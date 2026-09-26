@@ -56,6 +56,15 @@ const initialsOf = (n) => (n || "?").split(/[ @.]/).filter(Boolean).map((x) => x
 const fdate = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const ago = (d) => { const m = (Date.now() - new Date(d)) / 60000; return m < 60 ? Math.max(1, Math.round(m)) + "m ago" : m < 1440 ? Math.round(m / 60) + "h ago" : m < 10080 ? Math.round(m / 1440) + "d ago" : fdate(d); };
 const naira = (n) => "\u20A6" + Number(n || 0).toLocaleString("en-NG");
+// Sums placement fees per currency (mixed-currency totals can't be added together) and
+// joins them for display, e.g. "\u20A64,000,000" or "\u20A64,000,000 + $1,200" when currencies differ.
+const sumByCurrency = (placements, numKey, curKey) => {
+  const totals = {};
+  placements.forEach((p) => { const cur = p[curKey] || "NGN"; totals[cur] = (totals[cur] || 0) + (p[numKey] || 0); });
+  const entries = Object.entries(totals).filter(([, v]) => v);
+  if (entries.length === 0) return naira(0);
+  return entries.map(([cur, v]) => money(v, cur)).join(" + ");
+};
 /* Money in a job's own currency (jobs.currency, ISO code). Falls back to naira. */
 const money = (n, cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "NGN", maximumFractionDigits: 0 }).format(Number(n || 0)); } catch (e) { return naira(n); } };
 const curSymbol = (cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).formatToParts(0).find((p) => p.type === "currency").value; } catch (e) { return cur; } };
@@ -112,8 +121,8 @@ function mapAll(d) {
 function buildTeam(users, cands, placements) {
   return users.filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops")).map((u) => {
     const mine = cands.filter((c) => c.recruiterId === u.id); const placed = mine.filter((c) => c.status === "Placed").length;
-    const billed = placements.filter((p) => p.recruiterId === u.id && ["Ready", "Invoiced", "Paid"].includes(p.status)).reduce((a, p) => a + (p.feeNum || 0), 0);
-    return { id: u.id, init: initialsOf(u.name), name: u.name, level: u.role, submissions: mine.length, interviews: mine.filter((c) => c.status === "Interview").length, placed, conv: mine.length ? Math.round((placed / mine.length) * 100) : 0, billed: naira(billed) };
+    const billedPlacements = placements.filter((p) => p.recruiterId === u.id && ["Ready", "Invoiced", "Paid"].includes(p.status));
+    return { id: u.id, init: initialsOf(u.name), name: u.name, level: u.role, submissions: mine.length, interviews: mine.filter((c) => c.status === "Interview").length, placed, conv: mine.length ? Math.round((placed / mine.length) * 100) : 0, billed: sumByCurrency(billedPlacements, "feeNum", "feeCurrency") };
   }).sort((a, b) => b.placed - a.placed).map((r, i) => ({ ...r, top: i === 0 && r.placed > 0 }));
 }
 const weekly = (cands) => { const b = Array(12).fill(0); cands.forEach((c) => { const w = Math.floor((Date.now() - c.createdAt) / 6048e5); if (w >= 0 && w < 12) b[11 - w]++; }); return b; };
@@ -563,9 +572,11 @@ function MiniBars({ data, tone = C.em }) {
 const TREND = [8, 11, 9, 13, 12, 10, 14, 16, 13, 15, 14, 18];
 
 /* Overview pages */
-function statsOf(S) {
-  const c = S.cands; const billable = S.placements.filter((p) => ["Ready", "Invoiced", "Paid"].includes(p.status));
-  return { placed: c.filter((x) => x.status === "Placed").length, total: c.length, interviews: c.filter((x) => x.status === "Interview").length, billed: naira(billable.reduce((a, p) => a + (p.feeNum || 0), 0)), ready: S.placements.filter((p) => p.status === "Ready").length, month: new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase() };
+function statsOf(S, forRecruiter) {
+  const c = forRecruiter ? S.cands.filter((x) => x.recruiterId === forRecruiter) : S.cands;
+  const pl = forRecruiter ? S.placements.filter((p) => p.recruiterId === forRecruiter) : S.placements;
+  const billable = pl.filter((p) => ["Ready", "Invoiced", "Paid"].includes(p.status));
+  return { placed: c.filter((x) => x.status === "Placed").length, total: c.length, interviews: c.filter((x) => x.status === "Interview").length, billed: sumByCurrency(billable, "feeNum", "feeCurrency"), ready: pl.filter((p) => p.status === "Ready").length, month: new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase() };
 }
 
 function OverviewRecOps({ S }) {
@@ -644,7 +655,7 @@ function OverviewRecOps({ S }) {
 }
 
 function OverviewRecruiter({ S }) {
-  const st = statsOf(S);
+  const st = statsOf(S, S.me.id);
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -949,7 +960,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 <Btn kind="primary" className="w-full justify-center" onClick={() => setMenuOpen((m) => !m)}>Update status</Btn>
                 {menuOpen && (
                   <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-56 py-1" style={{ background: "#fff", borderColor: C.line }}>
-                    {["Hold", ...(S.role !== "recruiter" ? ["Approve, forward to client"] : []), "Not a fit for this role", ...(S.role !== "recruiter" ? ["Mark placed"] : []), "Reject"].map((o) => (
+                    {["Hold", ...(S.role !== "recruiter" ? ["Approve, forward to client"] : []), "Not a fit for this role", "Mark placed", "Reject"].map((o) => (
                       <button key={o} onClick={() => doStatus(o)} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: o === "Reject" ? C.dangerFg : C.ink }}>{o}</button>
                     ))}
                   </div>
@@ -1235,10 +1246,10 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
         {job.seo && (job.seo.keywords || []).length > 0 && (
           <div className="mb-4"><div className="text-xs mb-1.5" style={{ color: C.ink3 }}>Search keywords</div><div className="flex flex-wrap gap-1.5">{job.seo.keywords.map((k) => <Pill key={k} tone="neutral">{k}</Pill>)}</div></div>
         )}
-        {S.role !== "recruiter" && (job.billingAmount || job.incentiveAmount) && (
+        {(job.billingAmount || job.incentiveAmount) && (
           <div className="grid grid-cols-2 gap-4 mb-4 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
-            <div><div className="text-xs" style={{ color: C.ink3 }}>Client billing</div><div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div></div>
-            <div><div className="text-xs" style={{ color: C.ink3 }}>Recruiter incentive</div><div className="font-medium mt-0.5">{job.incentiveAmount ? (job.incentiveType === "flat" ? money(job.incentiveAmount, job.incentiveCurrency) : job.incentiveAmount + "% of the client fee") : "Not set"}</div></div>
+            {S.role !== "recruiter" && <div><div className="text-xs" style={{ color: C.ink3 }}>Client billing</div><div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div></div>}
+            <div><div className="text-xs" style={{ color: C.ink3 }}>{S.role === "recruiter" ? "Your incentive" : "Recruiter incentive"}</div><div className="font-medium mt-0.5">{job.incentiveAmount ? (job.incentiveType === "flat" ? money(job.incentiveAmount, job.incentiveCurrency) : job.incentiveAmount + "% of the client fee") : "Not set"}</div></div>
           </div>
         )}
         <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{job.link}</span></div>
