@@ -959,6 +959,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   const [reassign, setReassign] = useState(null);
   const qaState = candidate.screening.state;
   const qaQuestions = candidate.screening.questions || [];
+  const screeningJob = S.jobs.find((j) => j.id === candidate.screening.jobId) || null;
   const comments = candidate.comments;
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState("");
@@ -1145,8 +1146,50 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <div className="overflow-x-auto"><Tabs tabs={[{ key: "companies", label: "Companies" }, { key: "discussion", label: "Discussion" }, { key: "timeline", label: "Timeline" }]} active={tab} setActive={setTab} /></div>
             {tab === "companies" && (
               <div className="mt-4">
+                <div className="rounded-xl p-3.5 mb-4" style={{ background: "#F6F3EC" }}>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap"><Sparkles size={15} color={C.em} /><div className="text-sm font-medium">AI screening</div>{screeningJob && <Pill tone="neutral">{screeningJob.role}, {screeningJob.client}</Pill>}</div>
+                  {qaState === "pending" && qaQuestions.length === 0 && (
+                    <>
+                      <div className="text-xs mb-2.5" style={{ color: C.ink2 }}>AI writes 3 questions from the job description — a skills check, salary expectation, and start date.</div>
+                      {candidateJobs.length > 0 ? (
+                        <>
+                          <select value={draftJobId || ""} onChange={(e) => setDraftJobId(e.target.value)} className="w-full mb-2 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
+                            {candidateJobs.map((j) => <option key={j.id} value={j.id}>{j.role}, {j.client}</option>)}
+                          </select>
+                          <Btn kind="primary" full onClick={draftQuestions} disabled={aiBusy}>{aiBusy ? <>Drafting <InlineDots color="#fff" /></> : "Draft with AI"}</Btn>
+                        </>
+                      ) : <div className="text-xs" style={{ color: C.ink3 }}>Post a job first, then come back to draft questions against it.</div>}
+                    </>
+                  )}
+                  {qaState === "pending" && qaQuestions.length > 0 && (
+                    <>
+                      <div className="text-sm mb-1.5">{qaQuestions.length} screening questions ready</div>
+                      {qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}
+                      <Btn kind="primary" full className="mt-2" onClick={approveQ}>Approve and send</Btn>
+                    </>
+                  )}
+                  {qaState === "sent" && (
+                    <>
+                      {qaQuestions.length > 0 && <div className="mb-2">{qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}</div>}
+                      <div className="text-sm mb-2" style={{ color: C.ink2 }}>Waiting for {candidate.name.split(" ")[0]}'s reply. Paste it here when it arrives, and AI will review it.</div>
+                      <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={3} className="w-full rounded-lg border px-3 py-2 text-sm outline-none mb-2" style={{ borderColor: C.line, background: "#fff" }} />
+                      <Btn kind="primary" full onClick={reviewReply} disabled={aiBusy}>{aiBusy ? <>AI is reviewing <InlineDots color="#fff" /></> : "Get AI verdict"}</Btn>
+                    </>
+                  )}
+                  {qaState === "answered" && (
+                    <>
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="text-sm font-medium">Verdict</div>
+                        {candidate.screening.verdict && <Pill tone={candidate.screening.verdict === "Perfect fit" ? "em" : candidate.screening.verdict === "Possible fit" ? "warn" : "danger"}>{candidate.screening.verdict}</Pill>}
+                      </div>
+                      {candidate.screening.reasoning && <div className="text-sm mb-3" style={{ color: C.ink2 }}>{candidate.screening.reasoning}</div>}
+                      {(candidate.screening.qa || []).map((qa, i) => (<div key={i} className="py-2" style={{ borderTop: i ? `1px solid ${C.line}` : `1px solid ${C.line}` }}><div className="text-sm font-medium">{qa.q}</div><div className="text-sm" style={{ color: C.ink2 }}>{qa.a}</div></div>))}
+                    </>
+                  )}
+                  {aiErr && <div className="text-xs mt-3 rounded-lg p-2" style={{ background: C.dangerBg, color: C.dangerFg }}>{aiErr}</div>}
+                </div>
                 {candidate.endorsed.length === 0 && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Not yet endorsed to a company.</div>}
-                {candidate.endorsed.map((e, i) => (
+                {candidate.endorsed.slice().reverse().map((e, i) => (
                   <div key={i} className="flex items-center gap-3 py-3" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
                     <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: C.canvas }}>{e.company[0]}</div>
                     <div className="flex-1 min-w-0"><div className="font-medium text-sm">{e.company}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.role}</div></div>
@@ -1203,47 +1246,6 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 <><div className="flex items-center justify-between gap-2 text-sm"><span className="truncate" style={{ color: C.ink2 }}>{candidate.cvName || "CV on file"}</span><div className="flex gap-1.5 shrink-0"><Btn onClick={() => S.openResume(candidate.cv)} className="text-xs px-3 py-1.5">View</Btn><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
               ) : (
                 <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Upload resume (PDF is AI-scored)<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
-              )}
-            </div>
-            <div className="rounded-xl p-3.5 mt-3" style={{ background: "#F6F3EC" }}>
-              {qaState === "pending" && qaQuestions.length === 0 && (
-                <>
-                  <div className="text-sm font-medium mb-1.5">Draft screening questions</div>
-                  <div className="text-xs mb-2.5" style={{ color: C.ink2 }}>AI writes 3 questions from the job description — a skills check, salary expectation, and start date.</div>
-                  {candidateJobs.length > 0 ? (
-                    <>
-                      <select value={draftJobId || ""} onChange={(e) => setDraftJobId(e.target.value)} className="w-full mb-2 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
-                        {candidateJobs.map((j) => <option key={j.id} value={j.id}>{j.role}, {j.client}</option>)}
-                      </select>
-                      <Btn kind="primary" full onClick={draftQuestions} disabled={aiBusy}>{aiBusy ? <>Drafting <InlineDots color="#fff" /></> : "Draft with AI"}</Btn>
-                    </>
-                  ) : <div className="text-xs" style={{ color: C.ink3 }}>Post a job first, then come back to draft questions against it.</div>}
-                </>
-              )}
-              {qaState === "pending" && qaQuestions.length > 0 && (
-                <>
-                  <div className="flex items-center gap-2 text-sm font-medium mb-1.5"><Sparkles size={15} color={C.em} /> {qaQuestions.length} screening questions ready</div>
-                  {qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}
-                  <Btn kind="primary" full className="mt-2" onClick={approveQ}>Approve and send</Btn>
-                </>
-              )}
-              {qaState === "sent" && (
-                <>
-                  {qaQuestions.length > 0 && <div className="mb-2">{qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}</div>}
-                  <div className="text-sm mb-2" style={{ color: C.ink2 }}>Waiting for {candidate.name.split(" ")[0]}'s reply. Paste it here when it arrives, and AI will review it.</div>
-                  <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={3} className="w-full rounded-lg border px-3 py-2 text-sm outline-none mb-2" style={{ borderColor: C.line, background: "#fff" }} />
-                  <Btn kind="primary" full onClick={reviewReply} disabled={aiBusy}>{aiBusy ? <>AI is reviewing <InlineDots color="#fff" /></> : "Get AI verdict"}</Btn>
-                </>
-              )}
-              {qaState === "answered" && (
-                <>
-                  <div className="flex items-center justify-between mb-2 gap-2">
-                    <div className="flex items-center gap-2 text-sm font-medium"><Sparkles size={15} color={C.em} /> AI verdict</div>
-                    {candidate.screening.verdict && <Pill tone={candidate.screening.verdict === "Perfect fit" ? "em" : candidate.screening.verdict === "Possible fit" ? "warn" : "danger"}>{candidate.screening.verdict}</Pill>}
-                  </div>
-                  {candidate.screening.reasoning && <div className="text-sm mb-3" style={{ color: C.ink2 }}>{candidate.screening.reasoning}</div>}
-                  {(candidate.screening.qa || []).map((qa, i) => (<div key={i} className="py-2" style={{ borderTop: i ? `1px solid ${C.line}` : `1px solid ${C.line}` }}><div className="text-sm font-medium">{qa.q}</div><div className="text-sm" style={{ color: C.ink2 }}>{qa.a}</div></div>))}
-                </>
               )}
             </div>
           </Card>
