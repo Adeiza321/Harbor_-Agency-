@@ -329,6 +329,40 @@ revoke execute on function public.handle_new_user() from anon, authenticated, pu
 alter function public.touch_updated_at() set search_path = public;
 
 -- =====================================================================
+-- Candidate phone number, job billing terms, and recruiter incentives.
+-- (Migration: phone_billing_incentive_placement_links)
+-- =====================================================================
+alter table public.candidates add column if not exists phone text;
+
+alter table public.jobs
+  add column if not exists billing_type text not null default 'percent' check (billing_type in ('flat','percent')),
+  add column if not exists billing_amount numeric,
+  add column if not exists billing_currency text,
+  add column if not exists incentive_type text not null default 'percent' check (incentive_type in ('flat','percent')),
+  add column if not exists incentive_amount numeric,
+  add column if not exists incentive_currency text;
+
+-- Placements (billing entries) were only ever free text with no link back to
+-- the actual candidate/job records, and never recorded a recruiter incentive
+-- or a currency for the fee. Tie them properly.
+alter table public.placements
+  add column if not exists candidate_id uuid references public.candidates(id) on delete set null,
+  add column if not exists job_id uuid references public.jobs(id) on delete set null,
+  add column if not exists fee_currency text not null default 'NGN',
+  add column if not exists recruiter_incentive numeric,
+  add column if not exists recruiter_incentive_currency text;
+create index if not exists placements_candidate_idx on public.placements(candidate_id);
+create index if not exists placements_job_idx on public.placements(job_id);
+
+-- Recruiters could never actually create a placement: the existing write
+-- policy on placements ("place_write") is staff-only for every operation,
+-- so the app's "Mark placed" flow silently failed RLS for a recruiter.
+-- Let a recruiter insert their own; status changes (invoice, mark paid)
+-- stay staff-only via the existing place_write policy.
+create policy place_insert_recruiter on public.placements for insert to authenticated
+  with check (recruiter_id = auth.uid());
+
+-- =====================================================================
 -- AFTER RUNNING: create your first user (Authentication > Users > Add user),
 -- then make yourself admin (replace the email):
 --   update public.profiles set role = 'admin', level = 'Admin, owner' where email = 'you@example.com';

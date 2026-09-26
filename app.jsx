@@ -59,6 +59,18 @@ const naira = (n) => "\u20A6" + Number(n || 0).toLocaleString("en-NG");
 /* Money in a job's own currency (jobs.currency, ISO code). Falls back to naira. */
 const money = (n, cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "NGN", maximumFractionDigits: 0 }).format(Number(n || 0)); } catch (e) { return naira(n); } };
 const curSymbol = (cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).formatToParts(0).find((p) => p.type === "currency").value; } catch (e) { return cur; } };
+/* Suggests a client fee + recruiter incentive for a placement, from the job's
+   billing/incentive settings and (for a % fee) the candidate's salary. Both
+   figures are only a starting point — always editable before saving. */
+function suggestBilling(job, candidatePay) {
+  if (!job) return { fee: "", feeCurrency: "NGN", incentive: "", incentiveCurrency: "NGN" };
+  const salary = num(candidatePay) || job.maxPay || job.minPay || 0;
+  const fee = job.billingType === "flat" ? (job.billingAmount || 0) : Math.round((salary * (job.billingAmount || 0)) / 100);
+  const feeCurrency = job.billingType === "flat" ? (job.billingCurrency || "NGN") : (job.currency || "NGN");
+  const incentive = job.incentiveType === "flat" ? (job.incentiveAmount || 0) : Math.round((fee * (job.incentiveAmount || 0)) / 100);
+  const incentiveCurrency = job.incentiveType === "flat" ? (job.incentiveCurrency || "NGN") : feeCurrency;
+  return { fee: fee || "", feeCurrency, incentive: incentive || "", incentiveCurrency };
+}
 const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
 const CURRENCIES = ["NGN", "USD", "GBP", "EUR", "CAD", "AUD", "ZAR", "KES", "GHS", "AED", "INR"];
 /* Picking a hiring country pre-selects its usual currency (still overridable). */
@@ -83,12 +95,15 @@ function mapAll(d) {
   const ends = d.candidates.flatMap((c) => c.candidate_endorsements || []);
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
     const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
-    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
+    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null,
+      billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
+      incentiveType: j.incentive_type || "percent", incentiveAmount: j.incentive_amount, incentiveCurrency: j.incentive_currency || j.currency || "NGN",
+      recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
       submitted: new Set([...en.map((e) => e.candidate_id), ...active.map((l) => l.candidate_id)]).size,
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", ai: a.ai_score || 0, when: ago(a.created_at), assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, candidateId: a.candidate_id }));
   const today = new Date();
-  const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: naira(p.fee), guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, feeNum: Number(p.fee) }));
+  const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status }));
   const campaigns = d.campaigns.map((c) => ({ id: c.id, name: c.name, meta: pname(c.created_by).split(" ")[0] + " \u00b7 " + fdate(c.created_at), audience: c.audience ? c.audience.toLocaleString() : "-", delivered: c.delivered ? c.delivered.toLocaleString() : "-", opened: c.opened_pct || 0, status: c.status }));
   const ads = d.ads.map((a) => ({ id: a.id, job: a.job_title, client: a.client || "", channels: a.channels, payerType: a.payer_type, payer: a.payer_type === "agency" ? "Agency" : pname(a.created_by) + " (recruiter)", budget: naira(a.budget), spent: naira(a.spent), apps: a.applicants, status: a.status }));
   const set = d.settings || {};
@@ -381,7 +396,6 @@ const NAV_RECOPS = [
   { key: "candidates", label: "Candidates", icon: Users },
   { key: "inbox", label: "Inbox", icon: InboxIcon },
   { key: "jobs", label: "Jobs", icon: Briefcase },
-  { key: "hiringTracker", label: "Hiring tracker", icon: TrendingUp },
   { key: "campaigns", label: "Campaigns", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
   { key: "ads", label: "Ads", icon: Megaphone },
@@ -394,14 +408,14 @@ const NAV_RECRUITER = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "candidates", label: "My candidates", icon: Users },
   { key: "jobs", label: "Jobs", icon: Briefcase },
-  { key: "hiringTracker", label: "Hiring tracker", icon: TrendingUp },
   { key: "campaigns", label: "Campaigns", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
 ];
+const byKey = (list, key) => list.find((x) => x.key === key);
 const MOBILE_TABS = {
-  recops: [NAV_RECOPS[0], NAV_RECOPS[1], NAV_RECOPS[2], NAV_RECOPS[3]],
-  recruiter: [NAV_RECRUITER[0], NAV_RECRUITER[1], NAV_RECRUITER[2], NAV_RECRUITER[4]],
-  admin: [NAV_RECOPS[0], NAV_RECOPS[1], NAV_RECOPS[2], NAV_RECOPS[3]],
+  recops: [byKey(NAV_RECOPS, "overview"), byKey(NAV_RECOPS, "candidates"), byKey(NAV_RECOPS, "inbox"), byKey(NAV_RECOPS, "jobs")],
+  recruiter: [byKey(NAV_RECRUITER, "overview"), byKey(NAV_RECRUITER, "candidates"), byKey(NAV_RECRUITER, "jobs"), byKey(NAV_RECRUITER, "campaigns")],
+  admin: [byKey(NAV_RECOPS, "overview"), byKey(NAV_RECOPS, "candidates"), byKey(NAV_RECOPS, "inbox"), byKey(NAV_RECOPS, "jobs")],
 };
 const ROLE_LABEL = { recops: "Rec Ops manager", recruiter: "Recruiter", admin: "Admin, owner" };
 const ROLE_NAME = { recops: "Maya Okoye", recruiter: "Adaeze Nwosu", admin: "Ade Balogun" };
@@ -680,16 +694,29 @@ function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
   const [showF, setShowF] = useState(false);
   const [recF, setRecF] = useState("All");
   const [minAi, setMinAi] = useState(0);
+  const [roleF, setRoleF] = useState("All");
+  const [sourceF, setSourceF] = useState("All");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const gq = (S.query || "").toLowerCase();
   const hit = (c, t) => c.name.toLowerCase().includes(t) || c.role.toLowerCase().includes(t);
-  const filtered = data.filter((c) => (tab === "All" || c.status === tab) && hit(c, q.toLowerCase()) && hit(c, gq) && (recF === "All" || c.recruiter === recF) && c.ai >= minAi);
+  const roles = Array.from(new Set(data.map((c) => c.role).filter(Boolean))).sort();
+  const sources = Array.from(new Set(data.map((c) => c.source).filter(Boolean))).sort();
+  const fromMs = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
+  const toMs = dateTo ? new Date(dateTo + "T23:59:59").getTime() : null;
+  const filtered = data.filter((c) =>
+    (tab === "All" || c.status === tab) && hit(c, q.toLowerCase()) && hit(c, gq) &&
+    (recF === "All" || c.recruiter === recF) && c.ai >= minAi &&
+    (roleF === "All" || c.role === roleF) && (sourceF === "All" || c.source === sourceF) &&
+    (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
+  const activeFilterCount = [recF !== "All", minAi > 0, roleF !== "All", sourceF !== "All", !!dateFrom, !!dateTo].filter(Boolean).length;
   const tabs = ["All", "In review", "With client", "Interview", "Active file", "Placed", "Rejected"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" title={scope === "recruiter" ? "Your candidate bench" : "All candidates"} sub={scope === "recruiter" ? "Every applicant you have sourced, and active file candidates ready to reuse." : `${data.length} candidates across every recruiter, client, and source.`} />
         <div className="flex gap-2.5">
-          <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter</Btn>
+          <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Btn>
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
           <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={() => setPage("uploadCandidates")}>Upload</Btn>
         </div>
@@ -701,10 +728,23 @@ function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
               <option value="All">All recruiters</option>
               {S.team.map((r) => <option key={r.id} value={r.name}>{r.name}</option>)}
             </select>
+            <select value={roleF} onChange={(e) => setRoleF(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
+              <option value="All">All roles</option>
+              {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <select value={sourceF} onChange={(e) => setSourceF(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
+              <option value="All">All sources</option>
+              {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
             <select value={minAi} onChange={(e) => setMinAi(Number(e.target.value))} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
               <option value={0}>Any AI score</option><option value={70}>AI 70+</option><option value={80}>AI 80+</option><option value={90}>AI 90+</option>
             </select>
-            <button onClick={() => { setRecF("All"); setMinAi(0); }} className="text-xs" style={{ color: C.em }}>Clear</button>
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, color: dateFrom ? C.ink : C.ink3 }} />
+              <span className="text-xs" style={{ color: C.ink3 }}>to</span>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, color: dateTo ? C.ink : C.ink3 }} />
+            </div>
+            <button onClick={() => { setRecF("All"); setMinAi(0); setRoleF("All"); setSourceF("All"); setDateFrom(""); setDateTo(""); }} className="text-xs" style={{ color: C.em }}>Clear all</button>
           </div>
         )}
         <div className="mb-3"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
@@ -741,7 +781,20 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   const [panel, setPanel] = useState(null);
   const [msg, setMsg] = useState("");
   const [reply, setReply] = useState("");
+  const placementJobs = S.jobs.filter((j) => candidate.jobLinks.some((l) => l.jobId === j.id) || candidate.endorsed.some((e) => e.role === j.role && e.company === j.client));
+  const [placeJobId, setPlaceJobId] = useState("");
+  const placeJob = placementJobs.find((j) => j.id === placeJobId) || placementJobs[0] || null;
   const [fee, setFee] = useState("");
+  const [feeCur, setFeeCur] = useState("NGN");
+  const [incentive, setIncentive] = useState("");
+  const [incentiveCur, setIncentiveCur] = useState("NGN");
+  const openPlaced = () => {
+    const j = placementJobs[0] || null;
+    setPlaceJobId(j ? j.id : "");
+    const s = suggestBilling(j, candidate.pay);
+    setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency);
+    setPanel("placed");
+  };
   const sug = S.jobs.find((j) => j.status === "Open" && !candidate.endorsed.some((e) => e.role === j.role && e.company === j.client));
   const [fwd, setFwd] = useState(S.jobs[0] ? S.jobs[0].id : 0);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -798,16 +851,23 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       setTimeout(() => setReassign("found"), 1200);
     } else if (opt === "Approve, forward to client") { setStatus("With client"); toast("Forwarded to client"); }
     else if (opt === "Reject") { setStatus("Rejected"); toast("Candidate rejected"); }
-    else if (opt === "Mark placed") { setPanel("placed"); }
+    else if (opt === "Mark placed") { openPlaced(); }
     else { setStatus("In review"); toast("Status set to hold"); }
   };
   const setQa = (x) => patch((c) => ({ screening: { ...c.screening, ...x } }));
   const approveQ = () => { setQa({ state: "sent" }); toast("Marked as sent. Send the questions to " + candidate.name.split(" ")[0] + " by email or WhatsApp."); };
-  const markPlaced = () => {
+  const markPlaced = async () => {
     const amt = num(fee); if (!amt) { toast("Enter the placement fee"); return; }
     const e = candidate.endorsed[candidate.endorsed.length - 1];
-    S.setPlacements((l) => [{ id: uid(), name: candidate.name, role: e ? e.role + ", " + e.company : candidate.role, recruiterId: candidate.recruiterId, recruiter: candidate.recruiterInit, fee: naira(amt), feeNum: amt, guarantee: "Guarantee " + S.settings.guaranteeDays + " days", status: "Guarantee" }, ...l]);
-    setStatus("Placed"); setPanel(null); setFee(""); toast("Marked as placed");
+    try {
+      await S.insertPlacement({
+        name: candidate.name, role: placeJob ? placeJob.role + ", " + placeJob.client : (e ? e.role + ", " + e.company : candidate.role),
+        candidateId: candidate.id, jobId: placeJob ? placeJob.id : null,
+        recruiterId: candidate.recruiterId, recruiterInit: candidate.recruiterInit,
+        fee: amt, feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur,
+      });
+      setStatus("Placed"); setPanel(null); setFee(""); setIncentive(""); toast("Marked as placed");
+    } catch (e) { toast(e.message || "Could not record the placement"); }
   };
   const postComment = () => {
     if (!draft.trim()) { setErr("Write a note before posting."); return; }
@@ -842,9 +902,26 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         )}
       </Modal>
       <Modal open={panel === "placed"} onClose={() => setPanel(null)} title="Mark as placed">
-        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Placement fee (₦)</label>
-        <input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1,500,000" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        <Btn kind="primary" full onClick={markPlaced}>Confirm placement</Btn>
+        <div className="flex flex-col gap-3">
+          {placementJobs.length > 0 && (
+            <div>
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Role placed on</label>
+              <select value={placeJobId} onChange={(e) => { setPlaceJobId(e.target.value); const j = placementJobs.find((x) => x.id === e.target.value); const s = suggestBilling(j, candidate.pay); setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency); }} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+                {placementJobs.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={feeCur} onChange={(e) => setFeeCur(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={incentiveCur} onChange={(e) => setIncentiveCur(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+          </div>
+          <div className="text-xs" style={{ color: C.ink3 }}>Prefilled from this role's billing settings — edit as needed before confirming.</div>
+          <Btn kind="primary" full onClick={markPlaced}>Confirm placement</Btn>
+        </div>
       </Modal>
       <Modal open={panel === "fwd"} onClose={() => setPanel(null)} title="Forward to a client">
         <div className="flex flex-col gap-2 mb-4">
@@ -1158,6 +1235,12 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
         {job.seo && (job.seo.keywords || []).length > 0 && (
           <div className="mb-4"><div className="text-xs mb-1.5" style={{ color: C.ink3 }}>Search keywords</div><div className="flex flex-wrap gap-1.5">{job.seo.keywords.map((k) => <Pill key={k} tone="neutral">{k}</Pill>)}</div></div>
         )}
+        {S.role !== "recruiter" && (job.billingAmount || job.incentiveAmount) && (
+          <div className="grid grid-cols-2 gap-4 mb-4 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div><div className="text-xs" style={{ color: C.ink3 }}>Client billing</div><div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div></div>
+            <div><div className="text-xs" style={{ color: C.ink3 }}>Recruiter incentive</div><div className="font-medium mt-0.5">{job.incentiveAmount ? (job.incentiveType === "flat" ? money(job.incentiveAmount, job.incentiveCurrency) : job.incentiveAmount + "% of the client fee") : "Not set"}</div></div>
+          </div>
+        )}
         <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{job.link}</span></div>
       </Card>
       {S.role !== "recruiter" && fits.length > 0 && (
@@ -1255,6 +1338,13 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
   const [draftAi, setDraftAi] = useState(null); // AI suggestion awaiting review
   const [aiBusy, setAiBusy] = useState(false);
   const [done, setDone] = useState(null); // { link, id, status, title, client }
+  // What the agency bills the client, and how the recruiter is incentivized on this role.
+  const [billingType, setBillingType] = useState("percent"); // "percent" of salary, or "flat" fee
+  const [billingAmount, setBillingAmount] = useState("");
+  const [billingCurrency, setBillingCurrency] = useState("NGN");
+  const [incentiveType, setIncentiveType] = useState("percent"); // "percent" of the client fee, or "flat" bonus
+  const [incentiveAmount, setIncentiveAmount] = useState("");
+  const [incentiveCurrency, setIncentiveCurrency] = useState("NGN");
   const runRedraft = async () => {
     if (!title.trim() || description.trim().length < 40) { toast("Add a job title and a few sentences of description first"); return; }
     setAiBusy(true); setDraftAi(null);
@@ -1274,11 +1364,14 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
     const id = uid();
     const slug = (client[0] + title.split(" ").map((w) => w[0]).join("")).toLowerCase() + "-" + String(S.jobs.length + 1).padStart(2, "0");
     const link = "harbor.link/j/" + slug;
-    S.setJobs((l) => [{ id, role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo, recruiters: [], submitted: 0, interview: 0, days: 0, status, link }, ...l]);
+    S.setJobs((l) => [{ id, role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
+      billingType, billingAmount: num(billingAmount) || null, billingCurrency,
+      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency,
+      recruiters: [], submitted: 0, interview: 0, days: 0, status, link }, ...l]);
     setDone({ link, id, status, title, client });
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
-  const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); };
+  const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setIncentiveAmount(""); };
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
 
   return (
@@ -1327,6 +1420,50 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
                 <div className="flex flex-wrap gap-2"><Btn kind="primary" onClick={useRedraft}>Use this version</Btn><Btn onClick={runRedraft}>Try again</Btn><Btn onClick={() => setDraftAi(null)}>Discard</Btn></div>
               </div>
             )}
+          </div>
+          <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+            <SectionTitle title="Client billing" sub="What the agency charges the client when this role is filled." size="text-base" />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>Type</label>
+                <select value={billingType} onChange={(e) => setBillingType(e.target.value)} className={inp} style={inpStyle}>
+                  <option value="percent">% of salary</option>
+                  <option value="flat">Flat fee</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>{billingType === "percent" ? "Percentage" : "Amount"}</label>
+                <input value={billingAmount} onChange={(e) => setBillingAmount(e.target.value)} placeholder={billingType === "percent" ? "e.g. 15" : "e.g. 3000000"} className={inp} style={inpStyle} />
+              </div>
+              {billingType === "flat" && (
+                <div>
+                  <label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label>
+                  <select value={billingCurrency} onChange={(e) => setBillingCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+            <SectionTitle title="Recruiter incentive" sub="What the recruiter earns for placing a candidate on this role." size="text-base" />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>Type</label>
+                <select value={incentiveType} onChange={(e) => setIncentiveType(e.target.value)} className={inp} style={inpStyle}>
+                  <option value="percent">% of the client fee</option>
+                  <option value="flat">Flat bonus</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>{incentiveType === "percent" ? "Percentage" : "Amount"}</label>
+                <input value={incentiveAmount} onChange={(e) => setIncentiveAmount(e.target.value)} placeholder={incentiveType === "percent" ? "e.g. 10" : "e.g. 200000"} className={inp} style={inpStyle} />
+              </div>
+              {incentiveType === "flat" && (
+                <div>
+                  <label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label>
+                  <select value={incentiveCurrency} onChange={(e) => setIncentiveCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select>
+                </div>
+              )}
+            </div>
           </div>
           <div className="pt-3 flex items-center justify-between gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
             <div><div className="text-sm font-medium">Auto-rate candidates</div><div className="text-xs" style={{ color: C.ink2 }}>AI reviews and rates every applicant.</div></div>
@@ -1441,33 +1578,9 @@ function PromoteModal({ open, onClose, jobTitle, toast, S }) {
 /* ======================================================================
    HARBOR, PART 2. Paste this directly BELOW the code you already have.
    It uses the same imports, tokens and components, so nothing to add above.
-   Contains: Inbox, HiringTracker, Campaigns, Billing, Ads, Users, Settings,
+   Contains: Inbox, Campaigns, Billing, Ads, Users, Settings,
    UploadCandidates, CandidatePortal and the App root (default export).
    ====================================================================== */
-
-const STAGES = ["Submitted", "In review", "Interview", "Offer", "Placed"];
-function HiringTracker({ role, S }) {
-  const rows = (role === "recruiter" ? S.jobs.filter((j) => j.recruiters.includes(S.me.init)) : S.jobs).filter((j) => j.status !== "Closed");
-  return (
-    <div className="flex flex-col gap-5 md:gap-6">
-      <SectionTitle size="text-3xl md:text-4xl" title="Hiring tracker" sub="Where every open role sits in the pipeline." />
-      <Card>
-        <DataTable
-          rows={rows}
-          columns={[
-            { key: "role", label: "ROLE", render: (j) => <div><div className="font-medium">{j.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{j.client}</div></div> },
-            { key: "submitted", label: "SUBMITTED", render: (j) => j.submitted },
-            { key: "interview", label: "INTERVIEW", render: (j) => j.interview },
-            { key: "pipe", label: "PIPELINE", render: (j) => <div className="flex items-center gap-2"><ProgressBar w={100} pct={(j.interview / Math.max(1, j.submitted)) * 300} /><span className="text-xs">{Math.round((j.interview / Math.max(1, j.submitted)) * 100)}% reach interview</span></div> },
-            { key: "days", label: "OPEN", render: (j) => `${j.days}d` },
-            { key: "status", label: "STATUS", render: (j) => <StatusPill status={j.status} /> },
-          ]}
-        />
-      </Card>
-      <div className="text-xs" style={{ color: C.ink3 }}>Stages: {STAGES.join(", ")}.</div>
-    </div>
-  );
-}
 
 function CampaignsPage({ toast, S }) {
   const [open, setOpen] = useState(false);
@@ -1510,13 +1623,85 @@ function CampaignsPage({ toast, S }) {
   );
 }
 
+function NewBillingModal({ open, onClose, toast, S }) {
+  const [candId, setCandId] = useState("");
+  const [jobId, setJobId] = useState("");
+  const [fee, setFee] = useState("");
+  const [feeCur, setFeeCur] = useState("NGN");
+  const [incentive, setIncentive] = useState("");
+  const [incentiveCur, setIncentiveCur] = useState("NGN");
+  const [busy, setBusy] = useState(false);
+  const cand = S.cands.find((c) => c.id === candId) || null;
+  const job = S.jobs.find((j) => j.id === jobId) || null;
+  const pickCand = (id) => {
+    setCandId(id);
+    const c = S.cands.find((x) => x.id === id);
+    const j = c ? S.jobs.find((x) => c.jobLinks.some((l) => l.jobId === x.id)) : null;
+    setJobId(j ? j.id : "");
+    const s = suggestBilling(j, c ? c.pay : null);
+    setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency);
+  };
+  const pickJob = (id) => {
+    setJobId(id);
+    const j = S.jobs.find((x) => x.id === id);
+    const s = suggestBilling(j, cand ? cand.pay : null);
+    setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency);
+  };
+  const submit = async () => {
+    if (!cand) { toast("Pick a candidate"); return; }
+    if (!num(fee)) { toast("Enter the client fee"); return; }
+    setBusy(true);
+    try {
+      await S.insertPlacement({ name: cand.name, role: job ? job.role + ", " + job.client : cand.role, candidateId: cand.id, jobId: job ? job.id : null, recruiterId: cand.recruiterId, recruiterInit: cand.recruiterInit, fee: num(fee), feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur });
+      toast("Billing entry created"); setCandId(""); setJobId(""); setFee(""); setIncentive(""); onClose();
+    } catch (e) { toast(e.message || "Could not create billing entry"); }
+    setBusy(false);
+  };
+  const sel = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
+  const selStyle = { borderColor: C.line, background: "#FAF8F3" };
+  return (
+    <Modal open={open} onClose={onClose} title="New billing entry">
+      <div className="flex flex-col gap-3">
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Candidate</label>
+          <select value={candId} onChange={(e) => pickCand(e.target.value)} className={sel} style={selStyle}>
+            <option value="">Choose a candidate…</option>
+            {S.cands.map((c) => <option key={c.id} value={c.id}>{c.name} – {c.role}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Job (for billing terms)</label>
+          <select value={jobId} onChange={(e) => pickJob(e.target.value)} className={sel} style={selStyle}>
+            <option value="">No specific job</option>
+            {S.jobs.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className={sel} style={selStyle} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={feeCur} onChange={(e) => setFeeCur(e.target.value)} className={sel} style={selStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className={sel} style={selStyle} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={incentiveCur} onChange={(e) => setIncentiveCur(e.target.value)} className={sel} style={selStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+        </div>
+        {job && <div className="text-xs" style={{ color: C.ink3 }}>Prefilled from {job.role}'s billing settings — edit as needed.</div>}
+        <Btn kind="primary" full disabled={busy} onClick={submit}>{busy ? <>Creating <InlineDots color="#fff" /></> : "Create billing entry"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function BillingPage({ role, toast, S }) {
+  const [open, setOpen] = useState(false);
   const list = role === "recruiter" ? S.placements.filter((p) => p.recruiterId === S.me.id) : S.placements;
-  const setSt = (n, st, msg) => { S.setPlacements((l) => l.map((p) => (p.name === n ? { ...p, status: st } : p))); toast(msg); };
+  const setSt = (id, st, msg) => { S.setPlacementStatus(id, st); toast(msg); };
   const count = (s) => list.filter((p) => p.status === s).length;
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      <SectionTitle size="text-3xl md:text-4xl" title="Billing" sub="Fees are invoiced once the guarantee period clears." />
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+        <SectionTitle size="text-3xl md:text-4xl" title="Billing" sub="Fees are invoiced once the guarantee period clears." />
+        {role !== "recruiter" && <Btn kind="primary" icon={Plus} onClick={() => setOpen(true)}>New billing entry</Btn>}
+      </div>
       <KPIGrid>
         <KPI dark label="Ready to invoice" value={count("Ready")} foot="Guarantee cleared" />
         <KPI label="In guarantee" value={count("Guarantee")} foot="Not billable yet" />
@@ -1525,23 +1710,26 @@ function BillingPage({ role, toast, S }) {
       </KPIGrid>
       <Card>
         <DataTable
-          keyField="name"
+          keyField="id"
           rows={list}
+          empty="No billing entries yet."
           columns={[
             { key: "name", label: "PLACEMENT", render: (p) => <div><div className="font-medium">{p.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{p.role}</div></div> },
-            { key: "recruiter", label: "RECRUITER", render: (p) => <Avatar init={p.recruiter} tone={PEOPLE_TONE[p.recruiter]} size={26} /> },
-            { key: "fee", label: "FEE", render: (p) => <span className="font-medium">{p.fee}</span> },
+            { key: "recruiter", label: "RECRUITER", render: (p) => p.recruiter ? <Avatar init={p.recruiter} tone={PEOPLE_TONE[p.recruiter]} size={26} /> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
+            { key: "fee", label: "CLIENT FEE", render: (p) => <span className="font-medium">{p.fee}</span> },
+            { key: "incentive", label: "RECRUITER INCENTIVE", render: (p) => p.incentive ? <span className="text-sm">{p.incentive}</span> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
             { key: "guarantee", label: "GUARANTEE", render: (p) => <span className="text-xs" style={{ color: C.ink2 }}>{p.guarantee}</span> },
             { key: "status", label: "STATUS", render: (p) => (
               <div className="flex items-center gap-2">
                 <StatusPill status={p.status} />
-                {p.status === "Ready" && role !== "recruiter" && <button onClick={() => setSt(p.name, "Invoiced", "Invoice created for " + p.name)} className="text-xs" style={{ color: C.em }}>Invoice</button>}
-                {p.status === "Invoiced" && role !== "recruiter" && <button onClick={() => setSt(p.name, "Paid", "Marked paid: " + p.name)} className="text-xs" style={{ color: C.em }}>Mark paid</button>}
+                {p.status === "Ready" && role !== "recruiter" && <button onClick={() => setSt(p.id, "Invoiced", "Invoice created for " + p.name)} className="text-xs" style={{ color: C.em }}>Invoice</button>}
+                {p.status === "Invoiced" && role !== "recruiter" && <button onClick={() => setSt(p.id, "Paid", "Marked paid: " + p.name)} className="text-xs" style={{ color: C.em }}>Mark paid</button>}
               </div>
             ) },
           ]}
         />
       </Card>
+      <NewBillingModal open={open} onClose={() => setOpen(false)} toast={toast} S={S} />
     </div>
   );
 }
@@ -1908,20 +2096,30 @@ export default function App() {
     role, me: myMe, query, toast, go: setPage,
     cands: data.cands, updateCand,
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
-      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null } })); },
+      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null } })); },
     jobs: data.jobs,
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
-      setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null, status: j.status, created_by: session.uid } }); },
+      setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
+        billing_type: j.billingType || "percent", billing_amount: j.billingAmount || null, billing_currency: j.billingCurrency || j.currency || "NGN",
+        incentive_type: j.incentiveType || "percent", incentive_amount: j.incentiveAmount || null, incentive_currency: j.incentiveCurrency || j.currency || "NGN",
+        status: j.status, created_by: session.uid } }); },
     inbox: data.inbox,
     setInbox: (fn) => { const list = typeof fn === "function" ? fn(data.inbox) : fn;
       setData((d) => ({ ...d, inbox: list })); const x = list.find((i) => i.assignedId); if (x) call("/rest/v1/applications?id=eq." + x.id, { method: "PATCH", body: { assigned_to: x.assignedId } }); },
     placements: data.placements,
-    setPlacements: (fn) => { const list = typeof fn === "function" ? fn(data.placements) : fn;
-      const changed = list.find((p, i) => !data.placements[i] || data.placements[i].status !== p.status);
-      setData((d) => ({ ...d, placements: list }));
-      if (changed && data.placements.some((p) => p.id === changed.id)) call("/rest/v1/placements?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } });
-      else if (changed) call("/rest/v1/placements", { method: "POST", body: { id: changed.id, candidate_name: changed.name, role_desc: changed.role, recruiter_id: changed.recruiterId, fee: changed.feeNum, status: changed.status } });
+    /* p: { name, role, candidateId, jobId, recruiterId, recruiterInit, fee, feeCurrency, incentive, incentiveCurrency } */
+    insertPlacement: async (p) => {
+      const guaranteeEnds = new Date(Date.now() + (data.settings.guaranteedDays || 60) * 864e5).toISOString().slice(0, 10);
+      const row = { id: uid(), name: p.name, role: p.role, candidateId: p.candidateId || null, jobId: p.jobId || null, recruiterId: p.recruiterId || null, recruiter: p.recruiterInit || "", fee: money(p.fee, p.feeCurrency), feeNum: Number(p.fee) || 0, feeCurrency: p.feeCurrency || "NGN", incentive: p.incentive != null && p.incentive !== "" ? money(p.incentive, p.incentiveCurrency) : null, incentiveNum: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, guarantee: "Ends " + fdate(guaranteeEnds), status: "Guarantee" };
+      setData((d) => ({ ...d, placements: [row, ...d.placements] }));
+      try {
+        await call("/rest/v1/placements", { method: "POST", body: { id: row.id, candidate_name: p.name, role_desc: p.role, candidate_id: p.candidateId || null, job_id: p.jobId || null, recruiter_id: p.recruiterId || null, fee: Number(p.fee) || 0, fee_currency: p.feeCurrency || "NGN", recruiter_incentive: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, recruiter_incentive_currency: p.incentiveCurrency || null, guarantee_ends: guaranteeEnds, status: "Guarantee" } });
+        reload();
+      } catch (e) { toast(e.message); setData((d) => ({ ...d, placements: d.placements.filter((x) => x.id !== row.id) })); throw e; }
     },
+    setPlacementStatus: (id, status) => call("/rest/v1/placements?id=eq." + id, { method: "PATCH", body: { status } })
+      .then(() => setData((d) => ({ ...d, placements: d.placements.map((p) => (p.id === id ? { ...p, status } : p)) })))
+      .catch((e) => toast(e.message)),
     campaigns: data.campaigns,
     setCampaigns: (fn) => { const list = typeof fn === "function" ? fn(data.campaigns) : fn;
       const changed = list.find((c, i) => !data.campaigns[i] || data.campaigns[i].status !== c.status);
@@ -1999,7 +2197,6 @@ export default function App() {
   else if (page === "jobs") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "postJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "jobDetail") content = <JobDetail job={data.jobs.find((j) => j.id === jobId)} S={S} toast={toast} onBack={() => setPage("jobs")} onPromote={onPromote} />;
-  else if (page === "hiringTracker") content = <HiringTracker role={role} S={S} />;
   else if (page === "campaigns") content = <CampaignsPage toast={toast} S={S} />;
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
   else if (page === "ads") content = <AdsPage role={role} toast={toast} onPromote={onPromote} S={S} />;
