@@ -104,7 +104,7 @@ function mapAll(d) {
   const ends = d.candidates.flatMap((c) => c.candidate_endorsements || []);
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
     const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
-    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null,
+    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(),
       billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
       incentiveType: j.incentive_type || "percent", incentiveAmount: j.incentive_amount, incentiveCurrency: j.incentive_currency || j.currency || "NGN",
       recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
@@ -147,18 +147,23 @@ function namedRange(key, customFrom, customTo) {
   else { from = startOfWeek(now); to = now; }
   return { from: from.getTime(), to: Math.max(to.getTime(), from.getTime() + 1) };
 }
-// Buckets candidates created within [from, to] into hourly, daily, or weekly bars
-// depending on how wide the range is, so a single day still reads as a chart.
-function bucketSeries(cands, from, to) {
+// Buckets candidates (and, optionally, placements) created within [from, to] into
+// hourly, daily, or weekly bars depending on how wide the range is, so a single day
+// still reads as a chart. Passing `placements` gives a second, aligned series so the
+// "Submissions and placements" chart can actually show both, not just submissions.
+function bucketSeries(cands, from, to, placements) {
   const spanMs = Math.max(to - from, 1);
   const spanDays = spanMs / 864e5;
   let bucketMs, count, granularity;
   if (spanDays <= 1.5) { bucketMs = 36e5; count = Math.max(1, Math.ceil(spanMs / bucketMs)); granularity = "hour"; }
   else if (spanDays <= 31) { bucketMs = 864e5; count = Math.max(1, Math.ceil(spanDays)); granularity = "day"; }
   else { bucketMs = 6048e5; count = Math.max(1, Math.ceil(spanDays / 7)); granularity = "week"; }
-  const buckets = Array(count).fill(0);
-  cands.forEach((c) => { if (c.createdAt >= from && c.createdAt <= to) { const idx = Math.min(count - 1, Math.floor((c.createdAt - from) / bucketMs)); buckets[idx]++; } });
-  return { buckets, granularity };
+  const bucketOf = (arr) => {
+    const b = Array(count).fill(0);
+    (arr || []).forEach((c) => { if (c.createdAt >= from && c.createdAt <= to) { const idx = Math.min(count - 1, Math.floor((c.createdAt - from) / bucketMs)); b[idx]++; } });
+    return b;
+  };
+  return { buckets: bucketOf(cands), placedBuckets: placements ? bucketOf(placements) : null, granularity };
 }
 const RANGE_LABEL = { today: "Today", yesterday: "Yesterday", thisWeek: "This week", lastWeek: "Last week", thisMonth: "This month", lastMonth: "Last month", custom: "Custom range" };
 
@@ -577,8 +582,15 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut }) {
   );
 }
 
-function TopBar({ query, setQuery }) {
+function TopBar({ query, setQuery, S }) {
   const desktop = useDesktop();
+  const [notifOpen, setNotifOpen] = useState(false);
+  const notifItems = S ? [
+    { icon: Sparkles, t: "AI screening questions", n: S.cands.filter((c) => c.screening.state === "pending").length, go: "candidates" },
+    { icon: Clock, t: "Awaiting review", n: S.cands.filter((c) => c.status === "In review").length, go: "candidates" },
+    { icon: InboxIcon, t: "Unassigned applications", n: S.inbox.filter((x) => !x.assigned).length, go: "inbox" },
+    { icon: AlertTriangle, t: "Placements in guarantee", n: S.placements.filter((p) => p.status === "Guarantee").length, go: "billing" },
+  ].filter((x) => x.n > 0) : [];
   return (
     <div className="flex items-center gap-3 px-4 md:px-8 py-4 md:py-5">
       <div className="w-8 h-8 rounded-lg items-center justify-center shrink-0" style={{ display: desktop ? "none" : "flex", background: C.side }}>
@@ -589,19 +601,42 @@ function TopBar({ query, setQuery }) {
         <input id="harbor-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="bg-transparent outline-none text-sm flex-1 min-w-0" />
         <span className="rounded px-1.5 py-0.5" style={{ display: desktop ? "inline" : "none", fontSize: 11, background: C.canvas, color: C.ink2 }}>Ctrl K</span>
       </div>
-      <button className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative shrink-0" style={{ borderColor: C.line, background: "#fff" }}>
-        <Bell size={18} color={C.ink} />
-        <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />
-      </button>
+      <div className="relative shrink-0">
+        <button aria-label="Notifications" onClick={() => setNotifOpen((v) => !v)} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative" style={{ borderColor: C.line, background: "#fff" }}>
+          <Bell size={18} color={C.ink} />
+          {notifItems.length > 0 && <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />}
+        </button>
+        {notifOpen && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
+            <div className="absolute right-0 top-12 z-50 w-72 rounded-xl border p-2" style={{ borderColor: C.line, background: "#fff", boxShadow: "0 12px 32px rgba(20,32,27,0.16)" }}>
+              <div className="text-xs font-semibold px-2 py-1.5 tracking-widest" style={{ color: C.ink3 }}>NOTIFICATIONS</div>
+              {notifItems.length === 0 && <div className="text-sm px-2 py-3" style={{ color: C.ink2 }}>You're all caught up.</div>}
+              {notifItems.map((it, i) => (
+                <button key={i} onClick={() => { S.go(it.go); setNotifOpen(false); }} className="w-full flex items-center gap-2.5 text-left px-2 py-2 rounded-lg" style={{ background: "transparent" }}>
+                  <it.icon size={15} color={C.ink2} />
+                  <span className="text-sm flex-1">{it.t}</span>
+                  <span className="text-xs font-medium" style={{ color: C.ink2 }}>{it.n}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function MiniBars({ data, tone = C.em }) {
-  const max = Math.max(1, ...data);
+function MiniBars({ data, data2, tone = C.em, tone2 = C.ink }) {
+  const max = Math.max(1, ...data, ...(data2 || []));
   return (
     <div className="flex items-end gap-1 h-9">
-      {data.map((v, i) => <div key={i} className="rounded-sm flex-1" style={{ height: `${(v / max) * 100}%`, background: i === data.length - 1 ? tone : "#D4E9DE" }} />)}
+      {data.map((v, i) => (
+        <div key={i} className="flex-1 flex items-end gap-0.5 h-full">
+          <div className="rounded-sm flex-1" style={{ height: `${(v / max) * 100}%`, background: i === data.length - 1 ? tone : "#D4E9DE" }} />
+          {data2 && <div className="rounded-sm flex-1" style={{ height: `${((data2[i] || 0) / max) * 100}%`, background: tone2 }} />}
+        </div>
+      ))}
     </div>
   );
 }
@@ -623,22 +658,30 @@ function OverviewRecOps({ S }) {
   const st = statsOf(S);
   const monthLabel = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
-  // Company-wide snapshot metrics (not affected by the period toggle — they're "right now" gauges).
-  const totalLineup = S.cands.filter((c) => c.status !== "Rejected" && c.status !== "Placed").length;
-  const activeJobs = S.jobs.filter((j) => j.status !== "Draft" && j.status !== "Closed").length;
+  // The Daily/Weekly/Monthly/Yearly toggle now scopes every card on this row by when the
+  // record was created, so "Weekly" genuinely means "added in the last 7 days" everywhere.
+  const { from: pFrom, to: pTo } = periodRange(period);
+  const periodFoot = { Daily: "today", Weekly: "last 7 days", Monthly: "last 30 days", Yearly: "last 12 months" }[period];
+
+  const totalLineup = S.cands.filter((c) => c.createdAt >= pFrom && c.createdAt <= pTo && c.status !== "Rejected" && c.status !== "Placed").length;
+  const activeJobs = S.jobs.filter((j) => j.createdAt >= pFrom && j.createdAt <= pTo && j.status !== "Draft" && j.status !== "Closed").length;
+
+  // Payment due is deliberately NOT period-scoped: it's "what's owed right now" (any
+  // placement currently sitting in Invoiced status), not tied to when it was created.
   const invoicedDue = S.placements.filter((p) => p.status === "Invoiced");
   const paymentDue = sumByCurrency(invoicedDue, "feeNum", "feeCurrency");
 
-  // Period-scoped metrics: how many hires and how much was billed within the selected window.
-  const { from: pFrom, to: pTo } = periodRange(period);
+  // Hires / Total billed: how many placements were created, and how much of that is
+  // actually billable (Ready to invoice, Invoiced, or Paid — NOT the "Guarantee" stage,
+  // which BillingPage treats as not billable yet), within the selected window.
   const periodPlacements = S.placements.filter((p) => p.createdAt >= pFrom && p.createdAt <= pTo);
   const hires = periodPlacements.length;
   const billedPeriod = sumByCurrency(periodPlacements.filter((p) => ["Ready", "Invoiced", "Paid"].includes(p.status)), "feeNum", "feeCurrency");
-  const periodFoot = { Daily: "today", Weekly: "last 7 days", Monthly: "last 30 days", Yearly: "last 12 months" }[period];
 
-  // "Submissions and placements" chart's own, more granular date filter.
+  // "Submissions and placements" chart's own, more granular date filter — now plots both
+  // series (candidates submitted vs. placements made) instead of just submissions.
   const { from: sFrom, to: sTo } = namedRange(subRange, customFrom, customTo);
-  const { buckets: subBuckets, granularity } = bucketSeries(S.cands, sFrom, sTo);
+  const { buckets: subBuckets, placedBuckets, granularity } = bucketSeries(S.cands, sFrom, sTo, S.placements);
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -658,8 +701,8 @@ function OverviewRecOps({ S }) {
         </div>
       </div>
       <KPIGrid cols={5}>
-        <KPI dark label="Total lineup" value={totalLineup} foot="active in pipeline" />
-        <KPI label="Active jobs" value={activeJobs} foot="open roles" />
+        <KPI dark label="Total lineup" value={totalLineup} foot={"active in pipeline · " + periodFoot} />
+        <KPI label="Active jobs" value={activeJobs} foot={"open roles · " + periodFoot} />
         <KPI label="Hires" value={hires} foot={periodFoot} />
         <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
@@ -667,7 +710,7 @@ function OverviewRecOps({ S }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="md:col-span-2">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-            <SectionTitle title="Submissions and placements" sub={"New candidates by " + granularity + " · " + RANGE_LABEL[subRange]} />
+            <SectionTitle title="Submissions and placements" sub={"By " + granularity + " · " + RANGE_LABEL[subRange]} />
             <div className="flex items-center gap-2 flex-wrap">
               <select value={subRange} onChange={(e) => setSubRange(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
                 <option value="today">Today</option>
@@ -686,7 +729,11 @@ function OverviewRecOps({ S }) {
               )}
             </div>
           </div>
-          <div className="mt-4"><MiniBars data={subBuckets} /></div>
+          <div className="mt-4"><MiniBars data={subBuckets} data2={placedBuckets} /></div>
+          <div className="flex items-center gap-4 mt-2.5">
+            <div className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: "#D4E9DE" }} /> Submissions</div>
+            <div className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: C.ink }} /> Placements</div>
+          </div>
         </Card>
         <Card>
           <SectionTitle title="Needs attention" />
@@ -2298,7 +2345,7 @@ export default function App() {
       <TopProgressBar show={refreshing} />
       <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} />
       <div className="flex-1 min-w-0">
-        <TopBar query={query} setQuery={setQuery} />
+        <TopBar query={query} setQuery={setQuery} S={S} />
         <div className="px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} />
