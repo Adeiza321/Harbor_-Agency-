@@ -255,6 +255,80 @@ revoke all on function public.candidate_portal(text) from public;
 grant execute on function public.candidate_portal(text) to anon, authenticated;
 
 -- =====================================================================
+-- Candidate <-> job pipeline. A candidate can sit on several jobs, each
+-- with its own stage and fit score. (Migration: candidate_job_pipeline_and_resume_storage)
+-- =====================================================================
+create table public.candidate_jobs (
+  id uuid primary key default gen_random_uuid(),
+  candidate_id uuid not null references public.candidates(id) on delete cascade,
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  stage text not null default 'In review'
+    check (stage in ('Sourced','In review','Screening','Submitted','Interview','Offer','Placed','Rejected','Withdrawn')),
+  fit integer check (fit between 0 and 100),
+  notes text,
+  added_by uuid references public.profiles(id) default auth.uid(),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (candidate_id, job_id)
+);
+create index candidate_jobs_job_idx on public.candidate_jobs(job_id);
+create index candidate_jobs_candidate_idx on public.candidate_jobs(candidate_id);
+create trigger candidate_jobs_touch before update on public.candidate_jobs
+  for each row execute function public.touch_updated_at();
+alter table public.candidate_jobs enable row level security;
+create policy cj_read on public.candidate_jobs for select using (
+  is_staff() or exists (select 1 from candidates c where c.id = candidate_id and c.recruiter_id = auth.uid())
+  or exists (select 1 from job_recruiters jr where jr.job_id = candidate_jobs.job_id and jr.recruiter_id = auth.uid()));
+create policy cj_write on public.candidate_jobs for insert with check (
+  is_staff() or exists (select 1 from candidates c where c.id = candidate_id and c.recruiter_id = auth.uid()));
+create policy cj_update on public.candidate_jobs for update using (
+  is_staff() or exists (select 1 from candidates c where c.id = candidate_id and c.recruiter_id = auth.uid()))
+  with check (is_staff() or exists (select 1 from candidates c where c.id = candidate_id and c.recruiter_id = auth.uid()));
+create policy cj_delete on public.candidate_jobs for delete using (is_staff());
+
+alter table public.applications add column job_id uuid references public.jobs(id) on delete set null;
+create index applications_job_idx on public.applications(job_id);
+
+-- =====================================================================
+-- Resumes: one private bucket, files at resumes/<candidate_id>/<file>.
+-- Both the app (upload/view) and the ai-screen function use it.
+-- cv_path + the "cvs" bucket are the older single-file store; ai-screen
+-- still reads them as a fallback.
+-- =====================================================================
+alter table public.candidates add column resume_path text, add column resume_name text;
+alter table public.candidates add column if not exists cv_path text;
+
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('resumes','resumes', false, 10485760,
+  array['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
+on conflict (id) do nothing;
+
+create policy resumes_read on storage.objects for select to authenticated using (
+  bucket_id = 'resumes' and (is_staff() or exists (
+    select 1 from public.candidates c where c.id::text = (storage.foldername(name))[1] and c.recruiter_id = auth.uid())));
+create policy resumes_insert on storage.objects for insert to authenticated with check (
+  bucket_id = 'resumes' and (is_staff() or exists (
+    select 1 from public.candidates c where c.id::text = (storage.foldername(name))[1] and c.recruiter_id = auth.uid())));
+create policy resumes_update on storage.objects for update to authenticated using (
+  bucket_id = 'resumes' and (is_staff() or exists (
+    select 1 from public.candidates c where c.id::text = (storage.foldername(name))[1] and c.recruiter_id = auth.uid())));
+create policy resumes_delete on storage.objects for delete to authenticated using (
+  bucket_id = 'resumes' and is_staff());
+
+-- =====================================================================
+-- Jobs: salary currency, hiring country, AI SEO data.
+-- (Migration: job_currency_country_seo)
+-- =====================================================================
+alter table public.jobs
+  add column currency text not null default 'NGN' check (currency ~ '^[A-Z]{3}$'),
+  add column country text,
+  add column seo jsonb;   -- { meta_description, keywords[], original_title, original_description }
+
+-- Hardening (migration: tighten_function_security)
+revoke execute on function public.handle_new_user() from anon, authenticated, public;
+alter function public.touch_updated_at() set search_path = public;
+
+-- =====================================================================
 -- AFTER RUNNING: create your first user (Authentication > Users > Add user),
 -- then make yourself admin (replace the email):
 --   update public.profiles set role = 'admin', level = 'Admin, owner' where email = 'you@example.com';

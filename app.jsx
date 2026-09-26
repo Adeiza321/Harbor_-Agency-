@@ -56,6 +56,13 @@ const initialsOf = (n) => (n || "?").split(/[ @.]/).filter(Boolean).map((x) => x
 const fdate = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const ago = (d) => { const m = (Date.now() - new Date(d)) / 60000; return m < 60 ? Math.max(1, Math.round(m)) + "m ago" : m < 1440 ? Math.round(m / 60) + "h ago" : m < 10080 ? Math.round(m / 1440) + "d ago" : fdate(d); };
 const naira = (n) => "\u20A6" + Number(n || 0).toLocaleString("en-NG");
+/* Money in a job's own currency (jobs.currency, ISO code). Falls back to naira. */
+const money = (n, cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "NGN", maximumFractionDigits: 0 }).format(Number(n || 0)); } catch (e) { return naira(n); } };
+const curSymbol = (cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur }).formatToParts(0).find((p) => p.type === "currency").value; } catch (e) { return cur; } };
+const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
+const CURRENCIES = ["NGN", "USD", "GBP", "EUR", "CAD", "AUD", "ZAR", "KES", "GHS", "AED", "INR"];
+/* Picking a hiring country pre-selects its usual currency (still overridable). */
+const COUNTRY_CURRENCY = { Nigeria: "NGN", "United States": "USD", "United Kingdom": "GBP", Canada: "CAD", Ghana: "GHS", Kenya: "KES", "South Africa": "ZAR", "United Arab Emirates": "AED", Germany: "EUR", Ireland: "EUR", Netherlands: "EUR", France: "EUR", India: "INR", Australia: "AUD", "Remote \u2013 worldwide": "" };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
 const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status });
 
@@ -67,13 +74,18 @@ function mapAll(d) {
     recruiter: c.recruiter_id ? pname(c.recruiter_id) : null, recruiterInit: c.recruiter_id ? initialsOf(pname(c.recruiter_id)) : "",
     status: c.status, ai: c.ai_score || 0, email: c.email_verified ? "Verified" : "Unverified", emailAddr: c.email || "", phone: c.phone || "", opens: c.opens,
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
-    skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.cv_path || null,
+    skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done })),
   }));
   const ends = d.candidates.flatMap((c) => c.candidate_endorsements || []);
-  const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))), submitted: en.length, interview: en.filter((e) => e.status === "Interview").length, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
+  const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
+    const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
+    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
+      submitted: new Set([...en.map((e) => e.candidate_id), ...active.map((l) => l.candidate_id)]).size,
+      interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", ai: a.ai_score || 0, when: ago(a.created_at), assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, candidateId: a.candidate_id }));
   const today = new Date();
   const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: naira(p.fee), guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, feeNum: Number(p.fee) }));
@@ -759,8 +771,10 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   };
   const attachCv = async (file) => {
     setAiBusy(true); setAiErr("");
-    try { const b64 = await fileToBase64(file); await S.aiScreen("score_cv", { candidateId: candidate.id, fileBase64: b64, mediaType: "application/pdf", jobId: draftJobId }); toast("CV scored"); }
-    catch (e) { setAiErr(e.message); }
+    try { await S.uploadResume(candidate.id, file); } catch (e) { setAiErr(e.message); setAiBusy(false); return; }
+    if (!/\.pdf$/i.test(file.name)) { toast("Resume saved. AI scoring reads PDFs only."); setAiBusy(false); return; }
+    try { await S.aiScreen("score_cv", { candidateId: candidate.id, jobId: draftJobId }); toast("Resume saved and scored"); }
+    catch (e) { setAiErr("Resume saved, but AI scoring failed: " + e.message); }
     setAiBusy(false);
   };
   const rescoreCv = async () => {
@@ -942,6 +956,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         </div>
 
         <div className="flex flex-col gap-4">
+          <CandidateJobsCard candidate={candidate} S={S} toast={toast} />
           <Card>
             <div className="flex justify-between items-center mb-3 gap-2"><SectionTitle title="AI review" size="text-xl" /><Pill tone="warn">Internal</Pill></div>
             <div className="flex items-center gap-4 mb-4"><div className="text-3xl" style={{ ...SERIF }}>{candidate.ai || "-"}</div><div className="text-sm font-medium">Match for {candidate.role}</div></div>
@@ -950,9 +965,9 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             {aiErr && <div className="text-xs mt-3 rounded-lg p-2" style={{ background: C.dangerBg, color: C.dangerFg }}>{aiErr}</div>}
             <div className="rounded-xl p-3.5 mt-3" style={{ background: "#F6F3EC" }}>
               {candidate.cv ? (
-                <><div className="flex items-center justify-between gap-2 text-sm"><span style={{ color: C.ink2 }}>CV on file</span><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept="application/pdf" className="hidden" onChange={(e) => e.target.files[0] && attachCv(e.target.files[0])} /></label></>
+                <><div className="flex items-center justify-between gap-2 text-sm"><span className="truncate" style={{ color: C.ink2 }}>{candidate.cvName || "CV on file"}</span><div className="flex gap-1.5 shrink-0"><Btn onClick={() => S.openResume(candidate.cv)} className="text-xs px-3 py-1.5">View</Btn><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
               ) : (
-                <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Attach a PDF to score<input type="file" accept="application/pdf" className="hidden" onChange={(e) => e.target.files[0] && attachCv(e.target.files[0])} /></label></>
+                <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Upload resume (PDF is AI-scored)<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
               )}
             </div>
             <div className="rounded-xl p-3.5 mt-3" style={{ background: "#F6F3EC" }}>
@@ -1013,6 +1028,36 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   );
 }
 
+/* The roles a candidate is attached to (candidate_jobs), with a stage per role. */
+function CandidateJobsCard({ candidate, S, toast }) {
+  const [pick, setPick] = useState("");
+  const available = S.jobs.filter((j) => j.status !== "Closed" && !candidate.jobLinks.some((l) => l.jobId === j.id));
+  const sel = "text-sm rounded-lg border px-2 py-1.5 bg-white";
+  return (
+    <Card>
+      <SectionTitle title="Jobs" sub={candidate.jobLinks.length ? "Roles this candidate is attached to." : "Not attached to any job yet."} size="text-xl" />
+      {candidate.jobLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return (
+        <div key={l.id} className="flex items-center justify-between gap-2 py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
+          <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{(j ? j.client : "") + (l.fit != null ? " \u00b7 fit " + l.fit : "")}</div></div>
+          <div className="flex items-center gap-2 shrink-0">
+            <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+            {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
+          </div>
+        </div>
+      ); })}
+      {available.length > 0 && (
+        <div className="flex gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+          <select className={sel + " flex-1 min-w-0"} style={{ borderColor: C.line, color: C.ink }} value={pick} onChange={(e) => setPick(e.target.value)}>
+            <option value="">Add to a job…</option>
+            {available.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
+          </select>
+          <Btn kind="primary" onClick={() => { if (!pick) { toast("Pick a job first"); return; } S.linkJob(candidate.id, pick, candidate.ai || null).then(() => { setPick(""); toast("Added to job"); }).catch(() => {}); }}>Add</Btn>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function InboxPage({ toast, S }) {
   const items = S.inbox;
   const assign = (id, init) => {
@@ -1054,12 +1099,17 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
       <div className="text-sm" style={{ color: C.ink3 }}>This job could not be found.</div>
     </div>
   );
-  const candidates = S.cands.filter((c) => c.endorsed.some((e) => e.company === job.client && e.role === job.role));
+  const candidates = S.cands
+    .filter((c) => c.jobLinks.some((l) => l.jobId === job.id) || c.endorsed.some((e) => e.company === job.client && e.role === job.role))
+    .map((c) => ({ ...c, link: c.jobLinks.find((l) => l.jobId === job.id) || null }))
+    .sort((a, b) => ((b.link && b.link.fit) || b.ai || 0) - ((a.link && a.link.fit) || a.ai || 0));
+  const activeCount = candidates.filter((c) => !c.link || !["Rejected", "Withdrawn"].includes(c.link.stage)).length;
   const setStatus = (v) => S.setJobStatus(job.id, v);
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
-  const fits = suggestFits(job, S.cands);
+  const fits = suggestFits(job, S.cands).filter((c) => !c.jobLinks.some((l) => l.jobId === job.id));
   const reroute = (c) => {
     S.updateCand(c.id, (cc) => ({ status: "With client", endorsed: [...cc.endorsed, { company: job.client, role: job.role, by: todayStr() + " by " + S.me.first, status: "With client", next: "Awaiting feedback" }], timeline: [...cc.timeline, { t: "Rerouted to " + job.role + ", " + job.client, d: todayStr(), done: true }] }));
+    S.linkJob(c.id, job.id, c.ai || null).catch(() => {});
     toast(c.name + " rerouted to " + job.role);
   };
   return (
@@ -1095,14 +1145,18 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
           <div><div className="text-xs" style={{ color: C.ink3 }}>Interview</div><div className="text-sm font-medium mt-0.5">{job.interview}</div></div>
           <div><div className="text-xs" style={{ color: C.ink3 }}>Open</div><div className="text-sm font-medium mt-0.5">{job.days}d</div></div>
         </div>
-        {(job.location || job.minPay || job.maxPay) && (
+        {(job.location || job.country || job.minPay || job.maxPay) && (
           <div className="flex flex-wrap gap-4 mb-4 text-sm" style={{ color: C.ink2 }}>
             {job.location && <span>{job.location}</span>}
-            {(job.minPay || job.maxPay) && <span>{job.minPay ? naira(job.minPay) : "?"} – {job.maxPay ? naira(job.maxPay) : "?"} / year</span>}
+            {job.country && <span>Hiring in {job.country}</span>}
+            {(job.minPay || job.maxPay) && <span>{job.minPay ? money(job.minPay, job.currency) : "?"} – {job.maxPay ? money(job.maxPay, job.currency) : "?"} / year</span>}
           </div>
         )}
         {job.description && (
           <div className="mb-4 pt-4 text-sm whitespace-pre-wrap" style={{ borderTop: `1px solid ${C.line}`, color: C.ink2 }}>{job.description}</div>
+        )}
+        {job.seo && (job.seo.keywords || []).length > 0 && (
+          <div className="mb-4"><div className="text-xs mb-1.5" style={{ color: C.ink3 }}>Search keywords</div><div className="flex flex-wrap gap-1.5">{job.seo.keywords.map((k) => <Pill key={k} tone="neutral">{k}</Pill>)}</div></div>
         )}
         <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{job.link}</span></div>
       </Card>
@@ -1123,7 +1177,7 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
         </Card>
       )}
       <Card>
-        <SectionTitle title="Candidates on this role" sub={candidates.length + " submitted so far"} size="text-xl" />
+        <SectionTitle title="Candidates on this role" sub={activeCount + " active \u00b7 " + candidates.length + " total"} size="text-xl" />
         <div className="mt-3">
           <DataTable
             rows={candidates}
@@ -1136,8 +1190,14 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
                   <div><div className="font-medium">{c.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{c.recruiter || "Unassigned"}</div></div>
                 </div>
               ) },
-              { key: "status", label: "STATUS", render: (c) => <StatusPill status={c.status} /> },
-              { key: "ai", label: "AI", render: (c) => <Pill tone={!c.ai ? "neutral" : c.ai >= 80 ? "em" : c.ai >= 70 ? "warn" : "danger"}>{c.ai || "-"}</Pill> },
+              { key: "stage", label: "STAGE", render: (c) => c.link ? (
+                <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={c.link.stage} onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.setStage(c.link.id, v).then(() => toast(c.name.split(" ")[0] + " moved to " + v)).catch(() => {}); }}>
+                  {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              ) : <StatusPill status={c.status} /> },
+              { key: "cv", label: "RESUME", render: (c) => c.cv ? <button className="text-sm underline" style={{ color: C.em }} onClick={(e) => { e.stopPropagation(); S.openResume(c.cv); }}>View</button> : <span className="text-xs" style={{ color: C.ink3 }}>None</span> },
+              { key: "ai", label: "FIT", render: (c) => { const v = c.link && c.link.fit != null ? c.link.fit : c.ai; return <Pill tone={!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "danger"}>{v || "-"}</Pill>; } },
             ]}
           />
         </div>
@@ -1189,7 +1249,24 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
   const [minPay, setMinPay] = useState("");
   const [maxPay, setMaxPay] = useState("");
   const [description, setDescription] = useState("");
+  const [currency, setCurrency] = useState("NGN");
+  const [country, setCountry] = useState("Nigeria");
+  const [seo, setSeo] = useState(null);       // applied AI redraft: { meta_description, keywords, original_* }
+  const [draftAi, setDraftAi] = useState(null); // AI suggestion awaiting review
+  const [aiBusy, setAiBusy] = useState(false);
   const [done, setDone] = useState(null); // { link, id, status, title, client }
+  const runRedraft = async () => {
+    if (!title.trim() || description.trim().length < 40) { toast("Add a job title and a few sentences of description first"); return; }
+    setAiBusy(true); setDraftAi(null);
+    try { setDraftAi(await S.aiRedraft({ title, client, location, country, currency, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description })); }
+    catch (e) { toast(e.message); }
+    setAiBusy(false);
+  };
+  const useRedraft = () => {
+    setSeo({ meta_description: draftAi.meta_description || "", keywords: draftAi.keywords || [], original_title: title, original_description: description });
+    setTitle(draftAi.title || title); setDescription(draftAi.description || description); setDraftAi(null);
+    toast("AI version applied. You can still edit it.");
+  };
   const inp = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
   const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
   const publish = (status) => {
@@ -1197,11 +1274,11 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
     const id = uid();
     const slug = (client[0] + title.split(" ").map((w) => w[0]).join("")).toLowerCase() + "-" + String(S.jobs.length + 1).padStart(2, "0");
     const link = "harbor.link/j/" + slug;
-    S.setJobs((l) => [{ id, role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, recruiters: [], submitted: 0, interview: 0, days: 0, status, link }, ...l]);
+    S.setJobs((l) => [{ id, role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo, recruiters: [], submitted: 0, interview: 0, days: 0, status, link }, ...l]);
     setDone({ link, id, status, title, client });
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
-  const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); };
+  const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); };
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
 
   return (
@@ -1222,10 +1299,35 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} style={inpStyle} /></div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Minimum salary (₦)</label><input value={minPay} onChange={(e) => setMinPay(e.target.value)} className={inp} style={inpStyle} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Maximum salary (₦)</label><input value={maxPay} onChange={(e) => setMaxPay(e.target.value)} className={inp} style={inpStyle} /></div>
+            <div>
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Hiring country</label>
+              <input list="harbor-countries" value={country} placeholder="Where are you looking for candidates?" onChange={(e) => { const v = e.target.value; setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} className={inp} style={inpStyle} />
+              <datalist id="harbor-countries">{Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c} />)}</datalist>
+            </div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary currency</label><select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select></div>
           </div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Job description</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Describe the role, responsibilities, and what success looks like..." className={inp} style={inpStyle} /></div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Minimum salary ({curSymbol(currency)})</label><input value={minPay} onChange={(e) => setMinPay(e.target.value)} className={inp} style={inpStyle} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Maximum salary ({curSymbol(currency)})</label><input value={maxPay} onChange={(e) => setMaxPay(e.target.value)} className={inp} style={inpStyle} /></div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Job description</label>
+              <button type="button" onClick={runRedraft} disabled={aiBusy} className="inline-flex items-center gap-1 text-xs font-medium rounded-lg px-2.5 py-1.5 border" style={{ borderColor: C.em, color: C.em, background: "#fff", opacity: aiBusy ? 0.6 : 1 }}><Sparkles size={13} />{aiBusy ? <>Redrafting <InlineDots /></> : "AI redraft for SEO"}</button>
+            </div>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Describe the role, responsibilities, and what success looks like..." className={inp} style={inpStyle} />
+            {seo && !draftAi && <div className="text-xs mt-1.5" style={{ color: C.em }}>SEO version applied · {(seo.keywords || []).length} search keywords will be saved with this job.</div>}
+            {draftAi && (
+              <div className="mt-3 rounded-xl border p-4 flex flex-col gap-3" style={{ borderColor: C.em, background: "#F4FAF6" }}>
+                <div className="flex items-center justify-between gap-2"><div className="text-sm font-medium">AI redraft</div><Pill tone="em">Review before using</Pill></div>
+                <div><div className="text-xs" style={{ color: C.ink3 }}>Title</div><div className="text-sm font-medium">{draftAi.title}</div></div>
+                <div><div className="text-xs" style={{ color: C.ink3 }}>Description</div><div className="text-sm whitespace-pre-wrap overflow-y-auto mt-1 rounded-lg p-3" style={{ maxHeight: 320, background: "#fff", border: `1px solid ${C.line}`, color: C.ink2 }}>{draftAi.description}</div></div>
+                {draftAi.meta_description && <div><div className="text-xs" style={{ color: C.ink3 }}>Search result snippet</div><div className="text-sm" style={{ color: C.ink2 }}>{draftAi.meta_description}</div></div>}
+                {(draftAi.keywords || []).length > 0 && <div className="flex flex-wrap gap-1.5">{draftAi.keywords.map((k) => <Pill key={k} tone="neutral">{k}</Pill>)}</div>}
+                <div className="flex flex-wrap gap-2"><Btn kind="primary" onClick={useRedraft}>Use this version</Btn><Btn onClick={runRedraft}>Try again</Btn><Btn onClick={() => setDraftAi(null)}>Discard</Btn></div>
+              </div>
+            )}
+          </div>
           <div className="pt-3 flex items-center justify-between gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
             <div><div className="text-sm font-medium">Auto-rate candidates</div><div className="text-xs" style={{ color: C.ink2 }}>AI reviews and rates every applicant.</div></div>
             <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: C.em }}><div className="w-5 h-5 rounded-full bg-white ml-auto" /></div>
@@ -1593,9 +1695,9 @@ function UploadCandidates({ setPage, toast, S }) {
       const c = newCandidate({ name: f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "), role: "Unspecified", location: "Lagos, Nigeria", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, timeline: [{ t: "Uploaded by " + S.me.first, d: todayStr(), done: true }] });
       try {
         await S.insertCandidateAwait(c);
-        const b64 = await fileToBase64(f);
-        await S.aiScreen("score_cv", { candidateId: c.id, fileBase64: b64, mediaType: "application/pdf" });
+        await S.uploadResume(c.id, f);
         count++;
+        await S.aiScreen("score_cv", { candidateId: c.id });
       } catch (e) { aiFailures++; toast(f.name + ": " + e.message); }
     }
 
@@ -1703,12 +1805,12 @@ function AwaitingAccess({ onSignOut }) {
   );
 }
 
-const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*)&order=created_at.desc";
+const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*)&order=created_at.desc";
 async function loadAll(token) {
   const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
-    sbFetch("/rest/v1/jobs?select=*,job_recruiters(*)&order=created_at.desc", { token }),
+    sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
     sbFetch("/rest/v1/applications?select=*&order=created_at.desc", { token }),
     sbFetch("/rest/v1/placements?select=*&order=created_at.desc", { token }),
     sbFetch("/rest/v1/campaigns?select=*&order=created_at.desc", { token }),
@@ -1809,7 +1911,7 @@ export default function App() {
       setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null } })); },
     jobs: data.jobs,
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
-      setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, status: j.status, created_by: session.uid } }); },
+      setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null, status: j.status, created_by: session.uid } }); },
     inbox: data.inbox,
     setInbox: (fn) => { const list = typeof fn === "function" ? fn(data.inbox) : fn;
       setData((d) => ({ ...d, inbox: list })); const x = list.find((i) => i.assignedId); if (x) call("/rest/v1/applications?id=eq." + x.id, { method: "PATCH", body: { assigned_to: x.assignedId } }); },
@@ -1848,6 +1950,32 @@ export default function App() {
     openCandidate: (id) => setCandId(id),
     insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null } }),
     setJobStatus: (id, status) => call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => setData((d) => ({ ...d, jobs: d.jobs.map((j) => (j.id === id ? { ...j, status } : j)) }))),
+    /* Candidate <-> job pipeline (candidate_jobs table) */
+    linkJob: (candidateId, jobId, fit) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review" } }),
+    setStage: (linkId, stage) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { stage } }),
+    unlinkJob: (linkId) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "DELETE" }),
+    /* Resumes live in the private `resumes` bucket at <candidateId>/<file>. ai-screen reads the same file. */
+    uploadResume: async (candidateId, file) => {
+      const path = candidateId + "/" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
+      const r = await fetch(SB_URL + "/storage/v1/object/resumes/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": file.type || "application/pdf", "x-upsert": "true" }, body: file });
+      if (!r.ok) { const t = await r.text(); toast("Upload failed: " + t); throw new Error(t); }
+      await call("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", body: { resume_path: path, resume_name: file.name } });
+      return path;
+    },
+    openResume: async (path) => {
+      const bucket = path.includes("/") ? "resumes" : "cvs"; // legacy CVs were stored flat in `cvs`
+      const w = window.open("", "_blank");
+      try {
+        const r = await fetch(SB_URL + "/storage/v1/object/sign/" + bucket + "/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ expiresIn: 600 }) });
+        const j = await r.json(); if (!r.ok || !j.signedURL) throw new Error(j.message || j.error || "Could not open resume");
+        const url = SB_URL + "/storage/v1" + j.signedURL; if (w) w.location.href = url; else window.location.href = url;
+      } catch (e) { if (w) w.close(); toast(e.message); }
+    },
+    /* AI rewrite of a job ad for search (job-redraft Edge Function) */
+    aiRedraft: async (payload) => {
+      const r = await fetch(SB_URL + "/functions/v1/job-redraft", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "AI redraft failed"); return j;
+    },
     aiScreen: async (action, payload) => {
       const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;

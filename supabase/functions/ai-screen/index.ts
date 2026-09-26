@@ -79,32 +79,37 @@ Deno.serve(async (req: Request) => {
 
     // ---------------------------------------------------------------
     // 1) Score a CV — extracts skills/experience, produces a numeric score.
-    //    A fresh PDF upload is stored in the "cvs" bucket so it can be
-    //    re-scored later (e.g. against a different job) without re-uploading.
+    //    Resumes live in the shared private "resumes" bucket at
+    //    <candidateId>/<file> (candidates.resume_path), the same file the app
+    //    uploads and views. A fresh base64 upload is stored there too. Older
+    //    CVs stored flat in "cvs" (candidates.cv_path) are still readable.
     // ---------------------------------------------------------------
     if (action === "score_cv") {
       let { fileBase64 } = body;
       const mediaType = "application/pdf";
-      const cvPath = candidateId + ".pdf";
+      const cvPath = candidateId + "/" + Date.now() + "-cv.pdf";
 
       if (fileBase64) {
         // New upload: store it, so it can be re-scored later.
         const bytes = Uint8Array.from(atob(fileBase64), (c) => c.charCodeAt(0));
-        const { error: upErr } = await admin.storage.from("cvs").upload(cvPath, bytes, { contentType: mediaType, upsert: true });
+        const { error: upErr } = await admin.storage.from("resumes").upload(cvPath, bytes, { contentType: mediaType, upsert: true });
         if (upErr) return json({ error: "Could not store the CV: " + upErr.message }, 500);
-        await admin.from("candidates").update({ cv_path: cvPath }).eq("id", candidateId);
-      } else if (candidate.cv_path) {
-        // Re-score using the CV already on file.
-        const { data: file, error: dlErr } = await admin.storage.from("cvs").download(candidate.cv_path);
+        await admin.from("candidates").update({ resume_path: cvPath, resume_name: "CV.pdf" }).eq("id", candidateId);
+      } else if (candidate.resume_path || candidate.cv_path) {
+        // Re-score using the resume already on file.
+        if (candidate.resume_path && candidate.resume_name && !/\.pdf$/i.test(candidate.resume_name))
+          return json({ error: "AI scoring reads PDF resumes only. Upload a PDF version to score it." }, 400);
+        const bucket = candidate.resume_path ? "resumes" : "cvs";
+        const { data: file, error: dlErr } = await admin.storage.from(bucket).download(candidate.resume_path || candidate.cv_path);
         if (dlErr || !file) return json({ error: "Could not read the stored CV. Try re-uploading it." }, 500);
         const buf = new Uint8Array(await file.arrayBuffer());
         fileBase64 = bytesToBase64(buf);
       } else {
-        return json({ error: "No CV on file for this candidate. Attach a PDF to score one." }, 400);
+        return json({ error: "No resume on file for this candidate. Upload a PDF to score one." }, 400);
       }
 
       const jdBlock = job
-        ? `They are being considered for: ${job.role_title} at ${job.client}.\nJob description:\n${job.description || "(no description given)"}\nSalary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} NGN/year.`
+        ? `They are being considered for: ${job.role_title} at ${job.client}.\nJob description:\n${job.description || "(no description given)"}\nSalary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} ${job.currency || "NGN"}/year.`
         : `No specific job is attached yet — score general employability and extract a broad skill profile.`;
       const system =
         "You are a recruitment analyst. Read the attached CV and reply with STRICT JSON only, no markdown, no commentary, matching exactly this shape: " +
@@ -137,7 +142,7 @@ Deno.serve(async (req: Request) => {
         `{"questions": string[]} with EXACTLY 3 questions: one verifying a specific skill or requirement from the job description against the candidate's background, one asking their salary expectation, and one asking their earliest available start date. Keep each question under 25 words.`;
       const content =
         `Candidate: ${candidate.name}, current/last role: ${candidate.role_title}. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n` +
-        `Job: ${job.role_title} at ${job.client}.\nDescription: ${job.description || "(none given)"}\nSalary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} NGN/year.`;
+        `Job: ${job.role_title} at ${job.client}.\nDescription: ${job.description || "(none given)"}\nSalary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} ${job.currency || "NGN"}/year.`;
       const result = await askClaude(system, content, 400);
       const questions = (result.questions || []).slice(0, 3);
       await admin.from("candidates").update({
@@ -166,7 +171,7 @@ Deno.serve(async (req: Request) => {
         "Judge STRICTLY on three things only: (1) skills vs the job's stated requirements — never consider how long they held past roles/tenure, that is irrelevant, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
         "'reasoning' is 2-4 sentences a recruiter will read, explicitly touching on skills fit, salary, and start date so they can see why you reached this verdict.";
       const content =
-        `Job: ${reviewJob.role_title} at ${reviewJob.client}.\nDescription: ${reviewJob.description || "(none given)"}\nBudget: ${reviewJob.min_pay || "?"} - ${reviewJob.max_pay || "?"} NGN/year.\n` +
+        `Job: ${reviewJob.role_title} at ${reviewJob.client}.\nDescription: ${reviewJob.description || "(none given)"}\nBudget: ${reviewJob.min_pay || "?"} - ${reviewJob.max_pay || "?"} ${reviewJob.currency || "NGN"}/year.\n` +
         `Candidate known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n` +
         `Screening questions asked: ${questions.join(" | ") || "(none recorded)"}\n` +
         `Candidate's reply: ${answerText}`;
