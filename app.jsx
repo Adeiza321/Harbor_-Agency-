@@ -99,7 +99,7 @@ function mapAll(d) {
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
-    timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done })),
+    timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
   }));
   const ends = d.candidates.flatMap((c) => c.candidate_endorsements || []);
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
@@ -126,6 +126,22 @@ function buildTeam(users, cands, placements) {
   }).sort((a, b) => b.placed - a.placed).map((r, i) => ({ ...r, top: i === 0 && r.placed > 0 }));
 }
 const weekly = (cands) => { const b = Array(12).fill(0); cands.forEach((c) => { const w = Math.floor((Date.now() - c.createdAt) / 6048e5); if (w >= 0 && w < 12) b[11 - w]++; }); return b; };
+
+// Merges timestamped events from candidates (added + their own timeline of status
+// changes, submissions, messages, etc.), jobs and placements into one feed, newest
+// first — so the notification bell reads like an actual activity log of everything
+// happening in the system, not just a static "needs attention" summary.
+function buildActivityFeed(S, limit = 30) {
+  const events = [];
+  (S.cands || []).forEach((c) => {
+    events.push({ at: c.createdAt, icon: Users, text: "New candidate added: " + c.name, sub: c.role, go: () => S.openCandidate(c.id) });
+    (c.timeline || []).forEach((t) => t.at && events.push({ at: t.at, icon: Clock, text: c.name + ": " + t.t, go: () => S.openCandidate(c.id) }));
+  });
+  (S.jobs || []).forEach((j) => events.push({ at: j.createdAt, icon: Briefcase, text: "New job posted: " + j.role, sub: j.client, go: () => S.go("jobs") }));
+  (S.placements || []).forEach((p) => events.push({ at: p.createdAt, icon: CreditCard, text: "Placement recorded: " + p.name, sub: p.fee, go: () => S.go("billing") }));
+  events.sort((a, b) => b.at - a.at);
+  return events.slice(0, limit);
+}
 
 // Rolling window for the Overview page's Daily/Weekly/Monthly/Yearly toggle.
 const PERIOD_DAYS = { Daily: 1, Weekly: 7, Monthly: 30, Yearly: 365 };
@@ -585,12 +601,8 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut }) {
 function TopBar({ query, setQuery, S }) {
   const desktop = useDesktop();
   const [notifOpen, setNotifOpen] = useState(false);
-  const notifItems = S ? [
-    { icon: Sparkles, t: "AI screening questions", n: S.cands.filter((c) => c.screening.state === "pending").length, go: "candidates" },
-    { icon: Clock, t: "Awaiting review", n: S.cands.filter((c) => c.status === "In review").length, go: "candidates" },
-    { icon: InboxIcon, t: "Unassigned applications", n: S.inbox.filter((x) => !x.assigned).length, go: "inbox" },
-    { icon: AlertTriangle, t: "Placements in guarantee", n: S.placements.filter((p) => p.status === "Guarantee").length, go: "billing" },
-  ].filter((x) => x.n > 0) : [];
+  const feed = S ? buildActivityFeed(S, 30) : [];
+  const unread = feed.filter((e) => Date.now() - e.at < 864e5).length; // last 24h
   return (
     <div className="flex items-center gap-3 px-4 md:px-8 py-4 md:py-5">
       <div className="w-8 h-8 rounded-lg items-center justify-center shrink-0" style={{ display: desktop ? "none" : "flex", background: C.side }}>
@@ -604,21 +616,25 @@ function TopBar({ query, setQuery, S }) {
       <div className="relative shrink-0">
         <button aria-label="Notifications" onClick={() => setNotifOpen((v) => !v)} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative" style={{ borderColor: C.line, background: "#fff" }}>
           <Bell size={18} color={C.ink} />
-          {notifItems.length > 0 && <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />}
+          {unread > 0 && <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />}
         </button>
         {notifOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
-            <div className="absolute right-0 top-12 z-50 w-72 rounded-xl border p-2" style={{ borderColor: C.line, background: "#fff", boxShadow: "0 12px 32px rgba(20,32,27,0.16)" }}>
-              <div className="text-xs font-semibold px-2 py-1.5 tracking-widest" style={{ color: C.ink3 }}>NOTIFICATIONS</div>
-              {notifItems.length === 0 && <div className="text-sm px-2 py-3" style={{ color: C.ink2 }}>You're all caught up.</div>}
-              {notifItems.map((it, i) => (
-                <button key={i} onClick={() => { S.go(it.go); setNotifOpen(false); }} className="w-full flex items-center gap-2.5 text-left px-2 py-2 rounded-lg" style={{ background: "transparent" }}>
-                  <it.icon size={15} color={C.ink2} />
-                  <span className="text-sm flex-1">{it.t}</span>
-                  <span className="text-xs font-medium" style={{ color: C.ink2 }}>{it.n}</span>
-                </button>
-              ))}
+            <div className="absolute right-0 top-12 z-50 w-80 rounded-xl border p-2" style={{ borderColor: C.line, background: "#fff", boxShadow: "0 12px 32px rgba(20,32,27,0.16)" }}>
+              <div className="text-xs font-semibold px-2 py-1.5 tracking-widest" style={{ color: C.ink3 }}>ACTIVITY</div>
+              <div className="flex flex-col overflow-y-auto" style={{ maxHeight: 380 }}>
+                {feed.length === 0 && <div className="text-sm px-2 py-3" style={{ color: C.ink2 }}>Nothing has happened yet.</div>}
+                {feed.map((it, i) => (
+                  <button key={i} onClick={() => { it.go(); setNotifOpen(false); }} className="w-full flex items-start gap-2.5 text-left px-2 py-2 rounded-lg" style={{ background: "transparent", borderTop: i ? `1px solid ${C.line}` : "none" }}>
+                    <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: C.canvas }}><it.icon size={14} color={C.ink2} /></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm leading-snug">{it.text}</div>
+                      <div className="text-xs" style={{ color: C.ink3 }}>{it.sub ? it.sub + " · " : ""}{ago(it.at)}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           </>
         )}
@@ -627,10 +643,10 @@ function TopBar({ query, setQuery, S }) {
   );
 }
 
-function MiniBars({ data, data2, tone = C.em, tone2 = C.ink }) {
+function MiniBars({ data, data2, tone = C.em, tone2 = C.ink, height = 220 }) {
   const max = Math.max(1, ...data, ...(data2 || []));
   return (
-    <div className="flex items-end gap-1 h-9">
+    <div className="flex items-end gap-1" style={{ height }}>
       {data.map((v, i) => (
         <div key={i} className="flex-1 flex items-end gap-0.5 h-full">
           <div className="rounded-sm flex-1" style={{ height: `${(v / max) * 100}%`, background: i === data.length - 1 ? tone : "#D4E9DE" }} />
@@ -707,8 +723,8 @@ function OverviewRecOps({ S }) {
         <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="md:col-span-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+        <Card className="md:col-span-2 flex flex-col">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <SectionTitle title="Submissions and placements" sub={"By " + granularity + " · " + RANGE_LABEL[subRange]} />
             <div className="flex items-center gap-2 flex-wrap">
@@ -729,7 +745,7 @@ function OverviewRecOps({ S }) {
               )}
             </div>
           </div>
-          <div className="mt-4"><MiniBars data={subBuckets} data2={placedBuckets} /></div>
+          <div className="mt-4 flex-1 flex flex-col justify-end" style={{ minHeight: 220 }}><MiniBars data={subBuckets} data2={placedBuckets} height="100%" /></div>
           <div className="flex items-center gap-4 mt-2.5">
             <div className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: "#D4E9DE" }} /> Submissions</div>
             <div className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: C.ink }} /> Placements</div>
