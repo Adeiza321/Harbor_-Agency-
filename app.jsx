@@ -112,7 +112,7 @@ function mapAll(d) {
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", ai: a.ai_score || 0, when: ago(a.created_at), assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, candidateId: a.candidate_id }));
   const today = new Date();
-  const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status }));
+  const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now() }));
   const campaigns = d.campaigns.map((c) => ({ id: c.id, name: c.name, meta: pname(c.created_by).split(" ")[0] + " \u00b7 " + fdate(c.created_at), audience: c.audience ? c.audience.toLocaleString() : "-", delivered: c.delivered ? c.delivered.toLocaleString() : "-", opened: c.opened_pct || 0, status: c.status }));
   const ads = d.ads.map((a) => ({ id: a.id, job: a.job_title, client: a.client || "", channels: a.channels, payerType: a.payer_type, payer: a.payer_type === "agency" ? "Agency" : pname(a.created_by) + " (recruiter)", budget: naira(a.budget), spent: naira(a.spent), apps: a.applicants, status: a.status }));
   const set = d.settings || {};
@@ -126,6 +126,41 @@ function buildTeam(users, cands, placements) {
   }).sort((a, b) => b.placed - a.placed).map((r, i) => ({ ...r, top: i === 0 && r.placed > 0 }));
 }
 const weekly = (cands) => { const b = Array(12).fill(0); cands.forEach((c) => { const w = Math.floor((Date.now() - c.createdAt) / 6048e5); if (w >= 0 && w < 12) b[11 - w]++; }); return b; };
+
+// Rolling window for the Overview page's Daily/Weekly/Monthly/Yearly toggle.
+const PERIOD_DAYS = { Daily: 1, Weekly: 7, Monthly: 30, Yearly: 365 };
+const periodRange = (period) => { const to = Date.now(); const from = to - (PERIOD_DAYS[period] || 30) * 864e5; return { from, to }; };
+
+// Named date ranges for the "Submissions and placements" chart's own filter.
+function namedRange(key, customFrom, customTo) {
+  const now = new Date();
+  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const startOfWeek = (d) => { const x = startOfDay(d); const day = x.getDay(); const diff = day === 0 ? -6 : 1 - day; x.setDate(x.getDate() + diff); return x; };
+  let from, to;
+  if (key === "today") { from = startOfDay(now); to = now; }
+  else if (key === "yesterday") { const y = new Date(now); y.setDate(y.getDate() - 1); from = startOfDay(y); to = startOfDay(now); }
+  else if (key === "thisWeek") { from = startOfWeek(now); to = now; }
+  else if (key === "lastWeek") { const sw = startOfWeek(now); from = new Date(sw); from.setDate(from.getDate() - 7); to = sw; }
+  else if (key === "thisMonth") { from = new Date(now.getFullYear(), now.getMonth(), 1); to = now; }
+  else if (key === "lastMonth") { from = new Date(now.getFullYear(), now.getMonth() - 1, 1); to = new Date(now.getFullYear(), now.getMonth(), 1); }
+  else if (key === "custom") { from = customFrom ? startOfDay(new Date(customFrom)) : startOfWeek(now); const ct = customTo ? new Date(customTo) : now; ct.setHours(23, 59, 59, 999); to = ct; }
+  else { from = startOfWeek(now); to = now; }
+  return { from: from.getTime(), to: Math.max(to.getTime(), from.getTime() + 1) };
+}
+// Buckets candidates created within [from, to] into hourly, daily, or weekly bars
+// depending on how wide the range is, so a single day still reads as a chart.
+function bucketSeries(cands, from, to) {
+  const spanMs = Math.max(to - from, 1);
+  const spanDays = spanMs / 864e5;
+  let bucketMs, count, granularity;
+  if (spanDays <= 1.5) { bucketMs = 36e5; count = Math.max(1, Math.ceil(spanMs / bucketMs)); granularity = "hour"; }
+  else if (spanDays <= 31) { bucketMs = 864e5; count = Math.max(1, Math.ceil(spanDays)); granularity = "day"; }
+  else { bucketMs = 6048e5; count = Math.max(1, Math.ceil(spanDays / 7)); granularity = "week"; }
+  const buckets = Array(count).fill(0);
+  cands.forEach((c) => { if (c.createdAt >= from && c.createdAt <= to) { const idx = Math.min(count - 1, Math.floor((c.createdAt - from) / bucketMs)); buckets[idx]++; } });
+  return { buckets, granularity };
+}
+const RANGE_LABEL = { today: "Today", yesterday: "Yesterday", thisWeek: "This week", lastWeek: "Last week", thisMonth: "This month", lastMonth: "Last month", custom: "Custom range" };
 
 /* Structured, non-AI pre-filter: finds candidates worth re-checking against a newly posted job.
    This is a cheap word-overlap pass over structured fields (skills, role title) so a new job
@@ -225,8 +260,9 @@ function KPI({ label, value, delta, foot, dark = false }) {
     </Card>
   );
 }
-function KPIGrid({ children }) {
-  return <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">{children}</div>;
+function KPIGrid({ children, cols = 4 }) {
+  const mdCols = { 4: "md:grid-cols-4", 5: "md:grid-cols-5" }[cols] || "md:grid-cols-4";
+  return <div className={`grid grid-cols-2 ${mdCols} gap-3 md:gap-4`}>{children}</div>;
 }
 
 function SectionTitle({ title, sub, size = "text-2xl" }) {
@@ -581,14 +617,36 @@ function statsOf(S, forRecruiter) {
 
 function OverviewRecOps({ S }) {
   const [period, setPeriod] = useState("Monthly");
+  const [subRange, setSubRange] = useState("thisWeek");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const st = statsOf(S);
+  const monthLabel = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+
+  // Company-wide snapshot metrics (not affected by the period toggle — they're "right now" gauges).
+  const totalLineup = S.cands.filter((c) => c.status !== "Rejected" && c.status !== "Placed").length;
+  const activeJobs = S.jobs.filter((j) => j.status !== "Draft" && j.status !== "Closed").length;
+  const invoicedDue = S.placements.filter((p) => p.status === "Invoiced");
+  const paymentDue = sumByCurrency(invoicedDue, "feeNum", "feeCurrency");
+
+  // Period-scoped metrics: how many hires and how much was billed within the selected window.
+  const { from: pFrom, to: pTo } = periodRange(period);
+  const periodPlacements = S.placements.filter((p) => p.createdAt >= pFrom && p.createdAt <= pTo);
+  const hires = periodPlacements.length;
+  const billedPeriod = sumByCurrency(periodPlacements.filter((p) => ["Ready", "Invoiced", "Paid"].includes(p.status)), "feeNum", "feeCurrency");
+  const periodFoot = { Daily: "today", Weekly: "last 7 days", Monthly: "last 30 days", Yearly: "last 12 months" }[period];
+
+  // "Submissions and placements" chart's own, more granular date filter.
+  const { from: sFrom, to: sTo } = namedRange(subRange, customFrom, customTo);
+  const { buckets: subBuckets, granularity } = bucketSeries(S.cands, sFrom, sTo);
+
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <div className="text-xs font-semibold tracking-widest mb-1" style={{ color: C.ink3 }}>OVERVIEW &middot; {st.month}</div>
           <div className="text-3xl md:text-5xl mb-1" style={{ ...SERIF, color: C.ink }}>Good morning, {S.me.first}</div>
-          <div className="text-sm" style={{ color: C.ink2 }}>Here is how the agency is performing this month.</div>
+          <div className="text-sm" style={{ color: C.ink2 }}>Here is how the agency is performing.</div>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
           <div className="flex rounded-xl border p-1" style={{ borderColor: C.line, background: "#fff" }}>
@@ -599,16 +657,36 @@ function OverviewRecOps({ S }) {
           <Btn icon={Download} kind="dark" onClick={() => S.toast(downloadCSV("recruiter-performance.csv", S.team) ? "Exported recruiter-performance.csv" : "Nothing to export")}>Export</Btn>
         </div>
       </div>
-      <KPIGrid>
-        <KPI dark label="Placements" value={st.placed} foot="all time" />
-        <KPI label="Candidates" value={st.total} foot="on file" />
-        <KPI label="Interviews" value={st.interviews} foot="in interview now" />
-        <KPI label="Billed" value={st.billed} foot={st.ready + " invoices ready"} />
+      <KPIGrid cols={5}>
+        <KPI dark label="Total lineup" value={totalLineup} foot="active in pipeline" />
+        <KPI label="Active jobs" value={activeJobs} foot="open roles" />
+        <KPI label="Hires" value={hires} foot={periodFoot} />
+        <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
+        <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="md:col-span-2">
-          <SectionTitle title="Submissions and placements" sub="New candidates per week, last 12 weeks" />
-          <div className="mt-4"><MiniBars data={weekly(S.cands)} /></div>
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <SectionTitle title="Submissions and placements" sub={"New candidates by " + granularity + " · " + RANGE_LABEL[subRange]} />
+            <div className="flex items-center gap-2 flex-wrap">
+              <select value={subRange} onChange={(e) => setSubRange(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+                <option value="today">Today</option>
+                <option value="yesterday">Yesterday</option>
+                <option value="thisWeek">This week</option>
+                <option value="thisMonth">This month</option>
+                <option value="lastMonth">Last month</option>
+                <option value="lastWeek">Last week</option>
+                <option value="custom">Custom</option>
+              </select>
+              {subRange === "custom" && (
+                <>
+                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+                </>
+              )}
+            </div>
+          </div>
+          <div className="mt-4"><MiniBars data={subBuckets} /></div>
         </Card>
         <Card>
           <SectionTitle title="Needs attention" />
@@ -629,7 +707,7 @@ function OverviewRecOps({ S }) {
         </Card>
       </div>
       <Card>
-        <SectionTitle title="Recruiter performance" sub="September 2026, ranked by placements" />
+        <SectionTitle title="Recruiter performance" sub={monthLabel + ", ranked by placements"} />
         <div className="mt-3">
           <DataTable
             rows={S.team}
@@ -2121,7 +2199,7 @@ export default function App() {
     /* p: { name, role, candidateId, jobId, recruiterId, recruiterInit, fee, feeCurrency, incentive, incentiveCurrency } */
     insertPlacement: async (p) => {
       const guaranteeEnds = new Date(Date.now() + (data.settings.guaranteedDays || 60) * 864e5).toISOString().slice(0, 10);
-      const row = { id: uid(), name: p.name, role: p.role, candidateId: p.candidateId || null, jobId: p.jobId || null, recruiterId: p.recruiterId || null, recruiter: p.recruiterInit || "", fee: money(p.fee, p.feeCurrency), feeNum: Number(p.fee) || 0, feeCurrency: p.feeCurrency || "NGN", incentive: p.incentive != null && p.incentive !== "" ? money(p.incentive, p.incentiveCurrency) : null, incentiveNum: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, guarantee: "Ends " + fdate(guaranteeEnds), status: "Guarantee" };
+      const row = { id: uid(), name: p.name, role: p.role, candidateId: p.candidateId || null, jobId: p.jobId || null, recruiterId: p.recruiterId || null, recruiter: p.recruiterInit || "", fee: money(p.fee, p.feeCurrency), feeNum: Number(p.fee) || 0, feeCurrency: p.feeCurrency || "NGN", incentive: p.incentive != null && p.incentive !== "" ? money(p.incentive, p.incentiveCurrency) : null, incentiveNum: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, guarantee: "Ends " + fdate(guaranteeEnds), status: "Guarantee", createdAt: Date.now() };
       setData((d) => ({ ...d, placements: [row, ...d.placements] }));
       try {
         await call("/rest/v1/placements", { method: "POST", body: { id: row.id, candidate_name: p.name, role_desc: p.role, candidate_id: p.candidateId || null, job_id: p.jobId || null, recruiter_id: p.recruiterId || null, fee: Number(p.fee) || 0, fee_currency: p.feeCurrency || "NGN", recruiter_incentive: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, recruiter_incentive_currency: p.incentiveCurrency || null, guarantee_ends: guaranteeEnds, status: "Guarantee" } });
