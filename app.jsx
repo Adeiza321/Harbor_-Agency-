@@ -1147,6 +1147,22 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             {tab === "companies" && (
               <div className="mt-4">
                 <div className="rounded-xl p-3.5 mb-4" style={{ background: "#F6F3EC" }}>
+                  <div className="flex justify-between items-center mb-2 gap-2">
+                    <div className="flex items-center gap-2"><Sparkles size={15} color={C.em} /><div className="text-sm font-medium">AI review</div></div>
+                    <Pill tone="warn">Internal</Pill>
+                  </div>
+                  <div className="flex items-center gap-4 mb-3"><div className="text-3xl" style={{ ...SERIF }}>{candidate.ai || "-"}</div><div className="text-sm font-medium">Match for {candidate.role}</div></div>
+                  {candidate.strengths.length > 0 && (<><div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>STRENGTHS</div>{candidate.strengths.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><Check size={15} color={C.em} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
+                  {candidate.gaps.length > 0 && (<><div className="text-xs font-semibold mb-1.5 mt-3" style={{ color: C.ink3 }}>GAPS</div>{candidate.gaps.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
+                  <div className="rounded-xl p-3 mt-3" style={{ background: "#fff" }}>
+                    {candidate.cv ? (
+                      <><div className="flex items-center justify-between gap-2 text-sm"><span className="truncate" style={{ color: C.ink2 }}>{candidate.cvName || "CV on file"}</span><div className="flex gap-1.5 shrink-0"><Btn onClick={() => S.openResume(candidate.cv)} className="text-xs px-3 py-1.5">View</Btn><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
+                    ) : (
+                      <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Upload resume (PDF is AI-scored)<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-xl p-3.5 mb-4" style={{ background: "#F6F3EC" }}>
                   <div className="flex items-center gap-2 mb-2 flex-wrap"><Sparkles size={15} color={C.em} /><div className="text-sm font-medium">AI screening</div>{screeningJob && <Pill tone="neutral">{screeningJob.role}, {screeningJob.client}</Pill>}</div>
                   {qaState === "pending" && qaQuestions.length === 0 && (
                     <>
@@ -1235,20 +1251,6 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
 
         <div className="flex flex-col gap-4">
           <CandidateJobsCard candidate={candidate} S={S} toast={toast} />
-          <Card>
-            <div className="flex justify-between items-center mb-3 gap-2"><SectionTitle title="AI review" size="text-xl" /><Pill tone="warn">Internal</Pill></div>
-            <div className="flex items-center gap-4 mb-4"><div className="text-3xl" style={{ ...SERIF }}>{candidate.ai || "-"}</div><div className="text-sm font-medium">Match for {candidate.role}</div></div>
-            {candidate.strengths.length > 0 && (<><div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>STRENGTHS</div>{candidate.strengths.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><Check size={15} color={C.em} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
-            {candidate.gaps.length > 0 && (<><div className="text-xs font-semibold mb-1.5 mt-3" style={{ color: C.ink3 }}>GAPS</div>{candidate.gaps.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
-            {aiErr && <div className="text-xs mt-3 rounded-lg p-2" style={{ background: C.dangerBg, color: C.dangerFg }}>{aiErr}</div>}
-            <div className="rounded-xl p-3.5 mt-3" style={{ background: "#F6F3EC" }}>
-              {candidate.cv ? (
-                <><div className="flex items-center justify-between gap-2 text-sm"><span className="truncate" style={{ color: C.ink2 }}>{candidate.cvName || "CV on file"}</span><div className="flex gap-1.5 shrink-0"><Btn onClick={() => S.openResume(candidate.cv)} className="text-xs px-3 py-1.5">View</Btn><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
-              ) : (
-                <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Upload resume (PDF is AI-scored)<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
-              )}
-            </div>
-          </Card>
           <Card>
             <SectionTitle title="Candidate page" sub="Their secure link. No login needed." size="text-xl" />
             <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 mt-3 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{window.location.host + "/?c=" + candidate.portal}</span><Copy size={15} color={C.ink2} className="ml-auto cursor-pointer shrink-0" onClick={() => { try { navigator.clipboard.writeText(window.location.origin + window.location.pathname + "?c=" + candidate.portal); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} /></div>
