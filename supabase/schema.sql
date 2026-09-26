@@ -97,13 +97,40 @@ create table public.jobs (
   status text not null default 'Open' check (status in ('Draft','Open','Engaged','Closing','Closed')),
   link_slug text unique not null default substr(replace(gen_random_uuid()::text,'-',''),1,8),
   created_by uuid references public.profiles(id) default auth.uid(),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Recruiter-authored screening questions, set when the job is posted. Shown to any
+  -- recruiter working the job (so they can copy them straight to a candidate) and
+  -- answered per-candidate on candidate_jobs.screening_answers below.
+  screening_questions jsonb not null default '[]'::jsonb
 );
 create table public.job_recruiters (
   job_id uuid references public.jobs(id) on delete cascade,
   recruiter_id uuid references public.profiles(id) on delete cascade,
   primary key (job_id, recruiter_id)
 );
+
+-- Engage/disengage log: one row per engagement, closed out with disengaged_at + a
+-- reason when the recruiter steps back from the job. Duration and history are
+-- derived from this table; job_recruiters stays the simple "currently on it" list.
+create table public.job_engagements (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  recruiter_id uuid not null references public.profiles(id),
+  engaged_at timestamptz not null default now(),
+  disengaged_at timestamptz,
+  reason text,
+  created_at timestamptz not null default now()
+);
+create index job_engagements_job_idx on public.job_engagements(job_id);
+create index job_engagements_recruiter_idx on public.job_engagements(recruiter_id);
+alter table public.job_engagements enable row level security;
+create policy jeng_read on public.job_engagements for select to authenticated
+  using (public.is_staff() or recruiter_id = auth.uid());
+create policy jeng_insert on public.job_engagements for insert to authenticated
+  with check (recruiter_id = auth.uid());
+create policy jeng_update on public.job_engagements for update to authenticated
+  using (recruiter_id = auth.uid() or public.is_staff())
+  with check (recruiter_id = auth.uid() or public.is_staff());
 
 -- ---------- Inbox (unassigned applications) ----------
 create table public.applications (
@@ -208,8 +235,10 @@ create policy jobs_insert on public.jobs for insert to authenticated with check 
 create policy jobs_update on public.jobs for update to authenticated
   using (public.is_staff() or created_by = auth.uid()) with check (public.is_staff() or created_by = auth.uid());
 create policy jobrec_read on public.job_recruiters for select to authenticated using (true);
+-- Staff can manage anyone's row; a recruiter can also engage/disengage themselves.
 create policy jobrec_write on public.job_recruiters for all to authenticated
-  using (public.is_staff()) with check (public.is_staff());
+  using (public.is_staff() or recruiter_id = auth.uid())
+  with check (public.is_staff() or recruiter_id = auth.uid());
 
 -- inbox and billing writes: staff only (recruiters can read their own placements)
 create policy apps_staff on public.applications for all to authenticated
@@ -269,7 +298,10 @@ create table public.candidate_jobs (
   added_by uuid references public.profiles(id) default auth.uid(),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (candidate_id, job_id)
+  unique (candidate_id, job_id),
+  -- Recruiter-filled answers to the job's own screening_questions, entered alongside
+  -- the rest of this candidate's details rather than through a separate AI flow.
+  screening_answers jsonb not null default '[]'::jsonb
 );
 create index candidate_jobs_job_idx on public.candidate_jobs(job_id);
 create index candidate_jobs_candidate_idx on public.candidate_jobs(candidate_id);

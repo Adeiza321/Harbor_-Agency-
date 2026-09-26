@@ -55,6 +55,8 @@ const ROLE_KEY_LABEL = { admin: "Admin, owner", recops: "Rec Ops manager", recru
 const initialsOf = (n) => (n || "?").split(/[ @.]/).filter(Boolean).map((x) => x[0]).join("").slice(0, 2).toUpperCase();
 const fdate = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const ago = (d) => { const m = (Date.now() - new Date(d)) / 60000; return m < 60 ? Math.max(1, Math.round(m)) + "m ago" : m < 1440 ? Math.round(m / 60) + "h ago" : m < 10080 ? Math.round(m / 1440) + "d ago" : fdate(d); };
+// Formats a span of milliseconds as a short duration ("42m", "3.2h", "6.5d") for the job engagement log.
+const formatDuration = (ms) => { const mins = ms / 60000; if (mins < 60) return Math.max(1, Math.round(mins)) + "m"; const hrs = mins / 60; if (hrs < 24) return hrs.toFixed(1) + "h"; return (hrs / 24).toFixed(1) + "d"; };
 const naira = (n) => "\u20A6" + Number(n || 0).toLocaleString("en-NG");
 // Sums placement fees per currency (mixed-currency totals can't be added together) and
 // joins them for display, e.g. "\u20A64,000,000" or "\u20A64,000,000 + $1,200" when currencies differ.
@@ -96,7 +98,7 @@ function mapAll(d) {
     status: c.status, ai: c.ai_score || 0, email: c.email_verified ? "Verified" : "Unverified", emailAddr: c.email || "", phone: c.phone || "", opens: c.opens,
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit })),
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [] })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
@@ -104,7 +106,7 @@ function mapAll(d) {
   const ends = d.candidates.flatMap((c) => c.candidate_endorsements || []);
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
     const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
-    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(),
+    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(), screeningQuestions: j.screening_questions || [],
       billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
       incentiveType: j.incentive_type || "percent", incentiveAmount: j.incentive_amount, incentiveCurrency: j.incentive_currency || j.currency || "NGN",
       recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
@@ -116,7 +118,11 @@ function mapAll(d) {
   const campaigns = d.campaigns.map((c) => ({ id: c.id, name: c.name, meta: pname(c.created_by).split(" ")[0] + " \u00b7 " + fdate(c.created_at), audience: c.audience ? c.audience.toLocaleString() : "-", delivered: c.delivered ? c.delivered.toLocaleString() : "-", opened: c.opened_pct || 0, status: c.status }));
   const ads = d.ads.map((a) => ({ id: a.id, job: a.job_title, client: a.client || "", channels: a.channels, payerType: a.payer_type, payer: a.payer_type === "agency" ? "Agency" : pname(a.created_by) + " (recruiter)", budget: naira(a.budget), spent: naira(a.spent), apps: a.applicants, status: a.status }));
   const set = d.settings || {};
-  return { cands, jobs, inbox, placements, campaigns, ads, users: d.profiles.map(mapUser), settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days || 60, ai: set.ai_screening !== false } };
+  const jobEngagements = (d.jobEngagements || []).map((e) => ({
+    id: e.id, jobId: e.job_id, recruiterId: e.recruiter_id, recruiter: pname(e.recruiter_id) || "Unknown",
+    engagedAt: new Date(e.engaged_at).getTime(), disengagedAt: e.disengaged_at ? new Date(e.disengaged_at).getTime() : null, reason: e.reason || "",
+  })).sort((a, b) => b.engagedAt - a.engagedAt);
+  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, users: d.profiles.map(mapUser), settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days || 60, ai: set.ai_screening !== false } };
 }
 function buildTeam(users, cands, placements) {
   return users.filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops")).map((u) => {
@@ -1257,30 +1263,98 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   );
 }
 
+/* Expandable per-link screening answers editor, shown under a candidate-job link when
+   that job has screening questions attached. */
+function ScreeningAnswerRow({ link, job, S, toast }) {
+  const [open, setOpen] = useState(false);
+  const qs = (job && job.screeningQuestions) || [];
+  const [answers, setAnswers] = useState(() => qs.map((_, i) => (link.screeningAnswers && link.screeningAnswers[i]) || ""));
+  const [saving, setSaving] = useState(false);
+  if (!qs.length) return null;
+  const answered = (link.screeningAnswers || []).filter((a) => a && a.trim()).length;
+  const setA = (i, v) => setAnswers((arr) => arr.map((a, idx) => (idx === i ? v : a)));
+  const save = () => {
+    setSaving(true);
+    S.setScreeningAnswers(link.id, answers).then(() => toast("Screening answers saved")).catch(() => {}).finally(() => setSaving(false));
+  };
+  return (
+    <div className="mt-1.5">
+      <button className="text-xs font-medium" style={{ color: C.em }} onClick={() => setOpen((o) => !o)}>
+        {open ? "Hide" : "Show"} screening answers ({answered}/{qs.length})
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          {qs.map((q, i) => (
+            <div key={i}>
+              <div className="text-xs font-medium mb-1" style={{ color: C.ink2 }}>{q}</div>
+              <textarea
+                className="w-full text-sm rounded-lg border px-2 py-1.5 bg-white"
+                style={{ borderColor: C.line, color: C.ink }}
+                rows={2}
+                value={answers[i] || ""}
+                onChange={(e) => setA(i, e.target.value)}
+                placeholder="Candidate's answer…"
+              />
+            </div>
+          ))}
+          <Btn kind="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save answers"}</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* The roles a candidate is attached to (candidate_jobs), with a stage per role. */
 function CandidateJobsCard({ candidate, S, toast }) {
   const [pick, setPick] = useState("");
   const available = S.jobs.filter((j) => j.status !== "Closed" && !candidate.jobLinks.some((l) => l.jobId === j.id));
   const sel = "text-sm rounded-lg border px-2 py-1.5 bg-white";
+  const pickedJob = pick ? S.jobs.find((j) => j.id === pick) : null;
+  const pickedQs = (pickedJob && pickedJob.screeningQuestions) || [];
+  const [pendingAnswers, setPendingAnswers] = useState([]);
+  const setPickedAnswer = (i, v) => setPendingAnswers((arr) => { const next = arr.slice(); next[i] = v; return next; });
   return (
     <Card>
       <SectionTitle title="Jobs" sub={candidate.jobLinks.length ? "Roles this candidate is attached to." : "Not attached to any job yet."} size="text-xl" />
       {candidate.jobLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return (
-        <div key={l.id} className="flex items-center justify-between gap-2 py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
-          <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{(j ? j.client : "") + (l.fit != null ? " \u00b7 fit " + l.fit : "")}</div></div>
-          <div className="flex items-center gap-2 shrink-0">
-            <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-            {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
+        <div key={l.id} className="py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{(j ? j.client : "") + (l.fit != null ? " · fit " + l.fit : "")}</div></div>
+            <div className="flex items-center gap-2 shrink-0">
+              <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+              {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
+            </div>
           </div>
+          {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} />}
         </div>
       ); })}
       {available.length > 0 && (
-        <div className="flex gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-          <select className={sel + " flex-1 min-w-0"} style={{ borderColor: C.line, color: C.ink }} value={pick} onChange={(e) => setPick(e.target.value)}>
-            <option value="">Add to a job…</option>
-            {available.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
-          </select>
-          <Btn kind="primary" onClick={() => { if (!pick) { toast("Pick a job first"); return; } S.linkJob(candidate.id, pick, candidate.ai || null).then(() => { setPick(""); toast("Added to job"); }).catch(() => {}); }}>Add</Btn>
+        <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+          <div className="flex gap-2">
+            <select className={sel + " flex-1 min-w-0"} style={{ borderColor: C.line, color: C.ink }} value={pick} onChange={(e) => { setPick(e.target.value); setPendingAnswers([]); }}>
+              <option value="">Add to a job…</option>
+              {available.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
+            </select>
+            <Btn kind="primary" onClick={() => { if (!pick) { toast("Pick a job first"); return; } S.linkJob(candidate.id, pick, candidate.ai || null, pendingAnswers).then(() => { setPick(""); setPendingAnswers([]); toast("Added to job"); }).catch(() => {}); }}>Add</Btn>
+          </div>
+          {pickedQs.length > 0 && (
+            <div className="mt-2 space-y-2">
+              <div className="text-xs font-medium" style={{ color: C.ink2 }}>This job has screening questions — fill in the candidate's answers now if you have them:</div>
+              {pickedQs.map((q, i) => (
+                <div key={i}>
+                  <div className="text-xs font-medium mb-1" style={{ color: C.ink2 }}>{q}</div>
+                  <textarea
+                    className="w-full text-sm rounded-lg border px-2 py-1.5 bg-white"
+                    style={{ borderColor: C.line, color: C.ink }}
+                    rows={2}
+                    value={pendingAnswers[i] || ""}
+                    onChange={(e) => setPickedAnswer(i, e.target.value)}
+                    placeholder="Candidate's answer…"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -1322,6 +1396,9 @@ function InboxPage({ toast, S }) {
 
 function JobDetail({ job, S, toast, onBack, onPromote }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [reasonOpen, setReasonOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
   if (!job) return (
     <div className="flex flex-col gap-4">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Jobs</button>
@@ -1336,6 +1413,17 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
   const setStatus = (v) => S.setJobStatus(job.id, v);
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const fits = suggestFits(job, S.cands).filter((c) => !c.jobLinks.some((l) => l.jobId === job.id));
+
+  // Engage/disengage: job_recruiters is "who's on it now"; job_engagements is the permanent
+  // history admins review (per job: who, how long, and why they stepped back).
+  const jobEngLog = (S.jobEngagements || []).filter((e) => e.jobId === job.id);
+  const myOpenEngagement = jobEngLog.find((e) => e.recruiterId === S.me.id && !e.disengagedAt);
+  const engage = () => { setBusy(true); S.engageJob(job.id).then(() => toast("You're engaged on this role")).catch(() => {}).finally(() => setBusy(false)); };
+  const confirmDisengage = () => { setBusy(true); S.disengageJob(job.id, reason.trim()).then(() => { setReasonOpen(false); setReason(""); toast("Disengaged from this role"); }).catch(() => {}).finally(() => setBusy(false)); };
+  const copyQuestions = () => {
+    const text = (job.screeningQuestions || []).map((q, i) => (i + 1) + ". " + q).join("\n");
+    try { navigator.clipboard.writeText(text); toast("Screening questions copied"); } catch (e) { toast("Copy failed. Select and copy manually."); }
+  };
   const reroute = (c) => {
     S.updateCand(c.id, (cc) => ({ status: "With client", endorsed: [...cc.endorsed, { company: job.client, role: job.role, by: todayStr() + " by " + S.me.first, status: "With client", next: "Awaiting feedback" }], timeline: [...cc.timeline, { t: "Rerouted to " + job.role + ", " + job.client, d: todayStr(), done: true }] }));
     S.linkJob(c.id, job.id, c.ai || null).catch(() => {});
@@ -1353,6 +1441,9 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
           <div className="flex flex-wrap gap-2">
             <Btn icon={Copy} onClick={copyLink}>Copy link</Btn>
             <Btn onClick={() => onPromote(job.role)}>Promote</Btn>
+            {S.role === "recruiter" && (myOpenEngagement
+              ? <Btn onClick={() => setReasonOpen(true)} disabled={busy}>Disengage</Btn>
+              : <Btn kind="primary" onClick={engage} disabled={busy}>Engage</Btn>)}
             <div className="relative">
               <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
               {menuOpen && (
@@ -1368,6 +1459,7 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
         <div className="flex flex-wrap gap-2 mb-4">
           <StatusPill status={job.status} />
           {job.recruiters.length > 0 && <Pill tone="neutral">{job.recruiters.length} recruiter{job.recruiters.length > 1 ? "s" : ""} on this role</Pill>}
+          {S.role === "recruiter" && (myOpenEngagement ? <Pill tone="em">You're engaged · since {ago(myOpenEngagement.engagedAt)}</Pill> : <Pill tone="neutral">Not engaged</Pill>)}
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
           <div><div className="text-xs" style={{ color: C.ink3 }}>Submitted</div><div className="text-sm font-medium mt-0.5">{job.submitted}</div></div>
@@ -1395,6 +1487,36 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
         )}
         <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{job.link}</span></div>
       </Card>
+      {(job.screeningQuestions || []).length > 0 && (
+        <Card>
+          <div className="flex items-start justify-between gap-3">
+            <SectionTitle title="Screening questions" sub="Ask every applicant these before recording their answers on the candidate's profile." size="text-xl" />
+            <Btn icon={Copy} onClick={copyQuestions} className="shrink-0">Copy all</Btn>
+          </div>
+          <div className="flex flex-col gap-2 mt-3">
+            {job.screeningQuestions.map((q, i) => <div key={i} className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.canvas, color: C.ink }}>{i + 1}. {q}</div>)}
+          </div>
+        </Card>
+      )}
+      {S.role !== "recruiter" && jobEngLog.length > 0 && (
+        <Card>
+          <SectionTitle title="Engagement log" sub="Who has worked this role, how long, and why they stepped back." size="text-xl" />
+          <div className="mt-3">
+            <DataTable
+              rows={jobEngLog}
+              keyField="id"
+              empty="No recruiter has engaged on this role yet."
+              columns={[
+                { key: "recruiter", label: "RECRUITER", render: (e) => <div className="font-medium">{e.recruiter}</div> },
+                { key: "engagedAt", label: "ENGAGED", render: (e) => <span className="text-xs" style={{ color: C.ink2 }}>{fdate(e.engagedAt)}</span> },
+                { key: "status", label: "STATUS", render: (e) => e.disengagedAt ? <Pill tone="neutral">Disengaged {fdate(e.disengagedAt)}</Pill> : <Pill tone="em">Still engaged</Pill> },
+                { key: "duration", label: "DURATION", render: (e) => formatDuration((e.disengagedAt || Date.now()) - e.engagedAt) },
+                { key: "reason", label: "REASON", render: (e) => <span className="text-xs" style={{ color: C.ink2 }}>{e.reason || "-"}</span> },
+              ]}
+            />
+          </div>
+        </Card>
+      )}
       {S.role !== "recruiter" && fits.length > 0 && (
         <Card>
           <SectionTitle title="Candidates who might fit this role" sub="From your existing bench, matched on skills and role — nothing moves until you reroute them." size="text-xl" />
@@ -1437,6 +1559,13 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
           />
         </div>
       </Card>
+      <Modal open={reasonOpen} onClose={() => setReasonOpen(false)} title="Disengage from this role">
+        <div className="flex flex-col gap-3">
+          <div className="text-sm" style={{ color: C.ink2 }}>A short reason helps admin see why recruiters step back from a role.</div>
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="e.g. Client paused the search, or reassigned to another role" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <Btn kind="primary" full onClick={confirmDisengage} disabled={busy}>{busy ? <>Disengaging <InlineDots color="#fff" /></> : "Disengage"}</Btn>
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -1497,6 +1626,11 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
   const [incentiveType, setIncentiveType] = useState("percent"); // "percent" of the client fee, or "flat" bonus
   const [incentiveAmount, setIncentiveAmount] = useState("");
   const [incentiveCurrency, setIncentiveCurrency] = useState("NGN");
+  // Questions every applicant must be asked before their answers get recorded on their profile.
+  const [questions, setQuestions] = useState([""]);
+  const setQ = (i, v) => setQuestions((qs) => qs.map((q, idx) => (idx === i ? v : q)));
+  const addQ = () => setQuestions((qs) => [...qs, ""]);
+  const removeQ = (i) => setQuestions((qs) => qs.filter((_, idx) => idx !== i));
   const runRedraft = async () => {
     if (!title.trim() || description.trim().length < 40) { toast("Add a job title and a few sentences of description first"); return; }
     setAiBusy(true); setDraftAi(null);
@@ -1519,11 +1653,12 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
     S.setJobs((l) => [{ id, role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
       billingType, billingAmount: num(billingAmount) || null, billingCurrency,
       incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency,
+      screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
       recruiters: [], submitted: 0, interview: 0, days: 0, status, link }, ...l]);
     setDone({ link, id, status, title, client });
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
-  const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setIncentiveAmount(""); };
+  const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setIncentiveAmount(""); setQuestions([""]); };
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
 
   return (
@@ -1615,6 +1750,18 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
                   <select value={incentiveCurrency} onChange={(e) => setIncentiveCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select>
                 </div>
               )}
+            </div>
+          </div>
+          <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+            <SectionTitle title="Screening questions" sub="Every recruiter on this role asks applicants these before recording their answers." size="text-base" />
+            <div className="flex flex-col gap-2 mt-2">
+              {questions.map((q, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input value={q} onChange={(e) => setQ(i, e.target.value)} placeholder={"Question " + (i + 1)} className={inp + " mt-0"} style={inpStyle} />
+                  {questions.length > 1 && <button type="button" onClick={() => removeQ(i)} className="shrink-0 p-1" style={{ color: C.ink3 }}><X size={15} /></button>}
+                </div>
+              ))}
+              <button type="button" onClick={addQ} className="text-xs font-medium w-fit" style={{ color: C.em }}>+ Add another question</button>
             </div>
           </div>
           <div className="pt-3 flex items-center justify-between gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -2147,7 +2294,7 @@ function AwaitingAccess({ onSignOut }) {
 
 const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*)&order=created_at.desc";
 async function loadAll(token) {
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -2156,8 +2303,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/campaigns?select=*&order=created_at.desc", { token }),
     sbFetch("/rest/v1/ad_campaigns?select=*&order=created_at.desc", { token }),
     sbFetch("/rest/v1/agency_settings?select=*", { token }),
+    sbFetch("/rest/v1/job_engagements?select=*&order=engaged_at.desc", { token }),
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0] });
+  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements });
 }
 
 export default function App() {
@@ -2254,6 +2402,7 @@ export default function App() {
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
         billing_type: j.billingType || "percent", billing_amount: j.billingAmount || null, billing_currency: j.billingCurrency || j.currency || "NGN",
         incentive_type: j.incentiveType || "percent", incentive_amount: j.incentiveAmount || null, incentive_currency: j.incentiveCurrency || j.currency || "NGN",
+        screening_questions: j.screeningQuestions || [],
         status: j.status, created_by: session.uid } }); },
     inbox: data.inbox,
     setInbox: (fn) => { const list = typeof fn === "function" ? fn(data.inbox) : fn;
@@ -2300,10 +2449,23 @@ export default function App() {
     openCandidate: (id) => setCandId(id),
     insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null } }),
     setJobStatus: (id, status) => call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => setData((d) => ({ ...d, jobs: d.jobs.map((j) => (j.id === id ? { ...j, status } : j)) }))),
-    /* Candidate <-> job pipeline (candidate_jobs table) */
-    linkJob: (candidateId, jobId, fit) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review" } }),
+    /* Candidate <-> job pipeline (candidate_jobs table). screeningAnswers: [{q,a}] answered by the
+       recruiter right when they attach the candidate to a job that has screening_questions. */
+    linkJob: (candidateId, jobId, fit, screeningAnswers) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [] } }),
     setStage: (linkId, stage) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { stage } }),
+    setScreeningAnswers: (linkId, screeningAnswers) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { screening_answers: screeningAnswers } }),
     unlinkJob: (linkId) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "DELETE" }),
+    /* Engage/disengage log: job_recruiters is the "currently on it" set; job_engagements is the
+       permanent history (engaged_at / disengaged_at / reason) admins review per job. */
+    jobEngagements: data.jobEngagements,
+    engageJob: async (jobId) => {
+      await sbFetch("/rest/v1/job_recruiters?on_conflict=job_id,recruiter_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates", body: { job_id: jobId, recruiter_id: session.uid } });
+      await call("/rest/v1/job_engagements", { method: "POST", body: { job_id: jobId, recruiter_id: session.uid } });
+    },
+    disengageJob: async (jobId, reason) => {
+      await sbFetch("/rest/v1/job_recruiters?job_id=eq." + jobId + "&recruiter_id=eq." + session.uid, { method: "DELETE", token: session.token });
+      await call("/rest/v1/job_engagements?job_id=eq." + jobId + "&recruiter_id=eq." + session.uid + "&disengaged_at=is.null", { method: "PATCH", body: { disengaged_at: new Date().toISOString(), reason: reason || null } });
+    },
     /* Resumes live in the private `resumes` bucket at <candidateId>/<file>. ai-screen reads the same file. */
     uploadResume: async (candidateId, file) => {
       const path = candidateId + "/" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
