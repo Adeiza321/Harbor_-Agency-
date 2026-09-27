@@ -55,19 +55,35 @@ Reply with ONLY a JSON object, no other text: {"title": string, "description": s
 
   let text = "";
   if (geminiKey) {
-    const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "x-goog-api-key": geminiKey, "content-type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts: [{ text: facts }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 12000 },
-      }),
+    // Retry busy models, then fall back to the next one (same list as ai-screen).
+    const models = [...new Set([Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])];
+    const payload = JSON.stringify({
+      system_instruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts: [{ text: facts }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 12000 },
     });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) return json({ error: "AI request failed: " + (data?.error?.message || r.statusText) }, 502);
-    text = (data.candidates?.[0]?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || "").join("");
+    let lastErr = "", lastStatus = 0;
+    outer: for (const model of models) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: "POST",
+          headers: { "x-goog-api-key": geminiKey, "content-type": "application/json" },
+          body: payload,
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) {
+          text = (data.candidates?.[0]?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || "").join("");
+          if (text) break outer;
+          lastErr = "AI returned no answer"; break;
+        }
+        lastStatus = r.status; lastErr = data?.error?.message || r.statusText;
+        console.error("gemini", model, r.status, String(lastErr).slice(0, 200));
+        if (r.status === 404) break;
+        if (![429, 500, 503].includes(r.status)) return json({ error: "AI request failed: " + lastErr }, 502);
+        await new Promise((res) => setTimeout(res, attempt === 0 ? 1500 : 3000));
+      }
+    }
+    if (!text) return json({ error: lastStatus === 503 || lastStatus === 429 ? "Google's AI is very busy right now. Please try again in a minute." : "AI request failed: " + lastErr }, 502);
   } else {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",

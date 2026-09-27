@@ -528,3 +528,65 @@ create index audit_log_created_idx on public.audit_log(created_at desc);
 -- Also turn OFF "Allow new users to sign up" (Authentication > Sign In / Providers)
 -- so only people you invite can get in.
 -- =====================================================================
+
+-- =====================================================================
+-- Per-company AI screening cards, routing that the candidate accepts,
+-- and follow-up questions answered on the candidate page.
+-- =====================================================================
+
+-- ai: the latest screening for this candidate on this job (replaced on every rescreen):
+--   { stage: 'first'|'final', summary, strengths[], gaps[], score, verdict: 'Perfect fit'|'Possible fit'|'Reject',
+--     usedResume, answersUsed, updatedAt,
+--     followups: { state: 'draft'|'sent'|'answered', questions: [{q, a}], approvedBy, approvedAt, answeredAt } }
+-- candidate_response: 'accepted' for a normal submission; 'pending' when a recruiter routes
+--   the candidate to a role they must accept on their candidate page; 'declined' if they say no.
+alter table public.candidate_jobs
+  add column if not exists ai jsonb not null default '{}'::jsonb,
+  add column if not exists candidate_response text not null default 'accepted'
+    check (candidate_response in ('pending','accepted','declined')),
+  add column if not exists responded_at timestamptz;
+
+-- Only Rec Ops/Admins (and the ai-screen function, which runs as the service role)
+-- may change the AI result or the candidate's response. This is what stops a recruiter
+-- from approving follow-up questions themselves.
+create or replace function public.protect_candidate_job_ai() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and not public.is_staff() then
+    if tg_op = 'INSERT' then
+      if new.ai is distinct from '{}'::jsonb then
+        raise exception 'Only Rec Ops or Admins can set screening results';
+      end if;
+    elsif new.ai is distinct from old.ai or new.candidate_response is distinct from old.candidate_response then
+      raise exception 'Only Rec Ops or Admins can change screening results or candidate responses';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists candidate_jobs_protect_ai on public.candidate_jobs;
+create trigger candidate_jobs_protect_ai before insert or update on public.candidate_jobs
+  for each row execute function public.protect_candidate_job_ai();
+
+-- Candidate page: also returns roles they've been routed to (to accept or decline) and
+-- approved follow-up questions waiting for their answers. Matches already routed are left out.
+create or replace function public.candidate_portal(p_token text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'name', c.name,
+    'endorsements', coalesce((select jsonb_agg(jsonb_build_object('company', e.company, 'role', e.role_title, 'status', e.status))
+                              from candidate_endorsements e where e.candidate_id = c.id), '[]'::jsonb),
+    'matches', coalesce((select jsonb_agg(m) from jsonb_array_elements(c.matches) m
+                         where (m->>'fit')::int >= 70
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id and l.job_id::text = m->>'job_id')), '[]'::jsonb),
+    'routed', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client, 'location', j.location) order by l.created_at)
+                        from candidate_jobs l join jobs j on j.id = l.job_id
+                        where l.candidate_id = c.id and l.candidate_response = 'pending'), '[]'::jsonb),
+    'questions', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client,
+                             'questions', (select coalesce(jsonb_agg(x->>'q'), '[]'::jsonb) from jsonb_array_elements(l.ai->'followups'->'questions') x)) order by l.created_at)
+                           from candidate_jobs l join jobs j on j.id = l.job_id
+                           where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'sent'), '[]'::jsonb),
+    'answered', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client))
+                          from candidate_jobs l join jobs j on j.id = l.job_id
+                          where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'answered'), '[]'::jsonb))
+  from candidates c where c.portal_token = p_token
+$$;

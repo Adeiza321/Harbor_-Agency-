@@ -114,7 +114,7 @@ function mapAll(d) {
     status: c.status, ai: c.ai_score || 0, email: c.email_verified ? "Verified" : "Unverified", emailAddr: c.email || "", phone: c.phone || "", opens: c.opens,
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [] })),
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0 })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
@@ -248,6 +248,8 @@ function downloadCSV(name, rows) {
 /* PLACEHOLDER scoring: replace with your real AI rating service */
 const scoreFor = (seed) => 60 + (Array.from(seed).reduce((a, c) => a + c.charCodeAt(0), 0) % 35);
 const flat = (c) => ({ name: c.name, role: c.role, location: c.location, recruiter: c.recruiter || "", status: c.status, ai: c.ai, email: c.email });
+/* How many company cards have follow-up questions in a given state (draft / sent / answered). */
+const countFollowups = (cands, state) => cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.ai && l.ai.followups && l.ai.followups.state === state).length, 0);
 const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "Lagos, Nigeria", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
 
 /* Desktop detection in JS, so layout never depends on responsive classes being available */
@@ -778,7 +780,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
         <div className="px-3 pb-3">
           <div className="rounded-xl p-3.5 mb-3" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)" }}>
             <div className="flex items-center gap-2 mb-1"><Sparkles size={15} color={C.lime} /><span className="text-xs font-medium text-white">AI needs your approval</span></div>
-            <div className="text-xs" style={{ color: "#A9BBB1" }}>{pendingQ} candidates have screening questions ready to send.</div>
+            <div className="text-xs" style={{ color: "#A9BBB1" }}>{pendingQ} sets of screening questions are waiting for approval.</div>
           </div>
           <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: "#A9BBB1", border: "1px solid rgba(255,255,255,0.12)" }}>Sign out</button>
         </div>
@@ -999,7 +1001,7 @@ function OverviewRecOps({ S }) {
           <SectionTitle title="Needs attention" />
           <div className="mt-3 flex flex-col">
             {[
-              { icon: Sparkles, t: "AI screening questions", s: S.cands.filter((c) => c.screening.state === "pending").length + " sets waiting for approval", tone: "em", go: "candidates" },
+              { icon: Sparkles, t: "AI screening questions", s: countFollowups(S.cands, "draft") + " sets waiting for approval", tone: "em", go: "candidates" },
               { icon: Clock, t: "Awaiting review", s: S.cands.filter((c) => c.status === "In review").length + " candidates in review", tone: "warn", go: "candidates" },
               { icon: InboxIcon, t: "Unassigned applications", s: S.inbox.filter((x) => !x.assigned).length + " in the inbox", tone: "info", go: "inbox" },
               { icon: AlertTriangle, t: "Placements in guarantee", s: S.placements.filter((p) => p.status === "Guarantee").length + " placements", tone: "danger", go: "billing" },
@@ -1067,8 +1069,8 @@ function OverviewRecruiter({ S }) {
           <div className="mt-3 flex flex-col">
             {[
               { icon: Sparkles, t: "Role matches", s: S.cands.filter((c) => c.matches.length > 0).length + " candidates match other roles", tone: "em", go: "candidates" },
-              { icon: InboxIcon, t: "Waiting on candidates", s: S.cands.filter((c) => c.screening.state === "sent").length + " awaiting screening replies", tone: "warn", go: "candidates" },
-              { icon: Mail, t: "Answers to review", s: S.cands.filter((c) => c.screening.state === "answered").length + " sets of screening answers", tone: "info", go: "candidates" },
+              { icon: InboxIcon, t: "Waiting on candidates", s: countFollowups(S.cands, "sent") + " awaiting screening answers", tone: "warn", go: "candidates" },
+              { icon: Mail, t: "Routed roles", s: S.cands.reduce((n, c) => n + c.jobLinks.filter((l) => l.response === "pending").length, 0) + " waiting for candidates to accept", tone: "info", go: "candidates" },
             ].map((r, i) => (
               <div key={i} className="flex items-center gap-3 py-3 cursor-pointer" onClick={() => S.go(r.go)} style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
                 <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: TONE[r.tone].bg }}><r.icon size={17} color={TONE[r.tone].fg} /></div>
@@ -1201,42 +1203,30 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   const [fwd, setFwd] = useState(S.jobs[0] ? S.jobs[0].id : 0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reassign, setReassign] = useState(null);
-  const qaState = candidate.screening.state;
-  const qaQuestions = candidate.screening.questions || [];
-  const screeningJob = S.jobs.find((j) => j.id === candidate.screening.jobId) || null;
   const comments = candidate.comments;
   const [draft, setDraft] = useState("");
   const [err, setErr] = useState("");
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiErr, setAiErr] = useState("");
-  const candidateJobs = S.jobs.filter((j) => j.status !== "Closed");
-  const [draftJobId, setDraftJobId] = useState(candidate.screening.jobId || (candidateJobs[0] ? candidateJobs[0].id : null));
-  const draftQuestions = async () => {
-    if (!draftJobId) { setAiErr("Pick a role first"); return; }
-    setAiBusy(true); setAiErr("");
-    try { await S.aiScreen("draft_questions", { candidateId: candidate.id, jobId: draftJobId }); toast("Screening questions drafted"); }
-    catch (e) { setAiErr(e.message); }
-    setAiBusy(false);
-  };
-  const reviewReply = async () => {
-    if (!reply.trim()) { toast("Paste the candidate's reply first"); return; }
-    setAiBusy(true); setAiErr("");
-    try { await S.aiScreen("review_answer", { candidateId: candidate.id, jobId: draftJobId, answerText: reply.trim() }); setReply(""); toast("AI reviewed the reply"); }
-    catch (e) { setAiErr(e.message); }
-    setAiBusy(false);
-  };
+  const [resumeDel, setResumeDel] = useState(false);
+  const [resumeDelBusy, setResumeDelBusy] = useState(false);
+  /* Upload a resume: saved to storage, read by AI for the profile (skills, experience, notice,
+     salary expectation), then every company card the candidate is on is rescreened. */
   const attachCv = async (file) => {
-    setAiBusy(true); setAiErr("");
-    try { await S.uploadResume(candidate.id, file); } catch (e) { setAiErr(e.message); setAiBusy(false); return; }
-    try { await S.aiScreen("score_cv", { candidateId: candidate.id, jobId: draftJobId }); toast("Resume saved and scored"); }
-    catch (e) { setAiErr("Resume saved, but AI scoring failed: " + e.message); }
+    setAiBusy(true);
+    try { await S.uploadResume(candidate.id, file); } catch (e) { setAiBusy(false); return; }
+    const cards = candidate.jobLinks.filter((l) => l.response === "accepted").length;
+    toast(cards ? "Resume saved. Reading it and rescreening their companies…" : "Resume saved. Reading it…");
+    try {
+      const r = await S.aiScreen("score_cv", { candidateId: candidate.id, rescreenCards: true });
+      toast(r && r.rescreened ? "Resume read. " + r.rescreened + (r.rescreened === 1 ? " company" : " companies") + " rescreened." : "Resume read");
+    } catch (e) { toast("Resume saved, but the AI couldn't read it: " + e.message); }
     setAiBusy(false);
   };
-  const rescoreCv = async () => {
-    setAiBusy(true); setAiErr("");
-    try { await S.aiScreen("score_cv", { candidateId: candidate.id, jobId: draftJobId }); toast("Re-scored"); }
-    catch (e) { setAiErr(e.message); }
-    setAiBusy(false);
+  const removeResume = async () => {
+    setResumeDelBusy(true);
+    try { await S.aiScreen("remove_resume", { candidateId: candidate.id }); setResumeDel(false); toast("Resume removed"); }
+    catch (e) { toast(e.message); }
+    setResumeDelBusy(false);
   };
   const [editForm, setEditForm] = useState(null);
   const openEdit = () => setEditForm({ name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
@@ -1256,8 +1246,6 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     else if (opt === "Mark placed") { openPlaced(); }
     else { setStatus("In review"); toast("Status set to hold"); }
   };
-  const setQa = (x) => patch((c) => ({ screening: { ...c.screening, ...x } }));
-  const approveQ = () => { setQa({ state: "sent" }); toast("Marked as sent. Send the questions to " + candidate.name.split(" ")[0] + " by email or WhatsApp."); };
   const markPlaced = async () => {
     const amt = num(fee); if (!amt) { toast("Enter the placement fee"); return; }
     const e = candidate.endorsed[candidate.endorsed.length - 1];
@@ -1299,7 +1287,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <div className="grid grid-cols-3 gap-3">
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Experience</label><input value={editForm.experience} onChange={(e) => setEditForm((f) => ({ ...f, experience: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Notice</label><input value={editForm.notice} onChange={(e) => setEditForm((f) => ({ ...f, notice: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Pay</label><input value={editForm.pay} onChange={(e) => setEditForm((f) => ({ ...f, pay: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label><input value={editForm.pay} onChange={(e) => setEditForm((f) => ({ ...f, pay: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
             </div>
             <Btn kind="primary" full onClick={saveEdit}>Save changes</Btn>
           </div>
@@ -1379,7 +1367,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               </div>
             )}
             <div className="grid grid-cols-3 gap-4 mb-4">
-              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Pay", candidate.pay]].map(([l, v]) => (
+              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Salary expectation", candidate.pay]].map(([l, v]) => (
                 <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><div className="text-sm font-medium mt-0.5 break-words">{v || "-"}</div></div>
               ))}
             </div>
@@ -1392,6 +1380,22 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
               <div className="flex items-center gap-2 min-w-0" style={{ color: C.ink2 }}><Mail size={15} className="shrink-0" /><span className="truncate">{candidate.emailAddr || "No email on file"}</span></div>
               <div className="flex items-center gap-2" style={{ color: C.ink2 }}><Phone size={15} className="shrink-0" />{candidate.phone || "No phone on file"}</div>
+              <div className="flex items-center gap-1.5 sm:ml-auto">
+                {aiBusy ? (
+                  <span className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}>Reading resume <InlineDots /></span>
+                ) : candidate.cv ? (
+                  <>
+                    <Download size={15} color={C.em} className="shrink-0" />
+                    <button type="button" onClick={() => S.openResume(candidate.cv)} className="text-sm font-medium" style={{ color: C.em }} title={candidate.cvName || "Resume"}>View resume</button>
+                    <button type="button" aria-label="Remove resume" title="Remove resume" onClick={() => setResumeDel(true)} className="w-6 h-6 rounded-full border flex items-center justify-center" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={11} strokeWidth={2.5} /></button>
+                  </>
+                ) : (
+                  <label className="inline-flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-lg border border-dashed cursor-pointer" style={{ borderColor: "#BFB9AB", color: C.ink }}>
+                    <Upload size={14} />Upload resume
+                    <input type="file" accept={RESUME_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} />
+                  </label>
+                )}
+              </div>
             </div>
           </Card>
 
@@ -1399,73 +1403,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <div className="overflow-x-auto"><Tabs tabs={[{ key: "companies", label: "Companies" }, { key: "discussion", label: "Discussion" }, { key: "timeline", label: "Timeline" }]} active={tab} setActive={setTab} /></div>
             {tab === "companies" && (
               <div className="mt-4">
-                <div className="rounded-xl p-3.5 mb-4" style={{ background: "#F6F3EC" }}>
-                  <div className="flex justify-between items-center mb-2 gap-2">
-                    <div className="flex items-center gap-2"><Sparkles size={15} color={C.em} /><div className="text-sm font-medium">AI review</div></div>
-                    <Pill tone="warn">Internal</Pill>
-                  </div>
-                  <div className="flex items-center gap-4 mb-3"><div className="text-3xl" style={{ ...SERIF }}>{candidate.ai ? candidate.ai + "%" : "-"}</div><div className="text-sm font-medium">Match for {candidate.role}</div></div>
-                  {candidate.strengths.length > 0 && (<><div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>STRENGTHS</div>{candidate.strengths.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><Check size={15} color={C.em} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
-                  {candidate.gaps.length > 0 && (<><div className="text-xs font-semibold mb-1.5 mt-3" style={{ color: C.ink3 }}>GAPS</div>{candidate.gaps.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
-                  <div className="rounded-xl p-3 mt-3" style={{ background: "#fff" }}>
-                    {candidate.cv ? (
-                      <><div className="flex items-center justify-between gap-2 text-sm"><span className="truncate" style={{ color: C.ink2 }}>{candidate.cvName || "CV on file"}</span><div className="flex gap-1.5 shrink-0"><Btn onClick={() => S.openResume(candidate.cv)} className="text-xs px-3 py-1.5">View</Btn><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept={RESUME_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
-                    ) : (
-                      <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Upload resume (AI-scored)<input type="file" accept={RESUME_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-xl p-3.5 mb-4" style={{ background: "#F6F3EC" }}>
-                  <div className="flex items-center gap-2 mb-2 flex-wrap"><Sparkles size={15} color={C.em} /><div className="text-sm font-medium">AI screening</div>{screeningJob && <Pill tone="neutral">{screeningJob.role}, {screeningJob.client}</Pill>}</div>
-                  {qaState === "pending" && qaQuestions.length === 0 && (
-                    <>
-                      <div className="text-xs mb-2.5" style={{ color: C.ink2 }}>AI writes 3 questions from the job description — a skills check, salary expectation, and start date.</div>
-                      {candidateJobs.length > 0 ? (
-                        <>
-                          <select value={draftJobId || ""} onChange={(e) => setDraftJobId(e.target.value)} className="w-full mb-2 rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
-                            {candidateJobs.map((j) => <option key={j.id} value={j.id}>{j.role}, {j.client}</option>)}
-                          </select>
-                          <Btn kind="primary" full onClick={draftQuestions} disabled={aiBusy}>{aiBusy ? <>Drafting <InlineDots color="#fff" /></> : "Draft with AI"}</Btn>
-                        </>
-                      ) : <div className="text-xs" style={{ color: C.ink3 }}>Post a job first, then come back to draft questions against it.</div>}
-                    </>
-                  )}
-                  {qaState === "pending" && qaQuestions.length > 0 && (
-                    <>
-                      <div className="text-sm mb-1.5">{qaQuestions.length} screening questions ready</div>
-                      {qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}
-                      <Btn kind="primary" full className="mt-2" onClick={approveQ}>Approve and send</Btn>
-                    </>
-                  )}
-                  {qaState === "sent" && (
-                    <>
-                      {qaQuestions.length > 0 && <div className="mb-2">{qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}</div>}
-                      <div className="text-sm mb-2" style={{ color: C.ink2 }}>Waiting for {candidate.name.split(" ")[0]}'s reply. Paste it here when it arrives, and AI will review it together with their resume.</div>
-                      <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={3} className="w-full rounded-lg border px-3 py-2 text-sm outline-none mb-2" style={{ borderColor: C.line, background: "#fff" }} />
-                      <Btn kind="primary" full onClick={reviewReply} disabled={aiBusy}>{aiBusy ? <>AI is reviewing <InlineDots color="#fff" /></> : "Get AI verdict"}</Btn>
-                    </>
-                  )}
-                  {qaState === "answered" && (
-                    <>
-                      <div className="flex items-center justify-between mb-2 gap-2">
-                        <div className="text-sm font-medium">Verdict</div>
-                        {candidate.screening.verdict && <Pill tone={candidate.screening.verdict === "Perfect fit" ? "em" : candidate.screening.verdict === "Possible fit" ? "warn" : "danger"}>{candidate.screening.verdict}</Pill>}
-                      </div>
-                      {candidate.screening.reasoning && <div className="text-sm mb-1" style={{ color: C.ink2 }}>{candidate.screening.reasoning}</div>}
-                      {candidate.screening.reasoning && <div className="text-xs mb-3" style={{ color: C.ink3 }}>{candidate.screening.usedResume ? "Based on the resume and screening answers." : "Based on screening answers only (no readable resume on file)."}</div>}
-                      {(candidate.screening.qa || []).map((qa, i) => (<div key={i} className="py-2" style={{ borderTop: i ? `1px solid ${C.line}` : `1px solid ${C.line}` }}><div className="text-sm font-medium">{qa.q}</div><div className="text-sm" style={{ color: C.ink2 }}>{qa.a}</div></div>))}
-                    </>
-                  )}
-                  {aiErr && <div className="text-xs mt-3 rounded-lg p-2" style={{ background: C.dangerBg, color: C.dangerFg }}>{aiErr}</div>}
-                </div>
-                {candidate.endorsed.length === 0 && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Not yet endorsed to a company.</div>}
-                {candidate.endorsed.slice().reverse().map((e, i) => (
-                  <div key={i} className="flex items-center gap-3 py-3" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
-                    <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: C.canvas }}>{e.company[0]}</div>
-                    <div className="flex-1 min-w-0"><div className="font-medium text-sm">{e.company}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.role}</div></div>
-                    <div className="text-right shrink-0"><StatusPill status={e.status} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>{e.next}</div></div>
-                  </div>
-                ))}
+                <CompanyScreeningCards candidate={candidate} S={S} toast={toast} />
               </div>
             )}
             {tab === "discussion" && (
@@ -1509,12 +1447,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <SectionTitle title="Candidate page" sub="Their secure link. No login needed." size="text-xl" />
             <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 mt-3 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{window.location.host + "/?c=" + candidate.portal}</span><Copy size={15} color={C.ink2} className="ml-auto cursor-pointer shrink-0" onClick={() => { try { navigator.clipboard.writeText(window.location.origin + window.location.pathname + "?c=" + candidate.portal); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} /></div>
           </Card>
-          {candidate.matches.length > 0 && (
-            <Card>
-              <SectionTitle title="Other roles they match" sub="Shown to candidate at 70% or higher." size="text-xl" />
-              {candidate.matches.map((m, i) => (<div key={i} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}><div className="min-w-0"><div className="text-sm font-medium truncate">{m.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{m.company}</div></div><Pill tone="em">{m.fit}%</Pill></div>))}
-            </Card>
-          )}
+          <MatchesCard candidate={candidate} S={S} toast={toast} />
         </div>
       </div>
       <ConfirmModal
@@ -1525,13 +1458,232 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         onConfirm={confirmDelete}
         busy={delBusy}
       />
+      <ConfirmModal
+        open={resumeDel}
+        onClose={() => setResumeDel(false)}
+        title="Remove this resume?"
+        body={"This deletes " + (candidate.cvName || "the resume") + " from " + candidate.name + "'s profile. Their screening results stay until the next rescreen."}
+        onConfirm={removeResume}
+        busy={resumeDelBusy}
+        confirmLabel="Remove"
+      />
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+/* AI screening: one collapsible card per company the candidate is on.       */
+/* ------------------------------------------------------------------------- */
+const VERDICT_TONE = { "Perfect fit": "em", "Possible fit": "warn", Reject: "danger" };
+const FOLLOW_PILL = { draft: ["Waiting for approval", "warn"], sent: ["Sent · waiting for answers", "info"], answered: ["Answered", "em"] };
+
+function CompanyScreeningCards({ candidate, S, toast }) {
+  const groups = [];
+  candidate.jobLinks
+    .filter((l) => l.response === "accepted")
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .forEach((l) => {
+      const job = S.jobs.find((j) => j.id === l.jobId);
+      if (!job) return;
+      let g = groups.find((x) => x.company === job.client);
+      if (!g) { g = { company: job.client, items: [] }; groups.push(g); }
+      g.items.push({ link: l, job });
+    });
+  const withCards = new Set(groups.map((g) => g.company));
+  const otherSubs = candidate.endorsed.filter((e) => !withCards.has(e.company));
+  const [open, setOpen] = useState(() => (groups[0] ? { [groups[0].company]: true } : {}));
+  if (!groups.length && !otherSubs.length) return (
+    <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>No companies yet. Add them to a job from the Jobs card, or route them to a role they match. A screening card appears here once they're on it.</div>
+  );
+  return (
+    <div className="flex flex-col gap-3">
+      {groups.map((g) => (
+        <CompanyCard key={g.company} group={g} endorsed={candidate.endorsed.filter((e) => e.company === g.company)} open={!!open[g.company]}
+          onToggle={() => setOpen((o) => ({ ...o, [g.company]: !o[g.company] }))} candidate={candidate} S={S} toast={toast} />
+      ))}
+      {otherSubs.length > 0 && (
+        <div className="mt-1">
+          <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>OTHER SUBMISSIONS</div>
+          {otherSubs.slice().reverse().map((e, i) => (
+            <div key={i} className="flex items-center gap-3 py-3" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: C.canvas }}>{e.company[0]}</div>
+              <div className="flex-1 min-w-0"><div className="font-medium text-sm">{e.company}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.role}</div></div>
+              <div className="text-right shrink-0"><StatusPill status={e.status} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>{e.next}</div></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
+  const [idx, setIdx] = useState(0);
+  const { link, job } = group.items[Math.min(idx, group.items.length - 1)];
+  const ai = link.ai || {};
+  const f = ai.followups || null;
+  const staff = S.role === "admin" || S.role === "recops";
+  const first = candidate.name.split(" ")[0];
+  const e = endorsed.find((x) => x.role === job.role) || null;
+  const status = e ? e.status : link.stage;
+  const [busy, setBusy] = useState("");
+  // Editable copy of the drafted follow-up questions; reset whenever a new screening lands.
+  const stamp = (ai.updatedAt || "") + (f ? f.state : "");
+  const [drafts, setDrafts] = useState(null);
+  const [seen, setSeen] = useState(stamp);
+  if (stamp !== seen) { setSeen(stamp); setDrafts(null); }
+  const qList = drafts !== null ? drafts : f && f.state === "draft" ? f.questions.map((x) => x.q) : [];
+  const editing = staff && ((f && f.state === "draft") || (!f && drafts !== null));
+  const setQ = (i, v) => setDrafts(qList.map((q, k) => (k === i ? v : q)));
+  const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { toast(err.message); } setBusy(""); };
+  const screen = () => run("screen", async () => { await S.aiScreen("screen", { linkId: link.id }); toast("Screened for " + job.client); });
+  const approve = () => run("approve", async () => {
+    const qs = qList.map((q) => q.trim()).filter(Boolean);
+    if (!qs.length) throw new Error("Add at least one question");
+    await S.aiScreen("approve_questions", { linkId: link.id, questions: qs });
+    toast("Sent to " + first + "'s candidate page");
+  });
+  const appQs = job.screeningQuestions || [];
+  const box = { background: "#fff" };
+  return (
+    <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, background: "#F6F3EC" }}>
+      <button type="button" onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: "#fff" }}>{group.company[0]}</div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold truncate">{group.company}</div>
+          <div className="text-xs truncate" style={{ color: C.ink2 }}>{group.items.map((x) => x.job.role).join(", ")} · {f && f.state === "sent" ? "Questions sent, waiting for " + first + "'s answers" : status}</div>
+        </div>
+        {busy === "screen" ? <InlineDots /> : <div className="text-2xl shrink-0" style={{ ...SERIF }}>{ai.score != null ? ai.score + "%" : "–"}</div>}
+        {ai.verdict && <span className="hidden sm:inline"><Pill tone={VERDICT_TONE[ai.verdict] || "neutral"}>{ai.verdict}</Pill></span>}
+        <ChevronDown size={18} color={C.ink2} className="shrink-0" style={{ transform: open ? "rotate(180deg)" : "none" }} />
+      </button>
+      {open && (
+        <div className="px-4 pb-4 flex flex-col gap-3.5">
+          {group.items.length > 1 && <Tabs tabs={group.items.map((x, i) => ({ key: i, label: x.job.role }))} active={idx} setActive={setIdx} />}
+          {ai.verdict && <span className="sm:hidden w-fit"><Pill tone={VERDICT_TONE[ai.verdict] || "neutral"}>{ai.verdict}</Pill></span>}
+          {!ai.stage ? (
+            <div className="rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center gap-3" style={box}>
+              <div className="text-sm flex-1" style={{ color: C.ink2 }}>Not screened yet. The AI reads {candidate.cv ? "their resume" : "their answers (no resume on file)"} and any answers they've given, for this and other jobs.</div>
+              <Btn kind="primary" onClick={screen} disabled={!!busy}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: C.ink2 }}>
+                <Sparkles size={14} color={C.em} className="shrink-0" />
+                <span>{ai.stage === "final" ? "Final screening" : "First screening"} · {ai.usedResume ? "resume + " : "no resume · "}{ai.answersUsed || 0} {ai.answersUsed === 1 ? "answer" : "answers"} · updated {ai.updatedAt ? fdate(ai.updatedAt) : "–"}</span>
+                <button type="button" onClick={screen} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>{busy === "screen" ? "Screening…" : "Rescreen"}</button>
+              </div>
+              {ai.summary && <div className="text-sm leading-relaxed">{ai.summary}</div>}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>STRENGTHS</div>
+                  {(ai.strengths || []).length ? ai.strengths.map((x, i) => <div key={i} className="flex gap-2 text-sm mb-1"><Check size={15} color={C.em} className="shrink-0 mt-0.5" />{x}</div>) : <div className="text-sm" style={{ color: C.ink3 }}>None noted</div>}
+                </div>
+                <div>
+                  <div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>GAPS</div>
+                  {(ai.gaps || []).length ? ai.gaps.map((x, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="shrink-0 mt-0.5" />{x}</div>) : <div className="text-sm" style={{ color: C.ink3 }}>None noted</div>}
+                </div>
+              </div>
+            </>
+          )}
+
+          <div className="rounded-xl p-3.5 flex flex-col gap-2.5" style={box}>
+            <div className="flex items-center justify-between gap-2 flex-wrap"><div className="text-sm font-semibold">Application questions</div><Pill tone="neutral">Answered when they applied</Pill></div>
+            <div className="text-xs -mt-1" style={{ color: C.ink2 }}>The job's own screening questions.</div>
+            {appQs.length === 0 && <div className="text-sm" style={{ color: C.ink3 }}>This job has no application questions.</div>}
+            {appQs.map((q, i) => (
+              <div key={i} className="text-sm"><div className="font-medium">{q}</div><div style={{ color: (link.screeningAnswers[i] || "").trim() ? C.ink2 : C.ink3 }}>{(link.screeningAnswers[i] || "").trim() || "Not answered"}</div></div>
+            ))}
+          </div>
+
+          {(f || editing) && (
+            <div className="rounded-xl p-3.5 flex flex-col gap-2.5" style={box}>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-sm font-semibold">Follow-up questions</div>
+                <Pill tone={FOLLOW_PILL[f ? f.state : "draft"][1]}>{FOLLOW_PILL[f ? f.state : "draft"][0]}</Pill>
+              </div>
+              <div className="text-xs -mt-1" style={{ color: C.ink2 }}>
+                {!f || f.state === "draft" ? "Drafted by AI from what's still unclear. Never repeats a question already asked for any job."
+                  : f.state === "sent" ? "Approved by " + (f.approvedBy || "Rec Ops") + ". Showing on " + first + "'s candidate page; their answers go straight to the AI."
+                  : "Approved by " + (f.approvedBy || "Rec Ops") + (f.answeredAt ? " · answered " + fdate(f.answeredAt) : "")}
+              </div>
+              {editing ? (
+                <>
+                  {qList.map((q, i) => (
+                    <div key={i} className="flex gap-2 items-start">
+                      <textarea value={q} onChange={(ev) => setQ(i, ev.target.value)} rows={2} className="flex-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }} aria-label={"Question " + (i + 1)} />
+                      <button type="button" aria-label="Remove question" onClick={() => setDrafts(qList.filter((_, k) => k !== i))} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={12} strokeWidth={2.5} /></button>
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Btn kind="primary" onClick={approve} disabled={!!busy}>{busy === "approve" ? <>Sending <InlineDots color="#fff" /></> : "Approve and send"}</Btn>
+                    <Btn onClick={() => setDrafts([...qList, ""])}>Add a question</Btn>
+                  </div>
+                </>
+              ) : f && f.state === "draft" ? (
+                <>
+                  {f.questions.map((x, i) => <div key={i} className="text-sm">{i + 1}. {x.q}</div>)}
+                  <div className="text-xs" style={{ color: C.warnFg }}>Waiting for Rec Ops or an Admin to approve before they're sent.</div>
+                </>
+              ) : (
+                <>
+                  {(f.questions || []).map((x, i) => (
+                    <div key={i} className="text-sm"><div className="font-medium">{x.q}</div>{f.state === "answered" && x.a && <div style={{ color: C.ink2 }}>{x.a}</div>}</div>
+                  ))}
+                  {f.reply && <div className="text-sm" style={{ color: C.ink2 }}>{f.reply}</div>}
+                </>
+              )}
+            </div>
+          )}
+          {!f && !editing && staff && ai.stage && ai.verdict !== "Reject" && (
+            <button type="button" onClick={() => setDrafts([""])} className="text-xs font-medium w-fit" style={{ color: C.em }}>+ Ask a follow-up question</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Roles the candidate matches. Route sends the role to their candidate page; the company
+   card appears once they accept. */
+function MatchesCard({ candidate, S, toast }) {
+  const [busy, setBusy] = useState("");
+  if (!candidate.matches.length) return null;
+  const route = async (jobId) => {
+    setBusy(jobId);
+    try { await S.routeToJob(candidate.id, jobId); toast("Routed. " + candidate.name.split(" ")[0] + " will see it on their candidate page to accept."); } catch (e) { /* toast shown by S */ }
+    setBusy("");
+  };
+  return (
+    <Card>
+      <SectionTitle title="Other roles they match" sub="Shown to candidate at 70% or higher. A company card appears once you route them and they accept." size="text-xl" />
+      {candidate.matches.map((m, i) => {
+        const jobId = m.job_id;
+        const link = jobId ? candidate.jobLinks.find((l) => l.jobId === jobId) : null;
+        const job = jobId ? S.jobs.find((j) => j.id === jobId) : null;
+        return (
+          <div key={i} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div className="min-w-0"><div className="text-sm font-medium truncate">{m.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{m.company}</div></div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Pill tone="em">{m.fit}%</Pill>
+              {link ? (
+                <span className="text-xs font-medium" style={{ color: link.response === "pending" ? C.warnFg : link.response === "declined" ? C.dangerFg : C.em }}>
+                  {link.response === "pending" ? "Waiting for them to accept" : link.response === "declined" ? "Declined" : "In Companies"}
+                </span>
+              ) : job && job.status !== "Closed" ? (
+                <Btn onClick={() => route(jobId)} disabled={!!busy} className="text-xs px-3 py-1.5">{busy === jobId ? "Routing…" : "Route"}</Btn>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </Card>
   );
 }
 
 /* Expandable per-link screening answers editor, shown under a candidate-job link when
    that job has screening questions attached. */
-function ScreeningAnswerRow({ link, job, S, toast, candidateId, hasCv }) {
+function ScreeningAnswerRow({ link, job, S, toast }) {
   const [open, setOpen] = useState(false);
   const qs = (job && job.screeningQuestions) || [];
   const [answers, setAnswers] = useState(() => qs.map((_, i) => (link.screeningAnswers && link.screeningAnswers[i]) || ""));
@@ -1544,14 +1696,14 @@ function ScreeningAnswerRow({ link, job, S, toast, candidateId, hasCv }) {
     setSaving(true);
     S.setScreeningAnswers(link.id, answers).then(() => toast("Screening answers saved")).catch(() => {}).finally(() => setSaving(false));
   };
-  /* Save, then score this candidate for this job from their resume AND these answers. */
+  /* Save, then rescreen this company card with the new answers. */
   const saveAndScore = async () => {
     setScoring(true);
     try {
       await S.setScreeningAnswers(link.id, answers);
-      await S.aiScreen("score_cv", { candidateId, jobId: link.jobId });
-      toast("Scored from resume and screening answers");
-    } catch (e) { toast(e.message || "AI scoring failed"); }
+      if (link.response === "accepted") { await S.aiScreen("screen", { linkId: link.id }); toast("Answers saved and rescreened"); }
+      else toast("Answers saved");
+    } catch (e) { toast(e.message || "AI screening failed"); }
     setScoring(false);
   };
   return (
@@ -1576,9 +1728,7 @@ function ScreeningAnswerRow({ link, job, S, toast, candidateId, hasCv }) {
           ))}
           <div className="flex gap-2 flex-wrap">
             <Btn onClick={save} disabled={saving || scoring}>{saving ? "Saving…" : "Save answers"}</Btn>
-            {hasCv
-              ? <Btn kind="primary" onClick={saveAndScore} disabled={saving || scoring}>{scoring ? <>Scoring <InlineDots color="#fff" /></> : "Save and AI-score"}</Btn>
-              : <div className="text-xs self-center" style={{ color: C.ink3 }}>Upload a resume to AI-score with these answers.</div>}
+            <Btn kind="primary" onClick={saveAndScore} disabled={saving || scoring}>{scoring ? <>Screening <InlineDots color="#fff" /></> : "Save and rescreen"}</Btn>
           </div>
         </div>
       )}
@@ -1601,13 +1751,13 @@ function CandidateJobsCard({ candidate, S, toast }) {
       {candidate.jobLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return (
         <div key={l.id} className="py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
           <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{(j ? j.client : "") + (l.fit != null ? " · fit " + l.fit + "%" : "")}</div></div>
+            <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: l.response === "accepted" ? C.ink2 : C.warnFg }}>{(j ? j.client : "") + (l.response === "pending" ? " · routed, waiting for them to accept" : l.response === "declined" ? " · declined" : l.fit != null ? " · fit " + l.fit + "%" : "")}</div></div>
             <div className="flex items-center gap-2 shrink-0">
               <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>
               {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
             </div>
           </div>
-          {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} candidateId={candidate.id} hasCv={!!candidate.cv} />}
+          {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} />}
         </div>
       ); })}
       {available.length > 0 && (
@@ -1709,9 +1859,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
     try { navigator.clipboard.writeText(text); toast("Screening questions copied"); } catch (e) { toast("Copy failed. Select and copy manually."); }
   };
   const reroute = (c) => {
-    S.updateCand(c.id, (cc) => ({ status: "With client", endorsed: [...cc.endorsed, { company: job.client, role: job.role, by: todayStr() + " by " + S.me.first, status: "With client", next: "Awaiting feedback" }], timeline: [...cc.timeline, { t: "Rerouted to " + job.role + ", " + job.client, d: todayStr(), done: true }] }));
-    S.linkJob(c.id, job.id, c.ai || null).catch(() => {});
-    toast(c.name + " rerouted to " + job.role);
+    S.routeToJob(c.id, job.id).then(() => toast("Routed. " + c.name.split(" ")[0] + " will see it on their candidate page to accept.")).catch(() => {});
   };
   const confirmDelete = () => {
     setDelBusy(true);
@@ -1809,7 +1957,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
       )}
       {S.role !== "recruiter" && fits.length > 0 && (
         <Card>
-          <SectionTitle title="Candidates who might fit this role" sub="From your existing bench, matched on skills and role — nothing moves until you reroute them." size="text-xl" />
+          <SectionTitle title="Candidates who might fit this role" sub="From your existing bench, matched on skills and role. Route sends the role to their candidate page to accept." size="text-xl" />
           <div className="flex flex-col gap-2 mt-3">
             {fits.map((c) => (
               <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl border p-3" style={{ borderColor: C.line }}>
@@ -1817,7 +1965,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
                   <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone="em" />
                   <div className="min-w-0"><div className="font-medium text-sm truncate">{c.name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{c.role}{c.recruiter ? " · " + c.recruiter : ""}</div></div>
                 </div>
-                <Btn kind="primary" onClick={() => reroute(c)} className="shrink-0">Reroute</Btn>
+                <Btn kind="primary" onClick={() => reroute(c)} className="shrink-0">Route</Btn>
               </div>
             ))}
           </div>
@@ -1837,7 +1985,9 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
                   <div><div className="font-medium">{c.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{c.recruiter || "Unassigned"}</div></div>
                 </div>
               ) },
-              { key: "stage", label: "STAGE", render: (c) => c.link ? (
+              { key: "stage", label: "STAGE", render: (c) => c.link && c.link.response !== "accepted" ? (
+                <Pill tone={c.link.response === "declined" ? "danger" : "warn"}>{c.link.response === "declined" ? "Declined the role" : "Routed · waiting to accept"}</Pill>
+              ) : c.link ? (
                 <div className="flex items-center gap-1.5">
                   <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={c.link.stage} onClick={(e) => e.stopPropagation()}
                     onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.setStage(c.link.id, v).then(() => toast(c.name.split(" ")[0] + " moved to " + v)).catch(() => {}); }}>
@@ -2769,14 +2919,71 @@ function UploadCandidates({ setPage, toast, S }) {
   );
 }
 
-function CandidatePortal({ onBack, data }) {
-  const c = data || { name: "", endorsements: [], matches: [] };
+/* Candidate page (secure link, no login). Shows roles they've been routed to (accept or decline),
+   approved follow-up questions to answer, their applications and roles that fit them.
+   Accepting and answering go straight to the ai-screen function, which rescreens them. */
+function CandidatePortal({ onBack, data, token, onChanged }) {
+  const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], ...(data || {}) };
+  const [answers, setAnswers] = useState({});
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const act = async (key, body, done) => {
+    setBusy(key); setErr(""); setNote("");
+    try {
+      const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Something went wrong. Please try again.");
+      setNote(done); if (onChanged) await onChanged();
+    } catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+  const setA = (linkId, i, v) => setAnswers((m) => { const arr = (m[linkId] || []).slice(); arr[i] = v; return { ...m, [linkId]: arr }; });
+  const inputStyle = { borderColor: C.line, background: "#FAF8F3" };
   return (
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         {onBack && <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back to dashboard</button>}
         <div className="text-3xl md:text-4xl" style={{ ...SERIF }}>Hi {(c.name || "there").split(" ")[0]}</div>
-        <div className="text-sm" style={{ color: C.ink2 }}>Here is where your applications stand.</div>
+        <div className="text-sm" style={{ color: C.ink2 }}>{c.routed.length || c.questions.length ? "Your recruiter has something for you below. Your answers go straight into your application." : "Here is where your applications stand."}</div>
+        {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
+        {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+
+        {c.routed.map((r) => (
+          <Card key={r.linkId}>
+            <div className="text-xs font-semibold mb-2" style={{ color: C.warnFg }}>A NEW ROLE FOR YOU</div>
+            <div className="text-base font-semibold">{r.role}</div>
+            <div className="text-sm" style={{ color: C.ink2 }}>{r.company}{r.location ? " · " + r.location : ""}</div>
+            <div className="text-sm mt-2 mb-3" style={{ color: C.ink2 }}>Your recruiter thinks you'd be a strong fit. Would you like to be put forward?</div>
+            <div className="flex gap-2">
+              <Btn kind="primary" className="flex-1" disabled={!!busy} onClick={() => act("accept" + r.linkId, { action: "portal_respond", linkId: r.linkId, accept: true }, "Thanks! You've been put forward for " + r.role + ".")}>{busy === "accept" + r.linkId ? <>Sending <InlineDots color="#fff" /></> : "Yes, put me forward"}</Btn>
+              <Btn disabled={!!busy} onClick={() => act("decline" + r.linkId, { action: "portal_respond", linkId: r.linkId, accept: false }, "Got it. We won't put you forward for " + r.role + ".")}>No thanks</Btn>
+            </div>
+          </Card>
+        ))}
+
+        {c.questions.map((q) => {
+          const a = answers[q.linkId] || [];
+          const complete = q.questions.every((_, i) => (a[i] || "").trim());
+          return (
+            <Card key={q.linkId}>
+              <div className="text-base font-semibold">{q.role}</div>
+              <div className="text-sm mb-3" style={{ color: C.ink2 }}>{q.company}</div>
+              <div className="flex flex-col gap-3">
+                {q.questions.map((text, i) => (
+                  <div key={i} className="flex flex-col gap-1.5">
+                    <label htmlFor={"q-" + q.linkId + "-" + i} className="text-sm font-medium">{text}</label>
+                    <textarea id={"q-" + q.linkId + "-" + i} rows={3} value={a[i] || ""} onChange={(e) => setA(q.linkId, i, e.target.value)} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={inputStyle} />
+                  </div>
+                ))}
+                <Btn kind="primary" full disabled={!!busy || !complete} onClick={() => act("answer" + q.linkId, { action: "portal_answer", linkId: q.linkId, answers: q.questions.map((_, i) => a[i] || "") }, "Answers sent. Thank you!")}>
+                  {busy === "answer" + q.linkId ? <>Sending <InlineDots color="#fff" /></> : complete ? "Send answers" : "Answer every question to send"}
+                </Btn>
+              </div>
+            </Card>
+          );
+        })}
+
         <Card>
           <SectionTitle title="Your applications" size="text-xl" />
           {c.endorsements.length === 0 && <div className="text-sm py-4" style={{ color: C.ink3 }}>No applications yet.</div>}
@@ -2889,9 +3096,8 @@ export default function App() {
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
   const signOut = () => { store.set(null); setSession(null); setMe(null); setData(null); setStatus("signedout"); };
 
-  React.useEffect(() => {
-    if (portalToken) { sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then(setPortalData).catch(() => setPortalData({ error: true })); }
-  }, [portalToken]);
+  const loadPortal = () => sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then(setPortalData).catch(() => setPortalData({ error: true }));
+  React.useEffect(() => { if (portalToken) loadPortal(); }, [portalToken]); // eslint-disable-line
 
   const boot = async (s) => {
     try {
@@ -2915,7 +3121,7 @@ export default function App() {
   if (portalToken) {
     if (!portalData) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>Loading&hellip;</div></div>;
     if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
-    return <CandidatePortal data={portalData} onBack={() => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); }} />;
+    return <CandidatePortal data={portalData} token={portalToken} onChanged={loadPortal} onBack={() => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); }} />;
   }
 
   if (status === "loading") return <Loader label="Loading your workspace…" />;
@@ -2933,6 +3139,10 @@ export default function App() {
   const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner };
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => toast(e.message)).finally(() => setRefreshing(false)); };
   const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { toast(e.message); throw e; } };
+  const aiCall = async (action, payload) => {
+    const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
+  };
   // Fire-and-forget entry in the admin-only audit log. Never blocks or fails the action it's logging.
   const logAudit = (action, entityType, entityId, detail) => {
     sbFetch("/rest/v1/audit_log", { method: "POST", token: session.token, body: { actor_id: session.uid, action, entity_type: entityType, entity_id: entityId != null ? String(entityId) : null, detail: detail || null } }).catch(() => {});
@@ -3091,7 +3301,19 @@ export default function App() {
       }); },
     /* Candidate <-> job pipeline (candidate_jobs table). screeningAnswers: [{q,a}] answered by the
        recruiter right when they attach the candidate to a job that has screening_questions. */
-    linkJob: (candidateId, jobId, fit, screeningAnswers) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [] } }),
+    /* Submitting a candidate to a job opens their company card; the first AI screening
+       (resume + application answers + anything they've answered for other jobs) starts right away. */
+    linkJob: async (candidateId, jobId, fit, screeningAnswers) => {
+      let rows;
+      try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [] } }); }
+      catch (e) { toast(e.message); throw e; }
+      reload();
+      const row = rows && rows[0];
+      if (row) aiCall("screen", { linkId: row.id }).then(() => toast("AI screening ready")).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
+      return row;
+    },
+    /* Routing: the role shows on the candidate's page; their company card appears once they accept. */
+    routeToJob: (candidateId, jobId) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending" } }),
     setStage: (linkId, stage) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { stage } }),
     setScreeningAnswers: (linkId, screeningAnswers) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { screening_answers: screeningAnswers } }),
     unlinkJob: (linkId) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "DELETE" }),
@@ -3128,10 +3350,7 @@ export default function App() {
       const r = await fetch(SB_URL + "/functions/v1/job-redraft", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "AI redraft failed"); return j;
     },
-    aiScreen: async (action, payload) => {
-      const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-      const j = await r.json(); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
-    },
+    aiScreen: aiCall,
     /* Your own account: name/phone update straight to your profiles row, avatar via the public `avatars` bucket. */
     updateMyProfile: (patch) => {
       const body = {}; if ("name" in patch) body.full_name = patch.name; if ("phone" in patch) body.phone = patch.phone;
@@ -3152,7 +3371,7 @@ export default function App() {
     },
   };
   const onPromote = (job) => setPromote({ open: true, job });
-  const pendingQ = data.cands.filter((c) => c.screening.state === "pending").length;
+  const pendingQ = countFollowups(data.cands, "draft");
 
   if (portal) return <CandidatePortal onBack={() => setPortal(false)} data={null} />;
 
