@@ -1,5 +1,15 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+// AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
+//
+// Provider: Gemini when the GEMINI_API_KEY secret is set (model from GEMINI_MODEL,
+// default gemini-3.8-flash); otherwise Anthropic via ANTHROPIC_API_KEY. To switch back
+// to Claude, delete the GEMINI_API_KEY secret — no code change needed.
+//
+// Screening material: every judgement uses BOTH the candidate's resume (PDF) and their
+// screening answers — the job's own screening questions (candidate_jobs.screening_answers)
+// and the AI-drafted questions plus the candidate's reply (candidates.screening).
+
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -8,48 +18,116 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-const MODEL = "claude-sonnet-5";
-const ANTHROPIC_VERSION = "2023-06-01";
+const ANTHROPIC_MODEL = "claude-sonnet-5";
+const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
 
-async function askClaude(system: string, content: string | unknown[], maxTokens = 800) {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) throw new Error("AI is not configured yet (missing ANTHROPIC_API_KEY).");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+function parseJson(text: string) {
+  const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  try { return JSON.parse(cleaned); } catch { /* fall through */ }
+  const m = cleaned.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch { /* fall through */ } }
+  throw new Error("AI returned something unexpected: " + text.slice(0, 300));
+}
+
+async function askGemini(key: string, system: string, text: string, pdfBase64: string | null, maxTokens: number) {
+  const model = Deno.env.get("GEMINI_MODEL") || GEMINI_DEFAULT_MODEL;
+  const parts: unknown[] = [];
+  if (pdfBase64) parts.push({ inline_data: { mime_type: "application/pdf", data: pdfBase64 } });
+  parts.push({ text });
+  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": ANTHROPIC_VERSION,
-    },
+    headers: { "content-type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      system,
-      messages: [{ role: "user", content }],
+      system_instruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts }],
+      // Gemini counts its internal reasoning against this limit, so leave generous room.
+      generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: Math.max(maxTokens * 4, 4096) },
     }),
   });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error("AI request failed (" + res.status + "): " + t.slice(0, 300));
-  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("AI request failed (" + res.status + "): " + String(data?.error?.message || res.statusText).slice(0, 300));
+  const cand = data.candidates?.[0];
+  const out = (cand?.content?.parts || []).filter((p: any) => !p.thought).map((p: any) => p.text || "").join("");
+  if (!out) throw new Error("AI returned no answer (" + (cand?.finishReason || data.promptFeedback?.blockReason || "unknown reason") + "). Try again.");
+  return parseJson(out);
+}
+
+async function askAnthropic(key: string, system: string, text: string, pdfBase64: string | null, maxTokens: number) {
+  const content: unknown[] = [];
+  if (pdfBase64) content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } });
+  content.push({ type: "text", text });
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system, messages: [{ role: "user", content }] }),
+  });
+  if (!res.ok) throw new Error("AI request failed (" + res.status + "): " + (await res.text()).slice(0, 300));
   const data = await res.json();
-  const text = (data.content || []).map((b: any) => b.text || "").join("").trim();
-  const cleaned = text.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    throw new Error("AI returned something unexpected: " + text.slice(0, 300));
-  }
+  return parseJson((data.content || []).map((b: any) => b.text || "").join(""));
+}
+
+async function askAI(system: string, text: string, pdfBase64: string | null = null, maxTokens = 800) {
+  const gemini = Deno.env.get("GEMINI_API_KEY");
+  if (gemini) return askGemini(gemini, system, text, pdfBase64, maxTokens);
+  const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
+  if (anthropic) return askAnthropic(anthropic, system, text, pdfBase64, maxTokens);
+  throw new Error("AI is not configured yet: add a GEMINI_API_KEY secret to this Supabase project.");
 }
 
 function bytesToBase64(bytes: Uint8Array) {
   let binary = "";
   const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
+  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
   return btoa(binary);
 }
+
+// The resume on file as base64 PDF, or a reason it can't be read.
+async function loadResume(admin: any, candidate: any): Promise<{ pdf: string | null; why?: string }> {
+  const path = candidate.resume_path || candidate.cv_path;
+  if (!path) return { pdf: null, why: "No resume on file for this candidate. Upload a PDF to score one." };
+  if (candidate.resume_path && candidate.resume_name && !/\.pdf$/i.test(candidate.resume_name))
+    return { pdf: null, why: "AI reads PDF resumes only. Upload a PDF version to use it in screening." };
+  const bucket = candidate.resume_path ? "resumes" : "cvs";
+  const { data: file, error } = await admin.storage.from(bucket).download(path);
+  if (error || !file) return { pdf: null, why: "Could not read the stored CV. Try re-uploading it." };
+  return { pdf: bytesToBase64(new Uint8Array(await file.arrayBuffer())) };
+}
+
+// Everything the candidate has answered for this job, as readable Q&A lines.
+// includeAiReply=false leaves out a stored reply (used when a fresh reply is being reviewed).
+async function screeningMaterial(admin: any, candidate: any, job: any, includeAiReply = true) {
+  const lines: string[] = [];
+  let linkId: string | null = null;
+  if (job) {
+    const { data: link } = await admin.from("candidate_jobs").select("id,screening_answers")
+      .eq("candidate_id", candidate.id).eq("job_id", job.id).maybeSingle();
+    if (link) {
+      linkId = link.id;
+      const qs: string[] = Array.isArray(job.screening_questions) ? job.screening_questions : [];
+      const answers: any[] = Array.isArray(link.screening_answers) ? link.screening_answers : [];
+      answers.forEach((a, i) => {
+        const q = typeof a === "object" && a ? a.q : qs[i];
+        const ans = typeof a === "object" && a ? a.a : a;
+        if (q && ans && String(ans).trim()) lines.push(`Q: ${q}\nA: ${String(ans).trim()}`);
+      });
+    }
+  }
+  const s = candidate.screening || {};
+  const sameJob = !job || !s.jobId || s.jobId === job.id;
+  if (sameJob && includeAiReply && Array.isArray(s.qa) && s.qa.length) {
+    const asked = (s.questions || []).map((q: string, i: number) => `${i + 1}. ${q}`).join("\n");
+    const replies = s.qa.map((x: any) => String(x?.a || "").trim()).filter(Boolean).join("\n");
+    if (replies) lines.push(`AI screening questions sent:\n${asked || "(not recorded)"}\nCandidate's reply:\n${replies}`);
+  }
+  return { text: lines.join("\n\n"), count: lines.length, linkId };
+}
+
+const jobBlock = (job: any) =>
+  `Job: ${job.role_title} at ${job.client}.\nDescription:\n${job.description || "(no description given)"}\n` +
+  `Salary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} ${job.currency || "NGN"}/year.` +
+  (job.location ? `\nLocation: ${job.location}` : "") + (job.country ? `\nHiring country: ${job.country}` : "");
+
+const clampScore = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -78,72 +156,86 @@ Deno.serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------
-    // 1) Score a CV — extracts skills/experience, produces a numeric score.
-    //    Resumes live in the shared private "resumes" bucket at
-    //    <candidateId>/<file> (candidates.resume_path), the same file the app
-    //    uploads and views. A fresh base64 upload is stored there too. Older
-    //    CVs stored flat in "cvs" (candidates.cv_path) are still readable.
+    // 1) Score a candidate — resume PDF plus any screening answers for the job.
+    //    Resumes live in the private "resumes" bucket at <candidateId>/<file>
+    //    (candidates.resume_path); older ones in "cvs" (cv_path) are still read.
+    //    A fresh base64 upload is stored first so it can be re-scored later.
     // ---------------------------------------------------------------
     if (action === "score_cv") {
-      let { fileBase64 } = body;
-      const mediaType = "application/pdf";
-      const cvPath = candidateId + "/" + Date.now() + "-cv.pdf";
-
-      if (fileBase64) {
-        // New upload: store it, so it can be re-scored later.
-        const bytes = Uint8Array.from(atob(fileBase64), (c) => c.charCodeAt(0));
-        const { error: upErr } = await admin.storage.from("resumes").upload(cvPath, bytes, { contentType: mediaType, upsert: true });
+      let pdf: string | null = null;
+      if (body.fileBase64) {
+        const cvPath = candidateId + "/" + Date.now() + "-cv.pdf";
+        const bytes = Uint8Array.from(atob(body.fileBase64), (c) => c.charCodeAt(0));
+        const { error: upErr } = await admin.storage.from("resumes").upload(cvPath, bytes, { contentType: "application/pdf", upsert: true });
         if (upErr) return json({ error: "Could not store the CV: " + upErr.message }, 500);
         await admin.from("candidates").update({ resume_path: cvPath, resume_name: "CV.pdf" }).eq("id", candidateId);
-      } else if (candidate.resume_path || candidate.cv_path) {
-        // Re-score using the resume already on file.
-        if (candidate.resume_path && candidate.resume_name && !/\.pdf$/i.test(candidate.resume_name))
-          return json({ error: "AI scoring reads PDF resumes only. Upload a PDF version to score it." }, 400);
-        const bucket = candidate.resume_path ? "resumes" : "cvs";
-        const { data: file, error: dlErr } = await admin.storage.from(bucket).download(candidate.resume_path || candidate.cv_path);
-        if (dlErr || !file) return json({ error: "Could not read the stored CV. Try re-uploading it." }, 500);
-        const buf = new Uint8Array(await file.arrayBuffer());
-        fileBase64 = bytesToBase64(buf);
+        pdf = body.fileBase64;
       } else {
-        return json({ error: "No resume on file for this candidate. Upload a PDF to score one." }, 400);
+        const r = await loadResume(admin, candidate);
+        if (!r.pdf) return json({ error: r.why }, 400);
+        pdf = r.pdf;
       }
 
-      const jdBlock = job
-        ? `They are being considered for: ${job.role_title} at ${job.client}.\nJob description:\n${job.description || "(no description given)"}\nSalary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} ${job.currency || "NGN"}/year.`
-        : `No specific job is attached yet — score general employability and extract a broad skill profile.`;
+      const material = await screeningMaterial(admin, candidate, job);
+      const context =
+        (job ? `They are being considered for this role.\n${jobBlock(job)}` : "No specific job is attached yet — score general employability and extract a broad skill profile.") +
+        "\n\n" +
+        (material.count
+          ? `Candidate's screening answers (their own words):\n${material.text}`
+          : "Screening answers: none recorded yet — score from the resume alone.");
+
       const system =
-        "You are a recruitment analyst. Read the attached CV and reply with STRICT JSON only, no markdown, no commentary, matching exactly this shape: " +
-        `{"skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string}. ` +
-        "score reflects how strong a fit the candidate is for the context given, based only on skills and experience — never penalize or reward based on job tenure/duration at past employers. " +
-        "'experience' is a short summary like '6 yrs backend engineering'. 'notice' and 'pay' are short strings extracted from the CV if stated, else '-'.";
-      const result = await askClaude(system, [
-        { type: "document", source: { type: "base64", media_type: mediaType, data: fileBase64 } },
-        { type: "text", text: jdBlock },
-      ]);
-      await admin.from("candidates").update({
+        "You are a recruitment analyst screening a candidate. You are given their CV (attached PDF) and, when available, their answers to screening questions. " +
+        "Use BOTH together: the CV shows their track record; the screening answers add or clarify skills, experience, salary expectation, notice period and availability. " +
+        "Where an answer adds a relevant skill or experience the CV doesn't show, give credit for it. Where an answer contradicts the CV, list that in 'gaps' so the recruiter can check it. " +
+        "Reply with STRICT JSON only, no markdown, no commentary, matching exactly this shape: " +
+        `{"skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string, "phone": string, "location": string}. ` +
+        "score reflects how strong a fit the candidate is for the context given, based only on skills, experience and (if answered) salary and availability fit — never penalize or reward based on job tenure/duration at past employers. " +
+        "Salary: be flexible, only count it against them if it is clearly and substantially over the job's budget. " +
+        "'experience' is a short summary like '6 yrs backend engineering'. 'notice' and 'pay' are short strings taken from the screening answers if given there, else from the CV if stated, else '-'. " +
+        "'phone' is the candidate's phone/mobile number exactly as written on the CV (digits, spaces, dashes, parens as given), or '' if none is present. " +
+        "'location' is the candidate's city and state/region (and country if not obviously the same country as the job) as stated on the CV, e.g. 'Austin, TX', or '' if none is present — never guess a location from an area code or any other indirect clue, only use it if the CV states it directly.";
+
+      const result = await askAI(system, context, pdf, 1200);
+      const score = clampScore(result.score);
+      const patch: Record<string, unknown> = {
         skills: result.skills || [],
         strengths: result.strengths || [],
         gaps: result.gaps || [],
-        ai_score: Math.max(0, Math.min(100, Math.round(result.score || 0))),
+        ai_score: score,
         experience: result.experience || "-",
         notice: result.notice || "-",
         pay: result.pay || "-",
-      }).eq("id", candidateId);
-      return json({ ok: true, result });
+      };
+      // Only fill phone/location from the CV if the candidate doesn't already have one on
+      // file — never let a re-score silently overwrite a value staff typed in themselves.
+      if (result.phone && !candidate.phone) patch.phone = result.phone;
+      if (result.location && !candidate.location) patch.location = result.location;
+      await admin.from("candidates").update(patch).eq("id", candidateId);
+      // The per-job fit shown on the job page and the candidate's Jobs card.
+      if (job && material.linkId) await admin.from("candidate_jobs").update({ fit: score }).eq("id", material.linkId);
+      return json({ ok: true, result, usedScreeningAnswers: material.count > 0 });
     }
 
     // ---------------------------------------------------------------
     // 2) Draft screening questions for a candidate against a specific job.
+    //    Reads the resume too (when there is a PDF), so the skills question
+    //    targets what the CV leaves unclear.
     // ---------------------------------------------------------------
     if (action === "draft_questions") {
       if (!job) return json({ error: "jobId is required to draft screening questions" }, 400);
+      const { pdf } = await loadResume(admin, candidate);
+      const jobQs: string[] = Array.isArray(job.screening_questions) ? job.screening_questions : [];
       const system =
         "You write short candidate screening questions for a recruiter. Reply with STRICT JSON only: " +
-        `{"questions": string[]} with EXACTLY 3 questions: one verifying a specific skill or requirement from the job description against the candidate's background, one asking their salary expectation, and one asking their earliest available start date. Keep each question under 25 words.`;
+        `{"questions": string[]} with EXACTLY 3 questions: one verifying a specific skill or requirement from the job description that the candidate's CV/background does not clearly prove, one asking their salary expectation, and one asking their earliest available start date. ` +
+        "Keep each question under 25 words. Don't repeat anything the job's own screening questions already ask.";
       const content =
-        `Candidate: ${candidate.name}, current/last role: ${candidate.role_title}. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n` +
-        `Job: ${job.role_title} at ${job.client}.\nDescription: ${job.description || "(none given)"}\nSalary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} ${job.currency || "NGN"}/year.`;
-      const result = await askClaude(system, content, 400);
+        `Candidate: ${candidate.name}, current/last role: ${candidate.role_title}. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.` +
+        (pdf ? " Their CV is attached." : " No CV is on file.") + "\n" +
+        jobBlock(job) +
+        (jobQs.length ? `\nThe job's own screening questions (already asked separately):\n${jobQs.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "");
+      const result = await askAI(system, content, pdf, 400);
       const questions = (result.questions || []).slice(0, 3);
       await admin.from("candidates").update({
         screening: { state: "pending", questions, jobId: body.jobId },
@@ -152,30 +244,37 @@ Deno.serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------
-    // 3) Review the candidate's reply and return a fit verdict + reasoning.
+    // 3) Fit verdict from the resume AND all screening answers for the job.
     // ---------------------------------------------------------------
     if (action === "review_answer") {
       const { answerText } = body;
       if (!answerText || !answerText.trim()) return json({ error: "answerText is required" }, 400);
       const screeningJobId = candidate.screening?.jobId || body.jobId;
       let reviewJob = job;
-      if (!reviewJob && screeningJobId) {
-        const { data: j } = await admin.from("jobs").select("*").eq("id", screeningJobId).single();
-        reviewJob = j;
+      if (!reviewJob || (screeningJobId && reviewJob.id !== screeningJobId)) {
+        if (screeningJobId) {
+          const { data: j } = await admin.from("jobs").select("*").eq("id", screeningJobId).single();
+          reviewJob = j || reviewJob;
+        }
       }
       if (!reviewJob) return json({ error: "No job on file for this screening — pass jobId" }, 400);
+
+      const { pdf } = await loadResume(admin, candidate);
+      const material = await screeningMaterial(admin, candidate, reviewJob, false);
       const questions = candidate.screening?.questions || [];
       const system =
-        "You are reviewing a candidate's screening-question reply for a recruiter. Reply with STRICT JSON only: " +
-        `{"verdict": "Perfect fit" | "Possible fit" | "Not a fit", "reasoning": string}. ` +
-        "Judge STRICTLY on three things only: (1) skills vs the job's stated requirements — never consider how long they held past roles/tenure, that is irrelevant, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
-        "'reasoning' is 2-4 sentences a recruiter will read, explicitly touching on skills fit, salary, and start date so they can see why you reached this verdict.";
+        "You are screening a candidate for a recruiter, using BOTH their CV (attached PDF, when present) and their screening answers. Reply with STRICT JSON only: " +
+        `{"verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "reasoning": string}. ` +
+        "Judge STRICTLY on three things only: (1) skills and experience vs the job's stated requirements, from the CV and anything the answers add — never consider how long they held past roles/tenure, that is irrelevant, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
+        "If an answer contradicts the CV, say so. " +
+        "'reasoning' is 2-4 sentences a recruiter will read, explicitly touching on skills fit (saying what the CV shows and what the answers added), salary, and start date so they can see why you reached this verdict.";
       const content =
-        `Job: ${reviewJob.role_title} at ${reviewJob.client}.\nDescription: ${reviewJob.description || "(none given)"}\nBudget: ${reviewJob.min_pay || "?"} - ${reviewJob.max_pay || "?"} ${reviewJob.currency || "NGN"}/year.\n` +
-        `Candidate known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n` +
-        `Screening questions asked: ${questions.join(" | ") || "(none recorded)"}\n` +
-        `Candidate's reply: ${answerText}`;
-      const result = await askClaude(system, content, 500);
+        jobBlock(reviewJob) + "\n\n" +
+        (pdf ? "The candidate's CV is attached.\n" : `No readable PDF CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
+        (material.count ? `\nAnswers to the job's screening questions:\n${material.text}\n` : "") +
+        `\nAI screening questions sent:\n${questions.map((q: string, i: number) => `${i + 1}. ${q}`).join("\n") || "(none recorded)"}\n` +
+        `Candidate's reply:\n${answerText}`;
+      const result = await askAI(system, content, pdf, 700);
       const verdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
       await admin.from("candidates").update({
         screening: {
@@ -184,13 +283,15 @@ Deno.serve(async (req: Request) => {
           qa: [{ q: "Candidate reply", a: answerText.trim() }],
           verdict,
           reasoning: result.reasoning || "",
+          usedResume: !!pdf,
         },
       }).eq("id", candidateId);
+      if (material.linkId && result.score != null) await admin.from("candidate_jobs").update({ fit: clampScore(result.score) }).eq("id", material.linkId);
       return json({ ok: true, verdict, reasoning: result.reasoning });
     }
 
     return json({ error: "Unknown action" }, 400);
   } catch (e) {
-    return json({ error: String(e?.message || e) }, 500);
+    return json({ error: String((e as Error)?.message || e) }, 500);
   }
 });

@@ -1435,7 +1435,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                   {qaState === "sent" && (
                     <>
                       {qaQuestions.length > 0 && <div className="mb-2">{qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}</div>}
-                      <div className="text-sm mb-2" style={{ color: C.ink2 }}>Waiting for {candidate.name.split(" ")[0]}'s reply. Paste it here when it arrives, and AI will review it.</div>
+                      <div className="text-sm mb-2" style={{ color: C.ink2 }}>Waiting for {candidate.name.split(" ")[0]}'s reply. Paste it here when it arrives, and AI will review it together with their resume.</div>
                       <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={3} className="w-full rounded-lg border px-3 py-2 text-sm outline-none mb-2" style={{ borderColor: C.line, background: "#fff" }} />
                       <Btn kind="primary" full onClick={reviewReply} disabled={aiBusy}>{aiBusy ? <>AI is reviewing <InlineDots color="#fff" /></> : "Get AI verdict"}</Btn>
                     </>
@@ -1446,7 +1446,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                         <div className="text-sm font-medium">Verdict</div>
                         {candidate.screening.verdict && <Pill tone={candidate.screening.verdict === "Perfect fit" ? "em" : candidate.screening.verdict === "Possible fit" ? "warn" : "danger"}>{candidate.screening.verdict}</Pill>}
                       </div>
-                      {candidate.screening.reasoning && <div className="text-sm mb-3" style={{ color: C.ink2 }}>{candidate.screening.reasoning}</div>}
+                      {candidate.screening.reasoning && <div className="text-sm mb-1" style={{ color: C.ink2 }}>{candidate.screening.reasoning}</div>}
+                      {candidate.screening.reasoning && <div className="text-xs mb-3" style={{ color: C.ink3 }}>{candidate.screening.usedResume ? "Based on the resume and screening answers." : "Based on screening answers only (no PDF resume on file)."}</div>}
                       {(candidate.screening.qa || []).map((qa, i) => (<div key={i} className="py-2" style={{ borderTop: i ? `1px solid ${C.line}` : `1px solid ${C.line}` }}><div className="text-sm font-medium">{qa.q}</div><div className="text-sm" style={{ color: C.ink2 }}>{qa.a}</div></div>))}
                     </>
                   )}
@@ -1525,17 +1526,28 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
 
 /* Expandable per-link screening answers editor, shown under a candidate-job link when
    that job has screening questions attached. */
-function ScreeningAnswerRow({ link, job, S, toast }) {
+function ScreeningAnswerRow({ link, job, S, toast, candidateId, hasCv }) {
   const [open, setOpen] = useState(false);
   const qs = (job && job.screeningQuestions) || [];
   const [answers, setAnswers] = useState(() => qs.map((_, i) => (link.screeningAnswers && link.screeningAnswers[i]) || ""));
   const [saving, setSaving] = useState(false);
+  const [scoring, setScoring] = useState(false);
   if (!qs.length) return null;
   const answered = (link.screeningAnswers || []).filter((a) => a && a.trim()).length;
   const setA = (i, v) => setAnswers((arr) => arr.map((a, idx) => (idx === i ? v : a)));
   const save = () => {
     setSaving(true);
     S.setScreeningAnswers(link.id, answers).then(() => toast("Screening answers saved")).catch(() => {}).finally(() => setSaving(false));
+  };
+  /* Save, then score this candidate for this job from their resume AND these answers. */
+  const saveAndScore = async () => {
+    setScoring(true);
+    try {
+      await S.setScreeningAnswers(link.id, answers);
+      await S.aiScreen("score_cv", { candidateId, jobId: link.jobId });
+      toast("Scored from resume and screening answers");
+    } catch (e) { toast(e.message || "AI scoring failed"); }
+    setScoring(false);
   };
   return (
     <div className="mt-1.5">
@@ -1557,7 +1569,12 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
               />
             </div>
           ))}
-          <Btn kind="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save answers"}</Btn>
+          <div className="flex gap-2 flex-wrap">
+            <Btn onClick={save} disabled={saving || scoring}>{saving ? "Saving…" : "Save answers"}</Btn>
+            {hasCv
+              ? <Btn kind="primary" onClick={saveAndScore} disabled={saving || scoring}>{scoring ? <>Scoring <InlineDots color="#fff" /></> : "Save and AI-score"}</Btn>
+              : <div className="text-xs self-center" style={{ color: C.ink3 }}>Upload a PDF resume to AI-score with these answers.</div>}
+          </div>
         </div>
       )}
     </div>
@@ -1585,7 +1602,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
               {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
             </div>
           </div>
-          {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} />}
+          {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} candidateId={candidate.id} hasCv={!!candidate.cv} />}
         </div>
       ); })}
       {available.length > 0 && (
