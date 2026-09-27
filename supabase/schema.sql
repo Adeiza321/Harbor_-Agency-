@@ -56,7 +56,7 @@ create table public.candidates (
   location text not null default '',
   recruiter_id uuid references public.profiles(id) on delete set null,
   status text not null default 'In review'
-    check (status in ('In review','With client','Interview','Active file','Placed','Rejected')),
+    check (status in ('In review','With client','Interview','Active file','Placed','Rejected','Hired')),
   ai_score int check (ai_score between 0 and 100),
   email text,
   email_verified boolean not null default false,
@@ -659,3 +659,28 @@ drop trigger if exists jobs_guard_status on public.jobs;
 create trigger jobs_guard_status before update on public.jobs
   for each row execute function public.guard_job_status();
 revoke execute on function public.guard_job_status() from public, anon, authenticated;
+
+-- =====================================================================
+-- A recruiter no longer moves a submitted candidate through the pipeline
+-- (Hold/Not a fit/Reject/Forward/Mark placed) — that's Rec Ops/Admin's
+-- call. The one thing they can still do is flag a candidate as Hired, a
+-- lightweight signal that doesn't create a placement or billing entry;
+-- Rec Ops/Admin then confirms it with the existing Mark placed flow,
+-- which is what actually creates the placement.
+-- =====================================================================
+alter table public.candidates drop constraint if exists candidates_status_check;
+alter table public.candidates add constraint candidates_status_check
+  check (status in ('In review','With client','Interview','Active file','Placed','Rejected','Hired'));
+
+create or replace function public.guard_candidate_status() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.status is distinct from old.status and not public.is_staff() and new.status <> 'Hired' then
+    raise exception 'Recruiters can only flag a candidate as Hired — Rec Ops or an Admin confirms the placement' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+drop trigger if exists candidates_guard_status on public.candidates;
+create trigger candidates_guard_status before update on public.candidates
+  for each row execute function public.guard_candidate_status();
+revoke execute on function public.guard_candidate_status() from public, anon, authenticated;

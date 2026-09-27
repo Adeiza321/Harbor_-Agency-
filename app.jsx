@@ -23,7 +23,7 @@ const TONE = {
 };
 const STATUS_TONE = {
   Interview: "info", "With client": "info", "In review": "warn",
-  "Active file": "neutral", Placed: "em", Rejected: "danger",
+  "Active file": "neutral", Placed: "em", Rejected: "danger", Hired: "em",
   Open: "info", Engaged: "em", Closing: "warn", Closed: "neutral",
   Guarantee: "warn", Ready: "em", Invoiced: "info", Paid: "em", Fallout: "danger",
   Sent: "em", Scheduled: "info", Draft: "neutral", Live: "em",
@@ -1108,7 +1108,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
     (roleF === "All" || c.role === roleF) && (sourceF === "All" || c.source === sourceF) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
   const activeFilterCount = [recF !== "All", minAi > 0, roleF !== "All", sourceF !== "All", !!dateFrom, !!dateTo].filter(Boolean).length;
-  const tabs = ["All", "In review", "With client", "Interview", "Active file", "Placed", "Rejected"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
+  const tabs = ["All", "In review", "With client", "Interview", "Active file", "Hired", "Placed", "Rejected"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -1251,6 +1251,9 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     } else if (opt === "Approve, forward to client") { setStatus("With client"); toast("Forwarded to client"); }
     else if (opt === "Reject") { setStatus("Rejected"); toast("Candidate rejected"); }
     else if (opt === "Mark placed") { openPlaced(); }
+    // A recruiter's only status action: flags the candidate for Rec Ops/Admin to confirm.
+    // Doesn't create a placement or billing entry — that still only happens via Mark placed.
+    else if (opt === "Hired") { setStatus("Hired"); toast("Marked Hired — Rec Ops or an Admin will confirm the placement"); }
     else { setStatus("In review"); toast("Status set to hold"); }
   };
   const markPlaced = async () => {
@@ -1353,16 +1356,22 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <Btn icon={MessageSquare} onClick={() => setPanel("msg")} className="flex-1 sm:flex-none justify-center">Message</Btn>
               {S.role !== "recruiter" && <Btn onClick={() => setPanel("fwd")} className="flex-1 sm:flex-none justify-center">Forward</Btn>}
               {S.role === "admin" && <Btn icon={X} onClick={() => setDelOpen(true)} className="flex-1 sm:flex-none justify-center">Delete</Btn>}
+              {S.role === "recruiter" ? (
+                !["Hired", "Placed", "Rejected"].includes(status) && (
+                  <Btn kind="primary" className="flex-1 sm:flex-none justify-center" onClick={() => doStatus("Hired")}>Mark hired</Btn>
+                )
+              ) : (
               <div className="relative flex-1 sm:flex-none">
                 <Btn kind="primary" className="w-full justify-center" onClick={() => setMenuOpen((m) => !m)}>Update status</Btn>
                 {menuOpen && (
                   <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-56 py-1" style={{ background: "#fff", borderColor: C.line }}>
-                    {["Hold", ...(S.role !== "recruiter" ? ["Approve, forward to client"] : []), "Not a fit for this role", "Mark placed", "Reject"].map((o) => (
+                    {["Hold", "Approve, forward to client", "Not a fit for this role", "Mark placed", "Reject"].map((o) => (
                       <button key={o} onClick={() => doStatus(o)} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: o === "Reject" ? C.dangerFg : C.ink }}>{o}</button>
                     ))}
                   </div>
                 )}
               </div>
+              )}
             </div>
             <div className="flex flex-wrap gap-2 mb-4">
               <StatusPill status={status} />
