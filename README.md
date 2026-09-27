@@ -1,13 +1,13 @@
 # Harbor
 
-A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin), backed by Supabase (Postgres + Auth + Storage + Edge Functions) and Anthropic for CV scoring, screening questions, fit verdicts and job-ad rewriting.
+A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin), backed by Supabase (Postgres + Auth + Storage + Edge Functions) and an AI provider (Gemini for now, Anthropic as the fallback) for CV scoring, screening questions, fit verdicts and job-ad rewriting.
 
 ## Structure
 
 - `app.jsx` — the canonical React source for the whole app (single file). Built into a self-contained `harbor.html`.
 - `build/` — the build: `build.mjs` (esbuild bundle → `harbor.html`), `main.jsx` (entry), `lucide-shim.js` (maps the `lucide-react` icon names to `react-icons/lu`).
 - `supabase/schema.sql` — the database schema (tables, RLS policies, storage bucket, candidate-portal function). Already applied to the live project; kept here as the source of truth.
-- `supabase/functions/ai-screen/index.ts` — CV scoring, screening-question drafting and the post-screening fit verdict. Reads resumes from the `resumes` bucket.
+- `supabase/functions/ai-screen/index.ts` — CV scoring, screening-question drafting and the post-screening fit verdict. Every score and verdict uses both the resume (from the `resumes` bucket; PDF, Word .docx/.doc, OpenDocument, RTF, text or a photo/scan — read by `resume.ts`) and the candidate's screening answers (the job's own questions in `candidate_jobs.screening_answers` plus the AI-screening reply). Scoring against a job also sets that job link's fit.
 - `supabase/functions/job-redraft/index.ts` — the "AI redraft for SEO" button on Post a job: rewrites the job ad, snippet and search keywords.
 
 ## Features added in the second workspace
@@ -20,15 +20,23 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 ## Building
 
 ```
-npm install     # once: react, react-dom, react-icons, esbuild
-npm run build   # writes harbor.html
+Entry point `build/main.jsx`; `lucide-react` imports in `app.jsx` resolve to `build/lucide-shim.js` (react-icons/lu). Any bundler works, e.g. with bun:
+
+```
+sed 's#from "lucide-react";#from "./lucide-shim.js";#' app.jsx > build/app.jsx
+bun build build/main.jsx --minify --target=browser --format=iife --define 'process.env.NODE_ENV="production"' --outfile=build/bundle.js
 ```
 
-`harbor.html` is a build output and is not committed. Open it directly in a browser. Only the Tailwind CDN script loads from the internet.
+then inline the bundle into the page (escape `</script` as `<\/script`).
+```
+
+`index.html` in this repo is the latest build (same as `harbor.html`). Open it directly in a browser. Only the Tailwind CDN script loads from the internet.
 
 ## Backend
 
-Supabase project ref: `acjmsihvvupqiikxckho`. Secrets (`ANTHROPIC_API_KEY`, service role key) live only as Supabase Edge Function secrets — never in this repo. Both AI features need `ANTHROPIC_API_KEY` set under Edge Functions → Secrets.
+Supabase project ref: `acjmsihvvupqiikxckho`. Secrets live only as Supabase Edge Function secrets (Edge Functions → Secrets) — never in this repo.
+
+AI provider: both AI functions use **Gemini** when `GEMINI_API_KEY` is set (model from `GEMINI_MODEL`, default `gemini-3.8-flash`), and fall back to Anthropic (`ANTHROPIC_API_KEY`) when it isn't. To switch back to Claude, delete the `GEMINI_API_KEY` secret; no code change needed. Use a Gemini key on a billed project for live candidate data: Google's free tier may use prompts (resumes) to improve its products.
 
 ## Working across two workspaces
 

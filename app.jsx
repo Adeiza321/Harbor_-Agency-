@@ -91,6 +91,10 @@ function suggestBilling(job, candidatePay) {
   const incentiveCurrency = job.incentiveType === "flat" ? (job.incentiveCurrency || "NGN") : feeCurrency;
   return { fee: fee || "", feeCurrency, incentive: incentive || "", incentiveCurrency };
 }
+/* Resume formats the AI reads (see supabase/functions/ai-screen/resume.ts). */
+const RESUME_ACCEPT = ".pdf,.doc,.docx,.odt,.rtf,.txt,.jpg,.jpeg,.png,.webp,.heic,.heif";
+const RESUME_TYPES = { pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", odt: "application/vnd.oasis.opendocument.text", rtf: "application/rtf", txt: "text/plain", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heif" };
+const resumeMime = (name, fallback) => RESUME_TYPES[((name.match(/\.([A-Za-z0-9]+)$/) || [])[1] || "").toLowerCase()] || fallback || "application/octet-stream";
 const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
 /* A Google Calendar "quick add" link — no OAuth needed, just opens their calendar pre-filled. */
 const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent("Interview: " + candidateName + " – " + job.role) + "&details=" + encodeURIComponent("Interview for " + job.role + " at " + job.client + " with " + candidateName + ".");
@@ -1224,7 +1228,6 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   const attachCv = async (file) => {
     setAiBusy(true); setAiErr("");
     try { await S.uploadResume(candidate.id, file); } catch (e) { setAiErr(e.message); setAiBusy(false); return; }
-    if (!/\.pdf$/i.test(file.name)) { toast("Resume saved. AI scoring reads PDFs only."); setAiBusy(false); return; }
     try { await S.aiScreen("score_cv", { candidateId: candidate.id, jobId: draftJobId }); toast("Resume saved and scored"); }
     catch (e) { setAiErr("Resume saved, but AI scoring failed: " + e.message); }
     setAiBusy(false);
@@ -1404,9 +1407,9 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                   {candidate.gaps.length > 0 && (<><div className="text-xs font-semibold mb-1.5 mt-3" style={{ color: C.ink3 }}>GAPS</div>{candidate.gaps.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
                   <div className="rounded-xl p-3 mt-3" style={{ background: "#fff" }}>
                     {candidate.cv ? (
-                      <><div className="flex items-center justify-between gap-2 text-sm"><span className="truncate" style={{ color: C.ink2 }}>{candidate.cvName || "CV on file"}</span><div className="flex gap-1.5 shrink-0"><Btn onClick={() => S.openResume(candidate.cv)} className="text-xs px-3 py-1.5">View</Btn><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
+                      <><div className="flex items-center justify-between gap-2 text-sm"><span className="truncate" style={{ color: C.ink2 }}>{candidate.cvName || "CV on file"}</span><div className="flex gap-1.5 shrink-0"><Btn onClick={() => S.openResume(candidate.cv)} className="text-xs px-3 py-1.5">View</Btn><Btn onClick={rescoreCv} disabled={aiBusy} className="text-xs px-3 py-1.5">{aiBusy ? <>Scoring <InlineDots color="#fff" /></> : "Re-score"}</Btn></div></div><label className="text-xs mt-2 inline-block cursor-pointer" style={{ color: C.infoFg }}>Replace CV<input type="file" accept={RESUME_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
                     ) : (
-                      <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Upload resume (PDF is AI-scored)<input type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
+                      <><div className="text-sm font-medium mb-1">No CV on file</div><label className="inline-flex items-center gap-2 text-xs px-3 py-2 rounded-lg border cursor-pointer" style={{ borderColor: C.line }}><Upload size={13} />Upload resume (AI-scored)<input type="file" accept={RESUME_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files[0]; e.target.value = ""; if (f) attachCv(f); }} /></label></>
                     )}
                   </div>
                 </div>
@@ -1435,7 +1438,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                   {qaState === "sent" && (
                     <>
                       {qaQuestions.length > 0 && <div className="mb-2">{qaQuestions.map((q, i) => <div key={i} className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>)}</div>}
-                      <div className="text-sm mb-2" style={{ color: C.ink2 }}>Waiting for {candidate.name.split(" ")[0]}'s reply. Paste it here when it arrives, and AI will review it.</div>
+                      <div className="text-sm mb-2" style={{ color: C.ink2 }}>Waiting for {candidate.name.split(" ")[0]}'s reply. Paste it here when it arrives, and AI will review it together with their resume.</div>
                       <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={3} className="w-full rounded-lg border px-3 py-2 text-sm outline-none mb-2" style={{ borderColor: C.line, background: "#fff" }} />
                       <Btn kind="primary" full onClick={reviewReply} disabled={aiBusy}>{aiBusy ? <>AI is reviewing <InlineDots color="#fff" /></> : "Get AI verdict"}</Btn>
                     </>
@@ -1446,7 +1449,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                         <div className="text-sm font-medium">Verdict</div>
                         {candidate.screening.verdict && <Pill tone={candidate.screening.verdict === "Perfect fit" ? "em" : candidate.screening.verdict === "Possible fit" ? "warn" : "danger"}>{candidate.screening.verdict}</Pill>}
                       </div>
-                      {candidate.screening.reasoning && <div className="text-sm mb-3" style={{ color: C.ink2 }}>{candidate.screening.reasoning}</div>}
+                      {candidate.screening.reasoning && <div className="text-sm mb-1" style={{ color: C.ink2 }}>{candidate.screening.reasoning}</div>}
+                      {candidate.screening.reasoning && <div className="text-xs mb-3" style={{ color: C.ink3 }}>{candidate.screening.usedResume ? "Based on the resume and screening answers." : "Based on screening answers only (no readable resume on file)."}</div>}
                       {(candidate.screening.qa || []).map((qa, i) => (<div key={i} className="py-2" style={{ borderTop: i ? `1px solid ${C.line}` : `1px solid ${C.line}` }}><div className="text-sm font-medium">{qa.q}</div><div className="text-sm" style={{ color: C.ink2 }}>{qa.a}</div></div>))}
                     </>
                   )}
@@ -1525,17 +1529,28 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
 
 /* Expandable per-link screening answers editor, shown under a candidate-job link when
    that job has screening questions attached. */
-function ScreeningAnswerRow({ link, job, S, toast }) {
+function ScreeningAnswerRow({ link, job, S, toast, candidateId, hasCv }) {
   const [open, setOpen] = useState(false);
   const qs = (job && job.screeningQuestions) || [];
   const [answers, setAnswers] = useState(() => qs.map((_, i) => (link.screeningAnswers && link.screeningAnswers[i]) || ""));
   const [saving, setSaving] = useState(false);
+  const [scoring, setScoring] = useState(false);
   if (!qs.length) return null;
   const answered = (link.screeningAnswers || []).filter((a) => a && a.trim()).length;
   const setA = (i, v) => setAnswers((arr) => arr.map((a, idx) => (idx === i ? v : a)));
   const save = () => {
     setSaving(true);
     S.setScreeningAnswers(link.id, answers).then(() => toast("Screening answers saved")).catch(() => {}).finally(() => setSaving(false));
+  };
+  /* Save, then score this candidate for this job from their resume AND these answers. */
+  const saveAndScore = async () => {
+    setScoring(true);
+    try {
+      await S.setScreeningAnswers(link.id, answers);
+      await S.aiScreen("score_cv", { candidateId, jobId: link.jobId });
+      toast("Scored from resume and screening answers");
+    } catch (e) { toast(e.message || "AI scoring failed"); }
+    setScoring(false);
   };
   return (
     <div className="mt-1.5">
@@ -1557,7 +1572,12 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
               />
             </div>
           ))}
-          <Btn kind="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save answers"}</Btn>
+          <div className="flex gap-2 flex-wrap">
+            <Btn onClick={save} disabled={saving || scoring}>{saving ? "Saving…" : "Save answers"}</Btn>
+            {hasCv
+              ? <Btn kind="primary" onClick={saveAndScore} disabled={saving || scoring}>{scoring ? <>Scoring <InlineDots color="#fff" /></> : "Save and AI-score"}</Btn>
+              : <div className="text-xs self-center" style={{ color: C.ink3 }}>Upload a resume to AI-score with these answers.</div>}
+          </div>
         </div>
       )}
     </div>
@@ -1585,7 +1605,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
               {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
             </div>
           </div>
-          {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} />}
+          {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} candidateId={candidate.id} hasCv={!!candidate.cv} />}
         </div>
       ); })}
       {available.length > 0 && (
@@ -2670,11 +2690,12 @@ function UploadCandidates({ setPage, toast, S }) {
   const upload = async () => {
     if (!files.length) { toast("Choose a file first"); return; }
     setBusy(true);
-    const pdfs = files.filter((f) => /\.pdf$/i.test(f.name));
-    const others = files.filter((f) => !/\.pdf$/i.test(f.name));
+    // Every file except a spreadsheet is treated as a resume: saved, then read and scored by AI.
+    const pdfs = files.filter((f) => !/\.csv$/i.test(f.name));
+    const others = files.filter((f) => /\.csv$/i.test(f.name));
     let count = 0, aiFailures = 0;
 
-    // CSV rows and non-PDF files: added as before, no AI score yet.
+    // CSV rows: added as before, no AI score yet.
     const added = [];
     for (const f of others) {
       if (/\.csv$/i.test(f.name)) {
@@ -2688,7 +2709,7 @@ function UploadCandidates({ setPage, toast, S }) {
       count += added.length;
     }
 
-    // PDFs: inserted first, then handed to AI for real scoring (skills, strengths, gaps, ai_score).
+    // Resumes (PDF, Word, text, images): inserted first, then handed to AI for real scoring.
     for (const f of pdfs) {
       setStatus("Scoring " + f.name + "…");
       const c = newCandidate({ name: f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "), role: "Unspecified", location: "Lagos, Nigeria", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, timeline: [{ t: "Uploaded by " + S.me.first, d: todayStr(), done: true }] });
@@ -2708,13 +2729,13 @@ function UploadCandidates({ setPage, toast, S }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <button onClick={() => setPage("candidates")} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Candidates</button>
-      <SectionTitle size="text-3xl md:text-4xl" title="Upload candidates" sub="Add a PDF CV (AI reads and scores it), a spreadsheet, or other files." />
+      <SectionTitle size="text-3xl md:text-4xl" title="Upload candidates" sub="Add resumes (AI reads and scores them) or a CSV spreadsheet of candidates." />
       <Card className="md:max-w-xl">
         <label className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed py-10 cursor-pointer text-center" style={{ borderColor: "#D5D2C7", background: "#FAF8F3" }}>
           <Upload size={22} color={C.ink2} />
           <div className="text-sm font-medium">{file || "Choose files"}</div>
-          <div className="text-xs" style={{ color: C.ink3 }}>PDF (AI-scored), DOCX or CSV</div>
-          <input type="file" multiple className="hidden" onChange={(e) => { setFiles(Array.from(e.target.files)); setFile(e.target.files.length ? `${e.target.files.length} file(s) selected` : ""); }} />
+          <div className="text-xs" style={{ color: C.ink3 }}>Resumes: PDF, Word, text or photo (AI-scored) · or CSV</div>
+          <input type="file" multiple accept={RESUME_ACCEPT + ",.csv"} className="hidden" onChange={(e) => { setFiles(Array.from(e.target.files)); setFile(e.target.files.length ? `${e.target.files.length} file(s) selected` : ""); }} />
         </label>
         <div className="mt-4"><Btn kind="primary" full onClick={upload} disabled={busy}>{busy ? <>{status || "Uploading"} <InlineDots color="#fff" /></> : "Upload and rate"}</Btn></div>
       </Card>
@@ -3030,7 +3051,7 @@ export default function App() {
     /* Resumes live in the private `resumes` bucket at <candidateId>/<file>. ai-screen reads the same file. */
     uploadResume: async (candidateId, file) => {
       const path = candidateId + "/" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
-      const r = await fetch(SB_URL + "/storage/v1/object/resumes/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": file.type || "application/pdf", "x-upsert": "true" }, body: file });
+      const r = await fetch(SB_URL + "/storage/v1/object/resumes/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": resumeMime(file.name, file.type), "x-upsert": "true" }, body: file });
       if (!r.ok) { const t = await r.text(); toast("Upload failed: " + t); throw new Error(t); }
       await call("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", body: { resume_path: path, resume_name: file.name } });
       return path;

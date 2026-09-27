@@ -416,6 +416,12 @@ insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_typ
 values ('resumes','resumes', false, 10485760,
   array['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document'])
 on conflict (id) do nothing;
+-- AI reads every resume format below (ai-screen/resume.ts), so the bucket accepts them all.
+update storage.buckets set allowed_mime_types = array[
+  'application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.oasis.opendocument.text','application/rtf','text/rtf','text/plain','text/markdown',
+  'image/jpeg','image/png','image/webp','image/heic','image/heif']
+where id = 'resumes';
 
 create policy resumes_read on storage.objects for select to authenticated using (
   bucket_id = 'resumes' and (is_staff() or exists (

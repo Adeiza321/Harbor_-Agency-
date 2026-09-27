@@ -2,7 +2,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 // Rewrites a job ad for search (Google for Jobs, LinkedIn, job boards).
 // Called from the "AI redraft for SEO" button on Post a job.
-// Needs the ANTHROPIC_API_KEY secret on the Supabase project.
+// Uses Gemini when the GEMINI_API_KEY secret is set (model from GEMINI_MODEL, default
+// gemini-3.8-flash); otherwise Anthropic via ANTHROPIC_API_KEY.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -18,8 +19,9 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
 
+  const geminiKey = Deno.env.get("GEMINI_API_KEY");
   const key = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!key) return json({ error: "AI is not set up yet: add an ANTHROPIC_API_KEY secret to this Supabase project." }, 503);
+  if (!geminiKey && !key) return json({ error: "AI is not set up yet: add a GEMINI_API_KEY secret to this Supabase project." }, 503);
 
   let input: Record<string, unknown>;
   try { input = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
@@ -51,20 +53,36 @@ Rules:
 
 Reply with ONLY a JSON object, no other text: {"title": string, "description": string, "meta_description": string, "keywords": string[]}`;
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({
-      model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5",
-      max_tokens: 3000,
-      system,
-      messages: [{ role: "user", content: facts }],
-    }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) return json({ error: "AI request failed: " + (data?.error?.message || r.statusText) }, 502);
-
-  const text = (data.content || []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("");
+  let text = "";
+  if (geminiKey) {
+    const model = Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash";
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": geminiKey, "content-type": "application/json" },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: system }] },
+        contents: [{ role: "user", parts: [{ text: facts }] }],
+        generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 12000 },
+      }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return json({ error: "AI request failed: " + (data?.error?.message || r.statusText) }, 502);
+    text = (data.candidates?.[0]?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || "").join("");
+  } else {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key!, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({
+        model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5",
+        max_tokens: 3000,
+        system,
+        messages: [{ role: "user", content: facts }],
+      }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return json({ error: "AI request failed: " + (data?.error?.message || r.statusText) }, 502);
+    text = (data.content || []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("");
+  }
   const m = text.match(/\{[\s\S]*\}/);
   try {
     const out = JSON.parse(m ? m[0] : text);
