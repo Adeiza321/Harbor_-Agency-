@@ -87,7 +87,7 @@ const CURRENCIES = ["NGN", "USD", "GBP", "EUR", "CAD", "AUD", "ZAR", "KES", "GHS
 /* Picking a hiring country pre-selects its usual currency (still overridable). */
 const COUNTRY_CURRENCY = { Nigeria: "NGN", "United States": "USD", "United Kingdom": "GBP", Canada: "CAD", Ghana: "GHS", Kenya: "KES", "South Africa": "ZAR", "United Arab Emirates": "AED", Germany: "EUR", Ireland: "EUR", Netherlands: "EUR", France: "EUR", India: "INR", Australia: "AUD", "Remote \u2013 worldwide": "" };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status });
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null });
 
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
@@ -263,8 +263,9 @@ function Pill({ children, tone = "neutral" }) {
 function StatusPill({ status }) {
   return <Pill tone={STATUS_TONE[status] || "neutral"}>{status}</Pill>;
 }
-function Avatar({ init, tone = "neutral", size = 36 }) {
+function Avatar({ init, tone = "neutral", size = 36, src }) {
   const t = TONE[tone] || TONE.neutral;
+  if (src) return <img src={src} alt="" className="rounded-full object-cover shrink-0" style={{ width: size, height: size }} />;
   return (
     <div className="flex items-center justify-center rounded-full font-semibold shrink-0" style={{ width: size, height: size, background: t.bg, color: t.fg, fontSize: size > 30 ? 12 : 10 }}>
       {init}
@@ -509,6 +510,76 @@ const ROLE_LABEL = { recops: "Rec Ops manager", recruiter: "Recruiter", admin: "
 const ROLE_NAME = { recops: "Maya Okoye", recruiter: "Adaeze Nwosu", admin: "Ade Balogun" };
 const ROLE_INIT = { recops: "MO", recruiter: "AN", admin: "AB" };
 
+/* The logged-in user's own account: name, email, phone, role, and a profile picture. */
+function MyProfilePage({ S, toast, onBack }) {
+  const me = S.me;
+  const [name, setName] = useState(me.name);
+  const [phone, setPhone] = useState(me.phone || "");
+  const [busy, setBusy] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const fileRef = React.useRef(null);
+  const dirty = name.trim() !== me.name || phone.trim() !== (me.phone || "");
+  const save = () => {
+    if (!name.trim()) { toast("Add your name"); return; }
+    setBusy(true);
+    S.updateMyProfile({ name: name.trim(), phone: phone.trim() }).then(() => toast("Profile updated")).catch(() => {}).finally(() => setBusy(false));
+  };
+  const pickAvatar = () => fileRef.current && fileRef.current.click();
+  const onAvatarFile = (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!f.type.startsWith("image/")) { toast("Pick an image file"); return; }
+    setAvatarBusy(true);
+    S.uploadAvatar(f).then(() => toast("Profile picture updated")).catch(() => {}).finally(() => setAvatarBusy(false));
+  };
+  return (
+    <div className="flex flex-col gap-5 md:gap-6 max-w-2xl">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
+      <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
+      <Card>
+        <div className="flex items-center gap-4 mb-6">
+          <div className="relative">
+            <Avatar init={me.init} src={me.avatarUrl} tone="em" size={72} />
+            <button onClick={pickAvatar} disabled={avatarBusy} className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center border-2" style={{ background: C.em, borderColor: "#fff" }} title="Change profile picture">
+              <Pencil size={12} color="#fff" />
+            </button>
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFile} />
+          </div>
+          <div>
+            <div className="text-lg font-medium">{me.name}</div>
+            <div className="mt-1"><Pill tone="em">{me.label}</Pill></div>
+            {avatarBusy && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Uploading <InlineDots /></div>}
+          </div>
+        </div>
+        <div className="flex flex-col gap-4">
+          <div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          </div>
+          <div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
+            <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas }}>
+              <Mail size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{me.email}</span>
+            </div>
+            <div className="text-xs mt-1" style={{ color: C.ink3 }}>Contact an admin to change the email on your account.</div>
+          </div>
+          <div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone number</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Not set" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          </div>
+          <div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label>
+            <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas, color: C.ink2 }}>{me.label}</div>
+            <div className="text-xs mt-1" style={{ color: C.ink3 }}>Only an admin can change your role.</div>
+          </div>
+          <Btn kind="primary" full disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 /* Sidebar (desktop) + Mobile bottom nav + More sheet */
 function NavList({ items, page, setPage, dark, onNavigate }) {
   return (
@@ -564,15 +635,15 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
           <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: "#A9BBB1", border: "1px solid rgba(255,255,255,0.12)" }}>Sign out</button>
         </div>
       )}
-      <div className="px-4 pb-5 pt-2 flex items-center gap-2.5">
-        <Avatar init={me.init} tone="em" />
+      <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full" style={{ background: page === "myProfile" ? "rgba(255,255,255,0.07)" : "transparent" }} title="My profile">
+        <Avatar init={me.init} src={me.avatarUrl} tone="em" />
         {!collapsed && (
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-white truncate">{me.name}</div>
             <div className="text-xs truncate" style={{ color: "#8FA69A" }}>{me.label}</div>
           </div>
         )}
-      </div>
+      </button>
     </div>
   );
 }
@@ -612,7 +683,10 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut }) {
         <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: C.line }} />
         <NavList items={[...items, ...extra]} page={page} setPage={setPage} onNavigate={onClose} />
         <div className="pt-3 mt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-          <div className="text-xs px-3 pb-1" style={{ color: C.ink3 }}>{me.name} \u00b7 {me.label}</div>
+          <button onClick={() => { setPage("myProfile"); onClose(); }} className="w-full flex items-center gap-2.5 text-left rounded-xl px-3 py-2.5">
+            <Avatar init={me.init} src={me.avatarUrl} tone="em" size={32} />
+            <div className="min-w-0"><div className="text-sm font-medium truncate">{me.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{me.label}</div></div>
+          </button>
           <button onClick={() => { onSignOut(); onClose(); }} className="w-full text-left text-sm rounded-xl px-3 py-2.5" style={{ color: C.dangerFg }}>Sign out</button>
         </div>
       </div>
@@ -2476,7 +2550,7 @@ export default function App() {
   const role = me.roleKey;
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
-  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id };
+  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey };
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => toast(e.message)).finally(() => setRefreshing(false)); };
   const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { toast(e.message); throw e; } };
 
@@ -2616,6 +2690,24 @@ export default function App() {
       const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
     },
+    /* Your own account: name/phone update straight to your profiles row, avatar via the public `avatars` bucket. */
+    updateMyProfile: (patch) => {
+      const body = {}; if ("name" in patch) body.full_name = patch.name; if ("phone" in patch) body.phone = patch.phone;
+      setMe((m) => ({ ...m, ...("name" in patch ? { name: patch.name } : {}), ...("phone" in patch ? { phone: patch.phone } : {}) }));
+      return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body })
+        .then(reload)
+        .catch((e) => { toast(e.message); reload(); throw e; });
+    },
+    uploadAvatar: async (file) => {
+      const path = session.uid + "/" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
+      const r = await fetch(SB_URL + "/storage/v1/object/avatars/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": file.type || "image/png", "x-upsert": "true" }, body: file });
+      if (!r.ok) { const t = await r.text(); toast("Upload failed: " + t); throw new Error(t); }
+      const url = SB_URL + "/storage/v1/object/public/avatars/" + path;
+      setMe((m) => ({ ...m, avatarUrl: url }));
+      await sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { avatar_url: url } }).catch((e) => toast(e.message));
+      reload();
+      return url;
+    },
   };
   const onPromote = (job) => setPromote({ open: true, job });
   const pendingQ = data.cands.filter((c) => c.screening.state === "pending").length;
@@ -2641,6 +2733,7 @@ export default function App() {
   else if (page === "ads") content = <AdsPage role={role} toast={toast} onPromote={onPromote} S={S} />;
   else if (page === "users") content = role === "admin" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "settings") content = role === "admin" ? <SettingsPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
+  else if (page === "myProfile") content = <MyProfilePage S={S} toast={toast} onBack={() => setPage("overview")} />;
   else content = <OverviewRecOps S={S} />;
 
   return (

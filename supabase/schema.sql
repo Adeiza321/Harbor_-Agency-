@@ -13,6 +13,8 @@ create table public.profiles (
   role text not null default 'recruiter' check (role in ('admin','recops','recruiter')),
   level text not null default 'Recruiter',
   status text not null default 'Active' check (status in ('Active','Invited','Disabled')),
+  phone text,
+  avatar_url text,
   created_at timestamptz not null default now()
 );
 
@@ -203,10 +205,27 @@ alter table public.campaigns enable row level security;
 alter table public.ad_campaigns enable row level security;
 alter table public.agency_settings enable row level security;
 
--- profiles: everyone signed in can see names; only admins change roles
+-- profiles: everyone signed in can see names; only admins change roles.
+-- Everyone can also update their own row (name/phone/avatar_url) via profiles_self_update below;
+-- a trigger reverts role/level/status on that path so self-service can't grant admin.
 create policy profiles_read on public.profiles for select to authenticated using (true);
 create policy profiles_admin_write on public.profiles for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
+create policy profiles_self_update on public.profiles for update to authenticated
+  using (id = auth.uid()) with check (id = auth.uid());
+
+create or replace function public.protect_profile_privileged_fields() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_admin() then
+    new.role := old.role;
+    new.level := old.level;
+    new.status := old.status;
+  end if;
+  return new;
+end $$;
+create trigger profiles_protect_privileged before update on public.profiles
+  for each row execute function public.protect_profile_privileged_fields();
 
 -- candidates: staff see all, recruiters see only their own
 create policy cand_read on public.candidates for select to authenticated
@@ -350,6 +369,24 @@ create policy resumes_update on storage.objects for update to authenticated usin
     select 1 from public.candidates c where c.id::text = (storage.foldername(name))[1] and c.recruiter_id = auth.uid())));
 create policy resumes_delete on storage.objects for delete to authenticated using (
   bucket_id = 'resumes' and is_staff());
+
+-- =====================================================================
+-- Profile pictures: one public bucket, files at avatars/<user_id>/<file>.
+-- Public read so the app can show them with a plain URL; only the owner
+-- (or an admin) can write their own file.
+-- (Migration: add_profile_self_service_fields_and_avatars)
+-- =====================================================================
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('avatars', 'avatars', true, 5242880, array['image/png','image/jpeg','image/webp','image/gif'])
+on conflict (id) do nothing;
+
+create policy avatars_read on storage.objects for select to public using (bucket_id = 'avatars');
+create policy avatars_insert on storage.objects for insert to authenticated with check (
+  bucket_id = 'avatars' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+create policy avatars_update on storage.objects for update to authenticated using (
+  bucket_id = 'avatars' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+create policy avatars_delete on storage.objects for delete to authenticated using (
+  bucket_id = 'avatars' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
 
 -- =====================================================================
 -- Jobs: salary currency, hiring country, AI SEO data.
