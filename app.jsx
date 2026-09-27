@@ -58,6 +58,15 @@ const ago = (d) => { const m = (Date.now() - new Date(d)) / 60000; return m < 60
 // Formats a span of milliseconds as a short duration ("42m", "3.2h", "6.5d") for the job engagement log.
 const formatDuration = (ms) => { const mins = ms / 60000; if (mins < 60) return Math.max(1, Math.round(mins)) + "m"; const hrs = mins / 60; if (hrs < 24) return hrs.toFixed(1) + "h"; return (hrs / 24).toFixed(1) + "d"; };
 const naira = (n) => "\u20A6" + Number(n || 0).toLocaleString("en-NG");
+/* Builds a CSV client-side and triggers a browser download \u2014 no server round-trip needed. */
+function downloadCsv(filename, headers, rows) {
+  const esc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = [headers.join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 // Sums placement fees per currency (mixed-currency totals can't be added together) and
 // joins them for display, e.g. "\u20A64,000,000" or "\u20A64,000,000 + $1,200" when currencies differ.
 const sumByCurrency = (placements, numKey, curKey) => {
@@ -83,11 +92,14 @@ function suggestBilling(job, candidatePay) {
   return { fee: fee || "", feeCurrency, incentive: incentive || "", incentiveCurrency };
 }
 const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
+/* A Google Calendar "quick add" link — no OAuth needed, just opens their calendar pre-filled. */
+const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent("Interview: " + candidateName + " – " + job.role) + "&details=" + encodeURIComponent("Interview for " + job.role + " at " + job.client + " with " + candidateName + ".");
 const CURRENCIES = ["NGN", "USD", "GBP", "EUR", "CAD", "AUD", "ZAR", "KES", "GHS", "AED", "INR"];
 /* Picking a hiring country pre-selects its usual currency (still overridable). */
 const COUNTRY_CURRENCY = { Nigeria: "NGN", "United States": "USD", "United Kingdom": "GBP", Canada: "CAD", Ghana: "GHS", Kenya: "KES", "South Africa": "ZAR", "United Arab Emirates": "AED", Germany: "EUR", Ireland: "EUR", Netherlands: "EUR", France: "EUR", India: "INR", Australia: "AUD", "Remote \u2013 worldwide": "" };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null });
+const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true };
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) } });
 
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
@@ -96,7 +108,7 @@ function mapAll(d) {
     id: c.id, name: c.name, role: c.role_title, location: c.location, recruiterId: c.recruiter_id,
     recruiter: c.recruiter_id ? pname(c.recruiter_id) : null, recruiterInit: c.recruiter_id ? initialsOf(pname(c.recruiter_id)) : "",
     status: c.status, ai: c.ai_score || 0, email: c.email_verified ? "Verified" : "Unverified", emailAddr: c.email || "", phone: c.phone || "", opens: c.opens,
-    activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
+    activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [] })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
@@ -122,7 +134,15 @@ function mapAll(d) {
     id: e.id, jobId: e.job_id, recruiterId: e.recruiter_id, recruiter: pname(e.recruiter_id) || "Unknown",
     engagedAt: new Date(e.engaged_at).getTime(), disengagedAt: e.disengaged_at ? new Date(e.disengaged_at).getTime() : null, reason: e.reason || "",
   })).sort((a, b) => b.engagedAt - a.engagedAt);
-  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, users: d.profiles.map(mapUser), settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days || 60, ai: set.ai_screening !== false } };
+  const auditLog = (d.auditLog || []).map((a) => ({
+    id: a.id, actorId: a.actor_id, actor: pname(a.actor_id) || "Unknown", action: a.action, entityType: a.entity_type, entityId: a.entity_id, detail: a.detail || "",
+    when: fdate(a.created_at) + " " + new Date(a.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    createdAt: new Date(a.created_at).getTime(),
+  })).sort((a, b) => b.createdAt - a.createdAt);
+  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users: d.profiles.map(mapUser),
+    settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days || 60, ai: set.ai_screening !== false,
+      defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
+      integrations: set.integrations || {} } };
 }
 function buildTeam(users, cands, placements) {
   return users.filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops")).map((u) => {
@@ -511,7 +531,14 @@ const ROLE_NAME = { recops: "Maya Okoye", recruiter: "Adaeze Nwosu", admin: "Ade
 const ROLE_INIT = { recops: "MO", recruiter: "AN", admin: "AB" };
 
 /* The logged-in user's own account: name, email, phone, role, and a profile picture. */
-function MyProfilePage({ S, toast, onBack }) {
+const NOTIF_EVENTS = [
+  { key: "newCandidate", label: "New candidate added", sub: "A candidate is added to your pipeline." },
+  { key: "screeningReady", label: "AI screening ready for review", sub: "AI has drafted or reviewed a screening question that needs your approval." },
+  { key: "placementRecorded", label: "Placement recorded", sub: "A hire is logged for one of your roles." },
+  { key: "jobPosted", label: "New job posted", sub: "A new role goes live." },
+];
+
+function AccountTab({ S, toast }) {
   const me = S.me;
   const [name, setName] = useState(me.name);
   const [phone, setPhone] = useState(me.phone || "");
@@ -534,48 +561,165 @@ function MyProfilePage({ S, toast, onBack }) {
     S.uploadAvatar(f).then(() => toast("Profile picture updated")).catch(() => {}).finally(() => setAvatarBusy(false));
   };
   return (
+    <Card>
+      <div className="flex items-center gap-4 mb-6">
+        <div className="relative">
+          <Avatar init={me.init} src={me.avatarUrl} tone="em" size={72} />
+          <button onClick={pickAvatar} disabled={avatarBusy} className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center border-2" style={{ background: C.em, borderColor: "#fff" }} title="Change profile picture">
+            <Pencil size={12} color="#fff" />
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFile} />
+        </div>
+        <div>
+          <div className="text-lg font-medium">{me.name}</div>
+          <div className="mt-1"><Pill tone="em">{me.label}</Pill></div>
+          {avatarBusy && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Uploading <InlineDots /></div>}
+        </div>
+      </div>
+      <div className="flex flex-col gap-4">
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        </div>
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
+          <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas }}>
+            <Mail size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{me.email}</span>
+          </div>
+          <div className="text-xs mt-1" style={{ color: C.ink3 }}>Contact an admin to change the email on your account.</div>
+        </div>
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone number</label>
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Not set" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        </div>
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label>
+          <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas, color: C.ink2 }}>{me.label}</div>
+          <div className="text-xs mt-1" style={{ color: C.ink3 }}>Only an admin can change your role.</div>
+        </div>
+        <Btn kind="primary" full disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
+      </div>
+    </Card>
+  );
+}
+
+function NotificationsTab({ S, toast }) {
+  const [prefs, setPrefs] = useState({ ...DEFAULT_NOTIF_PREFS, ...(S.me.notificationPrefs || {}) });
+  const [busy, setBusy] = useState(false);
+  const dirty = JSON.stringify(prefs) !== JSON.stringify({ ...DEFAULT_NOTIF_PREFS, ...(S.me.notificationPrefs || {}) });
+  const toggle = (k) => setPrefs((p) => ({ ...p, [k]: !p[k] }));
+  const save = () => { setBusy(true); S.updateNotificationPrefs(prefs).then(() => toast("Notification preferences saved")).catch(() => {}).finally(() => setBusy(false)); };
+  return (
+    <Card>
+      <SectionTitle title="In-app notifications" sub="Choose which activity shows up in your notification bell." size="text-lg" />
+      <div className="flex flex-col gap-1 mt-4">
+        {NOTIF_EVENTS.map((e) => (
+          <button key={e.key} onClick={() => toggle(e.key)} className="py-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div><div className="text-sm font-medium">{e.label}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.sub}</div></div>
+            <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: prefs[e.key] ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${prefs[e.key] ? "ml-auto" : ""}`} /></div>
+          </button>
+        ))}
+      </div>
+      <div className="text-xs mt-3" style={{ color: C.ink3 }}>Email alerts aren't set up yet — these preferences will also cover email once they are.</div>
+      <Btn kind="primary" className="mt-4" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save preferences"}</Btn>
+    </Card>
+  );
+}
+
+function SecurityTab({ S, toast }) {
+  const [pw1, setPw1] = useState(""); const [pw2, setPw2] = useState(""); const [pwBusy, setPwBusy] = useState(false);
+  const [factors, setFactors] = useState(null); // null = loading, [] = none
+  const [enroll, setEnroll] = useState(null); // { factorId, qr, secret }
+  const [code, setCode] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [signOutBusy, setSignOutBusy] = useState(false);
+  React.useEffect(() => { S.mfaListFactors().then(setFactors).catch(() => setFactors([])); }, []);
+  const verified = (factors || []).filter((f) => f.status === "verified");
+
+  const savePassword = () => {
+    if (pw1.length < 8) { toast("Use at least 8 characters"); return; }
+    if (pw1 !== pw2) { toast("Passwords don't match"); return; }
+    setPwBusy(true);
+    S.changePassword(pw1).then(() => { toast("Password updated"); setPw1(""); setPw2(""); }).catch(() => {}).finally(() => setPwBusy(false));
+  };
+  const startEnroll = () => {
+    setMfaBusy(true);
+    S.mfaEnroll().then((j) => setEnroll({ factorId: j.id, qr: j.totp && j.totp.qr_code, secret: j.totp && j.totp.secret })).catch((e) => toast(e.message)).finally(() => setMfaBusy(false));
+  };
+  const confirmEnroll = () => {
+    if (!code.trim()) { toast("Enter the 6-digit code"); return; }
+    setMfaBusy(true);
+    S.mfaChallenge(enroll.factorId)
+      .then((ch) => S.mfaVerify(enroll.factorId, ch.id, code.trim()))
+      .then(() => { toast("Two-factor authentication turned on"); setEnroll(null); setCode(""); return S.mfaListFactors().then(setFactors); })
+      .catch((e) => toast(e.message))
+      .finally(() => setMfaBusy(false));
+  };
+  const removeFactor = (id) => {
+    setMfaBusy(true);
+    S.mfaUnenroll(id).then(() => { toast("Two-factor authentication turned off"); return S.mfaListFactors().then(setFactors); }).catch((e) => toast(e.message)).finally(() => setMfaBusy(false));
+  };
+  const signOutEverywhere = () => {
+    setSignOutBusy(true);
+    S.signOutEverywhere().then(() => toast("Signed out everywhere else")).catch(() => {}).finally(() => setSignOutBusy(false));
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <SectionTitle title="Change password" size="text-lg" />
+        <div className="flex flex-col gap-3 mt-4">
+          <input type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="New password" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Confirm new password" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <Btn kind="primary" disabled={!pw1 || !pw2 || pwBusy} onClick={savePassword}>{pwBusy ? <>Updating <InlineDots color="#fff" /></> : "Update password"}</Btn>
+        </div>
+      </Card>
+      <Card>
+        <SectionTitle title="Two-factor authentication" sub="Adds a one-time code from an authenticator app when you sign in." size="text-lg" />
+        <div className="mt-4">
+          {factors === null && <div className="text-sm" style={{ color: C.ink3 }}>Loading <InlineDots /></div>}
+          {factors !== null && verified.length > 0 && !enroll && (
+            <div className="flex items-center justify-between gap-3 rounded-xl p-3.5" style={{ background: C.emTint }}>
+              <div className="flex items-center gap-2 text-sm font-medium" style={{ color: C.em }}><CheckCircle2 size={16} /> Two-factor authentication is on</div>
+              <Btn kind="danger" disabled={mfaBusy} onClick={() => removeFactor(verified[0].id)}>Turn off</Btn>
+            </div>
+          )}
+          {factors !== null && verified.length === 0 && !enroll && (
+            <Btn kind="primary" disabled={mfaBusy} onClick={startEnroll}>{mfaBusy ? <>Starting <InlineDots color="#fff" /></> : "Set up two-factor authentication"}</Btn>
+          )}
+          {enroll && (
+            <div className="flex flex-col gap-3">
+              <div className="text-sm" style={{ color: C.ink2 }}>Scan this in your authenticator app, or enter the code manually, then type the 6-digit code it shows.</div>
+              {enroll.qr && <div className="w-40 h-40 [&_svg]:w-full [&_svg]:h-full" dangerouslySetInnerHTML={{ __html: enroll.qr }} />}
+              {enroll.secret && <div className="text-xs font-mono rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{enroll.secret}</div>}
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <div className="flex gap-2">
+                <Btn onClick={() => { setEnroll(null); setCode(""); }} disabled={mfaBusy}>Cancel</Btn>
+                <Btn kind="primary" disabled={mfaBusy} onClick={confirmEnroll}>{mfaBusy ? <>Verifying <InlineDots color="#fff" /></> : "Verify and turn on"}</Btn>
+              </div>
+            </div>
+          )}
+        </div>
+      </Card>
+      <Card>
+        <SectionTitle title="Sessions" size="text-lg" />
+        <div className="text-sm mt-1 mb-3" style={{ color: C.ink2 }}>If you signed in on a device you no longer use, sign out everywhere else. This one stays signed in.</div>
+        <Btn disabled={signOutBusy} onClick={signOutEverywhere}>{signOutBusy ? <>Signing out <InlineDots /></> : "Sign out of all other devices"}</Btn>
+      </Card>
+    </div>
+  );
+}
+
+function MyProfilePage({ S, toast, onBack }) {
+  const [tab, setTab] = useState("account");
+  return (
     <div className="flex flex-col gap-5 md:gap-6 max-w-2xl">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
-      <Card>
-        <div className="flex items-center gap-4 mb-6">
-          <div className="relative">
-            <Avatar init={me.init} src={me.avatarUrl} tone="em" size={72} />
-            <button onClick={pickAvatar} disabled={avatarBusy} className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center border-2" style={{ background: C.em, borderColor: "#fff" }} title="Change profile picture">
-              <Pencil size={12} color="#fff" />
-            </button>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onAvatarFile} />
-          </div>
-          <div>
-            <div className="text-lg font-medium">{me.name}</div>
-            <div className="mt-1"><Pill tone="em">{me.label}</Pill></div>
-            {avatarBusy && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Uploading <InlineDots /></div>}
-          </div>
-        </div>
-        <div className="flex flex-col gap-4">
-          <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-          </div>
-          <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
-            <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas }}>
-              <Mail size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{me.email}</span>
-            </div>
-            <div className="text-xs mt-1" style={{ color: C.ink3 }}>Contact an admin to change the email on your account.</div>
-          </div>
-          <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone number</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Not set" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-          </div>
-          <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label>
-            <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas, color: C.ink2 }}>{me.label}</div>
-            <div className="text-xs mt-1" style={{ color: C.ink3 }}>Only an admin can change your role.</div>
-          </div>
-          <Btn kind="primary" full disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
-        </div>
-      </Card>
+      <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }]} active={tab} setActive={setTab} />
+      {tab === "account" && <AccountTab S={S} toast={toast} />}
+      {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
+      {tab === "security" && <SecurityTab S={S} toast={toast} />}
     </div>
   );
 }
@@ -1672,10 +1816,17 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
                 </div>
               ) },
               { key: "stage", label: "STAGE", render: (c) => c.link ? (
-                <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={c.link.stage} onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.setStage(c.link.id, v).then(() => toast(c.name.split(" ")[0] + " moved to " + v)).catch(() => {}); }}>
-                  {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <div className="flex items-center gap-1.5">
+                  <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={c.link.stage} onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.setStage(c.link.id, v).then(() => toast(c.name.split(" ")[0] + " moved to " + v)).catch(() => {}); }}>
+                    {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                  {c.link.stage === "Interview" && S.settings.integrations && S.settings.integrations.googleCalendar && (
+                    <a href={gcalUrl(job, c.name)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Add interview to Google Calendar" className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.canvas }}>
+                      <Clock size={14} color={C.ink2} />
+                    </a>
+                  )}
+                </div>
               ) : <StatusPill status={c.status} /> },
               { key: "cv", label: "RESUME", render: (c) => c.cv ? <button className="text-sm underline" style={{ color: C.em }} onClick={(e) => { e.stopPropagation(); S.openResume(c.cv); }}>View</button> : <span className="text-xs" style={{ color: C.ink3 }}>None</span> },
               { key: "ai", label: "FIT", render: (c) => { const v = c.link && c.link.fit != null ? c.link.fit : c.ai; return <Pill tone={!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "danger"}>{v ? v + "%" : "-"}</Pill>; } },
@@ -1742,12 +1893,12 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const isEdit = !!editJob;
   const [title, setTitle] = useState(editJob ? editJob.role : "");
   const [client, setClient] = useState(editJob ? editJob.client : "");
-  const [location, setLocation] = useState(editJob ? (editJob.location || "Lagos, Nigeria") : "Lagos, Nigeria");
+  const [location, setLocation] = useState(editJob ? (editJob.location || "Lagos, Nigeria") : (S.settings.defaultCountry === "Nigeria" ? "Lagos, Nigeria" : S.settings.defaultCountry || "Lagos, Nigeria"));
   const [minPay, setMinPay] = useState(editJob && editJob.minPay != null ? String(editJob.minPay) : "");
   const [maxPay, setMaxPay] = useState(editJob && editJob.maxPay != null ? String(editJob.maxPay) : "");
   const [description, setDescription] = useState(editJob ? (editJob.description || "") : "");
-  const [currency, setCurrency] = useState(editJob ? (editJob.currency || "NGN") : "NGN");
-  const [country, setCountry] = useState(editJob ? (editJob.country || "Nigeria") : "Nigeria");
+  const [currency, setCurrency] = useState(editJob ? (editJob.currency || "NGN") : (S.settings.defaultCurrency || "NGN"));
+  const [country, setCountry] = useState(editJob ? (editJob.country || "Nigeria") : (S.settings.defaultCountry || "Nigeria"));
   const [seo, setSeo] = useState(editJob ? (editJob.seo || null) : null);       // applied AI redraft: { meta_description, keywords, original_* }
   const [draftAi, setDraftAi] = useState(null); // AI suggestion awaiting review
   const [aiBusy, setAiBusy] = useState(false);
@@ -1756,10 +1907,10 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   // What the agency bills the client, and how the recruiter is incentivized on this role.
   const [billingType, setBillingType] = useState(editJob ? (editJob.billingType || "percent") : "percent"); // "percent" of salary, or "flat" fee
   const [billingAmount, setBillingAmount] = useState(editJob && editJob.billingAmount != null ? String(editJob.billingAmount) : "");
-  const [billingCurrency, setBillingCurrency] = useState(editJob ? (editJob.billingCurrency || "NGN") : "NGN");
+  const [billingCurrency, setBillingCurrency] = useState(editJob ? (editJob.billingCurrency || "NGN") : (S.settings.defaultCurrency || "NGN"));
   const [incentiveType, setIncentiveType] = useState(editJob ? (editJob.incentiveType || "percent") : "percent"); // "percent" of the client fee, or "flat" bonus
   const [incentiveAmount, setIncentiveAmount] = useState(editJob && editJob.incentiveAmount != null ? String(editJob.incentiveAmount) : "");
-  const [incentiveCurrency, setIncentiveCurrency] = useState(editJob ? (editJob.incentiveCurrency || "NGN") : "NGN");
+  const [incentiveCurrency, setIncentiveCurrency] = useState(editJob ? (editJob.incentiveCurrency || "NGN") : (S.settings.defaultCurrency || "NGN"));
   // Questions every applicant must be asked before their answers get recorded on their profile.
   const [questions, setQuestions] = useState(editJob && editJob.screeningQuestions && editJob.screeningQuestions.length ? editJob.screeningQuestions : [""]);
   const setQ = (i, v) => setQuestions((qs) => qs.map((q, idx) => (idx === i ? v : q)));
@@ -1956,7 +2107,10 @@ const AD_CHANNELS = [
 ];
 
 function PromoteModal({ open, onClose, jobTitle, toast, S }) {
-  const [channels, setChannels] = useState({ GJ: true, LI: true, FB: false, GA: false });
+  const integrations = S.settings.integrations || {};
+  const CHANNEL_INTEGRATION = { GJ: "googleJobs", LI: "linkedin" }; // FB/GA have no integration toggle yet
+  const channelAvailable = (k) => !CHANNEL_INTEGRATION[k] || integrations[CHANNEL_INTEGRATION[k]];
+  const [channels, setChannels] = useState({ GJ: channelAvailable("GJ"), LI: channelAvailable("LI"), FB: false, GA: false });
   const [budget, setBudget] = useState("300,000");
   const [payer, setPayer] = useState("agency");
   const [copy, setCopy] = useState(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through Harbor today.`);
@@ -1965,7 +2119,7 @@ function PromoteModal({ open, onClose, jobTitle, toast, S }) {
     setCopy(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through Harbor today.`);
   }, [jobTitle, open]);
 
-  const toggle = (k) => setChannels((c) => ({ ...c, [k]: !c[k] }));
+  const toggle = (k) => { if (!channelAvailable(k)) { toast(AD_CHANNELS.find((c) => c.key === k).name + " isn't connected — turn it on in Agency settings → Integrations."); return; } setChannels((c) => ({ ...c, [k]: !c[k] })); };
   const paidSelected = channels.LI || channels.FB || channels.GA;
 
   const submit = () => {
@@ -1985,18 +2139,18 @@ function PromoteModal({ open, onClose, jobTitle, toast, S }) {
       <div className="text-sm mb-4" style={{ color: C.ink2 }}>{jobTitle}</div>
       <div className="text-xs font-semibold mb-2" style={{ color: C.ink3 }}>CHANNELS</div>
       <div className="flex flex-col gap-2 mb-4">
-        {AD_CHANNELS.map((ch) => (
-          <button key={ch.key} onClick={() => toggle(ch.key)} className="flex items-center gap-3 rounded-xl border p-3 text-left" style={{ borderColor: channels[ch.key] ? C.em : C.line, background: channels[ch.key] ? C.emTint : "#fff" }}>
+        {AD_CHANNELS.map((ch) => { const available = channelAvailable(ch.key); return (
+          <button key={ch.key} onClick={() => toggle(ch.key)} className="flex items-center gap-3 rounded-xl border p-3 text-left" style={{ borderColor: channels[ch.key] ? C.em : C.line, background: channels[ch.key] ? C.emTint : "#fff", opacity: available ? 1 : 0.55 }}>
             <div className="w-9 h-9 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ fontSize: 11, background: CHANNEL_TONE[ch.key].bg, color: CHANNEL_TONE[ch.key].fg }}>{ch.key}</div>
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium flex items-center gap-2">{ch.name}{ch.free && <Pill tone="em">Free</Pill>}</div>
-              <div className="text-xs" style={{ color: C.ink2 }}>{ch.desc}</div>
+              <div className="text-xs" style={{ color: C.ink2 }}>{available ? ch.desc : "Not connected — turn on in Agency settings"}</div>
             </div>
             <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: channels[ch.key] ? C.em : "#fff", border: channels[ch.key] ? "none" : `1.5px solid #D5D2C7` }}>
               {channels[ch.key] && <Check size={13} color="#fff" strokeWidth={3} />}
             </div>
           </button>
-        ))}
+        ); })}
       </div>
       {paidSelected && (
         <div className="mb-4">
@@ -2303,22 +2457,152 @@ function UsersPage({ toast, S }) {
   );
 }
 
-function SettingsPage({ toast, S }) {
+function AgencyTab({ toast, S }) {
   const [name, setName] = useState(S.settings.name);
   const [guarantee, setGuarantee] = useState(String(S.settings.guaranteeDays));
   const [auto, setAuto] = useState(S.settings.ai);
+  const [defaultCurrency, setDefaultCurrency] = useState(S.settings.defaultCurrency);
+  const [defaultCountry, setDefaultCountry] = useState(S.settings.defaultCountry);
+  const [busy, setBusy] = useState(false);
+  const save = () => {
+    setBusy(true);
+    S.saveSettings({ ...S.settings, name, guaranteeDays: num(guarantee) || 60, ai: auto, defaultCurrency, defaultCountry })
+      .then(() => toast("Settings saved")).catch(() => {}).finally(() => setBusy(false));
+  };
+  return (
+    <Card className="flex flex-col gap-4 md:max-w-xl">
+      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default currency</label>
+          <select value={defaultCurrency} onChange={(e) => setDefaultCurrency(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+            {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default hiring country</label>
+          <input list="harbor-default-countries" value={defaultCountry} onChange={(e) => { const v = e.target.value; setDefaultCountry(v); if (COUNTRY_CURRENCY[v]) setDefaultCurrency(COUNTRY_CURRENCY[v]); }} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <datalist id="harbor-default-countries">{Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c} />)}</datalist>
+        </div>
+      </div>
+      <div className="text-xs" style={{ color: C.ink3 }}>New jobs default to this currency and country unless changed when posting.</div>
+      <button onClick={() => setAuto(!auto)} className="pt-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
+        <div><div className="text-sm font-medium">AI screening questions</div><div className="text-xs" style={{ color: C.ink2 }}>Draft questions for every new candidate. You approve before they send.</div></div>
+        <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: auto ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${auto ? "ml-auto" : ""}`} /></div>
+      </button>
+      <Btn kind="primary" disabled={busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
+    </Card>
+  );
+}
+
+function DataPrivacyTab({ toast, S }) {
+  const [retention, setRetention] = useState(S.settings.retentionDays ? String(S.settings.retentionDays) : "");
+  const [busy, setBusy] = useState(false);
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeBusy, setPurgeBusy] = useState(false);
+  const days = num(retention);
+  const eligible = days ? S.cands.filter((c) => c.status === "Rejected" && c.updatedAt < Date.now() - days * 864e5) : [];
+  const saveRetention = () => {
+    setBusy(true);
+    S.saveSettings({ ...S.settings, retentionDays: days || null }).then(() => toast("Retention setting saved")).catch(() => {}).finally(() => setBusy(false));
+  };
+  const exportCandidates = () => downloadCsv("harbor-candidates.csv",
+    ["Name", "Role", "Location", "Status", "Recruiter", "Email", "Phone", "AI score", "Added"],
+    S.cands.map((c) => [c.name, c.role, c.location, c.status, c.recruiter || "", c.emailAddr, c.phone, c.ai, new Date(c.createdAt).toISOString().slice(0, 10)]));
+  const exportPlacements = () => downloadCsv("harbor-placements.csv",
+    ["Candidate", "Role", "Fee", "Recruiter incentive", "Status", "Recorded"],
+    S.placements.map((p) => [p.name, p.role, p.fee, p.incentive || "", p.status, new Date(p.createdAt).toISOString().slice(0, 10)]));
+  const confirmPurge = () => {
+    setPurgeBusy(true);
+    S.purgeCandidates(eligible.map((c) => c.id)).then(() => { toast(eligible.length + " candidate(s) removed"); setPurgeOpen(false); }).catch(() => {}).finally(() => setPurgeBusy(false));
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <SectionTitle title="Export data" sub="Download a CSV for your own records or another system." size="text-lg" />
+        <div className="flex flex-wrap gap-2 mt-4"><Btn icon={Download} onClick={exportCandidates}>Export candidates</Btn><Btn icon={Download} onClick={exportPlacements}>Export placements</Btn></div>
+      </Card>
+      <Card>
+        <SectionTitle title="Data retention" sub="Automatically clean up candidates who've been rejected for a while." size="text-lg" />
+        <div className="flex flex-col gap-3 mt-4 md:max-w-sm">
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete rejected candidates after (days)</label><input value={retention} onChange={(e) => setRetention(e.target.value)} placeholder="Never" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+          <Btn kind="primary" disabled={busy} onClick={saveRetention}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
+        </div>
+        {days > 0 && (
+          <div className="mt-4 pt-4 flex flex-wrap items-center justify-between gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div className="text-sm" style={{ color: C.ink2 }}>{eligible.length} rejected candidate{eligible.length === 1 ? "" : "s"} past {days} days right now.</div>
+            <Btn kind="danger" disabled={!eligible.length} onClick={() => setPurgeOpen(true)}>Purge now</Btn>
+          </div>
+        )}
+      </Card>
+      <ConfirmModal open={purgeOpen} onClose={() => setPurgeOpen(false)} title="Delete these candidates?" body={"This permanently deletes " + eligible.length + " rejected candidate(s) past your retention window. This can't be undone."} onConfirm={confirmPurge} busy={purgeBusy} />
+    </div>
+  );
+}
+
+const INTEGRATIONS_LIST = [
+  { key: "linkedin", label: "LinkedIn", sub: "Lets you pick LinkedIn as a channel when promoting a job." },
+  { key: "googleJobs", label: "Google for Jobs", sub: "Lets you pick Google for Jobs as a channel when promoting a job." },
+  { key: "googleCalendar", label: "Google Calendar", sub: "Adds an ‘Add to calendar’ link once a candidate reaches the Interview stage." },
+];
+function IntegrationsTab({ toast, S }) {
+  const base = { linkedin: false, googleJobs: false, googleCalendar: false, ...S.settings.integrations };
+  const [enabled, setEnabled] = useState(base);
+  const [busy, setBusy] = useState(false);
+  const dirty = JSON.stringify(enabled) !== JSON.stringify(base);
+  const toggle = (k) => setEnabled((e) => ({ ...e, [k]: !e[k] }));
+  const save = () => { setBusy(true); S.saveSettings({ ...S.settings, integrations: enabled }).then(() => toast("Integrations saved")).catch(() => {}).finally(() => setBusy(false)); };
+  return (
+    <Card>
+      <SectionTitle title="Integrations" sub="Turn on the channels and tools your team can use elsewhere in Harbor." size="text-lg" />
+      <div className="flex flex-col gap-1 mt-4">
+        {INTEGRATIONS_LIST.map((i) => (
+          <button key={i.key} onClick={() => toggle(i.key)} className="py-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div><div className="text-sm font-medium">{i.label}</div><div className="text-xs" style={{ color: C.ink2 }}>{i.sub}</div></div>
+            <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: enabled[i.key] ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${enabled[i.key] ? "ml-auto" : ""}`} /></div>
+          </button>
+        ))}
+      </div>
+      <div className="text-xs mt-3" style={{ color: C.ink3 }}>LinkedIn and Google for Jobs post through your ad campaigns, tracked here in Harbor — a real posting connection to either platform isn't wired up yet.</div>
+      <Btn kind="primary" className="mt-4" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
+    </Card>
+  );
+}
+
+function AuditLogTab({ S }) {
+  return (
+    <Card>
+      <SectionTitle title="Audit log" sub="Sensitive actions across the agency: deletes, account changes, settings updates." size="text-lg" />
+      <div className="mt-4">
+        {S.auditLog.length === 0 ? <div className="text-sm" style={{ color: C.ink3 }}>Nothing logged yet.</div> : (
+          <DataTable
+            keyField="id"
+            rows={S.auditLog}
+            columns={[
+              { key: "when", label: "WHEN", render: (a) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }}>{a.when}</span> },
+              { key: "actor", label: "WHO", render: (a) => a.actor },
+              { key: "action", label: "ACTION", render: (a) => <Pill tone={a.action === "deleted" || a.action === "purged" ? "danger" : "neutral"}>{a.action}</Pill> },
+              { key: "entityType", label: "ON", render: (a) => a.entityType },
+              { key: "detail", label: "DETAIL", render: (a) => <span className="text-xs" style={{ color: C.ink2 }}>{a.detail}</span> },
+            ]}
+          />
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function SettingsPage({ toast, S }) {
+  const [tab, setTab] = useState("agency");
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <SectionTitle size="text-3xl md:text-4xl" title="Agency settings" sub="Defaults that apply across the whole agency." />
-      <Card className="flex flex-col gap-4 md:max-w-xl">
-        <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-        <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-        <button onClick={() => setAuto(!auto)} className="pt-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
-          <div><div className="text-sm font-medium">AI screening questions</div><div className="text-xs" style={{ color: C.ink2 }}>Draft questions for every new candidate. You approve before they send.</div></div>
-          <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: auto ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${auto ? "ml-auto" : ""}`} /></div>
-        </button>
-        <Btn kind="primary" onClick={() => { S.saveSettings({ name, guaranteeDays: num(guarantee) || 60, ai: auto }); toast("Settings saved"); }}>Save changes</Btn>
-      </Card>
+      <div className="overflow-x-auto"><Tabs tabs={[{ key: "agency", label: "Agency" }, { key: "privacy", label: "Data & privacy" }, { key: "integrations", label: "Integrations" }, { key: "audit", label: "Audit log" }]} active={tab} setActive={setTab} /></div>
+      {tab === "agency" && <AgencyTab toast={toast} S={S} />}
+      {tab === "privacy" && <DataPrivacyTab toast={toast} S={S} />}
+      {tab === "integrations" && <IntegrationsTab toast={toast} S={S} />}
+      {tab === "audit" && <AuditLogTab S={S} />}
     </div>
   );
 }
@@ -2474,7 +2758,7 @@ function AwaitingAccess({ onSignOut }) {
 
 const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*)&order=created_at.desc";
 async function loadAll(token) {
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -2484,8 +2768,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/ad_campaigns?select=*&order=created_at.desc", { token }),
     sbFetch("/rest/v1/agency_settings?select=*", { token }),
     sbFetch("/rest/v1/job_engagements?select=*&order=engaged_at.desc", { token }),
+    sbFetch("/rest/v1/audit_log?select=*&order=created_at.desc&limit=200", { token }).catch(() => []), // empty for non-admins (RLS), never fatal
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements });
+  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog });
 }
 
 export default function App() {
@@ -2550,9 +2835,13 @@ export default function App() {
   const role = me.roleKey;
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
-  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey };
+  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs };
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => toast(e.message)).finally(() => setRefreshing(false)); };
   const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { toast(e.message); throw e; } };
+  // Fire-and-forget entry in the admin-only audit log. Never blocks or fails the action it's logging.
+  const logAudit = (action, entityType, entityId, detail) => {
+    sbFetch("/rest/v1/audit_log", { method: "POST", token: session.token, body: { actor_id: session.uid, action, entity_type: entityType, entity_id: entityId != null ? String(entityId) : null, detail: detail || null } }).catch(() => {});
+  };
 
   // Local candidate field -> candidates table column, for the fields a person can actually edit.
   const CAND_FIELD_MAP = { status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id" };
@@ -2589,11 +2878,11 @@ export default function App() {
   const S = {
     role, me: myMe, query, toast, go: setPage,
     cands: data.cands, updateCand,
-    deleteCandidate: (id) => call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }),
+    deleteCandidate: (id) => { const c = data.cands.find((x) => x.id === id); return call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "candidate", id, c ? c.name : "")); },
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
       setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null } })); },
     jobs: data.jobs, updateJob,
-    deleteJob: (id) => call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }),
+    deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
         billing_type: j.billingType || "percent", billing_amount: j.billingAmount || null, billing_currency: j.billingCurrency || j.currency || "NGN",
@@ -2625,7 +2914,7 @@ export default function App() {
       if (existing) call("/rest/v1/campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } });
       else if (changed) call("/rest/v1/campaigns", { method: "POST", body: { id: changed.id, name: changed.name, created_by: session.uid } });
     },
-    deleteCampaign: (id) => call("/rest/v1/campaigns?id=eq." + id, { method: "DELETE" }),
+    deleteCampaign: (id) => { const c = data.campaigns.find((x) => x.id === id); return call("/rest/v1/campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "campaign", id, c ? c.name : "")); },
     ads: data.ads,
     setAds: (fn) => { const list = typeof fn === "function" ? fn(data.ads) : fn;
       const existingIds = new Set(data.ads.map((a) => a.id)); const added = list.filter((a) => !existingIds.has(a.id));
@@ -2634,15 +2923,31 @@ export default function App() {
       added.forEach((a) => call("/rest/v1/ad_campaigns", { method: "POST", body: { id: a.id, job_title: a.job, client: a.client, channels: a.channels, payer_type: a.payerType, budget: num(a.budget), status: a.status, created_by: session.uid } }));
       if (changed) call("/rest/v1/ad_campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } });
     },
-    deleteAd: (id) => call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }),
+    deleteAd: (id) => { const a = data.ads.find((x) => x.id === id); return call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "ad_campaign", id, a ? a.job : "")); },
     users: data.users,
     createAccount: async ({ email, password, full_name, role }) => {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ email, password, full_name, role }) });
-      const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not create account"); reload();
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not create account"); logAudit("created", "user", j.id || null, full_name + " (" + role + ")"); reload();
     },
-    disableUser: (id) => call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Disabled" } }),
+    disableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Disabled" } }).then(() => logAudit("disabled", "user", id, u ? u.name : "")); },
     settings: data.settings,
-    saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai } }),
+    saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {} } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
+    auditLog: data.auditLog,
+    /* Deletes rejected candidates older than the retention window (data-privacy tab computes the eligible list). */
+    purgeCandidates: async (ids) => {
+      for (const id of ids) { await sbFetch("/rest/v1/candidates?id=eq." + id, { method: "DELETE", token: session.token }).catch(() => {}); }
+      logAudit("purged", "candidates", null, ids.length + " rejected candidate(s) past the retention window");
+      reload();
+    },
+    /* Your own account security: password, TOTP two-factor, and signing out other sessions. */
+    changePassword: (password) => sbFetch("/auth/v1/user", { method: "PUT", token: session.token, body: { password } }),
+    mfaListFactors: async () => { const j = await sbFetch("/auth/v1/user", { token: session.token }); return j.factors || []; },
+    mfaEnroll: () => sbFetch("/auth/v1/factors", { method: "POST", token: session.token, body: { factor_type: "totp", friendly_name: "Authenticator app" } }),
+    mfaChallenge: (factorId) => sbFetch("/auth/v1/factors/" + factorId + "/challenge", { method: "POST", token: session.token, body: {} }),
+    mfaVerify: (factorId, challengeId, code) => sbFetch("/auth/v1/factors/" + factorId + "/verify", { method: "POST", token: session.token, body: { challenge_id: challengeId, code } }),
+    mfaUnenroll: (factorId) => sbFetch("/auth/v1/factors/" + factorId, { method: "DELETE", token: session.token }),
+    signOutEverywhere: () => sbFetch("/auth/v1/logout?scope=others", { method: "POST", token: session.token, body: {} }),
+    updateNotificationPrefs: (prefs) => { setMe((m) => ({ ...m, notificationPrefs: prefs })); return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { notification_prefs: prefs } }).catch((e) => toast(e.message)); },
     team: buildTeam(data.users, data.cands, data.placements),
     openCandidate: (id) => setCandId(id),
     insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null } }),

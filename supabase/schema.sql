@@ -15,6 +15,8 @@ create table public.profiles (
   status text not null default 'Active' check (status in ('Active','Invited','Disabled')),
   phone text,
   avatar_url text,
+  notification_prefs jsonb not null default
+    '{"newCandidate":true,"screeningReady":true,"placementRecorded":true,"jobPosted":true}'::jsonb,
   created_at timestamptz not null default now()
 );
 
@@ -179,7 +181,11 @@ create table public.agency_settings (
   id int primary key default 1 check (id = 1),
   agency_name text not null default 'Harbor Agency',
   guarantee_days int not null default 60,
-  ai_screening boolean not null default true
+  ai_screening boolean not null default true,
+  default_currency text not null default 'NGN',
+  default_country text not null default 'Nigeria',
+  retention_days int,
+  integrations jsonb not null default '{}'::jsonb
 );
 insert into public.agency_settings default values;
 
@@ -434,6 +440,27 @@ create index if not exists placements_job_idx on public.placements(job_id);
 -- stay staff-only via the existing place_write policy.
 create policy place_insert_recruiter on public.placements for insert to authenticated
   with check (recruiter_id = auth.uid());
+
+-- =====================================================================
+-- Audit log: an admin-readable trail of sensitive actions (deletes, edits,
+-- account changes). Immutable from the app's side: authenticated users can
+-- only insert rows attributed to themselves, and there is no update/delete
+-- policy at all, so the app can log but never rewrite history.
+-- (Migration: add_settings_notifications_audit_log)
+-- =====================================================================
+create table public.audit_log (
+  id uuid primary key default gen_random_uuid(),
+  actor_id uuid references public.profiles(id),
+  action text not null,
+  entity_type text not null,
+  entity_id text,
+  detail text,
+  created_at timestamptz not null default now()
+);
+alter table public.audit_log enable row level security;
+create policy audit_read on public.audit_log for select to authenticated using (public.is_admin());
+create policy audit_insert on public.audit_log for insert to authenticated with check (actor_id = auth.uid());
+create index audit_log_created_idx on public.audit_log(created_at desc);
 
 -- =====================================================================
 -- AFTER RUNNING: create your first user (Authentication > Users > Add user),
