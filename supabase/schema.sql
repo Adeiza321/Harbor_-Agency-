@@ -17,8 +17,11 @@ create table public.profiles (
   avatar_url text,
   notification_prefs jsonb not null default
     '{"newCandidate":true,"screeningReady":true,"placementRecorded":true,"jobPosted":true}'::jsonb,
+  is_owner boolean not null default false,
   created_at timestamptz not null default now()
 );
+-- At most one owner at any time.
+create unique index if not exists profiles_single_owner_idx on public.profiles (is_owner) where is_owner;
 
 -- Role comes from app_metadata (only settable server-side), never from user-editable metadata.
 create or replace function public.handle_new_user() returns trigger
@@ -232,6 +235,56 @@ begin
 end $$;
 create trigger profiles_protect_privileged before update on public.profiles
   for each row execute function public.protect_profile_privileged_fields();
+
+-- The agency owner: a single admin every other admin can never demote or disable, and who
+-- alone can hand ownership to someone else. (Migration: add_agency_owner_concept)
+create or replace function public.is_owner() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select is_owner from public.profiles where id = auth.uid()), false)
+$$;
+
+-- Guards the owner's row and the is_owner flag itself:
+--  * role/status on the owner's own row can only be changed by the owner acting on themselves
+--    (or by transfer_ownership() below, which runs as them) -- never by another admin.
+--  * is_owner can only move from one row to another when the actor is already the current
+--    owner (checked against whatever owner exists *before* this statement), or when no owner
+--    exists yet at all (first-time setup).
+create or replace function public.protect_owner_row() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare
+  owner_exists boolean;
+begin
+  if OLD.is_owner and auth.uid() <> OLD.id then
+    new.role := old.role;
+    new.status := old.status;
+  end if;
+  if NEW.is_owner is distinct from OLD.is_owner then
+    select exists(select 1 from public.profiles where is_owner) into owner_exists;
+    if owner_exists and not public.is_owner() then
+      new.is_owner := old.is_owner;
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists profiles_protect_owner on public.profiles;
+create trigger profiles_protect_owner before update on public.profiles
+  for each row execute function public.protect_owner_row();
+
+-- The only sanctioned way to hand ownership to someone else: atomic, and only the current
+-- owner can call it.
+create or replace function public.transfer_ownership(new_owner_id uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_owner() then
+    raise exception 'Only the current owner can transfer ownership';
+  end if;
+  if not exists (select 1 from public.profiles where id = new_owner_id and status = 'Active') then
+    raise exception 'The new owner must be an active account';
+  end if;
+  update public.profiles set is_owner = false where is_owner;
+  update public.profiles set is_owner = true, role = 'admin', level = 'Admin, owner' where id = new_owner_id;
+end $$;
+grant execute on function public.transfer_ownership(uuid) to authenticated;
 
 -- candidates: staff see all, recruiters see only their own
 create policy cand_read on public.candidates for select to authenticated
@@ -464,8 +517,8 @@ create index audit_log_created_idx on public.audit_log(created_at desc);
 
 -- =====================================================================
 -- AFTER RUNNING: create your first user (Authentication > Users > Add user),
--- then make yourself admin (replace the email):
---   update public.profiles set role = 'admin', level = 'Admin, owner' where email = 'you@example.com';
+-- then make yourself admin and owner (replace the email):
+--   update public.profiles set role = 'admin', level = 'Admin, owner', is_owner = true where email = 'you@example.com';
 -- Also turn OFF "Allow new users to sign up" (Authentication > Sign In / Providers)
 -- so only people you invite can get in.
 -- =====================================================================

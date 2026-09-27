@@ -51,7 +51,7 @@ const toSession = (j) => ({ token: j.access_token, refresh: j.refresh_token, uid
 const signIn = async (email, password) => toSession(await sbFetch("/auth/v1/token?grant_type=password", { method: "POST", body: { email, password } }));
 const refreshSession = async (s) => toSession(await sbFetch("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token: s.refresh } }));
 
-const ROLE_KEY_LABEL = { admin: "Admin, owner", recops: "Rec Ops manager", recruiter: "Recruiter" };
+const ROLE_KEY_LABEL = { admin: "Admin", recops: "Rec Ops manager", recruiter: "Recruiter" };
 const initialsOf = (n) => (n || "?").split(/[ @.]/).filter(Boolean).map((x) => x[0]).join("").slice(0, 2).toUpperCase();
 const fdate = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 const ago = (d) => { const m = (Date.now() - new Date(d)) / 60000; return m < 60 ? Math.max(1, Math.round(m)) + "m ago" : m < 1440 ? Math.round(m / 60) + "h ago" : m < 10080 ? Math.round(m / 1440) + "d ago" : fdate(d); };
@@ -99,7 +99,7 @@ const CURRENCIES = ["NGN", "USD", "GBP", "EUR", "CAD", "AUD", "ZAR", "KES", "GHS
 const COUNTRY_CURRENCY = { Nigeria: "NGN", "United States": "USD", "United Kingdom": "GBP", Canada: "CAD", Ghana: "GHS", Kenya: "KES", "South Africa": "ZAR", "United Arab Emirates": "AED", Germany: "EUR", Ireland: "EUR", Netherlands: "EUR", France: "EUR", India: "INR", Australia: "AUD", "Remote \u2013 worldwide": "" };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
 const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true };
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) } });
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner });
 
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
@@ -2409,8 +2409,12 @@ function UsersPage({ toast, S }) {
   const [roleKey, setRoleKey] = useState("recruiter");
   const [busy, setBusy] = useState(false);
   const [roleBusyId, setRoleBusyId] = useState(null);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferTarget, setTransferTarget] = useState(null);
+  const [transferBusy, setTransferBusy] = useState(false);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
   const adminCount = users.filter((u) => u.roleKey === "admin" && u.status !== "Disabled").length;
+  const transferCandidates = users.filter((u) => !u.isOwner && u.status === "Active");
   const invite = async () => {
     if (!name.trim()) { toast("Enter their name"); return; }
     if (!email.includes("@")) { toast("Enter a valid email"); return; }
@@ -2427,26 +2431,40 @@ function UsersPage({ toast, S }) {
     setRoleBusyId(u.id);
     S.updateUserRole(u.id, newRoleKey).then(() => toast(u.name + " is now " + ROLE_KEY_LABEL[newRoleKey])).catch(() => {}).finally(() => setRoleBusyId(null));
   };
+  const confirmTransfer = () => {
+    if (!transferTarget) return;
+    setTransferBusy(true);
+    S.transferOwnership(transferTarget).then(() => { toast("Ownership transferred"); setTransferOpen(false); setTransferTarget(null); })
+      .catch((e) => toast(e.message || "Could not transfer ownership")).finally(() => setTransferBusy(false));
+  };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" title="Users and permissions" sub="Control who can see and do what." />
-        <Btn kind="primary" icon={UserPlus} onClick={() => setOpen(true)}>Invite user</Btn>
+        <div className="flex gap-2">
+          {S.me.isOwner && <Btn onClick={() => setTransferOpen(true)}>Transfer ownership</Btn>}
+          <Btn kind="primary" icon={UserPlus} onClick={() => setOpen(true)}>Invite user</Btn>
+        </div>
       </div>
       <Card>
         <DataTable
           keyField="email"
           rows={users}
           columns={[
-            { key: "name", label: "USER", render: (u) => <div><div className="font-medium">{u.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{u.email}</div></div> },
-            { key: "role", label: "ROLE", render: (u) => (
-              <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={u.roleKey} disabled={roleBusyId === u.id}
-                onChange={(e) => changeRole(u, e.target.value)}>
-                {ROLE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
-            ) },
+            { key: "name", label: "USER", render: (u) => <div><div className="font-medium flex items-center gap-1.5">{u.name}{u.isOwner && <Pill tone="em">Owner</Pill>}</div><div className="text-xs" style={{ color: C.ink2 }}>{u.email}</div></div> },
+            { key: "role", label: "ROLE", render: (u) => {
+              const editable = !u.isOwner || u.id === S.me.id;
+              if (!editable) return <span className="text-sm" style={{ color: C.ink2 }}>{u.role}</span>;
+              return (
+                <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={u.roleKey} disabled={roleBusyId === u.id}
+                  onChange={(e) => changeRole(u, e.target.value)}>
+                  {ROLE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                </select>
+              );
+            } },
             { key: "status", label: "STATUS", render: (u) => <StatusPill status={u.status} /> },
             { key: "act", label: "", render: (u) => {
+              if (u.isOwner) return null;
               if (u.status === "Disabled") return <button onClick={() => S.enableUser(u.id).then(() => toast("Account re-enabled"))} className="text-xs" style={{ color: C.em }}>Enable</button>;
               if (u.roleKey === "admin") return null;
               return <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button>;
@@ -2469,6 +2487,19 @@ function UsersPage({ toast, S }) {
         </div>
         <Btn kind="primary" full onClick={invite}>{busy ? "Creating\u2026" : "Create account"}</Btn>
         <div className="text-xs mt-2" style={{ color: C.ink3 }}>Share this email and password with them directly. They can change the password after signing in.</div>
+      </Modal>
+      <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="Transfer ownership">
+        <div className="text-sm mb-3" style={{ color: C.ink2 }}>The new owner becomes an admin who can't be demoted or disabled by anyone but themselves. You'll lose that protection.</div>
+        <div className="flex flex-col gap-1.5 mb-5">
+          {transferCandidates.length === 0 && <div className="text-sm" style={{ color: C.ink3 }}>No other active accounts to transfer to.</div>}
+          {transferCandidates.map((u) => (
+            <button key={u.id} onClick={() => setTransferTarget(u.id)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between" style={{ borderColor: transferTarget === u.id ? C.em : C.line, background: transferTarget === u.id ? C.emTint : "#fff" }}>
+              <span><span className="font-medium">{u.name}</span><span className="text-xs ml-2" style={{ color: C.ink2 }}>{u.email}</span></span>
+              <span className="text-xs" style={{ color: C.ink3 }}>{u.role}</span>
+            </button>
+          ))}
+        </div>
+        <Btn kind="danger" full disabled={!transferTarget || transferBusy} onClick={confirmTransfer}>{transferBusy ? "Transferring\u2026" : "Transfer ownership"}</Btn>
       </Modal>
     </div>
   );
@@ -2852,7 +2883,7 @@ export default function App() {
   const role = me.roleKey;
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
-  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs };
+  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner };
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => toast(e.message)).finally(() => setRefreshing(false)); };
   const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { toast(e.message); throw e; } };
   // Fire-and-forget entry in the admin-only audit log. Never blocks or fails the action it's logging.
@@ -2948,10 +2979,15 @@ export default function App() {
     },
     disableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Disabled" } }).then(() => logAudit("disabled", "user", id, u ? u.name : "")); },
     enableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Active" } }).then(() => logAudit("enabled", "user", id, u ? u.name : "")); },
-    /* Admin-only, via the profiles_admin_write policy (not the self-update path, so the anti-escalation trigger doesn't apply here). */
+    /* Admin-only, via the profiles_admin_write policy (not the self-update path, so the anti-escalation trigger doesn't apply here).
+       The owner's own row is separately protected in the DB (profiles_protect_owner trigger) so this is a no-op if aimed at them. */
     updateUserRole: (id, roleKey) => { const u = data.users.find((x) => x.id === id);
       return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { role: roleKey, level: ROLE_KEY_LABEL[roleKey] } })
         .then(() => logAudit("role changed", "user", id, (u ? u.name : "") + " -> " + ROLE_KEY_LABEL[roleKey])); },
+    /* Only the current owner can call this (enforced by the transfer_ownership() DB function, not just this check). */
+    transferOwnership: (newOwnerId) => { const u = data.users.find((x) => x.id === newOwnerId);
+      return sbFetch("/rest/v1/rpc/transfer_ownership", { method: "POST", token: session.token, body: { new_owner_id: newOwnerId } })
+        .then(() => { logAudit("ownership transferred", "user", newOwnerId, "-> " + (u ? u.name : "")); reload(); }); },
     settings: data.settings,
     saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {} } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
     auditLog: data.auditLog,
