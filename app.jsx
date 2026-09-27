@@ -595,7 +595,7 @@ function AccountTab({ S, toast }) {
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label>
           <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas, color: C.ink2 }}>{me.label}</div>
-          <div className="text-xs mt-1" style={{ color: C.ink3 }}>Only an admin can change your role.</div>
+          <div className="text-xs mt-1" style={{ color: C.ink3 }}>Even as an admin, you can't change your own role here — go to Users & permissions to change anyone's role, yours included.</div>
         </div>
         <Btn kind="primary" full disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
       </div>
@@ -2408,7 +2408,9 @@ function UsersPage({ toast, S }) {
   const [pass, setPass] = useState("");
   const [roleKey, setRoleKey] = useState("recruiter");
   const [busy, setBusy] = useState(false);
+  const [roleBusyId, setRoleBusyId] = useState(null);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
+  const adminCount = users.filter((u) => u.roleKey === "admin" && u.status !== "Disabled").length;
   const invite = async () => {
     if (!name.trim()) { toast("Enter their name"); return; }
     if (!email.includes("@")) { toast("Enter a valid email"); return; }
@@ -2418,6 +2420,12 @@ function UsersPage({ toast, S }) {
     try { await S.createAccount({ email, password: pass, full_name: name, role: roleKey }); setName(""); setEmail(""); setPass(""); setOpen(false); toast("Account created for " + name); }
     catch (e) { toast(e.message || "Could not create account"); }
     setBusy(false);
+  };
+  const changeRole = (u, newRoleKey) => {
+    if (newRoleKey === u.roleKey) return;
+    if (u.roleKey === "admin" && newRoleKey !== "admin" && adminCount <= 1) { toast("You're the only admin — make someone else admin first"); return; }
+    setRoleBusyId(u.id);
+    S.updateUserRole(u.id, newRoleKey).then(() => toast(u.name + " is now " + ROLE_KEY_LABEL[newRoleKey])).catch(() => {}).finally(() => setRoleBusyId(null));
   };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -2431,9 +2439,18 @@ function UsersPage({ toast, S }) {
           rows={users}
           columns={[
             { key: "name", label: "USER", render: (u) => <div><div className="font-medium">{u.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{u.email}</div></div> },
-            { key: "role", label: "ROLE", render: (u) => u.role },
+            { key: "role", label: "ROLE", render: (u) => (
+              <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={u.roleKey} disabled={roleBusyId === u.id}
+                onChange={(e) => changeRole(u, e.target.value)}>
+                {ROLE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            ) },
             { key: "status", label: "STATUS", render: (u) => <StatusPill status={u.status} /> },
-            { key: "act", label: "", render: (u) => u.roleKey === "admin" ? null : <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button> },
+            { key: "act", label: "", render: (u) => {
+              if (u.status === "Disabled") return <button onClick={() => S.enableUser(u.id).then(() => toast("Account re-enabled"))} className="text-xs" style={{ color: C.em }}>Enable</button>;
+              if (u.roleKey === "admin") return null;
+              return <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button>;
+            } },
           ]}
         />
       </Card>
@@ -2930,6 +2947,11 @@ export default function App() {
       const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not create account"); logAudit("created", "user", j.id || null, full_name + " (" + role + ")"); reload();
     },
     disableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Disabled" } }).then(() => logAudit("disabled", "user", id, u ? u.name : "")); },
+    enableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Active" } }).then(() => logAudit("enabled", "user", id, u ? u.name : "")); },
+    /* Admin-only, via the profiles_admin_write policy (not the self-update path, so the anti-escalation trigger doesn't apply here). */
+    updateUserRole: (id, roleKey) => { const u = data.users.find((x) => x.id === id);
+      return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { role: roleKey, level: ROLE_KEY_LABEL[roleKey] } })
+        .then(() => logAudit("role changed", "user", id, (u ? u.name : "") + " -> " + ROLE_KEY_LABEL[roleKey])); },
     settings: data.settings,
     saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {} } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
     auditLog: data.auditLog,
