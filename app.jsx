@@ -1268,7 +1268,9 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         recruiterId: candidate.recruiterId, recruiterInit: candidate.recruiterInit,
         fee: amt, feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur,
       });
-      setStatus("Placed"); setPanel(null); setFee(""); setIncentive(""); toast("Marked as placed");
+      // insertPlacement itself moves the candidate to "Placed" (it's the single place
+      // that creates a placement, so status stays in sync no matter which door was used).
+      setPanel(null); setFee(""); setIncentive(""); toast("Marked as placed");
     } catch (e) { toast(e.message || "Could not record the placement"); }
   };
   const postComment = () => {
@@ -2271,6 +2273,10 @@ function NewBillingModal({ open, onClose, toast, S }) {
   const [busy, setBusy] = useState(false);
   const cand = S.cands.find((c) => c.id === candId) || null;
   const job = S.jobs.find((j) => j.id === jobId) || null;
+  // A candidate has to still be in play to be billed — billing someone who was
+  // rejected or withdrew is exactly the kind of status/billing mismatch that's
+  // confusing to audit later, so they're not offered here at all.
+  const billableCands = S.cands.filter((c) => c.status !== "Rejected" && c.status !== "Withdrawn");
   const pickCand = (id) => {
     setCandId(id);
     const c = S.cands.find((x) => x.id === id);
@@ -2304,8 +2310,9 @@ function NewBillingModal({ open, onClose, toast, S }) {
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Candidate</label>
           <select value={candId} onChange={(e) => pickCand(e.target.value)} className={sel} style={selStyle}>
             <option value="">Choose a candidate…</option>
-            {S.cands.map((c) => <option key={c.id} value={c.id}>{c.name} – {c.role}</option>)}
+            {billableCands.map((c) => <option key={c.id} value={c.id}>{c.name} – {c.role}</option>)}
           </select>
+          <div className="text-xs mt-1" style={{ color: C.ink3 }}>Rejected and withdrawn candidates aren't listed — a billing entry marks them placed.</div>
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Job (for billing terms)</label>
@@ -2331,9 +2338,16 @@ function NewBillingModal({ open, onClose, toast, S }) {
 
 function BillingPage({ role, toast, S }) {
   const [open, setOpen] = useState(false);
+  const [delTarget, setDelTarget] = useState(null);
+  const [delBusy, setDelBusy] = useState(false);
   const list = role === "recruiter" ? S.placements.filter((p) => p.recruiterId === S.me.id) : S.placements;
   const setSt = (id, st, msg) => { S.setPlacementStatus(id, st); toast(msg); };
   const count = (s) => list.filter((p) => p.status === s).length;
+  const openRow = (p) => { if (p.candidateId) S.openCandidate(p.candidateId); else toast("No linked candidate record to open"); };
+  const confirmDelete = () => {
+    setDelBusy(true);
+    S.deletePlacement(delTarget.id).then(() => { toast("Billing entry deleted"); setDelTarget(null); }).catch((e) => toast(e.message || "Could not delete")).finally(() => setDelBusy(false));
+  };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -2351,6 +2365,7 @@ function BillingPage({ role, toast, S }) {
           keyField="id"
           rows={list}
           empty="No billing entries yet."
+          onRowClick={openRow}
           columns={[
             { key: "name", label: "PLACEMENT", render: (p) => <div><div className="font-medium">{p.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{p.role}</div></div> },
             { key: "recruiter", label: "RECRUITER", render: (p) => p.recruiter ? <Avatar init={p.recruiter} tone={PEOPLE_TONE[p.recruiter]} size={26} /> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
@@ -2358,16 +2373,27 @@ function BillingPage({ role, toast, S }) {
             { key: "incentive", label: "RECRUITER INCENTIVE", render: (p) => p.incentive ? <span className="text-sm">{p.incentive}</span> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
             { key: "guarantee", label: "GUARANTEE", render: (p) => <span className="text-xs" style={{ color: C.ink2 }}>{p.guarantee}</span> },
             { key: "status", label: "STATUS", render: (p) => (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <StatusPill status={p.status} />
-                {p.status === "Ready" && role !== "recruiter" && <button onClick={() => setSt(p.id, "Invoiced", "Invoice created for " + p.name)} className="text-xs" style={{ color: C.em }}>Invoice</button>}
-                {p.status === "Invoiced" && role !== "recruiter" && <button onClick={() => setSt(p.id, "Paid", "Marked paid: " + p.name)} className="text-xs" style={{ color: C.em }}>Mark paid</button>}
+                {p.status === "Guarantee" && p.guarantee.startsWith("Cleared") && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Ready", "Guarantee cleared — ready to invoice for " + p.name); }} className="text-xs" style={{ color: C.em }}>Mark ready</button>}
+                {p.status === "Ready" && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Invoiced", "Invoice created for " + p.name); }} className="text-xs" style={{ color: C.em }}>Invoice</button>}
+                {p.status === "Invoiced" && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Paid", "Marked paid: " + p.name); }} className="text-xs" style={{ color: C.em }}>Mark paid</button>}
+                {["Guarantee", "Ready"].includes(p.status) && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Fallout", "Marked as fallout: " + p.name); }} className="text-xs" style={{ color: C.dangerFg }}>Mark fallout</button>}
               </div>
             ) },
+            { key: "act", label: "", render: (p) => role === "admin" ? <button title="Delete billing entry" onClick={(e) => { e.stopPropagation(); setDelTarget(p); }} className="p-1" style={{ color: C.ink3 }}><X size={15} /></button> : null },
           ]}
         />
       </Card>
       <NewBillingModal open={open} onClose={() => setOpen(false)} toast={toast} S={S} />
+      <ConfirmModal
+        open={!!delTarget}
+        onClose={() => setDelTarget(null)}
+        title="Delete this billing entry?"
+        body={delTarget ? "This permanently removes the billing entry for \"" + delTarget.name + "\" (" + delTarget.fee + "). It doesn't change the candidate's own status — check that separately if this placement didn't actually happen. This can't be undone." : ""}
+        onConfirm={confirmDelete}
+        busy={delBusy}
+      />
     </div>
   );
 }
@@ -2925,6 +2951,11 @@ export default function App() {
         if (p.timeline) await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: id, title: p.timeline[p.timeline.length - 1].t } });
         if (p.endorsed) { const e = p.endorsed[p.endorsed.length - 1]; await sbFetch("/rest/v1/candidate_endorsements", { method: "POST", token: session.token, body: { candidate_id: id, company: e.company, role_title: e.role, status: e.status, next_step: e.next, endorsed_by: session.uid } }); }
         if (p.screening) await sbFetch("/rest/v1/candidates?id=eq." + id, { method: "PATCH", token: session.token, body: { screening: p.screening } });
+        // Ripple this into the audit log so status moves (and other edits) stay traceable
+        // from wherever they were triggered — the candidate page, Billing, a bulk action, etc.
+        if ("status" in body) logAudit("status changed", "candidate", id, (c ? c.name : "") + ": " + (c ? c.status : "?") + " → " + p.status);
+        const otherFields = Object.keys(body).filter((k) => k !== "status" && k !== "ai_score");
+        if (otherFields.length) logAudit("edited", "candidate", id, c ? c.name : "");
         reload();
       } catch (e) { toast(e.message); reload(); }
     })();
@@ -2940,7 +2971,13 @@ export default function App() {
     const body = {}; Object.entries(JOB_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
     setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, ...p } : x)) }));
     return sbFetch("/rest/v1/jobs?id=eq." + id, { method: "PATCH", token: session.token, body })
-      .then(reload)
+      .then(() => {
+        const label = j ? j.role + ", " + j.client : "";
+        if ("status" in body) logAudit("status changed", "job", id, label + ": " + (j ? j.status : "?") + " → " + p.status);
+        const otherFields = Object.keys(body).filter((k) => k !== "status");
+        if (otherFields.length) logAudit("edited", "job", id, label);
+        reload();
+      })
       .catch((e) => { toast(e.message); reload(); throw e; });
   };
 
@@ -2969,19 +3006,35 @@ export default function App() {
       setData((d) => ({ ...d, placements: [row, ...d.placements] }));
       try {
         await call("/rest/v1/placements", { method: "POST", body: { id: row.id, candidate_name: p.name, role_desc: p.role, candidate_id: p.candidateId || null, job_id: p.jobId || null, recruiter_id: p.recruiterId || null, fee: Number(p.fee) || 0, fee_currency: p.feeCurrency || "NGN", recruiter_incentive: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, recruiter_incentive_currency: p.incentiveCurrency || null, guarantee_ends: guaranteeEnds, status: "Guarantee" } });
+        logAudit("created", "placement", row.id, p.name + (p.role ? " — " + p.role : "") + " (" + row.fee + ")");
+        // Being billed IS being placed — a candidate can't sit at "Rejected"/anything
+        // else while a placement exists for them, or Billing and their own status
+        // tell two different stories. This is the single place that creates a
+        // placement (both "Mark placed" and "New billing entry" call it), so fixing
+        // the candidate's status here keeps the two in sync no matter which door was used.
+        const c = data.cands.find((x) => x.id === p.candidateId);
+        if (c && c.status !== "Placed") {
+          updateCand(c.id, (cc) => ({ status: "Placed", timeline: [...cc.timeline, { t: "Status set to Placed", d: todayStr(), done: true }] }));
+        }
         reload();
       } catch (e) { toast(e.message); setData((d) => ({ ...d, placements: d.placements.filter((x) => x.id !== row.id) })); throw e; }
     },
-    setPlacementStatus: (id, status) => call("/rest/v1/placements?id=eq." + id, { method: "PATCH", body: { status } })
-      .then(() => setData((d) => ({ ...d, placements: d.placements.map((p) => (p.id === id ? { ...p, status } : p)) })))
-      .catch((e) => toast(e.message)),
+    setPlacementStatus: (id, status) => { const pl = data.placements.find((x) => x.id === id);
+      return call("/rest/v1/placements?id=eq." + id, { method: "PATCH", body: { status } })
+        .then(() => {
+          setData((d) => ({ ...d, placements: d.placements.map((p) => (p.id === id ? { ...p, status } : p)) }));
+          logAudit("status changed", "placement", id, (pl ? pl.name : "") + ": " + (pl ? pl.status : "?") + " → " + status);
+        })
+        .catch((e) => toast(e.message)); },
+    deletePlacement: (id) => { const pl = data.placements.find((x) => x.id === id);
+      return call("/rest/v1/placements?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "placement", id, pl ? pl.name + " (" + pl.fee + ")" : "")); },
     campaigns: data.campaigns,
     setCampaigns: (fn) => { const list = typeof fn === "function" ? fn(data.campaigns) : fn;
       const changed = list.find((c, i) => !data.campaigns[i] || data.campaigns[i].status !== c.status);
       setData((d) => ({ ...d, campaigns: list }));
       const existing = changed && data.campaigns.find((c) => c.id === changed.id);
-      if (existing) call("/rest/v1/campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } });
-      else if (changed) call("/rest/v1/campaigns", { method: "POST", body: { id: changed.id, name: changed.name, created_by: session.uid } });
+      if (existing) call("/rest/v1/campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } }).then(() => logAudit("status changed", "campaign", changed.id, changed.name + ": " + existing.status + " → " + changed.status));
+      else if (changed) call("/rest/v1/campaigns", { method: "POST", body: { id: changed.id, name: changed.name, created_by: session.uid } }).then(() => logAudit("created", "campaign", changed.id, changed.name));
     },
     deleteCampaign: (id) => { const c = data.campaigns.find((x) => x.id === id); return call("/rest/v1/campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "campaign", id, c ? c.name : "")); },
     ads: data.ads,
@@ -2989,8 +3042,9 @@ export default function App() {
       const existingIds = new Set(data.ads.map((a) => a.id)); const added = list.filter((a) => !existingIds.has(a.id));
       const changed = list.find((a) => { const o = data.ads.find((x) => x.id === a.id); return o && o.status !== a.status; });
       setData((d) => ({ ...d, ads: list }));
-      added.forEach((a) => call("/rest/v1/ad_campaigns", { method: "POST", body: { id: a.id, job_title: a.job, client: a.client, channels: a.channels, payer_type: a.payerType, budget: num(a.budget), status: a.status, created_by: session.uid } }));
-      if (changed) call("/rest/v1/ad_campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } });
+      added.forEach((a) => call("/rest/v1/ad_campaigns", { method: "POST", body: { id: a.id, job_title: a.job, client: a.client, channels: a.channels, payer_type: a.payerType, budget: num(a.budget), status: a.status, created_by: session.uid } }).then(() => logAudit("created", "ad_campaign", a.id, a.job)));
+      if (changed) { const prevStatus = (data.ads.find((x) => x.id === changed.id) || {}).status;
+        call("/rest/v1/ad_campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } }).then(() => logAudit("status changed", "ad_campaign", changed.id, changed.job + ": " + prevStatus + " → " + changed.status)); }
     },
     deleteAd: (id) => { const a = data.ads.find((x) => x.id === id); return call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "ad_campaign", id, a ? a.job : "")); },
     users: data.users,
@@ -3030,7 +3084,11 @@ export default function App() {
     team: buildTeam(data.users, data.cands, data.placements),
     openCandidate: (id) => setCandId(id),
     insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null } }),
-    setJobStatus: (id, status) => call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => setData((d) => ({ ...d, jobs: d.jobs.map((j) => (j.id === id ? { ...j, status } : j)) }))),
+    setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
+      return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => {
+        setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status } : x)) }));
+        logAudit("status changed", "job", id, (j ? j.role + ", " + j.client : "") + ": " + (j ? j.status : "?") + " → " + status);
+      }); },
     /* Candidate <-> job pipeline (candidate_jobs table). screeningAnswers: [{q,a}] answered by the
        recruiter right when they attach the candidate to a job that has screening_questions. */
     linkJob: (candidateId, jobId, fit, screeningAnswers) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [] } }),
