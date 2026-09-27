@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
+import { screenLink } from "./screening.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -157,21 +158,97 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const body = await req.json();
+
+    // ---------------------------------------------------------------
+    // Candidate page actions. No staff login: the candidate's secret portal token
+    // proves who they are, and they can only act on their own job cards.
+    // ---------------------------------------------------------------
+    if (body.action === "portal_respond" || body.action === "portal_answer") {
+      const portalToken = String(body.token || "");
+      if (portalToken.length < 16) return json({ error: "Invalid link" }, 403);
+      const { data: cand } = await admin.from("candidates").select("id,name").eq("portal_token", portalToken).maybeSingle();
+      if (!cand) return json({ error: "Invalid link" }, 403);
+      const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", body.linkId).eq("candidate_id", cand.id).maybeSingle();
+      if (!link) return json({ error: "This role is no longer available" }, 404);
+      const { data: pj } = await admin.from("jobs").select("role_title,client").eq("id", link.job_id).maybeSingle();
+      const roleName = pj ? pj.role_title + ", " + pj.client : "a role";
+
+      if (body.action === "portal_respond") {
+        if (link.candidate_response !== "pending") return json({ ok: true, already: true });
+        const accept = body.accept === true;
+        await admin.from("candidate_jobs").update({
+          candidate_response: accept ? "accepted" : "declined",
+          responded_at: new Date().toISOString(),
+          ...(accept ? { stage: "In review" } : { stage: "Withdrawn" }),
+        }).eq("id", link.id);
+        await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: (accept ? "Accepted " : "Declined ") + roleName + " on their candidate page", done: true });
+        if (accept) { try { await screenLink(admin, link.id, askAI, loadResume); } catch (e) { console.error("screen after accept", String((e as Error)?.message || e)); } }
+        return json({ ok: true });
+      }
+
+      // portal_answer
+      const f = link.ai?.followups;
+      if (!f || f.state !== "sent") return json({ error: "These questions have already been answered" }, 409);
+      const answers: unknown[] = Array.isArray(body.answers) ? body.answers : [];
+      const questions = (f.questions || []).map((x: any, i: number) => ({ q: x.q, a: String(answers[i] ?? "").trim().slice(0, 4000) }));
+      if (questions.some((x: any) => !x.a)) return json({ error: "Please answer every question" }, 400);
+      const ai = { ...(link.ai || {}), followups: { ...f, state: "answered", questions, answeredAt: new Date().toISOString() } };
+      await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
+      await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: "Answered screening questions for " + roleName, done: true });
+      try { await screenLink(admin, link.id, askAI, loadResume); } catch (e) { console.error("screen after answers", String((e as Error)?.message || e)); }
+      return json({ ok: true });
+    }
+
+    // ---------------------------------------------------------------
+    // Everything below needs a signed-in, active Harbor user.
+    // ---------------------------------------------------------------
     const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
     const { data: caller } = await admin.auth.getUser(token);
     if (!caller?.user) return json({ error: "Not signed in" }, 401);
 
-    const { data: me } = await admin.from("profiles").select("id,role,status").eq("id", caller.user.id).single();
+    const { data: me } = await admin.from("profiles").select("id,role,status,full_name").eq("id", caller.user.id).single();
     if (!me || me.status !== "Active") return json({ error: "Your account is not active" }, 403);
     const isStaff = me.role === "admin" || me.role === "recops";
+    const { action } = body;
 
-    const body = await req.json();
-    const { action, candidateId } = body;
+    // Card-level actions take a linkId (one candidate on one job).
+    if (action === "screen" || action === "approve_questions") {
+      const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", body.linkId).maybeSingle();
+      if (!link) return json({ error: "Screening card not found" }, 404);
+      const { data: owner } = await admin.from("candidates").select("recruiter_id").eq("id", link.candidate_id).single();
+      if (!isStaff && owner?.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
+      if (link.candidate_response !== "accepted") return json({ error: "The candidate hasn't accepted this role yet" }, 409);
+
+      if (action === "screen") return json({ ok: true, ai: await screenLink(admin, link.id, askAI, loadResume) });
+
+      // approve_questions: only Rec Ops and Admins can send follow-up questions to a candidate.
+      if (!isStaff) return json({ error: "Only Rec Ops or Admins can approve screening questions" }, 403);
+      const f = link.ai?.followups;
+      if (f && f.state !== "draft") return json({ error: "These questions were already sent" }, 409);
+      const qs = (Array.isArray(body.questions) ? body.questions : []).map((q: unknown) => String(q || "").trim()).filter(Boolean).slice(0, 6);
+      if (!qs.length) return json({ error: "Add at least one question" }, 400);
+      const ai = { ...(link.ai || {}), followups: { state: "sent", questions: qs.map((q: string) => ({ q })), approvedBy: me.full_name || "Rec Ops", approvedAt: new Date().toISOString() } };
+      await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
+      await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening questions sent by " + (me.full_name || "Rec Ops"), done: true });
+      return json({ ok: true, ai });
+    }
+
+    const { candidateId } = body;
     if (!candidateId) return json({ error: "candidateId is required" }, 400);
 
     const { data: candidate } = await admin.from("candidates").select("*").eq("id", candidateId).single();
     if (!candidate) return json({ error: "Candidate not found" }, 404);
     if (!isStaff && candidate.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
+
+    // Remove the resume: delete the stored file (service role, so recruiters can remove
+    // their own candidate's resume too) and clear it from the profile.
+    if (action === "remove_resume") {
+      if (candidate.resume_path) await admin.storage.from("resumes").remove([candidate.resume_path]);
+      if (candidate.cv_path) await admin.storage.from("cvs").remove([candidate.cv_path]);
+      await admin.from("candidates").update({ resume_path: null, resume_name: null, cv_path: null }).eq("id", candidateId);
+      return json({ ok: true });
+    }
 
     let job: any = null;
     if (body.jobId) {
@@ -216,7 +293,7 @@ Deno.serve(async (req: Request) => {
         `{"skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string, "phone": string, "location": string}. ` +
         "score reflects how strong a fit the candidate is for the context given, based only on skills, experience and (if answered) salary and availability fit — never penalize or reward based on job tenure/duration at past employers. " +
         "Salary: be flexible, only count it against them if it is clearly and substantially over the job's budget. " +
-        "'experience' is a short summary like '6 yrs backend engineering'. 'notice' and 'pay' are short strings taken from the screening answers if given there, else from the CV if stated, else '-'. " +
+        "'experience' is a short summary like '6 yrs backend engineering'. 'notice' is their notice period and 'pay' their salary expectation (amount, currency and period as stated): short strings taken from the screening answers if given there, else from the CV if stated, else '-'. " +
         "'phone' is the candidate's phone/mobile number exactly as written on the CV (digits, spaces, dashes, parens as given), or '' if none is present. " +
         "'location' is the candidate's city and state/region (and country if not obviously the same country as the job) as stated on the CV, e.g. 'Austin, TX', or '' if none is present — never guess a location from an area code or any other indirect clue, only use it if the CV states it directly.";
 
@@ -228,9 +305,12 @@ Deno.serve(async (req: Request) => {
         gaps: result.gaps || [],
         ai_score: score,
         experience: result.experience || "-",
-        notice: result.notice || "-",
-        pay: result.pay || "-",
       };
+      // Notice and salary expectation: answers to screening questions win, so the resume
+      // only fills these when nothing is on file yet.
+      const blank = (v: unknown) => !v || String(v).trim() === "" || String(v).trim() === "-";
+      if (blank(candidate.notice)) patch.notice = result.notice || "-";
+      if (blank(candidate.pay)) patch.pay = result.pay || "-";
       // Only fill phone/location from the CV if the candidate doesn't already have one on
       // file — never let a re-score silently overwrite a value staff typed in themselves.
       if (result.phone && !candidate.phone) patch.phone = result.phone;
@@ -238,7 +318,13 @@ Deno.serve(async (req: Request) => {
       await admin.from("candidates").update(patch).eq("id", candidateId);
       // The per-job fit shown on the job page and the candidate's Jobs card.
       if (job && material.linkId) await admin.from("candidate_jobs").update({ fit: score }).eq("id", material.linkId);
-      return json({ ok: true, result, usedScreeningAnswers: material.count > 0 });
+      // A new resume changes every company card: rescreen the ones the candidate is on.
+      let rescreened = 0;
+      if (body.rescreenCards) {
+        const { data: cards } = await admin.from("candidate_jobs").select("id").eq("candidate_id", candidateId).eq("candidate_response", "accepted").limit(5);
+        for (const c of cards || []) { try { await screenLink(admin, c.id, askAI, loadResume); rescreened++; } catch (e) { console.error("rescreen", c.id, String((e as Error)?.message || e)); } }
+      }
+      return json({ ok: true, result, usedScreeningAnswers: material.count > 0, rescreened });
     }
 
     // ---------------------------------------------------------------
