@@ -153,7 +153,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
 
   const f = link.ai?.followups;
   const final = f?.state === "answered";
-  const keepFollowups = f && (f.state === "sent" || f.state === "answered");
+  const keepFollowups = f && (f.state === "sent" || f.state === "answered" || f.manual);
   const mayAsk = !keepFollowups;
 
   const system =
@@ -211,4 +211,67 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   const salary = String(result.salary_expectation || "").trim();
   if (salary && salary !== "-") await admin.from("candidates").update({ pay: salary.slice(0, 120) }).eq("id", candidate.id);
   return ai;
+}
+
+// ---------------------------------------------------------------------------
+// Match review: a candidate against a role they are NOT on yet. Uses the resume and
+// every answer they have given for any job, returns the checklist, a short summary and
+// questions that would confirm the fit. Questions already answered are flagged, never
+// silently dropped, so the recruiter can see what's covered.
+// The result is saved on the candidate's matches entry for that job (candidates.matches).
+// ---------------------------------------------------------------------------
+export async function reviewMatch(admin: any, candidateId: string, jobId: string, askAI: Ask, loadResume: Load) {
+  const { data: candidate } = await admin.from("candidates").select("*").eq("id", candidateId).single();
+  if (!candidate) throw new Error("Candidate not found");
+  const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
+  if (!job) throw new Error("This job no longer exists");
+  const { data: allLinks } = await admin.from("candidate_jobs").select("*").eq("candidate_id", candidateId);
+  const links: any[] = allLinks || [];
+  const { data: jobs } = links.length ? await admin.from("jobs").select("*").in("id", [...new Set(links.map((l) => l.job_id))]) : { data: [] };
+  const jobOf = (id: string) => (jobs || []).find((j: any) => j.id === id);
+  const answered = links.flatMap((l) => {
+    const j = jobOf(l.job_id);
+    return answersOn(l, j).map((x) => ({ ...x, where: j ? `${j.role_title} at ${j.client}` : "another role" }));
+  });
+  const { resume } = await loadResume(admin, candidate);
+
+  const system =
+    "You are a recruitment analyst checking whether a candidate already in the database is a fit for a NEW role they have not been put forward for. " +
+    "You get their CV and every answer they have given while being screened for other roles. Reply with STRICT JSON only: " +
+    `{${REQS_SHAPE}, "summary": string, "score": number (0-100), "verdict": "Perfect fit" | "Possible fit" | "Reject", "verdict_reason": string, ` +
+    `"questions": [{"q": string, "already_answered": boolean, "answer": string}]}. ` +
+    RUBRIC +
+    "summary: 2-3 sentences on how they fit THIS role, naming the most important must-have that is still unproven. " +
+    "questions: 3 to 6 short questions (under 30 words each) that would confirm the fit for THIS role, most important first, aimed at must-haves marked 'partial' or 'not met' and at anything this role needs that earlier answers don't cover. " +
+    "For each question, if the candidate has ALREADY answered it (or something that settles it) in the answers provided, set already_answered true and put a one-sentence summary of what they said in 'answer'; otherwise already_answered false and answer ''. " +
+    "Include salary, start date or work authorisation only if they have not already answered it.";
+  const content =
+    jobText(job) + "\n\n" +
+    (resume ? "The candidate's CV is included.\n" : `No readable CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
+    `\nEverything they have answered so far:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}\n(answered for ${x.where})`).join("\n\n") : "(nothing yet)"}`;
+
+  const result = await askAI(system, content, resume, 3000);
+  const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit", "Reject");
+  const review = {
+    job_id: job.id,
+    role: job.role_title,
+    company: job.client,
+    fit: checked.score,
+    verdict: checked.verdict,
+    verdict_reason: String(result.verdict_reason || "").slice(0, 400),
+    summary: String(result.summary || "").slice(0, 1200),
+    requirements: cleanReqs(result.requirements),
+    questions: (Array.isArray(result.questions) ? result.questions : []).slice(0, 6).map((x: any) => ({
+      q: String(x?.q || "").slice(0, 300),
+      already_answered: !!x?.already_answered,
+      answer: String(x?.answer || "").slice(0, 400),
+    })).filter((x: any) => x.q),
+    usedResume: !!resume,
+    answersUsed: answered.length,
+    reviewedAt: new Date().toISOString(),
+  };
+  // Replace this job's entry in the candidate's match list (not a locked review field).
+  const others = (Array.isArray(candidate.matches) ? candidate.matches : []).filter((m: any) => m?.job_id !== job.id);
+  await admin.from("candidates").update({ matches: [...others, review] }).eq("id", candidateId);
+  return { review, answered };
 }

@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
-import { screenLink, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
+import { screenLink, reviewMatch, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -233,6 +233,38 @@ Deno.serve(async (req: Request) => {
       await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
       await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening questions sent by " + (me.full_name || "Rec Ops"), done: true });
       return json({ ok: true, ai });
+    }
+
+    // Review a candidate against a role they're not on yet, and route them to it with
+    // questions attached. Routing keeps the normal flow: the candidate accepts on their page,
+    // then the card appears under Companies. Rec Ops/Admin questions go out as sent;
+    // a recruiter's wait for approval like any other follow-up.
+    if (action === "review_match" || action === "route_with_questions") {
+      const { data: cand } = await admin.from("candidates").select("id,recruiter_id").eq("id", body.candidateId).maybeSingle();
+      if (!cand) return json({ error: "Candidate not found" }, 404);
+      if (!isStaff && cand.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
+      if (!body.jobId) return json({ error: "jobId is required" }, 400);
+      if (action === "review_match") return json({ ok: true, ...(await reviewMatch(admin, cand.id, body.jobId, askAI, loadResume)) });
+
+      const { data: existing } = await admin.from("candidate_jobs").select("id").eq("candidate_id", cand.id).eq("job_id", body.jobId).maybeSingle();
+      if (existing) return json({ error: "They're already on this job" }, 409);
+      const qs = (Array.isArray(body.questions) ? body.questions : []).map((q: unknown) => String(q || "").trim()).filter(Boolean).slice(0, 8);
+      const r = body.review && typeof body.review === "object" ? body.review : null;
+      const ai: Record<string, unknown> = r ? {
+        stage: "first", summary: String(r.summary || "").slice(0, 1200), score: r.fit ?? null, verdict: r.verdict || "", verdict_reason: String(r.verdict_reason || "").slice(0, 400),
+        requirements: Array.isArray(r.requirements) ? r.requirements.slice(0, 25) : [], strengths: [], gaps: [], usedResume: !!r.usedResume, answersUsed: r.answersUsed || 0, updatedAt: new Date().toISOString(),
+      } : {};
+      if (qs.length) ai.followups = isStaff
+        ? { state: "sent", manual: true, questions: qs.map((q: string) => ({ q })), approvedBy: me.full_name || "Rec Ops", approvedAt: new Date().toISOString() }
+        : { state: "draft", manual: true, questions: qs.map((q: string) => ({ q })) };
+      const { data: link, error } = await admin.from("candidate_jobs").insert({
+        candidate_id: cand.id, job_id: body.jobId, stage: "Sourced", candidate_response: "pending",
+        fit: r && r.fit != null ? clampScore(r.fit) : null, ai,
+      }).select("id").single();
+      if (error) return json({ error: error.message }, 500);
+      const { data: j } = await admin.from("jobs").select("role_title,client").eq("id", body.jobId).maybeSingle();
+      await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: "Routed to " + (j ? j.role_title + ", " + j.client : "a role") + (qs.length ? " with " + qs.length + " screening question" + (qs.length > 1 ? "s" : "") : ""), done: true });
+      return json({ ok: true, linkId: link.id, questionsState: qs.length ? (isStaff ? "sent" : "draft") : null });
     }
 
     const { candidateId } = body;

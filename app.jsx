@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, Inbox as InboxIcon, Briefcase, TrendingUp, Send,
   CreditCard, Megaphone, Search, Bell, ChevronDown, ChevronRight, ChevronLeft,
@@ -434,12 +434,12 @@ function Toast({ text }) {
   );
 }
 
-function Modal({ open, onClose, title, children }) {
+function Modal({ open, onClose, title, children, wide }) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
       <div className="absolute inset-0" style={{ background: "rgba(20,32,27,0.45)" }} onClick={onClose} />
-      <div className="relative w-full md:max-w-lg rounded-t-2xl md:rounded-2xl p-5 md:p-6 overflow-y-auto" style={{ background: "#fff", maxHeight: "85vh" }}>
+      <div className={"relative w-full rounded-t-2xl md:rounded-2xl p-5 md:p-6 overflow-y-auto " + (wide ? "md:max-w-2xl" : "md:max-w-lg")} style={{ background: "#fff", maxHeight: "88vh" }}>
         <div className="flex items-center justify-between mb-4">
           <div className="text-xl" style={{ ...SERIF }}>{title}</div>
           <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: C.canvas }}><X size={16} /></button>
@@ -1538,8 +1538,10 @@ function CompanyScreeningCards({ candidate, S, toast }) {
       if (!g) { g = { company: job.client, items: [] }; groups.push(g); }
       g.items.push({ link: l, job });
     });
-  const withCards = new Set(groups.map((g) => g.company));
-  const otherSubs = candidate.endorsed.filter((e) => !withCards.has(e.company));
+  // A submission belongs to a card when it's the same company, or the same role as a job on
+  // that card (so a client renamed after submitting doesn't show up as a second company).
+  const onGroup = (g, e) => e.company === g.company || g.items.some((x) => x.job.role === e.role);
+  const otherSubs = candidate.endorsed.filter((e) => !groups.some((g) => onGroup(g, e)));
   const [open, setOpen] = useState(() => (groups[0] ? { [groups[0].company]: true } : {}));
   if (!groups.length && !otherSubs.length) return (
     <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>No companies yet. Add them to a job from the Jobs card, or route them to a role they match. A screening card appears here once they're on it.</div>
@@ -1547,7 +1549,7 @@ function CompanyScreeningCards({ candidate, S, toast }) {
   return (
     <div className="flex flex-col gap-3">
       {groups.map((g) => (
-        <CompanyCard key={g.company} group={g} endorsed={candidate.endorsed.filter((e) => e.company === g.company)} open={!!open[g.company]}
+        <CompanyCard key={g.company} group={g} endorsed={candidate.endorsed.filter((e) => onGroup(g, e))} open={!!open[g.company]}
           onToggle={() => setOpen((o) => ({ ...o, [g.company]: !o[g.company] }))} candidate={candidate} S={S} toast={toast} />
       ))}
       {otherSubs.length > 0 && (
@@ -1741,39 +1743,213 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   );
 }
 
-/* Roles the candidate matches. Route sends the role to their candidate page; the company
-   card appears once they accept. */
-function MatchesCard({ candidate, S, toast }) {
+/* Everything the candidate has already answered, across every job they're on. */
+function pastAnswers(candidate, S) {
+  const out = [];
+  candidate.jobLinks.forEach((l) => {
+    const j = S.jobs.find((x) => x.id === l.jobId);
+    const where = j ? j.role + " · " + j.client : "another role";
+    ((j && j.screeningQuestions) || []).forEach((q, i) => { const a = String(l.screeningAnswers[i] || "").trim(); if (a) out.push({ q, a, where }); });
+    const f = l.ai && l.ai.followups;
+    if (f && f.state === "answered") (f.questions || []).forEach((x) => { if (x.q && String(x.a || "").trim()) out.push({ q: x.q, a: String(x.a).trim(), where }); });
+  });
+  return out;
+}
+const Q_TOPICS = [/salar|compensation|pay expectation|base pay/, /notice|start date|when .*start|join/, /visa|sponsor|citizen|green card|work auth|right to work/, /interview availab|availability/, /linkedin/, /cpa|licen[cs]e/, /relocat/, /remote|hybrid|on.?site/, /interviewed .*60 days|recent interviews/];
+const qWords = (s) => new Set(String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").split(/\s+/).filter((w) => w.length > 3));
+// An earlier answer that already covers this question: same topic, or mostly the same words.
+function coveredBy(q, past) {
+  const t = Q_TOPICS.findIndex((re) => re.test(String(q).toLowerCase()));
+  const w = qWords(q);
+  return past.find((p) => {
+    if (t >= 0 && Q_TOPICS[t].test(String(p.q).toLowerCase())) return true;
+    const pw = qWords(p.q); if (!w.size || !pw.size) return false;
+    let n = 0; w.forEach((x) => { if (pw.has(x)) n++; });
+    return n / Math.min(w.size, pw.size) >= 0.6;
+  }) || null;
+}
+
+/* Review one candidate against one job they're not on: checklist vs resume and earlier answers,
+   a short summary, and questions to confirm the fit (already-answered ones flagged). Routing
+   sends the role and the chosen questions to their candidate page; the job appears under
+   Companies once they accept. */
+function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
+  const saved = (candidate.matches || []).find((m) => m.job_id === job.id && m.reviewedAt) || null;
+  const [review, setReview] = useState(saved);
   const [busy, setBusy] = useState("");
-  if (!candidate.matches.length) return null;
-  const route = async (jobId) => {
-    setBusy(jobId);
-    try { await S.routeToJob(candidate.id, jobId); toast("Routed. " + candidate.name.split(" ")[0] + " will see it on their candidate page to accept."); } catch (e) { /* toast shown by S */ }
+  const [err, setErr] = useState("");
+  const [picked, setPicked] = useState(null);
+  const [extra, setExtra] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [showPast, setShowPast] = useState(false);
+  const [showReqs, setShowReqs] = useState(true);
+  const past = pastAnswers(candidate, S);
+  const link = candidate.jobLinks.find((l) => l.jobId === job.id) || null;
+  const first = candidate.name.split(" ")[0];
+  const staff = S.role === "admin" || S.role === "recops";
+  const run = async () => {
+    setBusy("review"); setErr("");
+    try { const r = await S.aiScreen("review_match", { candidateId: candidate.id, jobId: job.id }); setReview(r.review); setPicked(null); }
+    catch (e) { setErr(e.message); }
     setBusy("");
   };
+  // First open with no saved review: run it straight away.
+  useEffect(() => { if (open && !saved) run(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const aiQs = ((review && review.questions) || []).map((x) => {
+    const hit = x.already_answered ? { a: x.answer } : coveredBy(x.q, past);
+    return { q: x.q, answered: !!hit, answer: hit ? hit.a : "", where: hit && hit.where ? hit.where : "" };
+  });
+  const allQs = [...aiQs, ...extra];
+  const on = picked || allQs.map((x) => !x.answered);
+  const chosen = allQs.filter((_, i) => on[i]).map((x) => x.q);
+  const toggle = (i) => setPicked(allQs.map((_, k) => (k === i ? !on[k] : on[k])));
+  const addQ = () => {
+    const q = draft.trim(); if (!q) return;
+    const hit = coveredBy(q, past);
+    setExtra([...extra, { q, manual: true, answered: !!hit, answer: hit ? hit.a : "", where: hit ? hit.where : "" }]);
+    setPicked([...on, true]); setDraft("");
+  };
+  const route = async () => {
+    setBusy("route"); setErr("");
+    try {
+      await S.aiScreen("route_with_questions", { candidateId: candidate.id, jobId: job.id, questions: chosen, review });
+      toast("Routed to " + job.client + ". " + first + " will see it" + (chosen.length ? " with " + chosen.length + " question" + (chosen.length > 1 ? "s" : "") : "") + " on their candidate page.");
+      onClose();
+    } catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+  const reqs = (review && review.requirements) || [];
+  const groups = [
+    { key: "must", label: "MUST-HAVE", note: "decides the verdict", items: reqs.filter((r) => r.type === "must") },
+    { key: "preferred", label: "NICE TO HAVE", note: "never a reason to reject", items: reqs.filter((r) => r.type !== "must") },
+  ].filter((g) => g.items.length);
+  const why = review ? verdictWhy(review) : "";
+  return (
+    <Modal open={open} onClose={onClose} title={"Fit review: " + first} wide>
+      <div className="flex flex-col gap-3.5">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="min-w-0 flex-1"><div className="text-sm font-semibold">{job.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{job.client}{job.location ? " · " + job.location : ""}</div></div>
+          {review && <div className="text-2xl" style={{ ...SERIF }}>{review.fit}%</div>}
+          {review && <Pill tone={VERDICT_TONE[review.verdict] || "neutral"}>{review.verdict}</Pill>}
+        </div>
+        {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+        {busy === "review" && <div className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}><InlineDots /> Checking {first}'s resume and {past.length} earlier answer{past.length === 1 ? "" : "s"} against this job…</div>}
+        {review && busy !== "review" && (
+          <>
+            <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: C.ink2 }}>
+              <Sparkles size={14} color={C.em} className="shrink-0" />
+              <span>{review.usedResume ? "Resume + " : "No resume · "}{review.answersUsed || 0} earlier answer{review.answersUsed === 1 ? "" : "s"} · reviewed {fdate(review.reviewedAt)}</span>
+              <button type="button" onClick={run} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>Review again</button>
+            </div>
+            {review.summary && <div className="text-sm leading-relaxed">{review.summary}</div>}
+            {why && (
+              <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed" style={{ background: (TONE[VERDICT_TONE[review.verdict]] || TONE.neutral).bg }}>
+                <span className="font-semibold" style={{ color: (TONE[VERDICT_TONE[review.verdict]] || TONE.neutral).fg }}>Why {review.verdict === "Reject" ? "rejected" : String(review.verdict).toLowerCase()}: </span>{why}
+              </div>
+            )}
+            {groups.length > 0 && (
+              <Fold title="Requirements checklist" open={showReqs} onToggle={() => setShowReqs((v) => !v)}
+                count={groups.map((g) => (g.key === "must" ? "Must-have " : "Nice to have ") + g.items.filter((r) => r.status === "met").length + "/" + g.items.length + " met").join(" · ")}>
+                {groups.map((g) => (
+                  <div key={g.key}>
+                    <div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>{g.label} <span className="font-normal">· {g.note}</span></div>
+                    <div className="flex flex-col gap-1.5">
+                      {g.items.map((r, i) => (
+                        <div key={i} className="flex gap-2 text-sm items-start">
+                          <Pill tone={r.status === "met" ? "em" : r.status === "partial" ? "warn" : g.key === "must" ? "danger" : "neutral"}>{r.status}</Pill>
+                          <div className="flex-1"><span className={g.key === "must" ? "font-medium" : ""} style={g.key === "must" ? null : { color: C.ink2 }}>{r.requirement}</span>{r.evidence && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.evidence}</div>}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </Fold>
+            )}
+          </>
+        )}
+        <div className="rounded-xl" style={{ background: C.canvas }}>
+          <Fold title="Their earlier answers" count={"(" + past.length + ")"} open={showPast} onToggle={() => setShowPast((v) => !v)} sub="Everything they've answered for other roles. Used in the review and to flag repeat questions.">
+            {!past.length && <div className="text-sm" style={{ color: C.ink3 }}>Nothing answered yet.</div>}
+            {past.map((x, i) => <div key={i} className="text-sm"><div className="font-medium">{x.q}</div><div className="whitespace-pre-line mt-0.5" style={{ color: C.ink2 }}>{x.a}</div><div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{x.where}</div></div>)}
+          </Fold>
+        </div>
+        {(review || extra.length > 0) && (
+          <div className="flex flex-col gap-2">
+            <div className="text-xs font-semibold" style={{ color: C.ink3 }}>QUESTIONS TO CONFIRM THE FIT · {chosen.length} selected</div>
+            {allQs.map((x, i) => (
+              <label key={i} className="flex gap-2.5 items-start rounded-lg border px-3 py-2.5 cursor-pointer" style={{ borderColor: C.line, background: on[i] ? "#fff" : "#FAF8F3" }}>
+                <input type="checkbox" checked={!!on[i]} onChange={() => toggle(i)} className="mt-1" />
+                <div className="flex-1 text-sm">
+                  <div className="flex items-start gap-2 flex-wrap">
+                    <span className="flex-1" style={{ color: on[i] ? C.ink : C.ink2 }}>{x.q}</span>
+                    {x.manual && <Pill tone="info">Added by you</Pill>}
+                    {x.answered && <Pill tone="warn">Already answered</Pill>}
+                  </div>
+                  {x.answered && x.answer && <div className="text-xs mt-1" style={{ color: C.ink2 }}>They said: {x.answer}{x.where ? " (" + x.where + ")" : ""}</div>}
+                </div>
+              </label>
+            ))}
+            <div className="flex gap-2 items-start">
+              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Add your own question" aria-label="Add your own question" className="flex-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <Btn onClick={addQ} disabled={!draft.trim()}>Add</Btn>
+            </div>
+          </div>
+        )}
+        <div className="flex items-center gap-2 flex-wrap pt-1">
+          {link ? (
+            <span className="text-sm" style={{ color: C.ink2 }}>{link.response === "pending" ? "Already routed, waiting for " + first + " to accept." : link.response === "declined" ? first + " declined this role." : "Already under Companies."}</span>
+          ) : (
+            <>
+              <Btn kind="primary" onClick={route} disabled={!!busy || job.status === "Closed"}>{busy === "route" ? <>Routing <InlineDots color="#fff" /></> : chosen.length ? "Route with " + chosen.length + " question" + (chosen.length > 1 ? "s" : "") : "Route without questions"}</Btn>
+              <span className="text-xs flex-1" style={{ color: C.ink2 }}>Goes to {first}'s candidate page{chosen.length ? (staff ? " with the questions" : "; questions wait for Rec Ops approval") : ""}. The job shows under Companies once they accept.</span>
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/* Roles the candidate could fit that they're not on yet. Review fit opens the fit review;
+   routing from there sends the role to their candidate page and the company card appears
+   once they accept. Names and scores come from the live job and the latest review. */
+function MatchesCard({ candidate, S, toast }) {
+  const [reviewJob, setReviewJob] = useState(null);
+  const onJob = (id) => candidate.jobLinks.some((l) => l.jobId === id && l.response === "accepted");
+  const rows = (candidate.matches || [])
+    .map((m) => ({ m, job: S.jobs.find((j) => j.id === m.job_id) }))
+    .filter((x) => x.job && x.job.status !== "Closed" && !onJob(x.job.id))
+    .sort((a, b) => (b.m.fit || 0) - (a.m.fit || 0));
+  const listed = new Set(rows.map((x) => x.job.id));
+  const others = S.jobs.filter((j) => j.status !== "Closed" && !listed.has(j.id) && !candidate.jobLinks.some((l) => l.jobId === j.id));
+  if (!rows.length && !others.length) return null;
   return (
     <Card>
-      <SectionTitle title="Other roles they match" sub="Shown to candidate at 70% or higher. A company card appears once you route them and they accept." size="text-xl" />
-      {candidate.matches.map((m, i) => {
-        const jobId = m.job_id;
-        const link = jobId ? candidate.jobLinks.find((l) => l.jobId === jobId) : null;
-        const job = jobId ? S.jobs.find((j) => j.id === jobId) : null;
+      <SectionTitle title="Other roles they could fit" sub="Review their fit before routing. A company card appears once you route them and they accept." size="text-xl" />
+      {rows.map(({ m, job }) => {
+        const link = candidate.jobLinks.find((l) => l.jobId === job.id) || null;
         return (
-          <div key={i} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
-            <div className="min-w-0"><div className="text-sm font-medium truncate">{m.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{m.company}</div></div>
+          <div key={job.id} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div className="min-w-0"><div className="text-sm font-medium truncate">{job.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{job.client}{m.reviewedAt ? " · reviewed " + fdate(m.reviewedAt) : " · not reviewed yet"}</div></div>
             <div className="flex items-center gap-2 shrink-0">
-              <Pill tone="em">{m.fit}%</Pill>
-              {link ? (
-                <span className="text-xs font-medium" style={{ color: link.response === "pending" ? C.warnFg : link.response === "declined" ? C.dangerFg : C.em }}>
-                  {link.response === "pending" ? "Waiting for them to accept" : link.response === "declined" ? "Declined" : "In Companies"}
-                </span>
-              ) : job && job.status !== "Closed" ? (
-                <Btn onClick={() => route(jobId)} disabled={!!busy} className="text-xs px-3 py-1.5">{busy === jobId ? "Routing…" : "Route"}</Btn>
-              ) : null}
+              {m.fit != null && <span className="text-sm font-medium">{m.fit}%</span>}
+              {m.verdict && <Pill tone={VERDICT_TONE[m.verdict] || "neutral"}>{m.verdict}</Pill>}
+              {link && <span className="text-xs font-medium" style={{ color: link.response === "declined" ? C.dangerFg : C.warnFg }}>{link.response === "declined" ? "Declined" : "Waiting to accept"}</span>}
+              <Btn onClick={() => setReviewJob(job)} className="text-xs px-3 py-1.5">{m.reviewedAt ? "Open review" : "Review fit"}</Btn>
             </div>
           </div>
         );
       })}
+      {others.length > 0 && (
+        <div className="pt-2.5" style={{ borderTop: rows.length ? `1px solid ${C.line}` : "none" }}>
+          <select value="" onChange={(e) => { const j = S.jobs.find((x) => x.id === e.target.value); if (j) setReviewJob(j); }} aria-label="Review fit for another open job"
+            className="w-full text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+            <option value="">Review fit for another open job…</option>
+            {others.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
+          </select>
+        </div>
+      )}
+      {reviewJob && <FitReviewModal open onClose={() => setReviewJob(null)} candidate={candidate} job={reviewJob} S={S} toast={toast} />}
     </Card>
   );
 }
@@ -1930,6 +2106,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
   const [busy, setBusy] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
+  const [fitFor, setFitFor] = useState(null);
   if (!job) return (
     <div className="flex flex-col gap-4">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Jobs</button>
@@ -2054,6 +2231,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
           </div>
         </Card>
       )}
+      {fitFor && <FitReviewModal open onClose={() => setFitFor(null)} candidate={S.cands.find((x) => x.id === fitFor.id) || fitFor} job={job} S={S} toast={toast} />}
       {S.role !== "recruiter" && fits.length > 0 && (
         <Card>
           <SectionTitle title="Candidates who might fit this role" sub="From your existing bench, matched on skills and role. Route sends the role to their candidate page to accept." size="text-xl" />
@@ -2064,7 +2242,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
                   <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone="em" />
                   <div className="min-w-0"><div className="font-medium text-sm truncate">{c.name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{c.role}{c.recruiter ? " · " + c.recruiter : ""}</div></div>
                 </div>
-                <Btn kind="primary" onClick={() => reroute(c)} className="shrink-0">Route</Btn>
+                <div className="flex gap-2 shrink-0"><Btn onClick={() => setFitFor(c)}>Review fit</Btn><Btn kind="primary" onClick={() => reroute(c)}>Route</Btn></div>
               </div>
             ))}
           </div>

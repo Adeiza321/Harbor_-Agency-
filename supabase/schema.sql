@@ -568,16 +568,21 @@ create trigger candidate_jobs_protect_ai before insert or update on public.candi
   for each row execute function public.protect_candidate_job_ai();
 
 -- Candidate page: also returns roles they've been routed to (to accept or decline) and
--- approved follow-up questions waiting for their answers. Matches already routed are left out.
+-- approved follow-up questions waiting for their answers.
+-- (Migration portal_matches_live_job_names, 27 Sep 2026: "Roles that fit you" take their
+-- names from the live job, so a renamed client shows its new name; closed jobs and jobs
+-- they're already on are left out.)
 create or replace function public.candidate_portal(p_token text) returns jsonb
 language sql stable security definer set search_path = public as $$
   select jsonb_build_object(
     'name', c.name,
     'endorsements', coalesce((select jsonb_agg(jsonb_build_object('company', e.company, 'role', e.role_title, 'status', e.status))
                               from candidate_endorsements e where e.candidate_id = c.id), '[]'::jsonb),
-    'matches', coalesce((select jsonb_agg(m) from jsonb_array_elements(c.matches) m
-                         where (m->>'fit')::int >= 70
-                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id and l.job_id::text = m->>'job_id')), '[]'::jsonb),
+    'matches', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client, 'fit', (m->>'fit')::int))
+                         from jsonb_array_elements(c.matches) m
+                         join jobs j on j.id::text = m->>'job_id'
+                         where (m->>'fit')::int >= 70 and coalesce(j.status, '') <> 'Closed'
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id and l.job_id = j.id)), '[]'::jsonb),
     'routed', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client, 'location', j.location) order by l.created_at)
                         from candidate_jobs l join jobs j on j.id = l.job_id
                         where l.candidate_id = c.id and l.candidate_response = 'pending'), '[]'::jsonb),
