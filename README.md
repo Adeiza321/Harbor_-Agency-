@@ -7,7 +7,7 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 - `app.jsx` — the canonical React source for the whole app (single file). Built into a self-contained `harbor.html`.
 - `build/` — the build: `build.mjs` (esbuild bundle → `harbor.html`), `main.jsx` (entry), `lucide-shim.js` (maps the `lucide-react` icon names to `react-icons/lu`).
 - `supabase/schema.sql` — the database schema (tables, RLS policies, storage bucket, candidate-portal function). Already applied to the live project; kept here as the source of truth.
-- `supabase/functions/ai-screen/index.ts` — CV scoring, screening-question drafting and the post-screening fit verdict. Every score and verdict uses both the resume (PDF from the `resumes` bucket) and the candidate's screening answers (the job's own questions in `candidate_jobs.screening_answers` plus the AI-screening reply). Scoring against a job also sets that job link's fit.
+- `supabase/functions/ai-screen/index.ts` — CV scoring, screening-question drafting and the post-screening fit verdict. Every score and verdict uses both the resume (from the `resumes` bucket; PDF, Word .docx/.doc, OpenDocument, RTF, text or a photo/scan — read by `resume.ts`) and the candidate's screening answers (the job's own questions in `candidate_jobs.screening_answers` plus the AI-screening reply). Scoring against a job also sets that job link's fit.
 - `supabase/functions/job-redraft/index.ts` — the "AI redraft for SEO" button on Post a job: rewrites the job ad, snippet and search keywords.
 
 ## Features added in the second workspace

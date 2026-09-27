@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { prepareResume, type ResumeInput } from "./resume.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -6,7 +7,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // default gemini-3.8-flash); otherwise Anthropic via ANTHROPIC_API_KEY. To switch back
 // to Claude, delete the GEMINI_API_KEY secret — no code change needed.
 //
-// Screening material: every judgement uses BOTH the candidate's resume (PDF) and their
+// Resumes: PDF, Word (.docx/.doc), OpenDocument, RTF, text and images are all read
+// (see resume.ts). Screening material: every judgement uses BOTH the resume and their
 // screening answers — the job's own screening questions (candidate_jobs.screening_answers)
 // and the AI-drafted questions plus the candidate's reply (candidates.screening).
 
@@ -29,11 +31,16 @@ function parseJson(text: string) {
   throw new Error("AI returned something unexpected: " + text.slice(0, 300));
 }
 
-async function askGemini(key: string, system: string, text: string, pdfBase64: string | null, maxTokens: number) {
+// A resume that arrived as text goes into the prompt; PDFs and images go in as files.
+const withResumeText = (text: string, resume: ResumeInput | null) =>
+  resume?.kind === "text" ? `Candidate's resume (text extracted from their file):\n"""\n${resume.text}\n"""\n\n${text}` : text;
+
+async function askGemini(key: string, system: string, text: string, resume: ResumeInput | null, maxTokens: number) {
   const model = Deno.env.get("GEMINI_MODEL") || GEMINI_DEFAULT_MODEL;
   const parts: unknown[] = [];
-  if (pdfBase64) parts.push({ inline_data: { mime_type: "application/pdf", data: pdfBase64 } });
-  parts.push({ text });
+  if (resume?.kind === "pdf") parts.push({ inline_data: { mime_type: "application/pdf", data: resume.data } });
+  if (resume?.kind === "image") parts.push({ inline_data: { mime_type: resume.mime, data: resume.data } });
+  parts.push({ text: withResumeText(text, resume) });
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-goog-api-key": key },
@@ -52,10 +59,14 @@ async function askGemini(key: string, system: string, text: string, pdfBase64: s
   return parseJson(out);
 }
 
-async function askAnthropic(key: string, system: string, text: string, pdfBase64: string | null, maxTokens: number) {
+async function askAnthropic(key: string, system: string, text: string, resume: ResumeInput | null, maxTokens: number) {
   const content: unknown[] = [];
-  if (pdfBase64) content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBase64 } });
-  content.push({ type: "text", text });
+  if (resume?.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: resume.data } });
+  if (resume?.kind === "image") {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(resume.mime)) throw new Error("This AI setup can't read HEIC photos. Upload the resume as JPG, PNG or PDF.");
+    content.push({ type: "image", source: { type: "base64", media_type: resume.mime, data: resume.data } });
+  }
+  content.push({ type: "text", text: withResumeText(text, resume) });
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
@@ -66,31 +77,23 @@ async function askAnthropic(key: string, system: string, text: string, pdfBase64
   return parseJson((data.content || []).map((b: any) => b.text || "").join(""));
 }
 
-async function askAI(system: string, text: string, pdfBase64: string | null = null, maxTokens = 800) {
+async function askAI(system: string, text: string, resume: ResumeInput | null = null, maxTokens = 800) {
   const gemini = Deno.env.get("GEMINI_API_KEY");
-  if (gemini) return askGemini(gemini, system, text, pdfBase64, maxTokens);
+  if (gemini) return askGemini(gemini, system, text, resume, maxTokens);
   const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
-  if (anthropic) return askAnthropic(anthropic, system, text, pdfBase64, maxTokens);
+  if (anthropic) return askAnthropic(anthropic, system, text, resume, maxTokens);
   throw new Error("AI is not configured yet: add a GEMINI_API_KEY secret to this Supabase project.");
 }
 
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  return btoa(binary);
-}
-
-// The resume on file as base64 PDF, or a reason it can't be read.
-async function loadResume(admin: any, candidate: any): Promise<{ pdf: string | null; why?: string }> {
+// The resume on file, ready for the AI (any supported format), or a reason it can't be read.
+async function loadResume(admin: any, candidate: any): Promise<{ resume: ResumeInput | null; why?: string }> {
   const path = candidate.resume_path || candidate.cv_path;
-  if (!path) return { pdf: null, why: "No resume on file for this candidate. Upload a PDF to score one." };
-  if (candidate.resume_path && candidate.resume_name && !/\.pdf$/i.test(candidate.resume_name))
-    return { pdf: null, why: "AI reads PDF resumes only. Upload a PDF version to use it in screening." };
+  if (!path) return { resume: null, why: "No resume on file for this candidate. Upload one to score them." };
   const bucket = candidate.resume_path ? "resumes" : "cvs";
   const { data: file, error } = await admin.storage.from(bucket).download(path);
-  if (error || !file) return { pdf: null, why: "Could not read the stored CV. Try re-uploading it." };
-  return { pdf: bytesToBase64(new Uint8Array(await file.arrayBuffer())) };
+  if (error || !file) return { resume: null, why: "Could not read the stored resume. Try re-uploading it." };
+  const r = await prepareResume(new Uint8Array(await file.arrayBuffer()), (candidate.resume_path && candidate.resume_name) || path);
+  return r.input ? { resume: r.input } : { resume: null, why: r.why };
 }
 
 // Everything the candidate has answered for this job, as readable Q&A lines.
@@ -156,24 +159,24 @@ Deno.serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------
-    // 1) Score a candidate — resume PDF plus any screening answers for the job.
+    // 1) Score a candidate — their resume (any format) plus any screening answers for the job.
     //    Resumes live in the private "resumes" bucket at <candidateId>/<file>
     //    (candidates.resume_path); older ones in "cvs" (cv_path) are still read.
     //    A fresh base64 upload is stored first so it can be re-scored later.
     // ---------------------------------------------------------------
     if (action === "score_cv") {
-      let pdf: string | null = null;
+      let resume: ResumeInput | null = null;
       if (body.fileBase64) {
         const cvPath = candidateId + "/" + Date.now() + "-cv.pdf";
         const bytes = Uint8Array.from(atob(body.fileBase64), (c) => c.charCodeAt(0));
         const { error: upErr } = await admin.storage.from("resumes").upload(cvPath, bytes, { contentType: "application/pdf", upsert: true });
         if (upErr) return json({ error: "Could not store the CV: " + upErr.message }, 500);
         await admin.from("candidates").update({ resume_path: cvPath, resume_name: "CV.pdf" }).eq("id", candidateId);
-        pdf = body.fileBase64;
+        resume = { kind: "pdf", data: body.fileBase64 };
       } else {
         const r = await loadResume(admin, candidate);
-        if (!r.pdf) return json({ error: r.why }, 400);
-        pdf = r.pdf;
+        if (!r.resume) return json({ error: r.why }, 400);
+        resume = r.resume;
       }
 
       const material = await screeningMaterial(admin, candidate, job);
@@ -185,7 +188,7 @@ Deno.serve(async (req: Request) => {
           : "Screening answers: none recorded yet — score from the resume alone.");
 
       const system =
-        "You are a recruitment analyst screening a candidate. You are given their CV (attached PDF) and, when available, their answers to screening questions. " +
+        "You are a recruitment analyst screening a candidate. You are given their CV (attached, or as extracted text) and, when available, their answers to screening questions. " +
         "Use BOTH together: the CV shows their track record; the screening answers add or clarify skills, experience, salary expectation, notice period and availability. " +
         "Where an answer adds a relevant skill or experience the CV doesn't show, give credit for it. Where an answer contradicts the CV, list that in 'gaps' so the recruiter can check it. " +
         "Reply with STRICT JSON only, no markdown, no commentary, matching exactly this shape: " +
@@ -196,7 +199,7 @@ Deno.serve(async (req: Request) => {
         "'phone' is the candidate's phone/mobile number exactly as written on the CV (digits, spaces, dashes, parens as given), or '' if none is present. " +
         "'location' is the candidate's city and state/region (and country if not obviously the same country as the job) as stated on the CV, e.g. 'Austin, TX', or '' if none is present — never guess a location from an area code or any other indirect clue, only use it if the CV states it directly.";
 
-      const result = await askAI(system, context, pdf, 1200);
+      const result = await askAI(system, context, resume, 1200);
       const score = clampScore(result.score);
       const patch: Record<string, unknown> = {
         skills: result.skills || [],
@@ -219,12 +222,12 @@ Deno.serve(async (req: Request) => {
 
     // ---------------------------------------------------------------
     // 2) Draft screening questions for a candidate against a specific job.
-    //    Reads the resume too (when there is a PDF), so the skills question
+    //    Reads the resume too (when there is one), so the skills question
     //    targets what the CV leaves unclear.
     // ---------------------------------------------------------------
     if (action === "draft_questions") {
       if (!job) return json({ error: "jobId is required to draft screening questions" }, 400);
-      const { pdf } = await loadResume(admin, candidate);
+      const { resume } = await loadResume(admin, candidate);
       const jobQs: string[] = Array.isArray(job.screening_questions) ? job.screening_questions : [];
       const system =
         "You write short candidate screening questions for a recruiter. Reply with STRICT JSON only: " +
@@ -232,10 +235,10 @@ Deno.serve(async (req: Request) => {
         "Keep each question under 25 words. Don't repeat anything the job's own screening questions already ask.";
       const content =
         `Candidate: ${candidate.name}, current/last role: ${candidate.role_title}. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.` +
-        (pdf ? " Their CV is attached." : " No CV is on file.") + "\n" +
+        (resume ? " Their CV is included." : " No readable CV is on file.") + "\n" +
         jobBlock(job) +
         (jobQs.length ? `\nThe job's own screening questions (already asked separately):\n${jobQs.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "");
-      const result = await askAI(system, content, pdf, 400);
+      const result = await askAI(system, content, resume, 400);
       const questions = (result.questions || []).slice(0, 3);
       await admin.from("candidates").update({
         screening: { state: "pending", questions, jobId: body.jobId },
@@ -259,22 +262,22 @@ Deno.serve(async (req: Request) => {
       }
       if (!reviewJob) return json({ error: "No job on file for this screening — pass jobId" }, 400);
 
-      const { pdf } = await loadResume(admin, candidate);
+      const { resume } = await loadResume(admin, candidate);
       const material = await screeningMaterial(admin, candidate, reviewJob, false);
       const questions = candidate.screening?.questions || [];
       const system =
-        "You are screening a candidate for a recruiter, using BOTH their CV (attached PDF, when present) and their screening answers. Reply with STRICT JSON only: " +
+        "You are screening a candidate for a recruiter, using BOTH their CV (attached or as extracted text, when present) and their screening answers. Reply with STRICT JSON only: " +
         `{"verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "reasoning": string}. ` +
         "Judge STRICTLY on three things only: (1) skills and experience vs the job's stated requirements, from the CV and anything the answers add — never consider how long they held past roles/tenure, that is irrelevant, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
         "If an answer contradicts the CV, say so. " +
         "'reasoning' is 2-4 sentences a recruiter will read, explicitly touching on skills fit (saying what the CV shows and what the answers added), salary, and start date so they can see why you reached this verdict.";
       const content =
         jobBlock(reviewJob) + "\n\n" +
-        (pdf ? "The candidate's CV is attached.\n" : `No readable PDF CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
+        (resume ? "The candidate's CV is included.\n" : `No readable CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
         (material.count ? `\nAnswers to the job's screening questions:\n${material.text}\n` : "") +
         `\nAI screening questions sent:\n${questions.map((q: string, i: number) => `${i + 1}. ${q}`).join("\n") || "(none recorded)"}\n` +
         `Candidate's reply:\n${answerText}`;
-      const result = await askAI(system, content, pdf, 700);
+      const result = await askAI(system, content, resume, 700);
       const verdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
       await admin.from("candidates").update({
         screening: {
@@ -283,7 +286,7 @@ Deno.serve(async (req: Request) => {
           qa: [{ q: "Candidate reply", a: answerText.trim() }],
           verdict,
           reasoning: result.reasoning || "",
-          usedResume: !!pdf,
+          usedResume: !!resume,
         },
       }).eq("id", candidateId);
       if (material.linkId && result.score != null) await admin.from("candidate_jobs").update({ fit: clampScore(result.score) }).eq("id", material.linkId);
