@@ -377,7 +377,7 @@ Deno.serve(async (req: Request) => {
       const questions = candidate.screening?.questions || [];
       const system =
         "You are screening a candidate for a recruiter, using BOTH their CV (attached or as extracted text, when present) and their screening answers. Reply with STRICT JSON only: " +
-        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "reasoning": string}. ` +
+        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "verdict_reason": string, "reasoning": string}. ` +
         RUBRIC +
         "Judge STRICTLY on three things only: (1) the requirement checklist above, from the CV and anything the answers add, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
         "If an answer contradicts the CV, say so. " +
@@ -390,7 +390,7 @@ Deno.serve(async (req: Request) => {
         `Candidate's reply:\n${answerText}`;
       const result = await askAI(system, content, resume, 2500);
       const rawVerdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
-      const checked = enforceChecklist(result.requirements, clampScore(result.score), rawVerdict, "Perfect fit", "Possible fit");
+      const checked = enforceChecklist(result.requirements, clampScore(result.score), rawVerdict, "Perfect fit", "Possible fit", "Not a fit");
       const verdict = checked.verdict;
       result.score = checked.score;
       await admin.from("candidates").update({

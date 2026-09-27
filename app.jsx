@@ -4,7 +4,7 @@ import {
   CreditCard, Megaphone, Search, Bell, ChevronDown, ChevronRight, ChevronLeft,
   Plus, Download, Filter, Upload, Check, X, Lock, Copy, MessageSquare,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
-  Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil,
+  Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info,
 } from "lucide-react";
 
 /* Design tokens */
@@ -114,6 +114,7 @@ function mapAll(d) {
     status: c.status, ai: c.ai_score || 0, email: c.email_verified ? "Verified" : "Unverified", emailAddr: c.email || "", phone: c.phone || "", opens: c.opens,
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
+    ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "",
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0 })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
@@ -1499,6 +1500,31 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
 /* ------------------------------------------------------------------------- */
 const VERDICT_TONE = { "Perfect fit": "em", "Possible fit": "warn", Reject: "danger" };
 const FOLLOW_PILL = { draft: ["Waiting for approval", "warn"], sent: ["Sent · waiting for answers", "info"], answered: ["Answered", "em"] };
+const NICE_RE = /\s*\((nice to have|preferred)\)\s*$/i;
+// Why the card has its verdict: the stored reason, or one built from the must-have checklist.
+function verdictWhy(ai) {
+  // The label already names the verdict, so drop a reason that starts by repeating it.
+  if (ai.verdict_reason) return String(ai.verdict_reason).replace(/^(perfect fit|possible fit|not a fit|rejected?)(\s*\([^)]*\))?[.:]\s*/i, "");
+  const must = (ai.requirements || []).filter((r) => r.type === "must");
+  if (!must.length) return "";
+  const miss = must.filter((r) => r.status === "not met").map((r) => r.requirement);
+  const part = must.filter((r) => r.status === "partial").map((r) => r.requirement);
+  if (!miss.length && !part.length) return "Meets every must-have requirement.";
+  return (miss.length ? "Missing must-have: " + miss.join("; ") + ". " : "") + (part.length ? "Partly shown: " + part.join("; ") + "." : "");
+}
+// A section of the card that folds away to one line.
+function Fold({ title, count, pill, sub, open, onToggle, children }) {
+  return (
+    <div className="rounded-xl" style={{ background: "#fff" }}>
+      <button type="button" onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-2 px-3.5 py-3 text-left flex-wrap">
+        <span className="text-sm font-semibold">{title}</span>
+        {count && <span className="text-xs" style={{ color: C.ink3 }}>{count}</span>}
+        <span className="ml-auto flex items-center gap-2">{pill}<ChevronDown size={16} color={C.ink2} style={{ transform: open ? "rotate(180deg)" : "none" }} /></span>
+      </button>
+      {open && <div className="px-3.5 pb-3.5 flex flex-col gap-2.5">{sub && <div className="text-xs -mt-1" style={{ color: C.ink2 }}>{sub}</div>}{children}</div>}
+    </div>
+  );
+}
 
 function CompanyScreeningCards({ candidate, S, toast }) {
   const groups = [];
@@ -1567,7 +1593,21 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
     toast("Sent to " + first + "'s candidate page");
   });
   const appQs = job.screeningQuestions || [];
+  const answered = appQs.filter((_, i) => String(link.screeningAnswers[i] || "").trim()).length;
   const box = { background: "#fff" };
+  // Question sections start folded; the follow-up opens itself when it needs someone to act.
+  const [showApp, setShowApp] = useState(false);
+  const [showFollow, setShowFollow] = useState(null);
+  const [showReqs, setShowReqs] = useState(false);
+  const followOpen = showFollow !== null ? showFollow : editing || (f && f.state === "draft");
+  const why = verdictWhy(ai);
+  const gapList = (ai.gaps || []).map((x) => ({ text: String(x).replace(NICE_RE, ""), nice: NICE_RE.test(String(x)) }));
+  const mustGaps = gapList.filter((g) => !g.nice), niceGaps = gapList.filter((g) => g.nice);
+  const reqs = ai.requirements || [];
+  const reqGroups = [
+    { key: "must", label: "MUST-HAVE", note: "decides the verdict", items: reqs.filter((r) => r.type === "must") },
+    { key: "preferred", label: "NICE TO HAVE", note: "never a reason to reject", items: reqs.filter((r) => r.type !== "must") },
+  ].filter((g) => g.items.length);
   return (
     <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, background: "#F6F3EC" }}>
       <button type="button" onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
@@ -1609,49 +1649,61 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
                 </div>
                 <div>
                   <div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>GAPS</div>
-                  {(ai.gaps || []).length ? ai.gaps.map((x, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="shrink-0 mt-0.5" />{x}</div>) : <div className="text-sm" style={{ color: C.ink3 }}>None noted</div>}
+                  {!gapList.length && <div className="text-sm" style={{ color: C.ink3 }}>None noted</div>}
+                  {mustGaps.map((g, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="shrink-0 mt-0.5" />{g.text}</div>)}
+                  {niceGaps.map((g, i) => (
+                    <div key={"n" + i} className="flex gap-2 text-sm mb-1" style={{ color: C.ink2 }}>
+                      <Info size={15} color={C.ink3} className="shrink-0 mt-0.5" /><span>{g.text} <span className="text-xs whitespace-nowrap" style={{ color: C.ink3 }}>· nice to have</span></span>
+                    </div>
+                  ))}
                 </div>
               </div>
-              {(ai.requirements || []).length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>REQUIREMENTS CHECKLIST</div>
-                  <div className="flex flex-col gap-1.5">
-                    {ai.requirements.map((r, i) => (
-                      <div key={i} className="flex gap-2 text-sm items-start">
-                        <Pill tone={r.status === "met" ? "em" : r.status === "partial" ? "warn" : "danger"}>{r.status || "?"}</Pill>
-                        <div className="flex-1">
-                          <span className={r.type === "must" ? "font-medium" : ""}>{r.requirement}</span>
-                          {r.type === "must" && <span className="ml-1 text-xs" style={{ color: C.ink3 }}>(must-have)</span>}
-                          {r.evidence && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.evidence}</div>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+              {why && ai.verdict && (
+                <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed" style={{ background: (TONE[VERDICT_TONE[ai.verdict]] || TONE.neutral).bg }}>
+                  <span className="font-semibold" style={{ color: (TONE[VERDICT_TONE[ai.verdict]] || TONE.neutral).fg }}>Why {ai.verdict === "Reject" ? "rejected" : ai.verdict.toLowerCase()}: </span>{why}
                 </div>
+              )}
+              {reqGroups.length > 0 && (
+                <Fold title="Requirements checklist" open={showReqs} onToggle={() => setShowReqs((v) => !v)}
+                  count={reqGroups.map((g) => (g.key === "must" ? "Must-have " : "Nice to have ") + g.items.filter((r) => r.status === "met").length + "/" + g.items.length + " met").join(" · ")}>
+                  {reqGroups.map((g) => (
+                    <div key={g.key}>
+                      <div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>
+                        {g.label} · {g.items.filter((r) => r.status === "met").length}/{g.items.length} met <span className="font-normal">· {g.note}</span>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {g.items.map((r, i) => (
+                          <div key={i} className="flex gap-2 text-sm items-start">
+                            <Pill tone={r.status === "met" ? "em" : r.status === "partial" ? "warn" : g.key === "must" ? "danger" : "neutral"}>{r.status || "?"}</Pill>
+                            <div className="flex-1">
+                              <span className={g.key === "must" ? "font-medium" : ""} style={g.key === "must" ? null : { color: C.ink2 }}>{r.requirement}</span>
+                              {r.evidence && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.evidence}</div>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </Fold>
               )}
             </>
           )}
 
-          <div className="rounded-xl p-3.5 flex flex-col gap-2.5" style={box}>
-            <div className="flex items-center justify-between gap-2 flex-wrap"><div className="text-sm font-semibold">Application questions</div><Pill tone="neutral">Answered when they applied</Pill></div>
-            <div className="text-xs -mt-1" style={{ color: C.ink2 }}>The job's own screening questions.</div>
+          <Fold title="Application questions" count={appQs.length ? "(" + answered + "/" + appQs.length + " answered)" : ""} open={showApp} onToggle={() => setShowApp((v) => !v)}
+            sub="The job's own screening questions and the candidate's answers.">
             {appQs.length === 0 && <div className="text-sm" style={{ color: C.ink3 }}>This job has no application questions.</div>}
-            {appQs.map((q, i) => (
-              <div key={i} className="text-sm"><div className="font-medium">{q}</div><div style={{ color: (link.screeningAnswers[i] || "").trim() ? C.ink2 : C.ink3 }}>{(link.screeningAnswers[i] || "").trim() || "Not answered"}</div></div>
-            ))}
-          </div>
+            {appQs.map((q, i) => {
+              const a = String(link.screeningAnswers[i] || "").trim();
+              return <div key={i} className="text-sm"><div className="font-medium">{i + 1}. {q}</div><div className="whitespace-pre-line mt-0.5" style={{ color: a ? C.ink2 : C.ink3 }}>{a || "Not answered"}</div></div>;
+            })}
+          </Fold>
 
           {(f || editing) && (
-            <div className="rounded-xl p-3.5 flex flex-col gap-2.5" style={box}>
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <div className="text-sm font-semibold">Follow-up questions</div>
-                <Pill tone={FOLLOW_PILL[f ? f.state : "draft"][1]}>{FOLLOW_PILL[f ? f.state : "draft"][0]}</Pill>
-              </div>
-              <div className="text-xs -mt-1" style={{ color: C.ink2 }}>
-                {!f || f.state === "draft" ? "Drafted by AI from what's still unclear. Never repeats a question already asked for any job."
+            <Fold title="AI additional screening follow-up" count={"(" + (editing ? qList.length : (f.questions || []).length) + ")"} open={followOpen} onToggle={() => setShowFollow(!followOpen)}
+              pill={<Pill tone={FOLLOW_PILL[f ? f.state : "draft"][1]}>{FOLLOW_PILL[f ? f.state : "draft"][0]}</Pill>}
+              sub={!f || f.state === "draft" ? "Extra questions the AI drafted from what's still unclear after the application questions. Never repeats a question already asked for any job."
                   : f.state === "sent" ? "Approved by " + (f.approvedBy || "Rec Ops") + ". Showing on " + first + "'s candidate page; their answers go straight to the AI."
-                  : "Approved by " + (f.approvedBy || "Rec Ops") + (f.answeredAt ? " · answered " + fdate(f.answeredAt) : "")}
-              </div>
+                  : "Approved by " + (f.approvedBy || "Rec Ops") + (f.answeredAt ? " · answered " + fdate(f.answeredAt) : "")}>
               {editing ? (
                 <>
                   {qList.map((q, i) => (
@@ -1673,15 +1725,15 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               ) : (
                 <>
                   {(f.questions || []).map((x, i) => (
-                    <div key={i} className="text-sm"><div className="font-medium">{x.q}</div>{f.state === "answered" && x.a && <div style={{ color: C.ink2 }}>{x.a}</div>}</div>
+                    <div key={i} className="text-sm"><div className="font-medium">{x.q}</div>{f.state === "answered" && x.a && <div className="whitespace-pre-line mt-0.5" style={{ color: C.ink2 }}>{x.a}</div>}</div>
                   ))}
-                  {f.reply && <div className="text-sm" style={{ color: C.ink2 }}>{f.reply}</div>}
+                  {f.reply && <div className="text-sm whitespace-pre-line" style={{ color: C.ink2 }}>{f.reply}</div>}
                 </>
               )}
-            </div>
+            </Fold>
           )}
           {!f && !editing && staff && ai.stage && ai.verdict !== "Reject" && (
-            <button type="button" onClick={() => setDrafts([""])} className="text-xs font-medium w-fit" style={{ color: C.em }}>+ Ask a follow-up question</button>
+            <button type="button" onClick={() => setDrafts([""])} className="text-xs font-medium w-fit" style={{ color: C.em }}>+ Ask an AI follow-up question</button>
           )}
         </div>
       )}

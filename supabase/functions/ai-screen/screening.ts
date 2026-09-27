@@ -28,11 +28,13 @@ export const RUBRIC =
   "3) Quantities matter. When the job asks for a number of years, or for 'significant' experience in something (a type of firm, a function), count the dated time the CV actually shows in that thing. Undated or very short exposure is 'partial', not 'met'. Separately, never penalise someone for changing jobs often or for short stays in general; only measure the experience the job asks for. " +
   "4) Score from the checklist, not from overall impression: start at 100; for each must-have 'not met' subtract 10-15; for each must-have 'partial' subtract 5-8; for each preferred item not met subtract 2-3. If a required licence, certification, degree or work authorisation is not met, the score must be 45 or lower and the verdict must be the rejection option. " +
   "5) 'Perfect fit' ONLY when every must-have is 'met'. Any must-have that is 'partial' or 'not met' means 'Possible fit' at best. Scores of 90 or more are for candidates who meet every must-have and most preferred items, and should be rare. " +
-  "6) 'gaps' must name every must-have that is 'not met' or 'partial', most important first. 'strengths' must only list things backed by described work. Be accurate and specific; never pad strengths. ";
+  "6) 'gaps' must name every must-have that is 'not met' or 'partial', most important first. List must-have gaps before any preferred gap, and end every gap about a preferred item with ' (nice to have)'. 'strengths' must only list things backed by described work. Be accurate and specific; never pad strengths. " +
+  "7) Preferred items are never a reason to reject. A candidate who has no must-have marked 'not met' must NOT get the rejection verdict, however many preferred items they lack; missing preferred items only lower the score slightly. " +
+  "8) 'verdict_reason': 1-2 short sentences explaining the verdict by naming the specific must-have requirements that decided it (e.g. 'Meets every must-have: active CPA, 10 yrs Big 4, SEC reporting, ASC 606/718.' or 'Rejected: no active CPA, which the role requires.'). Never give a preferred item as the reason for a rejection. ";
 
 // Hard guard on the model's own checklist: a verdict or score can't claim more
 // than the requirements it marked support.
-export function enforceChecklist(reqs: unknown, score: number, verdict: string, perfect: string, possible: string) {
+export function enforceChecklist(reqs: unknown, score: number, verdict: string, perfect: string, possible: string, reject = "") {
   const list = Array.isArray(reqs) ? reqs : [];
   const must = list.filter((r: any) => String(r?.type || "").toLowerCase() === "must");
   const notMet = must.filter((r: any) => String(r?.status || "").toLowerCase() === "not met").length;
@@ -41,7 +43,10 @@ export function enforceChecklist(reqs: unknown, score: number, verdict: string, 
   if (notMet) s = Math.min(s, 75);
   else if (partial) s = Math.min(s, 85);
   if ((notMet || partial) && v === perfect) v = possible;
-  return { score: s, verdict: v };
+  // Preferred items can never reject a candidate: with every must-have at least
+  // partly met, a rejection becomes "possible fit" and the score keeps a floor.
+  if (reject && must.length && !notMet && v === reject) { v = possible; s = Math.max(s, 60); }
+  return { score: s, verdict: v, notMet, partial };
 }
 export const cleanReqs = (reqs: unknown) => (Array.isArray(reqs) ? reqs : []).slice(0, 25).map((r: any) => ({
   requirement: String(r?.requirement || "").slice(0, 160),
@@ -155,7 +160,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     "You are a recruitment analyst screening one candidate for one job. You get their CV (attached, or as extracted text) and everything they have answered so far: " +
     "this job's application questions, any follow-up questions, and answers they gave while being screened for other jobs. Use ALL of it — e.g. a salary or notice period they gave for another job still applies. " +
     "Reply with STRICT JSON only: " +
-    `{${REQS_SHAPE}, "summary": string, "strengths": string[], "gaps": string[], "score": number (0-100), "verdict": "Perfect fit" | "Possible fit" | "Reject", "salary_expectation": string, "questions": string[]}. ` +
+    `{${REQS_SHAPE}, "summary": string, "strengths": string[], "gaps": string[], "score": number (0-100), "verdict": "Perfect fit" | "Possible fit" | "Reject", "verdict_reason": string, "salary_expectation": string, "questions": string[]}. ` +
     RUBRIC +
     "Judge ONLY on: (1) the requirement checklist above, from the CV and anything the answers add; " +
     "(2) salary expectation vs budget — be flexible, only count it against them if clearly and substantially over; (3) availability vs the role's timeline. " +
@@ -178,7 +183,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     `\nAlready asked (never ask these again):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}`;
 
   const result = await askAI(system, content, resume, 2500);
-  const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit");
+  const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit", "Reject");
   const verdict = checked.verdict;
   const score = checked.score;
   const questions = mayAsk && verdict !== "Reject" ? dedupeQuestions(result.questions, asked) : [];
@@ -194,6 +199,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     gaps: (Array.isArray(result.gaps) ? result.gaps : []).slice(0, 6).map((s: unknown) => String(s).slice(0, 160)),
     score,
     verdict,
+    verdict_reason: String(result.verdict_reason || "").slice(0, 400),
     requirements: cleanReqs(result.requirements),
     usedResume: !!resume,
     answersUsed: here.length + elsewhere.length,
