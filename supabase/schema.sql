@@ -137,7 +137,8 @@ create table public.applications (
   id uuid primary key default gen_random_uuid(),
   name text not null, role_title text not null, source text,
   ai_score int, assigned_to uuid references public.profiles(id),
-  candidate_id uuid references public.candidates(id),
+  -- on delete set null: deleting a candidate should not be blocked by their old inbox row.
+  candidate_id uuid references public.candidates(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -234,6 +235,7 @@ create policy jobs_read on public.jobs for select to authenticated using (true);
 create policy jobs_insert on public.jobs for insert to authenticated with check (created_by = auth.uid());
 create policy jobs_update on public.jobs for update to authenticated
   using (public.is_staff() or created_by = auth.uid()) with check (public.is_staff() or created_by = auth.uid());
+create policy jobs_delete on public.jobs for delete to authenticated using (public.is_admin());
 create policy jobrec_read on public.job_recruiters for select to authenticated using (true);
 -- Staff can manage anyone's row; a recruiter can also engage/disengage themselves.
 create policy jobrec_write on public.job_recruiters for all to authenticated
@@ -253,6 +255,7 @@ create policy camp_read on public.campaigns for select to authenticated using (t
 create policy camp_insert on public.campaigns for insert to authenticated with check (created_by = auth.uid());
 create policy camp_update on public.campaigns for update to authenticated
   using (public.is_staff() or created_by = auth.uid()) with check (public.is_staff() or created_by = auth.uid());
+create policy camp_delete on public.campaigns for delete to authenticated using (public.is_admin());
 
 -- ads: agency-paid ads must start as 'Pending approval'; only staff can approve or end
 create policy ads_read on public.ad_campaigns for select to authenticated
@@ -262,6 +265,7 @@ create policy ads_insert on public.ad_campaigns for insert to authenticated
     and (public.is_staff() or payer_type = 'recruiter' or status = 'Pending approval'));
 create policy ads_update on public.ad_campaigns for update to authenticated
   using (public.is_staff()) with check (public.is_staff());
+create policy ads_delete on public.ad_campaigns for delete to authenticated using (public.is_admin());
 
 create policy settings_read on public.agency_settings for select to authenticated using (true);
 create policy settings_write on public.agency_settings for update to authenticated

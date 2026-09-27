@@ -306,6 +306,7 @@ function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", fu
   const style =
     kind === "primary" ? { background: C.em, color: "#fff" } :
     kind === "dark" ? { background: C.ink, color: "#fff" } :
+    kind === "danger" ? { background: C.dangerFg, color: "#fff" } :
     { background: "#fff", color: C.ink, border: `1px solid ${C.line}` };
   return (
     <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${className}`} style={{ ...style, ...(disabled ? { opacity: 0.6, cursor: "not-allowed" } : {}) }}>
@@ -418,6 +419,21 @@ function Modal({ open, onClose, title, children }) {
         {children}
       </div>
     </div>
+  );
+}
+
+/* Shared "are you sure" modal for destructive actions (delete candidate/job/campaign/ad). */
+function ConfirmModal({ open, onClose, title, body, confirmLabel = "Delete", onConfirm, busy }) {
+  return (
+    <Modal open={open} onClose={onClose} title={title}>
+      <div className="flex flex-col gap-4">
+        <div className="text-sm" style={{ color: C.ink2 }}>{body}</div>
+        <div className="flex gap-2 justify-end">
+          <Btn onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn kind="danger" onClick={onConfirm} disabled={busy}>{busy ? <>Deleting <InlineDots color="#fff" /></> : confirmLabel}</Btn>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -895,7 +911,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
               {sources.map((s) => <option key={s} value={s}>{s}</option>)}
             </select>
             <select value={minAi} onChange={(e) => setMinAi(Number(e.target.value))} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
-              <option value={0}>Any AI score</option><option value={70}>AI 70+</option><option value={80}>AI 80+</option><option value={90}>AI 90+</option>
+              <option value={0}>Any AI score</option><option value={70}>AI 70%+</option><option value={80}>AI 80%+</option><option value={90}>AI 90%+</option>
             </select>
             <div className="flex items-center gap-1.5">
               <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, color: dateFrom ? C.ink : C.ink3 }} />
@@ -920,7 +936,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
             ) },
             { key: "recruiter", label: "RECRUITER", render: (c) => c.recruiter ? <div className="flex items-center gap-2"><Avatar init={c.recruiterInit} tone={PEOPLE_TONE[c.recruiterInit]} size={24} /><span className="text-xs">{c.recruiter}</span></div> : <Pill tone="danger">Unassigned</Pill> },
             { key: "status", label: "STATUS", render: (c) => <StatusPill status={c.status} /> },
-            { key: "ai", label: "AI", render: (c) => <Pill tone={!c.ai ? "neutral" : c.ai >= 80 ? "em" : c.ai >= 70 ? "warn" : "danger"}>{c.ai || "-"}</Pill> },
+            { key: "ai", label: "AI", render: (c) => <Pill tone={!c.ai ? "neutral" : c.ai >= 80 ? "em" : c.ai >= 70 ? "warn" : "danger"}>{c.ai ? c.ai + "%" : "-"}</Pill> },
             { key: "email", label: "EMAIL", render: (c) => <Pill tone={c.email === "Verified" ? "em" : "warn"}>{c.email}</Pill> },
             { key: "activity", label: "ACTIVITY", render: (c) => <span className="text-xs" style={{ color: C.ink2 }}>{c.activity}</span> },
           ]}
@@ -937,6 +953,12 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   const patch = (fn) => S.updateCand(candidate.id, fn);
   const setStatus = (v) => patch((c) => ({ status: v, timeline: [...c.timeline, { t: "Status set to " + v, d: todayStr(), done: true }] }));
   const [panel, setPanel] = useState(null);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
+  const confirmDelete = () => {
+    setDelBusy(true);
+    S.deleteCandidate(candidate.id).then(() => { toast("Candidate deleted"); onBack(); }).catch(() => {}).finally(() => setDelBusy(false));
+  };
   const [msg, setMsg] = useState("");
   const [reply, setReply] = useState("");
   const placementJobs = S.jobs.filter((j) => candidate.jobLinks.some((l) => l.jobId === j.id) || candidate.endorsed.some((e) => e.role === j.role && e.company === j.client));
@@ -1097,13 +1119,15 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <Avatar init={candidate.name.split(" ").map((x) => x[0]).join("")} tone="em" size={64} />
               <div className="flex-1 min-w-0">
                 <div className="text-2xl md:text-3xl" style={{ ...SERIF }}>{candidate.name}</div>
-                <div className="text-sm flex items-center gap-1" style={{ color: C.ink2 }}><MapPin size={13} />{candidate.location}</div>
+                <div className="text-sm font-medium mt-0.5" style={{ color: C.em }}>{candidate.role || "Role not set"}</div>
+                <div className="text-sm flex items-center gap-1 mt-0.5" style={{ color: C.ink2 }}><MapPin size={13} className="shrink-0" />{candidate.location || "Location not set"}</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-2 mb-3">
               <Btn icon={Pencil} onClick={openEdit} className="flex-1 sm:flex-none justify-center">Edit</Btn>
               <Btn icon={MessageSquare} onClick={() => setPanel("msg")} className="flex-1 sm:flex-none justify-center">Message</Btn>
               {S.role !== "recruiter" && <Btn onClick={() => setPanel("fwd")} className="flex-1 sm:flex-none justify-center">Forward</Btn>}
+              {S.role === "admin" && <Btn icon={X} onClick={() => setDelOpen(true)} className="flex-1 sm:flex-none justify-center">Delete</Btn>}
               <div className="relative flex-1 sm:flex-none">
                 <Btn kind="primary" className="w-full justify-center" onClick={() => setMenuOpen((m) => !m)}>Update status</Btn>
                 {menuOpen && (
@@ -1131,14 +1155,20 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 )}
               </div>
             )}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Pay", candidate.pay], ["Skills", candidate.skills.slice(0, 2).join(", ")]].map(([l, v]) => (
-                <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><div className="text-sm font-medium mt-0.5 truncate">{v}</div></div>
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Pay", candidate.pay]].map(([l, v]) => (
+                <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><div className="text-sm font-medium mt-0.5 break-words">{v || "-"}</div></div>
               ))}
+            </div>
+            <div className="mb-4">
+              <div className="text-xs mb-1.5" style={{ color: C.ink3 }}>SKILLS</div>
+              {candidate.skills.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">{candidate.skills.map((s, i) => <Pill key={i} tone="neutral">{s}</Pill>)}</div>
+              ) : <div className="text-sm" style={{ color: C.ink3 }}>No skills on file yet.</div>}
             </div>
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
               <div className="flex items-center gap-2 min-w-0" style={{ color: C.ink2 }}><Mail size={15} className="shrink-0" /><span className="truncate">{candidate.emailAddr || "No email on file"}</span></div>
-              <div className="flex items-center gap-2" style={{ color: C.ink2 }}><Phone size={15} />{candidate.phone || "No phone on file"}</div>
+              <div className="flex items-center gap-2" style={{ color: C.ink2 }}><Phone size={15} className="shrink-0" />{candidate.phone || "No phone on file"}</div>
             </div>
           </Card>
 
@@ -1151,7 +1181,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                     <div className="flex items-center gap-2"><Sparkles size={15} color={C.em} /><div className="text-sm font-medium">AI review</div></div>
                     <Pill tone="warn">Internal</Pill>
                   </div>
-                  <div className="flex items-center gap-4 mb-3"><div className="text-3xl" style={{ ...SERIF }}>{candidate.ai || "-"}</div><div className="text-sm font-medium">Match for {candidate.role}</div></div>
+                  <div className="flex items-center gap-4 mb-3"><div className="text-3xl" style={{ ...SERIF }}>{candidate.ai ? candidate.ai + "%" : "-"}</div><div className="text-sm font-medium">Match for {candidate.role}</div></div>
                   {candidate.strengths.length > 0 && (<><div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>STRENGTHS</div>{candidate.strengths.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><Check size={15} color={C.em} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
                   {candidate.gaps.length > 0 && (<><div className="text-xs font-semibold mb-1.5 mt-3" style={{ color: C.ink3 }}>GAPS</div>{candidate.gaps.map((s, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="mt-0.5 shrink-0" />{s}</div>)}</>)}
                   <div className="rounded-xl p-3 mt-3" style={{ background: "#fff" }}>
@@ -1263,6 +1293,14 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
           )}
         </div>
       </div>
+      <ConfirmModal
+        open={delOpen}
+        onClose={() => setDelOpen(false)}
+        title="Delete this candidate?"
+        body={"This permanently removes " + candidate.name + "'s profile, resume, screening history, and pipeline links. This can't be undone."}
+        onConfirm={confirmDelete}
+        busy={delBusy}
+      />
     </div>
   );
 }
@@ -1323,7 +1361,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
       {candidate.jobLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return (
         <div key={l.id} className="py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
           <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{(j ? j.client : "") + (l.fit != null ? " · fit " + l.fit : "")}</div></div>
+            <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{(j ? j.client : "") + (l.fit != null ? " · fit " + l.fit + "%" : "")}</div></div>
             <div className="flex items-center gap-2 shrink-0">
               <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>
               {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
@@ -1398,11 +1436,13 @@ function InboxPage({ toast, S }) {
   );
 }
 
-function JobDetail({ job, S, toast, onBack, onPromote }) {
+function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
   if (!job) return (
     <div className="flex flex-col gap-4">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Jobs</button>
@@ -1433,6 +1473,10 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
     S.linkJob(c.id, job.id, c.ai || null).catch(() => {});
     toast(c.name + " rerouted to " + job.role);
   };
+  const confirmDelete = () => {
+    setDelBusy(true);
+    S.deleteJob(job.id).then(() => { toast("Job deleted"); onDeleted && onDeleted(); }).catch(() => {}).finally(() => setDelBusy(false));
+  };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Jobs</button>
@@ -1448,6 +1492,8 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
             {S.role === "recruiter" && (myOpenEngagement
               ? <Btn onClick={() => setReasonOpen(true)} disabled={busy}>Disengage</Btn>
               : <Btn kind="primary" onClick={engage} disabled={busy}>Engage</Btn>)}
+            {S.role !== "recruiter" && <Btn icon={Pencil} onClick={onEdit}>Edit</Btn>}
+            {S.role === "admin" && <Btn icon={X} onClick={() => setDelOpen(true)}>Delete</Btn>}
             <div className="relative">
               <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
               {menuOpen && (
@@ -1558,7 +1604,7 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
                 </select>
               ) : <StatusPill status={c.status} /> },
               { key: "cv", label: "RESUME", render: (c) => c.cv ? <button className="text-sm underline" style={{ color: C.em }} onClick={(e) => { e.stopPropagation(); S.openResume(c.cv); }}>View</button> : <span className="text-xs" style={{ color: C.ink3 }}>None</span> },
-              { key: "ai", label: "FIT", render: (c) => { const v = c.link && c.link.fit != null ? c.link.fit : c.ai; return <Pill tone={!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "danger"}>{v || "-"}</Pill>; } },
+              { key: "ai", label: "FIT", render: (c) => { const v = c.link && c.link.fit != null ? c.link.fit : c.ai; return <Pill tone={!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "danger"}>{v ? v + "%" : "-"}</Pill>; } },
             ]}
           />
         </div>
@@ -1570,6 +1616,14 @@ function JobDetail({ job, S, toast, onBack, onPromote }) {
           <Btn kind="primary" full onClick={confirmDisengage} disabled={busy}>{busy ? <>Disengaging <InlineDots color="#fff" /></> : "Disengage"}</Btn>
         </div>
       </Modal>
+      <ConfirmModal
+        open={delOpen}
+        onClose={() => setDelOpen(false)}
+        title="Delete this job?"
+        body={"This permanently removes " + job.role + " at " + job.client + ", along with its screening questions and engagement log. Candidates already attached to it keep their history but lose the link to this role. This can't be undone."}
+        onConfirm={confirmDelete}
+        busy={delBusy}
+      />
     </div>
   );
 }
@@ -1610,28 +1664,30 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   );
 }
 
-function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
-  const [title, setTitle] = useState("");
-  const [client, setClient] = useState("");
-  const [location, setLocation] = useState("Lagos, Nigeria");
-  const [minPay, setMinPay] = useState("");
-  const [maxPay, setMaxPay] = useState("");
-  const [description, setDescription] = useState("");
-  const [currency, setCurrency] = useState("NGN");
-  const [country, setCountry] = useState("Nigeria");
-  const [seo, setSeo] = useState(null);       // applied AI redraft: { meta_description, keywords, original_* }
+function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
+  const isEdit = !!editJob;
+  const [title, setTitle] = useState(editJob ? editJob.role : "");
+  const [client, setClient] = useState(editJob ? editJob.client : "");
+  const [location, setLocation] = useState(editJob ? (editJob.location || "Lagos, Nigeria") : "Lagos, Nigeria");
+  const [minPay, setMinPay] = useState(editJob && editJob.minPay != null ? String(editJob.minPay) : "");
+  const [maxPay, setMaxPay] = useState(editJob && editJob.maxPay != null ? String(editJob.maxPay) : "");
+  const [description, setDescription] = useState(editJob ? (editJob.description || "") : "");
+  const [currency, setCurrency] = useState(editJob ? (editJob.currency || "NGN") : "NGN");
+  const [country, setCountry] = useState(editJob ? (editJob.country || "Nigeria") : "Nigeria");
+  const [seo, setSeo] = useState(editJob ? (editJob.seo || null) : null);       // applied AI redraft: { meta_description, keywords, original_* }
   const [draftAi, setDraftAi] = useState(null); // AI suggestion awaiting review
   const [aiBusy, setAiBusy] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null); // { link, id, status, title, client }
   // What the agency bills the client, and how the recruiter is incentivized on this role.
-  const [billingType, setBillingType] = useState("percent"); // "percent" of salary, or "flat" fee
-  const [billingAmount, setBillingAmount] = useState("");
-  const [billingCurrency, setBillingCurrency] = useState("NGN");
-  const [incentiveType, setIncentiveType] = useState("percent"); // "percent" of the client fee, or "flat" bonus
-  const [incentiveAmount, setIncentiveAmount] = useState("");
-  const [incentiveCurrency, setIncentiveCurrency] = useState("NGN");
+  const [billingType, setBillingType] = useState(editJob ? (editJob.billingType || "percent") : "percent"); // "percent" of salary, or "flat" fee
+  const [billingAmount, setBillingAmount] = useState(editJob && editJob.billingAmount != null ? String(editJob.billingAmount) : "");
+  const [billingCurrency, setBillingCurrency] = useState(editJob ? (editJob.billingCurrency || "NGN") : "NGN");
+  const [incentiveType, setIncentiveType] = useState(editJob ? (editJob.incentiveType || "percent") : "percent"); // "percent" of the client fee, or "flat" bonus
+  const [incentiveAmount, setIncentiveAmount] = useState(editJob && editJob.incentiveAmount != null ? String(editJob.incentiveAmount) : "");
+  const [incentiveCurrency, setIncentiveCurrency] = useState(editJob ? (editJob.incentiveCurrency || "NGN") : "NGN");
   // Questions every applicant must be asked before their answers get recorded on their profile.
-  const [questions, setQuestions] = useState([""]);
+  const [questions, setQuestions] = useState(editJob && editJob.screeningQuestions && editJob.screeningQuestions.length ? editJob.screeningQuestions : [""]);
   const setQ = (i, v) => setQuestions((qs) => qs.map((q, idx) => (idx === i ? v : q)));
   const addQ = () => setQuestions((qs) => [...qs, ""]);
   const removeQ = (i) => setQuestions((qs) => qs.filter((_, idx) => idx !== i));
@@ -1664,15 +1720,31 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
   };
   const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setIncentiveAmount(""); setQuestions([""]); };
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const saveEdit = () => {
+    if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
+    setBusy(true);
+    S.updateJob(editJob.id, {
+      role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
+      billingType, billingAmount: num(billingAmount) || null, billingCurrency,
+      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency,
+      screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
+    }).then(() => { toast("Job updated"); setPage("jobDetail"); }).catch(() => {}).finally(() => setBusy(false));
+  };
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      <button onClick={() => setPage("jobs")} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Jobs</button>
+      <button onClick={() => setPage(isEdit ? "jobDetail" : "jobs")} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> {isEdit ? "Job" : "Jobs"}</button>
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Post a new job" sub="Publishing creates a unique link for candidates and recruiters." />
+        <SectionTitle size="text-3xl md:text-4xl" title={isEdit ? "Edit job" : "Post a new job"} sub={isEdit ? "Changes save straight to this listing." : "Publishing creates a unique link for candidates and recruiters."} />
         <div className="flex gap-2">
-          <Btn onClick={() => publish("Draft")} className="flex-1 md:flex-none justify-center">Save as draft</Btn>
-          <Btn kind="primary" className="flex-1 md:flex-none justify-center" onClick={() => publish("Open")}>Publish job</Btn>
+          {isEdit ? (
+            <Btn kind="primary" className="flex-1 md:flex-none justify-center" disabled={busy} onClick={saveEdit}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
+          ) : (
+            <>
+              <Btn onClick={() => publish("Draft")} className="flex-1 md:flex-none justify-center">Save as draft</Btn>
+              <Btn kind="primary" className="flex-1 md:flex-none justify-center" onClick={() => publish("Open")}>Publish job</Btn>
+            </>
+          )}
         </div>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
@@ -1775,9 +1847,9 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob }) {
         </Card>
         <div className="flex flex-col gap-4">
           <Card>
-            <SectionTitle title="Job link" sub="Generated when you publish." size="text-xl" />
-            <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 mt-3 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">harbor.link/j/••••••</span></div>
-            <div className="mt-2"><Pill tone="neutral">Draft until published</Pill></div>
+            <SectionTitle title="Job link" sub={isEdit ? "This job's public link." : "Generated when you publish."} size="text-xl" />
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 mt-3 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{isEdit ? editJob.link : "harbor.link/j/••••••"}</span></div>
+            <div className="mt-2">{isEdit ? <StatusPill status={editJob.status} /> : <Pill tone="neutral">Draft until published</Pill>}</div>
           </Card>
         </div>
       </div>
@@ -1889,6 +1961,8 @@ function CampaignsPage({ toast, S }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [aud, setAud] = useState("");
+  const [delTarget, setDelTarget] = useState(null);
+  const [delBusy, setDelBusy] = useState(false);
   const create = () => {
     if (!name.trim()) { toast("Name the campaign"); return; }
     S.setCampaigns((l) => [{ id: uid(), name, meta: S.me.first + " \u00b7 Not scheduled", audience: aud || "-", delivered: "-", opened: 0, status: "Draft" }, ...l]);
@@ -1896,6 +1970,10 @@ function CampaignsPage({ toast, S }) {
   };
   /* DEMO: in production this hands the send to your email provider */
   const send = (n) => { S.setCampaigns((l) => l.map((c) => (c.name === n ? { ...c, status: "Sent", delivered: c.audience, meta: c.meta.split(" \u00b7 ")[0] + " \u00b7 " + todayStr() } : c))); toast("Campaign sent"); };
+  const confirmDelete = () => {
+    setDelBusy(true);
+    S.deleteCampaign(delTarget.id).then(() => { toast("Campaign deleted"); setDelTarget(null); }).catch(() => {}).finally(() => setDelBusy(false));
+  };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -1912,6 +1990,7 @@ function CampaignsPage({ toast, S }) {
             { key: "delivered", label: "DELIVERED", render: (c) => c.delivered },
             { key: "opened", label: "OPENED", render: (c) => c.opened ? <div className="flex items-center gap-2"><ProgressBar pct={c.opened} /><span className="text-xs">{c.opened}%</span></div> : "-" },
             { key: "status", label: "STATUS", render: (c) => <div className="flex items-center gap-2"><StatusPill status={c.status} />{c.status !== "Sent" && <button onClick={() => send(c.name)} className="text-xs" style={{ color: C.em }}>Send now</button>}</div> },
+            { key: "act", label: "", render: (c) => S.role === "admin" ? <button title="Delete campaign" onClick={(e) => { e.stopPropagation(); setDelTarget(c); }} className="p-1" style={{ color: C.ink3 }}><X size={15} /></button> : null },
           ]}
         />
       </Card>
@@ -1922,6 +2001,14 @@ function CampaignsPage({ toast, S }) {
         <input value={aud} onChange={(e) => setAud(e.target.value)} placeholder="e.g. 1,200" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         <Btn kind="primary" full onClick={create}>Create draft</Btn>
       </Modal>
+      <ConfirmModal
+        open={!!delTarget}
+        onClose={() => setDelTarget(null)}
+        title="Delete this campaign?"
+        body={delTarget ? "This permanently removes \"" + delTarget.name + "\". This can't be undone." : ""}
+        onConfirm={confirmDelete}
+        busy={delBusy}
+      />
     </div>
   );
 }
@@ -2040,6 +2127,12 @@ function BillingPage({ role, toast, S }) {
 function AdsPage({ role, toast, onPromote, S }) {
   const ads = S.ads;
   const setAdStatus = (id, st, msg) => { S.setAds((l) => l.map((a) => (a.id === id ? { ...a, status: st } : a))); toast(msg); };
+  const [delTarget, setDelTarget] = useState(null);
+  const [delBusy, setDelBusy] = useState(false);
+  const confirmDelete = () => {
+    setDelBusy(true);
+    S.deleteAd(delTarget.id).then(() => { toast("Ad campaign deleted"); setDelTarget(null); }).catch(() => {}).finally(() => setDelBusy(false));
+  };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -2063,9 +2156,18 @@ function AdsPage({ role, toast, onPromote, S }) {
                 {a.status === "Live" && role !== "recruiter" && <button onClick={() => setAdStatus(a.id, "Ended", "Campaign ended")} className="text-xs" style={{ color: C.dangerFg }}>End</button>}
               </div>
             ) },
+            { key: "act", label: "", render: (a) => role === "admin" ? <button title="Delete ad campaign" onClick={() => setDelTarget(a)} className="p-1" style={{ color: C.ink3 }}><X size={15} /></button> : null },
           ]}
         />
       </Card>
+      <ConfirmModal
+        open={!!delTarget}
+        onClose={() => setDelTarget(null)}
+        title="Delete this ad campaign?"
+        body={delTarget ? "This permanently removes the ad campaign for \"" + delTarget.job + "\". This can't be undone." : ""}
+        onConfirm={confirmDelete}
+        busy={delBusy}
+      />
     </div>
   );
 }
@@ -2396,12 +2498,28 @@ export default function App() {
     })();
   };
 
+  // Local job field -> jobs table column, for the fields a person can edit after posting.
+  const JOB_FIELD_MAP = { role: "role_title", client: "client", location: "location", minPay: "min_pay", maxPay: "max_pay", description: "description", currency: "currency", country: "country", seo: "seo",
+    billingType: "billing_type", billingAmount: "billing_amount", billingCurrency: "billing_currency",
+    incentiveType: "incentive_type", incentiveAmount: "incentive_amount", incentiveCurrency: "incentive_currency",
+    screeningQuestions: "screening_questions", status: "status" };
+  const updateJob = (id, patch) => {
+    const j = data.jobs.find((x) => x.id === id); const p = typeof patch === "function" ? patch(j) : patch;
+    const body = {}; Object.entries(JOB_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
+    setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, ...p } : x)) }));
+    return sbFetch("/rest/v1/jobs?id=eq." + id, { method: "PATCH", token: session.token, body })
+      .then(reload)
+      .catch((e) => { toast(e.message); reload(); throw e; });
+  };
+
   const S = {
     role, me: myMe, query, toast, go: setPage,
     cands: data.cands, updateCand,
+    deleteCandidate: (id) => call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }),
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
       setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null } })); },
-    jobs: data.jobs,
+    jobs: data.jobs, updateJob,
+    deleteJob: (id) => call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }),
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
         billing_type: j.billingType || "percent", billing_amount: j.billingAmount || null, billing_currency: j.billingCurrency || j.currency || "NGN",
@@ -2433,6 +2551,7 @@ export default function App() {
       if (existing) call("/rest/v1/campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } });
       else if (changed) call("/rest/v1/campaigns", { method: "POST", body: { id: changed.id, name: changed.name, created_by: session.uid } });
     },
+    deleteCampaign: (id) => call("/rest/v1/campaigns?id=eq." + id, { method: "DELETE" }),
     ads: data.ads,
     setAds: (fn) => { const list = typeof fn === "function" ? fn(data.ads) : fn;
       const existingIds = new Set(data.ads.map((a) => a.id)); const added = list.filter((a) => !existingIds.has(a.id));
@@ -2441,6 +2560,7 @@ export default function App() {
       added.forEach((a) => call("/rest/v1/ad_campaigns", { method: "POST", body: { id: a.id, job_title: a.job, client: a.client, channels: a.channels, payer_type: a.payerType, budget: num(a.budget), status: a.status, created_by: session.uid } }));
       if (changed) call("/rest/v1/ad_campaigns?id=eq." + changed.id, { method: "PATCH", body: { status: changed.status } });
     },
+    deleteAd: (id) => call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }),
     users: data.users,
     createAccount: async ({ email, password, full_name, role }) => {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ email, password, full_name, role }) });
@@ -2514,7 +2634,8 @@ export default function App() {
   else if (page === "inbox") content = <InboxPage toast={toast} S={S} />;
   else if (page === "jobs") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "postJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
-  else if (page === "jobDetail") content = <JobDetail job={data.jobs.find((j) => j.id === jobId)} S={S} toast={toast} onBack={() => setPage("jobs")} onPromote={onPromote} />;
+  else if (page === "editJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} editJob={data.jobs.find((j) => j.id === jobId)} />;
+  else if (page === "jobDetail") content = <JobDetail job={data.jobs.find((j) => j.id === jobId)} S={S} toast={toast} onBack={() => setPage("jobs")} onPromote={onPromote} onEdit={() => setPage("editJob")} onDeleted={() => setPage("jobs")} />;
   else if (page === "campaigns") content = <CampaignsPage toast={toast} S={S} />;
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
   else if (page === "ads") content = <AdsPage role={role} toast={toast} onPromote={onPromote} S={S} />;
