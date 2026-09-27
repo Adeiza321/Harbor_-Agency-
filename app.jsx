@@ -1918,16 +1918,18 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
               : <Btn kind="primary" onClick={engage} disabled={busy}>Engage</Btn>)}
             {S.role !== "recruiter" && <Btn icon={Pencil} onClick={onEdit}>Edit</Btn>}
             {S.role === "admin" && <Btn icon={X} onClick={() => setDelOpen(true)}>Delete</Btn>}
-            <div className="relative">
-              <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
-              {menuOpen && (
-                <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-48 py-1" style={{ background: "#fff", borderColor: C.line }}>
-                  {["Open", "Engaged", "Closing", "Closed"].map((o) => (
-                    <button key={o} onClick={() => { setStatus(o); setMenuOpen(false); }} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: C.ink }}>{o}</button>
-                  ))}
-                </div>
-              )}
-            </div>
+            {S.role !== "recruiter" && (
+              <div className="relative">
+                <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
+                {menuOpen && (
+                  <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-48 py-1" style={{ background: "#fff", borderColor: C.line }}>
+                    {["Open", "Engaged", "Closing", "Closed"].map((o) => (
+                      <button key={o} onClick={() => { setStatus(o); setMenuOpen(false); }} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: C.ink }}>{o}</button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap gap-2 mb-4">
@@ -2644,9 +2646,36 @@ function UsersPage({ toast, S }) {
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferTarget, setTransferTarget] = useState(null);
   const [transferBusy, setTransferBusy] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [pwUser, setPwUser] = useState(null);
+  const [pwValue, setPwValue] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [delUser, setDelUser] = useState(null);
+  const [delBusy, setDelBusy] = useState(false);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
   const adminCount = users.filter((u) => u.roleKey === "admin" && u.status !== "Disabled").length;
   const transferCandidates = users.filter((u) => !u.isOwner && u.status === "Active");
+  const openEdit = (u) => { setEditUser(u); setEditName(u.name); setEditPhone(u.phone || ""); };
+  const saveEdit = () => {
+    if (!editName.trim()) { toast("Enter their name"); return; }
+    setEditBusy(true);
+    S.editUser(editUser.id, { name: editName.trim(), phone: editPhone.trim() })
+      .then(() => { toast("Details updated"); setEditUser(null); }).catch((e) => toast(e.message)).finally(() => setEditBusy(false));
+  };
+  const savePassword = () => {
+    if (pwValue.length < 8) { toast("Password must be at least 8 characters"); return; }
+    setPwBusy(true);
+    S.setUserPassword(pwUser.id, pwValue)
+      .then(() => { toast("Password set for " + pwUser.name); setPwUser(null); setPwValue(""); }).catch((e) => toast(e.message)).finally(() => setPwBusy(false));
+  };
+  const confirmDeleteUser = () => {
+    setDelBusy(true);
+    S.deleteUser(delUser.id)
+      .then(() => { toast(delUser.name + " deleted"); setDelUser(null); }).catch((e) => toast(e.message)).finally(() => setDelBusy(false));
+  };
   const invite = async () => {
     if (!name.trim()) { toast("Enter their name"); return; }
     if (!email.includes("@")) { toast("Enter a valid email"); return; }
@@ -2696,14 +2725,43 @@ function UsersPage({ toast, S }) {
             } },
             { key: "status", label: "STATUS", render: (u) => <StatusPill status={u.status} /> },
             { key: "act", label: "", render: (u) => {
-              if (u.isOwner) return null;
-              if (u.status === "Disabled") return <button onClick={() => S.enableUser(u.id).then(() => toast("Account re-enabled"))} className="text-xs" style={{ color: C.em }}>Enable</button>;
-              if (u.roleKey === "admin") return null;
-              return <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button>;
+              if (u.isOwner) return <button onClick={() => openEdit(u)} className="text-xs" style={{ color: C.em }}>Edit</button>;
+              const lastAdmin = u.roleKey === "admin" && u.status !== "Disabled" && adminCount <= 1;
+              return (
+                <div className="flex items-center gap-2.5 flex-wrap justify-end">
+                  <button onClick={() => openEdit(u)} className="text-xs" style={{ color: C.em }}>Edit</button>
+                  <button onClick={() => { setPwUser(u); setPwValue(""); }} className="text-xs" style={{ color: C.em }}>Set password</button>
+                  {u.status === "Disabled"
+                    ? <button onClick={() => S.enableUser(u.id).then(() => toast("Account re-enabled"))} className="text-xs" style={{ color: C.em }}>Enable</button>
+                    : !lastAdmin && u.roleKey !== "admin" && <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button>}
+                  {!lastAdmin && <button onClick={() => setDelUser(u)} className="text-xs" style={{ color: C.dangerFg }}>Delete</button>}
+                </div>
+              );
             } },
           ]}
         />
       </Card>
+      <Modal open={!!editUser} onClose={() => setEditUser(null)} title={editUser ? "Edit " + editUser.name : "Edit user"}>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
+        <input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label>
+        <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="optional" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <Btn kind="primary" full onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Save changes"}</Btn>
+      </Modal>
+      <Modal open={!!pwUser} onClose={() => setPwUser(null)} title={pwUser ? "Set a password for " + pwUser.name : "Set password"}>
+        <div className="text-sm mb-3" style={{ color: C.ink2 }}>This sets their password directly — no reset email is sent. Share it with them yourself.</div>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>New password (8+ characters)</label>
+        <input type="text" value={pwValue} onChange={(e) => setPwValue(e.target.value)} className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <Btn kind="primary" full onClick={savePassword} disabled={pwBusy}>{pwBusy ? "Setting…" : "Set password"}</Btn>
+      </Modal>
+      <ConfirmModal
+        open={!!delUser}
+        onClose={() => setDelUser(null)}
+        title={delUser ? "Delete " + delUser.name + "?" : "Delete user?"}
+        body="This permanently removes their login. If they still have jobs, placements or other records tied to their account, this will be blocked — disable them instead in that case."
+        onConfirm={confirmDeleteUser}
+        busy={delBusy}
+      />
       <Modal open={open} onClose={() => setOpen(false)} title="Create an account">
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
         <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
@@ -3310,6 +3368,27 @@ export default function App() {
     transferOwnership: (newOwnerId) => { const u = data.users.find((x) => x.id === newOwnerId);
       return sbFetch("/rest/v1/rpc/transfer_ownership", { method: "POST", token: session.token, body: { new_owner_id: newOwnerId } })
         .then(() => { logAudit("ownership transferred", "user", newOwnerId, "-> " + (u ? u.name : "")); reload(); }); },
+    /* Name/phone only — role changes go through updateUserRole, and email/password through the
+       create-user edge function below (needs the service role, not available to the client). */
+    editUser: (id, patch) => { const u = data.users.find((x) => x.id === id);
+      return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { full_name: patch.name, phone: patch.phone || null } })
+        .then(() => { logAudit("edited", "user", id, u ? u.name : ""); reload(); }); },
+    /* Sets their password directly (no reset email) — for handing someone a new login on the spot. */
+    setUserPassword: async (id, password) => {
+      const u = data.users.find((x) => x.id === id);
+      const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_password", id, password }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not set password");
+      logAudit("password reset", "user", id, u ? u.name : "");
+    },
+    /* Permanently removes their login (auth.users, cascading to profiles). The edge function
+       refuses this if the person still has jobs/placements/etc referencing their account —
+       disable them instead in that case. Never usable on the owner. */
+    deleteUser: async (id) => {
+      const u = data.users.find((x) => x.id === id);
+      const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", id }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not delete account");
+      logAudit("deleted", "user", id, u ? u.name : ""); reload();
+    },
     settings: data.settings,
     saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {} } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
     auditLog: data.auditLog,

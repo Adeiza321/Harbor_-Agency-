@@ -639,3 +639,23 @@ create trigger candidate_jobs_guard_locked before update on public.candidate_job
 
 revoke execute on function public.guard_locked_candidate() from public, anon, authenticated;
 revoke execute on function public.guard_locked_candidate_job() from public, anon, authenticated;
+
+-- =====================================================================
+-- A job's status is Rec Ops/Admin territory. The UI already hides "Change
+-- status" from recruiters; this is the backing defense-in-depth, since the
+-- jobs_update RLS policy also lets a job's own creator update it directly
+-- (a recruiter can post a job, so without this a determined API call could
+-- still flip status even though no button offers it).
+-- =====================================================================
+create or replace function public.guard_job_status() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.status is distinct from old.status and not public.is_staff() then
+    raise exception 'Only Rec Ops or Admins can change a job''s status' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+drop trigger if exists jobs_guard_status on public.jobs;
+create trigger jobs_guard_status before update on public.jobs
+  for each row execute function public.guard_job_status();
+revoke execute on function public.guard_job_status() from public, anon, authenticated;
