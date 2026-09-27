@@ -15,6 +15,44 @@ type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null
 
 export const VERDICTS = ["Perfect fit", "Possible fit", "Reject"];
 
+// Manually reviewed candidates are locked (candidates.ai_locked). The database also
+// refuses AI writes to them, but checking here gives the recruiter a clear message.
+export const LOCKED_MSG = "This candidate's review is locked because it was manually reviewed. Unlock it before re-running AI.";
+
+// Shared scoring rules: every AI judgement checks the candidate against the job
+// description requirement by requirement, instead of giving an overall impression.
+export const RUBRIC =
+  "HOW TO SCORE — follow these steps strictly. " +
+  "1) Read the job description and list EVERY requirement it states. Mark each 'must' (required, 'must have', minimum years, required degree, licence or certification, and the named experience areas the role requires) or 'preferred' (anything described as 'a plus', 'preferred' or 'nice to have'). " +
+  "2) For each requirement decide 'met', 'partial' or 'not met'. Only mark 'met' when the CV or the candidate's answers describe actual work performed that shows it: a role, a responsibility, a project, or an answer with specifics. A word that only appears in a skills or keywords list, a headline or a summary, without described work, is NOT evidence: mark it 'partial' at most. " +
+  "3) Quantities matter. When the job asks for a number of years, or for 'significant' experience in something (a type of firm, a function), count the dated time the CV actually shows in that thing. Undated or very short exposure is 'partial', not 'met'. Separately, never penalise someone for changing jobs often or for short stays in general; only measure the experience the job asks for. " +
+  "4) Score from the checklist, not from overall impression: start at 100; for each must-have 'not met' subtract 10-15; for each must-have 'partial' subtract 5-8; for each preferred item not met subtract 2-3. If a required licence, certification, degree or work authorisation is not met, the score must be 45 or lower and the verdict must be the rejection option. " +
+  "5) 'Perfect fit' ONLY when every must-have is 'met'. Any must-have that is 'partial' or 'not met' means 'Possible fit' at best. Scores of 90 or more are for candidates who meet every must-have and most preferred items, and should be rare. " +
+  "6) 'gaps' must name every must-have that is 'not met' or 'partial', most important first. 'strengths' must only list things backed by described work. Be accurate and specific; never pad strengths. ";
+
+// Hard guard on the model's own checklist: a verdict or score can't claim more
+// than the requirements it marked support.
+export function enforceChecklist(reqs: unknown, score: number, verdict: string, perfect: string, possible: string) {
+  const list = Array.isArray(reqs) ? reqs : [];
+  const must = list.filter((r: any) => String(r?.type || "").toLowerCase() === "must");
+  const notMet = must.filter((r: any) => String(r?.status || "").toLowerCase() === "not met").length;
+  const partial = must.filter((r: any) => String(r?.status || "").toLowerCase() === "partial").length;
+  let s = score, v = verdict;
+  if (notMet) s = Math.min(s, 75);
+  else if (partial) s = Math.min(s, 85);
+  if ((notMet || partial) && v === perfect) v = possible;
+  return { score: s, verdict: v };
+}
+export const cleanReqs = (reqs: unknown) => (Array.isArray(reqs) ? reqs : []).slice(0, 25).map((r: any) => ({
+  requirement: String(r?.requirement || "").slice(0, 160),
+  type: String(r?.type || "").toLowerCase() === "must" ? "must" : "preferred",
+  status: ["met", "partial", "not met"].includes(String(r?.status || "").toLowerCase()) ? String(r.status).toLowerCase() : "partial",
+  evidence: String(r?.evidence || "").slice(0, 240),
+}));
+const REQS_SHAPE = `"requirements": [{"requirement": string, "type": "must" | "preferred", "status": "met" | "partial" | "not met", "evidence": string}]`;
+export { REQS_SHAPE };
+
+
 const norm = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 const clampScore = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
@@ -92,6 +130,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   if (!link) throw new Error("Screening card not found");
   const { data: candidate } = await admin.from("candidates").select("*").eq("id", link.candidate_id).single();
   if (!candidate) throw new Error("Candidate not found");
+  if (candidate.ai_locked) throw new Error(LOCKED_MSG);
   const { data: allLinks } = await admin.from("candidate_jobs").select("*").eq("candidate_id", link.candidate_id);
   const links: any[] = allLinks || [link];
   const { data: jobs } = await admin.from("jobs").select("*").in("id", [...new Set(links.map((l) => l.job_id))]);
@@ -116,12 +155,13 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     "You are a recruitment analyst screening one candidate for one job. You get their CV (attached, or as extracted text) and everything they have answered so far: " +
     "this job's application questions, any follow-up questions, and answers they gave while being screened for other jobs. Use ALL of it — e.g. a salary or notice period they gave for another job still applies. " +
     "Reply with STRICT JSON only: " +
-    `{"summary": string, "strengths": string[], "gaps": string[], "score": number (0-100), "verdict": "Perfect fit" | "Possible fit" | "Reject", "salary_expectation": string, "questions": string[]}. ` +
-    "Judge ONLY on: (1) skills and experience vs the job's stated requirements, from the CV and anything the answers add — never on how long they stayed in past roles; " +
+    `{${REQS_SHAPE}, "summary": string, "strengths": string[], "gaps": string[], "score": number (0-100), "verdict": "Perfect fit" | "Possible fit" | "Reject", "salary_expectation": string, "questions": string[]}. ` +
+    RUBRIC +
+    "Judge ONLY on: (1) the requirement checklist above, from the CV and anything the answers add; " +
     "(2) salary expectation vs budget — be flexible, only count it against them if clearly and substantially over; (3) availability vs the role's timeline. " +
     "If an answer contradicts the CV, list it in gaps. " +
-    "summary: 2-3 sentences a recruiter reads first. strengths and gaps: at most 4 each, a few words each. " +
-    "verdict: 'Perfect fit' = meets essentially all key requirements with no real concerns; 'Possible fit' = promising but partial or with open questions; 'Reject' = clearly missing core requirements or clearly incompatible. " +
+    "summary: 2-3 sentences a recruiter reads first; mention the most important unmet must-have if there is one. strengths and gaps: at most 6 each, a few words each. requirements: the checklist from step 1-2, evidence in a few words. " +
+    "verdict: 'Perfect fit' = every must-have met (step 5); 'Possible fit' = promising but at least one must-have partial or not met, or open questions; 'Reject' = missing a hard requirement or several core requirements, or clearly incompatible. " +
     "salary_expectation: the salary the candidate themselves said they expect, as they stated it (keep amount, currency and period), taken from their answers; '' if they never stated one. " +
     (mayAsk
       ? "questions: up to 3 short follow-up questions (under 25 words each) that would settle the most important open points for THIS job. NEVER repeat or rephrase anything in the 'Already asked' list, and never ask for something already answered anywhere in the material (e.g. no salary question if they already gave a salary). If nothing important is unclear, or the verdict is Reject, return []."
@@ -137,9 +177,10 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     `\nAnswers given for other jobs:\n${elsewhere.length ? fmt(elsewhere) : "(none)"}\n` +
     `\nAlready asked (never ask these again):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}`;
 
-  const result = await askAI(system, content, resume, 1200);
-  const verdict = normalizeVerdict(result.verdict);
-  const score = clampScore(result.score);
+  const result = await askAI(system, content, resume, 2500);
+  const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit");
+  const verdict = checked.verdict;
+  const score = checked.score;
   const questions = mayAsk && verdict !== "Reject" ? dedupeQuestions(result.questions, asked) : [];
 
   const followups = keepFollowups
@@ -153,6 +194,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     gaps: (Array.isArray(result.gaps) ? result.gaps : []).slice(0, 6).map((s: unknown) => String(s).slice(0, 160)),
     score,
     verdict,
+    requirements: cleanReqs(result.requirements),
     usedResume: !!resume,
     answersUsed: here.length + elsewhere.length,
     updatedAt: new Date().toISOString(),

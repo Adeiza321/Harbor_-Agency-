@@ -590,3 +590,52 @@ language sql stable security definer set search_path = public as $$
                           where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'answered'), '[]'::jsonb))
   from candidates c where c.portal_token = p_token
 $$;
+
+-- =====================================================================
+-- Manual-review locking: once a candidate's review is locked, no AI run
+-- can overwrite it. (Migration: lock_manual_reviews, applied 27 Sep 2026)
+-- =====================================================================
+
+alter table public.candidates
+  add column if not exists ai_locked boolean not null default false,
+  add column if not exists ai_locked_reason text;
+
+-- Blocks changes to review fields on a locked candidate. Changing ai_locked itself
+-- (unlocking) is always allowed. A deliberate manual edit can bypass with:
+--   set local harbor.manual_review = 'on';
+create or replace function public.guard_locked_candidate() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if old.ai_locked and new.ai_locked
+     and coalesce(current_setting('harbor.manual_review', true), '') <> 'on'
+     and (new.ai_score is distinct from old.ai_score
+       or new.skills is distinct from old.skills
+       or new.strengths is distinct from old.strengths
+       or new.gaps is distinct from old.gaps
+       or new.screening is distinct from old.screening) then
+    raise exception 'This candidate''s review is locked (manually reviewed). Unlock it before re-running AI.'
+      using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+drop trigger if exists candidates_guard_locked on public.candidates;
+create trigger candidates_guard_locked before update on public.candidates
+  for each row execute function public.guard_locked_candidate();
+
+create or replace function public.guard_locked_candidate_job() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if coalesce(current_setting('harbor.manual_review', true), '') <> 'on'
+     and (new.fit is distinct from old.fit or new.ai is distinct from old.ai)
+     and exists (select 1 from candidates c where c.id = new.candidate_id and c.ai_locked) then
+    raise exception 'This candidate''s review is locked (manually reviewed). Unlock it before re-running AI.'
+      using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+drop trigger if exists candidate_jobs_guard_locked on public.candidate_jobs;
+create trigger candidate_jobs_guard_locked before update on public.candidate_jobs
+  for each row execute function public.guard_locked_candidate_job();
+
+revoke execute on function public.guard_locked_candidate() from public, anon, authenticated;
+revoke execute on function public.guard_locked_candidate_job() from public, anon, authenticated;

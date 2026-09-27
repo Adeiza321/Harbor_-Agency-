@@ -1228,6 +1228,13 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     catch (e) { toast(e.message); }
     setResumeDelBusy(false);
   };
+  const [unlockBusy, setUnlockBusy] = useState(false);
+  const unlockReview = async () => {
+    setUnlockBusy(true);
+    try { await patch(() => ({ ai_locked: false })); toast("Review unlocked. AI can re-screen this candidate again."); }
+    catch (e) { toast(e.message); }
+    setUnlockBusy(false);
+  };
   const [editForm, setEditForm] = useState(null);
   const openEdit = () => setEditForm({ name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
   const saveEdit = () => {
@@ -1334,6 +1341,13 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 <div className="text-sm flex items-center gap-1 mt-0.5" style={{ color: C.ink2 }}><MapPin size={13} className="shrink-0" />{candidate.location || "Location not set"}</div>
               </div>
             </div>
+            {candidate.ai_locked && (
+              <div className="rounded-lg p-2.5 mb-3 flex items-center gap-2 text-xs flex-wrap" style={{ background: C.warnBg, color: C.warnFg }}>
+                <Lock size={13} className="shrink-0" />
+                <span className="flex-1">Review locked{candidate.ai_locked_reason ? " — " + candidate.ai_locked_reason : ""}. The AI can't overwrite this candidate's score, skills, strengths or gaps until unlocked.</span>
+                {S.role === "admin" && <button type="button" onClick={unlockReview} disabled={unlockBusy} className="font-medium underline shrink-0">{unlockBusy ? "Unlocking…" : "Unlock"}</button>}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2 mb-3">
               <Btn icon={Pencil} onClick={openEdit} className="flex-1 sm:flex-none justify-center">Edit</Btn>
               <Btn icon={MessageSquare} onClick={() => setPanel("msg")} className="flex-1 sm:flex-none justify-center">Message</Btn>
@@ -1561,17 +1575,22 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
         <div className="px-4 pb-4 flex flex-col gap-3.5">
           {group.items.length > 1 && <Tabs tabs={group.items.map((x, i) => ({ key: i, label: x.job.role }))} active={idx} setActive={setIdx} />}
           {ai.verdict && <span className="sm:hidden w-fit"><Pill tone={VERDICT_TONE[ai.verdict] || "neutral"}>{ai.verdict}</Pill></span>}
+          {candidate.ai_locked && (
+            <div className="rounded-lg p-2.5 flex items-center gap-2 text-xs" style={{ background: C.warnBg, color: C.warnFg }}>
+              <Lock size={13} className="shrink-0" /> Locked — manually reviewed. {S.role === "admin" ? "Unlock from the candidate header to let the AI re-screen." : "An admin can unlock it to let the AI re-screen."}
+            </div>
+          )}
           {!ai.stage ? (
             <div className="rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center gap-3" style={box}>
               <div className="text-sm flex-1" style={{ color: C.ink2 }}>Not screened yet. The AI reads {candidate.cv ? "their resume" : "their answers (no resume on file)"} and any answers they've given, for this and other jobs.</div>
-              <Btn kind="primary" onClick={screen} disabled={!!busy}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>
+              <Btn kind="primary" onClick={screen} disabled={!!busy || candidate.ai_locked}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>
             </div>
           ) : (
             <>
               <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: C.ink2 }}>
                 <Sparkles size={14} color={C.em} className="shrink-0" />
                 <span>{ai.stage === "final" ? "Final screening" : "First screening"} · {ai.usedResume ? "resume + " : "no resume · "}{ai.answersUsed || 0} {ai.answersUsed === 1 ? "answer" : "answers"} · updated {ai.updatedAt ? fdate(ai.updatedAt) : "–"}</span>
-                <button type="button" onClick={screen} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>{busy === "screen" ? "Screening…" : "Rescreen"}</button>
+                {!candidate.ai_locked && <button type="button" onClick={screen} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>{busy === "screen" ? "Screening…" : "Rescreen"}</button>}
               </div>
               {ai.summary && <div className="text-sm leading-relaxed">{ai.summary}</div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1584,6 +1603,23 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
                   {(ai.gaps || []).length ? ai.gaps.map((x, i) => <div key={i} className="flex gap-2 text-sm mb-1"><AlertTriangle size={15} color={C.warnFg} className="shrink-0 mt-0.5" />{x}</div>) : <div className="text-sm" style={{ color: C.ink3 }}>None noted</div>}
                 </div>
               </div>
+              {(ai.requirements || []).length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold mb-1.5" style={{ color: C.ink3 }}>REQUIREMENTS CHECKLIST</div>
+                  <div className="flex flex-col gap-1.5">
+                    {ai.requirements.map((r, i) => (
+                      <div key={i} className="flex gap-2 text-sm items-start">
+                        <Pill tone={r.status === "met" ? "em" : r.status === "partial" ? "warn" : "danger"}>{r.status || "?"}</Pill>
+                        <div className="flex-1">
+                          <span className={r.type === "must" ? "font-medium" : ""}>{r.requirement}</span>
+                          {r.type === "must" && <span className="ml-1 text-xs" style={{ color: C.ink3 }}>(must-have)</span>}
+                          {r.evidence && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.evidence}</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -3149,7 +3185,7 @@ export default function App() {
   };
 
   // Local candidate field -> candidates table column, for the fields a person can actually edit.
-  const CAND_FIELD_MAP = { status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id" };
+  const CAND_FIELD_MAP = { status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id", ai_locked: "ai_locked" };
   const updateCand = (id, patch) => {
     const c = data.cands.find((x) => x.id === id); const p = typeof patch === "function" ? patch(c) : patch;
     const body = {}; Object.entries(CAND_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
@@ -3164,7 +3200,8 @@ export default function App() {
         // Ripple this into the audit log so status moves (and other edits) stay traceable
         // from wherever they were triggered — the candidate page, Billing, a bulk action, etc.
         if ("status" in body) logAudit("status changed", "candidate", id, (c ? c.name : "") + ": " + (c ? c.status : "?") + " → " + p.status);
-        const otherFields = Object.keys(body).filter((k) => k !== "status" && k !== "ai_score");
+        if ("ai_locked" in body && body.ai_locked === false) logAudit("unlocked", "candidate", id, (c ? c.name : "") + ": review unlocked, AI can re-screen");
+        const otherFields = Object.keys(body).filter((k) => k !== "status" && k !== "ai_score" && k !== "ai_locked");
         if (otherFields.length) logAudit("edited", "candidate", id, c ? c.name : "");
         reload();
       } catch (e) { toast(e.message); reload(); }

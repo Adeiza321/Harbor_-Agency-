@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
-import { screenLink } from "./screening.ts";
+import { screenLink, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -216,8 +216,9 @@ Deno.serve(async (req: Request) => {
     if (action === "screen" || action === "approve_questions") {
       const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", body.linkId).maybeSingle();
       if (!link) return json({ error: "Screening card not found" }, 404);
-      const { data: owner } = await admin.from("candidates").select("recruiter_id").eq("id", link.candidate_id).single();
+      const { data: owner } = await admin.from("candidates").select("recruiter_id,ai_locked").eq("id", link.candidate_id).single();
       if (!isStaff && owner?.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
+      if (action === "screen" && owner?.ai_locked) return json({ error: LOCKED_MSG, locked: true }, 409);
       if (link.candidate_response !== "accepted") return json({ error: "The candidate hasn't accepted this role yet" }, 409);
 
       if (action === "screen") return json({ ok: true, ai: await screenLink(admin, link.id, askAI, loadResume) });
@@ -240,6 +241,8 @@ Deno.serve(async (req: Request) => {
     const { data: candidate } = await admin.from("candidates").select("*").eq("id", candidateId).single();
     if (!candidate) return json({ error: "Candidate not found" }, 404);
     if (!isStaff && candidate.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
+    if (candidate.ai_locked && ["score_cv", "draft_questions", "review_answer"].includes(action))
+      return json({ error: LOCKED_MSG, locked: true }, 409);
 
     // Remove the resume: delete the stored file (service role, so recruiters can remove
     // their own candidate's resume too) and clear it from the profile.
@@ -290,15 +293,15 @@ Deno.serve(async (req: Request) => {
         "Use BOTH together: the CV shows their track record; the screening answers add or clarify skills, experience, salary expectation, notice period and availability. " +
         "Where an answer adds a relevant skill or experience the CV doesn't show, give credit for it. Where an answer contradicts the CV, list that in 'gaps' so the recruiter can check it. " +
         "Reply with STRICT JSON only, no markdown, no commentary, matching exactly this shape: " +
-        `{"skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string, "phone": string, "location": string}. ` +
-        "score reflects how strong a fit the candidate is for the context given, based only on skills, experience and (if answered) salary and availability fit — never penalize or reward based on job tenure/duration at past employers. " +
+        `{${REQS_SHAPE}, "skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string, "phone": string, "location": string}. ` +
+        (job ? RUBRIC + "score is the checklist score for this job, adjusted only for (if answered) salary and availability fit. " : "No job is attached: score general employability, list requirements as []. ") +
         "Salary: be flexible, only count it against them if it is clearly and substantially over the job's budget. " +
         "'experience' is a short summary like '6 yrs backend engineering'. 'notice' is their notice period and 'pay' their salary expectation (amount, currency and period as stated): short strings taken from the screening answers if given there, else from the CV if stated, else '-'. " +
         "'phone' is the candidate's phone/mobile number exactly as written on the CV (digits, spaces, dashes, parens as given), or '' if none is present. " +
         "'location' is the candidate's city and state/region (and country if not obviously the same country as the job) as stated on the CV, e.g. 'Austin, TX', or '' if none is present — never guess a location from an area code or any other indirect clue, only use it if the CV states it directly.";
 
-      const result = await askAI(system, context, resume, 1200);
-      const score = clampScore(result.score);
+      const result = await askAI(system, context, resume, 2500);
+      const score = job ? enforceChecklist(result.requirements, clampScore(result.score), "", "", "").score : clampScore(result.score);
       const patch: Record<string, unknown> = {
         skills: result.skills || [],
         strengths: result.strengths || [],
@@ -374,8 +377,9 @@ Deno.serve(async (req: Request) => {
       const questions = candidate.screening?.questions || [];
       const system =
         "You are screening a candidate for a recruiter, using BOTH their CV (attached or as extracted text, when present) and their screening answers. Reply with STRICT JSON only: " +
-        `{"verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "reasoning": string}. ` +
-        "Judge STRICTLY on three things only: (1) skills and experience vs the job's stated requirements, from the CV and anything the answers add — never consider how long they held past roles/tenure, that is irrelevant, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
+        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "reasoning": string}. ` +
+        RUBRIC +
+        "Judge STRICTLY on three things only: (1) the requirement checklist above, from the CV and anything the answers add, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
         "If an answer contradicts the CV, say so. " +
         "'reasoning' is 2-4 sentences a recruiter will read, explicitly touching on skills fit (saying what the CV shows and what the answers added), salary, and start date so they can see why you reached this verdict.";
       const content =
@@ -384,8 +388,11 @@ Deno.serve(async (req: Request) => {
         (material.count ? `\nAnswers to the job's screening questions:\n${material.text}\n` : "") +
         `\nAI screening questions sent:\n${questions.map((q: string, i: number) => `${i + 1}. ${q}`).join("\n") || "(none recorded)"}\n` +
         `Candidate's reply:\n${answerText}`;
-      const result = await askAI(system, content, resume, 700);
-      const verdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
+      const result = await askAI(system, content, resume, 2500);
+      const rawVerdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
+      const checked = enforceChecklist(result.requirements, clampScore(result.score), rawVerdict, "Perfect fit", "Possible fit");
+      const verdict = checked.verdict;
+      result.score = checked.score;
       await admin.from("candidates").update({
         screening: {
           ...(candidate.screening || {}),
