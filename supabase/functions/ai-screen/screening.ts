@@ -9,6 +9,7 @@
 // A rescreen replaces the previous result. Salary expectation found in answers goes to candidates.pay.
 
 import type { ResumeInput } from "./resume.ts";
+import { lookupIndustries, industryText } from "./industry.ts";
 
 type Ask = (system: string, text: string, resume: ResumeInput | null, maxTokens: number) => Promise<any>;
 type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null; why?: string }>;
@@ -24,13 +25,17 @@ export const LOCKED_MSG = "This candidate's review is locked because it was manu
 export const RUBRIC =
   "HOW TO SCORE — follow these steps strictly. " +
   "1) Read the job description and list EVERY requirement it states. Mark each 'must' (required, 'must have', minimum years, required degree, licence or certification, and the named experience areas the role requires) or 'preferred' (anything described as 'a plus', 'preferred' or 'nice to have'). " +
-  "2) For each requirement decide 'met', 'partial' or 'not met'. Only mark 'met' when the CV or the candidate's answers describe actual work performed that shows it: a role, a responsibility, a project, or an answer with specifics. A word that only appears in a skills or keywords list, a headline or a summary, without described work, is NOT evidence: mark it 'partial' at most. " +
+  "Split combined requirements into separate lines: 'ASC 606, 718 and 842' is three lines, and '8+ years including significant Big 4' is two (the years, and the Big 4). Never let one part being met carry another. " +
+  "Screening notes or distinctions in the job description (e.g. which kind of experience does or does not count) are binding: apply them exactly. " +
+  "2) For each requirement decide 'met', 'partial' or 'not met'. Only mark 'met' when the CV or the candidate's answers describe actual work performed that shows it: a role, a responsibility, a project, or an answer with specifics. A word that only appears in a skills or keywords list, a headline or a professional summary, without a role that describes the work, is NOT evidence: mark it 'not met' if nothing else supports it, 'partial' at most. " +
   "3) Quantities matter. When the job asks for a number of years, or for 'significant' experience in something (a type of firm, a function), count the dated time the CV actually shows in that thing. Undated or very short exposure is 'partial', not 'met'. Separately, never penalise someone for changing jobs often or for short stays in general; only measure the experience the job asks for. " +
   "4) Score from the checklist, not from overall impression: start at 100; for each must-have 'not met' subtract 10-15; for each must-have 'partial' subtract 5-8; for each preferred item not met subtract 2-3. If a required licence, certification, degree or work authorisation is not met, the score must be 45 or lower and the verdict must be the rejection option. " +
   "5) 'Perfect fit' ONLY when every must-have is 'met'. Any must-have that is 'partial' or 'not met' means 'Possible fit' at best. Scores of 90 or more are for candidates who meet every must-have and most preferred items, and should be rare. " +
   "6) 'gaps' must name every must-have that is 'not met' or 'partial', most important first. List must-have gaps before any preferred gap, and end every gap about a preferred item with ' (nice to have)'. 'strengths' must only list things backed by described work. Be accurate and specific; never pad strengths. " +
   "7) Preferred items are never a reason to reject. A candidate who has no must-have marked 'not met' must NOT get the rejection verdict, however many preferred items they lack; missing preferred items only lower the score slightly. " +
-  "8) 'verdict_reason': 1-2 short sentences explaining the verdict by naming the specific must-have requirements that decided it (e.g. 'Meets every must-have: active CPA, 10 yrs Big 4, SEC reporting, ASC 606/718.' or 'Rejected: no active CPA, which the role requires.'). Never give a preferred item as the reason for a rejection. ";
+  "8) Industry alignment: compare the candidate's industry experience (from the looked-up employer list when given, otherwise the CV) with the industry the job asks for. It counts exactly as the job description ranks it (must or preferred). An employer marked 'unsure' is unknown industry: never count it as a match. " +
+  "9) If the candidate's current or most recent role is outside the field the job needs, say so in 'gaps'. " +
+  "10) 'verdict_reason': 1-2 short sentences explaining the verdict by naming the specific must-have requirements that decided it (e.g. 'Meets every must-have: active CPA, 10 yrs Big 4, SEC reporting, ASC 606/718.' or 'Rejected: no active CPA, which the role requires.'). Never give a preferred item as the reason for a rejection. ";
 
 // Hard guard on the model's own checklist: a verdict or score can't claim more
 // than the requirements it marked support.
@@ -144,6 +149,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   if (!job) throw new Error("This job no longer exists");
 
   const { resume } = await loadResume(admin, candidate);
+  const industries = await ensureIndustries(admin, candidate, resume);
   const here = answersOn(link, job);
   const elsewhere = links.filter((l) => l.id !== link.id).flatMap((l) => {
     const j = jobOf(l.job_id);
@@ -178,6 +184,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   const content =
     jobText(job) + "\n\n" +
     (resume ? "The candidate's CV is included.\n" : `No readable CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
+    industryText(industries) + "\n" +
     `\nAnswers for this job:\n${here.length ? fmt(here) : "(none yet)"}\n` +
     `\nAnswers given for other jobs:\n${elsewhere.length ? fmt(elsewhere) : "(none)"}\n` +
     `\nAlready asked (never ask these again):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}`;
@@ -208,8 +215,11 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   };
   await admin.from("candidate_jobs").update({ ai, fit: score }).eq("id", link.id);
 
+  // The candidate's main AI score follows their latest screening, so a rescreen shows everywhere.
+  const cpatch: Record<string, unknown> = { ai_score: score };
   const salary = String(result.salary_expectation || "").trim();
-  if (salary && salary !== "-") await admin.from("candidates").update({ pay: salary.slice(0, 120) }).eq("id", candidate.id);
+  if (salary && salary !== "-") cpatch.pay = salary.slice(0, 120);
+  await admin.from("candidates").update(cpatch).eq("id", candidate.id);
   return ai;
 }
 
@@ -234,6 +244,7 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
     return answersOn(l, j).map((x) => ({ ...x, where: j ? `${j.role_title} at ${j.client}` : "another role" }));
   });
   const { resume } = await loadResume(admin, candidate);
+  const industries = await ensureIndustries(admin, candidate, resume);
 
   const system =
     "You are a recruitment analyst checking whether a candidate already in the database is a fit for a NEW role they have not been put forward for. " +
@@ -248,6 +259,7 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
   const content =
     jobText(job) + "\n\n" +
     (resume ? "The candidate's CV is included.\n" : `No readable CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
+    industryText(industries) + "\n" +
     `\nEverything they have answered so far:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}\n(answered for ${x.where})`).join("\n\n") : "(nothing yet)"}`;
 
   const result = await askAI(system, content, resume, 3000);
@@ -274,4 +286,16 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
   const others = (Array.isArray(candidate.matches) ? candidate.matches : []).filter((m: any) => m?.job_id !== job.id);
   await admin.from("candidates").update({ matches: [...others, review] }).eq("id", candidateId);
   return { review, answered };
+}
+
+// Looks up the candidate's employers once (when nothing is on file yet) and saves the list.
+// Industries aren't a locked review field: they're facts about employers, so they're filled
+// even for manually reviewed candidates.
+export async function ensureIndustries(admin: any, candidate: any, resume: ResumeInput | null) {
+  if (Array.isArray(candidate.industries) && candidate.industries.length) return candidate.industries;
+  if (!resume) return [];
+  const { items, error } = await lookupIndustries(resume);
+  if (error) console.error("industries", candidate.id, error);
+  if (items.length) await admin.from("candidates").update({ industries: items, industries_checked_at: new Date().toISOString() }).eq("id", candidate.id);
+  return items;
 }

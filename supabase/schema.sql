@@ -689,3 +689,15 @@ drop trigger if exists candidates_guard_status on public.candidates;
 create trigger candidates_guard_status before update on public.candidates
   for each row execute function public.guard_candidate_status();
 revoke execute on function public.guard_candidate_status() from public, anon, authenticated;
+
+-- =====================================================================
+-- Industry experience per employer (migration candidate_industries, 28 Sep 2026).
+-- Filled by the ai-screen "industries" action and on first screening: each employer on
+-- the resume is looked up on the web. Item: {company, title, from, to, industry,
+-- confidence: 'confirmed'|'unsure', big4_practice, source, note}. 'unsure' = the company
+-- couldn't be identified, so no industry is claimed. Screening uses it for industry
+-- alignment. Not a locked review field (employer facts), so it fills for locked candidates.
+-- =====================================================================
+alter table public.candidates
+  add column if not exists industries jsonb not null default '[]'::jsonb,
+  add column if not exists industries_checked_at timestamptz;

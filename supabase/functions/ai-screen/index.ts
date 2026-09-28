@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
 import { screenLink, reviewMatch, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
+import { lookupIndustries, industryText } from "./industry.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -285,6 +286,17 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true });
     }
 
+    // Industry experience: look up every employer on the resume. Allowed on locked candidates
+    // (employer facts, not the review). Nothing is saved if the lookup fails.
+    if (action === "industries") {
+      const { resume, why } = await loadResume(admin, candidate);
+      if (!resume) return json({ error: why }, 400);
+      const { items, error } = await lookupIndustries(resume);
+      if (!items.length) return json({ error: "Couldn't look up the companies: " + (error || "no employers found") }, 502);
+      await admin.from("candidates").update({ industries: items, industries_checked_at: new Date().toISOString() }).eq("id", candidateId);
+      return json({ ok: true, industries: items });
+    }
+
     let job: any = null;
     if (body.jobId) {
       const { data: j } = await admin.from("jobs").select("*").eq("id", body.jobId).single();
@@ -315,7 +327,7 @@ Deno.serve(async (req: Request) => {
       const material = await screeningMaterial(admin, candidate, job);
       const context =
         (job ? `They are being considered for this role.\n${jobBlock(job)}` : "No specific job is attached yet — score general employability and extract a broad skill profile.") +
-        "\n\n" +
+        "\n\n" + industryText(candidate.industries) + "\n\n" +
         (material.count
           ? `Candidate's screening answers (their own words):\n${material.text}`
           : "Screening answers: none recorded yet — score from the resume alone.");

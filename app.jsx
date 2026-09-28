@@ -115,6 +115,7 @@ function mapAll(d) {
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "",
+    industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0 })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
@@ -1401,6 +1402,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 <div className="flex flex-wrap gap-1.5">{candidate.skills.map((s, i) => <Pill key={i} tone="neutral">{s}</Pill>)}</div>
               ) : <div className="text-sm" style={{ color: C.ink3 }}>No skills on file yet.</div>}
             </div>
+            <IndustryExperience candidate={candidate} S={S} toast={toast} />
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
               <div className="flex items-center gap-2 min-w-0" style={{ color: C.ink2 }}><Mail size={15} className="shrink-0" /><span className="truncate">{candidate.emailAddr || "No email on file"}</span></div>
               <div className="flex items-center gap-2" style={{ color: C.ink2 }}><Phone size={15} className="shrink-0" />{candidate.phone || "No phone on file"}</div>
@@ -1738,6 +1740,65 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
             <button type="button" onClick={() => setDrafts([""])} className="text-xs font-medium w-fit" style={{ color: C.em }}>+ Ask an AI follow-up question</button>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* Industry experience: each employer on the resume, looked up on the web. "Confirmed" shows
+   the industry and the page it came from; "Unsure" means the company couldn't be identified,
+   so no industry is claimed. Screening uses this for industry alignment. */
+function IndustryExperience({ candidate, S, toast }) {
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const items = candidate.industries || [];
+  const confirmed = items.filter((x) => x.confidence === "confirmed");
+  const labels = [...new Set(confirmed.map((x) => x.industry))];
+  const unsure = items.length - confirmed.length;
+  const run = async () => {
+    setBusy(true);
+    try { const r = await S.aiScreen("industries", { candidateId: candidate.id }); toast("Looked up " + (r.industries || []).length + " employers"); }
+    catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="mb-4">
+      <div className="flex items-center gap-2 mb-1.5">
+        <div className="text-xs" style={{ color: C.ink3 }}>INDUSTRY EXPERIENCE</div>
+        {candidate.cv && (
+          <button type="button" onClick={run} disabled={busy} className="ml-auto text-xs font-medium" style={{ color: C.em }}>
+            {busy ? <span className="inline-flex items-center gap-1.5">Looking up companies <InlineDots /></span> : items.length ? "Refresh" : "Look up companies"}
+          </button>
+        )}
+      </div>
+      {!items.length ? (
+        <div className="text-sm" style={{ color: C.ink3 }}>{candidate.cv ? "Not looked up yet. It runs on the next screening, or look it up now." : "Upload a resume to look up their employers."}</div>
+      ) : (
+        <>
+          <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-1.5 flex-wrap text-left">
+            {labels.map((l, i) => <Pill key={i} tone="em">{l}</Pill>)}
+            {unsure > 0 && <Pill tone="warn">{unsure} unsure</Pill>}
+            <span className="ml-auto flex items-center gap-1 text-xs" style={{ color: C.ink2 }}>{items.length} employers<ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : "none" }} /></span>
+          </button>
+          {open && (
+            <div className="flex flex-col mt-2">
+              {items.map((x, i) => (
+                <div key={i} className="flex items-start gap-2 py-2 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium">{x.company}{x.title && <span className="font-normal" style={{ color: C.ink2 }}> · {x.title}</span>}</div>
+                    <div className="text-xs" style={{ color: C.ink3 }}>{[x.from, x.to].filter(Boolean).join(" – ") || "Dates not given"}{x.big4_practice ? " · Big 4 practice: " + x.big4_practice : ""}</div>
+                    {x.note && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{x.note}</div>}
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {x.confidence === "confirmed" ? <Pill tone="em">{x.industry}</Pill> : <Pill tone="warn">Unsure</Pill>}
+                    {x.source && <a href={x.source} target="_blank" rel="noopener noreferrer" className="text-xs" style={{ color: C.em }}>Source</a>}
+                  </div>
+                </div>
+              ))}
+              {candidate.industriesAt && <div className="text-xs pt-1" style={{ color: C.ink3 }}>Looked up {fdate(candidate.industriesAt)}</div>}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
