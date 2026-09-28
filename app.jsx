@@ -591,7 +591,11 @@ const scoreFor = (seed) => 60 + (Array.from(seed).reduce((a, c) => a + c.charCod
 const flat = (c) => ({ name: c.name, role: c.role, location: c.location, recruiter: c.recruiter || "", status: c.status, ai: c.ai, email: c.email });
 /* How many company cards have follow-up questions in a given state (draft / sent / answered). */
 const countFollowups = (cands, state) => cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.ai && l.ai.followups && l.ai.followups.state === state).length, 0);
-const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "Lagos, Nigeria", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
+// location/phone default to blank, never a guessed value: the AI screener (score_cv) only fills
+// them from the resume when the candidate doesn't already have one on file, so a hardcoded
+// default here would silently block that fill forever. Let the UI show "not set" instead and
+// leave resume + screening answers as the only source of truth.
+const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
 
 /* Desktop detection in JS, so layout never depends on responsive classes being available */
 function useDesktop() {
@@ -2286,8 +2290,10 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
 /* Roles the candidate could fit that they're not on yet. Review fit opens the fit review;
    routing from there sends the role to their candidate page and the company card appears
    once they accept. Names and scores come from the live job and the latest review. */
+const MATCHES_COLLAPSED_COUNT = 3;
 function MatchesCard({ candidate, S, toast }) {
   const [reviewJob, setReviewJob] = useState(null);
+  const [showAllMatches, setShowAllMatches] = useState(false);
   const [titlesBusy, setTitlesBusy] = useState(false);
   const busy = busyWith(candidate, S.jobs);
   const refreshTitles = () => {
@@ -2325,7 +2331,7 @@ function MatchesCard({ candidate, S, toast }) {
       <SectionTitle title="Other roles they could fit" sub="Roles the full AI review rated a fit on location, experience, skills and requirements. A company card appears once you route them and they accept." size="text-xl" />
       {titles}
       {!rows.length && <div className="text-sm mt-3" style={{ color: C.ink2 }}>No reviewed fits on open roles yet.</div>}
-      {rows.map(({ m, job }) => {
+      {(showAllMatches ? rows : rows.slice(0, MATCHES_COLLAPSED_COUNT)).map(({ m, job }) => {
         const link = candidate.jobLinks.find((l) => l.jobId === job.id) || null;
         return (
           <div key={job.id} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -2339,6 +2345,11 @@ function MatchesCard({ candidate, S, toast }) {
           </div>
         );
       })}
+      {rows.length > MATCHES_COLLAPSED_COUNT && (
+        <button onClick={() => setShowAllMatches((v) => !v)} className="text-xs underline mt-2" style={{ color: C.ink2 }}>
+          {showAllMatches ? "Show less" : "See all " + rows.length}
+        </button>
+      )}
       {others.length > 0 && (
         <div className="pt-2.5" style={{ borderTop: rows.length ? `1px solid ${C.line}` : "none" }}>
           <select value="" onChange={(e) => { const j = S.jobs.find((x) => x.id === e.target.value); if (j) setReviewJob(j); }} aria-label="Review fit for another open job"
@@ -4056,7 +4067,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   const ensureDraft = async () => {
     if (candId) return candId;
     if (!name.trim()) { toast("Enter the candidate's name"); return null; }
-    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", location: "Lagos, Nigeria", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
+    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
     await S.insertCandidateAwait(c);
     setCandId(c.id);
     return c.id;
@@ -4465,7 +4476,7 @@ export default function App() {
     cands: data.cands, updateCand,
     deleteCandidate: (id) => { const c = data.cands.find((x) => x.id === id); return call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "candidate", id, c ? c.name : "")); },
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
-      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
+      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
     jobs: data.jobs, updateJob,
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
@@ -4596,7 +4607,7 @@ export default function App() {
     // Opens Billing with the new billing entry form ready for this candidate.
     startBilling: (id) => { setCandId(null); setBillFor(id); setPage("billing"); },
     billFor, clearBillFor: () => setBillFor(null),
-    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, is_draft: !!c.isDraft } }),
+    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
     logAudit,
     setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
       return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => {
