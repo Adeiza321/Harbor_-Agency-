@@ -304,6 +304,40 @@ Deno.serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------
+    // 0) Quick "check fit" for an unsubmitted draft candidate — resume ONLY, never
+    //    screening-question answers, so a recruiter can tell whether it's worth asking
+    //    the candidate the job's screening questions at all. Only the recruiter who
+    //    created the draft can run this (staff bypass does not apply here); the result
+    //    is written to the still-draft candidate row, which RLS keeps invisible to
+    //    everyone but them until they Submit. The caller still writes its own audit-log
+    //    entry, same as every other action here.
+    // ---------------------------------------------------------------
+    if (action === "check_fit") {
+      if (!candidate.is_draft) return json({ error: "This candidate has already been submitted" }, 400);
+      if (candidate.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
+      if (!job) return json({ error: "jobId is required to check fit" }, 400);
+      const { resume, why } = await loadResume(admin, candidate);
+      if (!resume) return json({ error: why || "Upload a resume first" }, 400);
+
+      const system =
+        "You are helping a recruiter decide whether to pursue a candidate for a role, using ONLY their CV — no screening-question answers exist yet. Reply with STRICT JSON only: " +
+        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "verdict_reason": string, "reasoning": string}. ` +
+        RUBRIC +
+        "Judge ONLY on the requirement checklist above, from the CV alone. Do not penalise for salary or availability — those aren't known yet. " +
+        "'reasoning' is 2-3 sentences telling the recruiter whether this candidate is worth screening further for this specific role, and why.";
+      const content = jobBlock(job) + "\n\nThe candidate's CV is included.";
+      const result = await askAI(system, content, resume, 1200);
+      const rawVerdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
+      const checked = enforceChecklist(result.requirements, clampScore(result.score), rawVerdict, "Perfect fit", "Possible fit", "Not a fit");
+      const verdict = checked.verdict;
+      const score = checked.score;
+      await admin.from("candidates").update({
+        screening: { state: "checked_fit", jobId: job.id, verdict, score, reasoning: String(result.reasoning || "").slice(0, 800), checkedAt: new Date().toISOString() },
+      }).eq("id", candidateId);
+      return json({ ok: true, verdict, score, reasoning: result.reasoning || "" });
+    }
+
+    // ---------------------------------------------------------------
     // 1) Score a candidate — their resume (any format) plus any screening answers for the job.
     //    Resumes live in the private "resumes" bucket at <candidateId>/<file>
     //    (candidates.resume_path); older ones in "cvs" (cv_path) are still read.

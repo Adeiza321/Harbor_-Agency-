@@ -108,13 +108,17 @@ const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
   const pname = (id) => (pm[id] ? pm[id].full_name || pm[id].email : "");
-  const cands = d.candidates.map((c) => ({
+  // Draft candidates (created mid-way through "Add candidate", not yet Submitted) stay
+  // out of every normal list — the whole point of a draft is that nobody sees it, not
+  // even Admin/Rec Ops, until it's submitted. The "Add candidate" flow tracks its own
+  // draft in local state, so it never needs to find it in here.
+  const cands = d.candidates.filter((c) => !c.is_draft).map((c) => ({
     id: c.id, name: c.name, role: c.role_title, location: c.location, recruiterId: c.recruiter_id,
     recruiter: c.recruiter_id ? pname(c.recruiter_id) : null, recruiterInit: c.recruiter_id ? initialsOf(pname(c.recruiter_id)) : "",
     status: c.status, ai: c.ai_score || 0, email: c.email_verified ? "Verified" : "Unverified", emailAddr: c.email || "", phone: c.phone || "", opens: c.opens,
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
-    ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "",
+    ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0 })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
@@ -1118,7 +1122,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
         <div className="flex gap-2.5">
           <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Btn>
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
-          <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={() => setPage("uploadCandidates")}>Upload</Btn>
+          <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={() => setPage("uploadCandidates")}>Add candidate</Btn>
         </div>
       </div>
       <Card>
@@ -2692,7 +2696,7 @@ function PromoteModal({ open, onClose, jobTitle, toast, S }) {
    HARBOR, PART 2. Paste this directly BELOW the code you already have.
    It uses the same imports, tokens and components, so nothing to add above.
    Contains: Inbox, Campaigns, Billing, Ads, Users, Settings,
-   UploadCandidates, CandidatePortal and the App root (default export).
+   AddCandidate, CandidatePortal and the App root (default export).
    ====================================================================== */
 
 function CampaignsPage({ toast, S }) {
@@ -3252,62 +3256,131 @@ const fileToBase64 = (f) => new Promise((resolve, reject) => {
   r.readAsDataURL(f);
 });
 
-function UploadCandidates({ setPage, toast, S }) {
-  const [file, setFile] = useState("");
-  const [files, setFiles] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("");
-  const upload = async () => {
-    if (!files.length) { toast("Choose a file first"); return; }
-    setBusy(true);
-    // Every file except a spreadsheet is treated as a resume: saved, then read and scored by AI.
-    const pdfs = files.filter((f) => !/\.csv$/i.test(f.name));
-    const others = files.filter((f) => /\.csv$/i.test(f.name));
-    let count = 0, aiFailures = 0;
+/* Add a candidate against a specific job. The screening questions for that job show up
+   front, before anything is submitted. "Check fit" runs a resume-only AI read to help a
+   recruiter decide whether it's worth going further — that draft stays invisible to
+   everyone but them (enforced by RLS on candidates.is_draft), though it's still saved on
+   the backend and logged to the audit log. Nothing shows up for Admin/Rec Ops until
+   Submit, which needs the resume AND the job's screening questions answered. */
+function AddCandidate({ setPage, toast, S }) {
+  const openJobs = S.jobs.filter((j) => j.status !== "Closed");
+  const [jobId, setJobId] = useState("");
+  const job = jobId ? S.jobs.find((j) => j.id === jobId) : null;
+  const qs = (job && job.screeningQuestions) || [];
+  const [answers, setAnswers] = useState([]);
+  const [name, setName] = useState("");
+  const [emailAddr, setEmailAddr] = useState("");
+  const [phone, setPhone] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [file, setFile] = useState(null);
+  const [candId, setCandId] = useState(null);
+  const [checking, setChecking] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [fit, setFit] = useState(null);
 
-    // CSV rows: added as before, no AI score yet.
-    const added = [];
-    for (const f of others) {
-      if (/\.csv$/i.test(f.name)) {
-        const lines = (await f.text()).split(/\r?\n/).filter(Boolean);
-        const head = lines[0].toLowerCase().split(",").map((h) => h.trim());
-        lines.slice(1).forEach((ln) => { const v = ln.split(","); const g = (k) => (v[head.indexOf(k)] || "").trim(); if (g("name")) added.push({ name: g("name"), role: g("role") || "Unspecified", location: g("location") || "Lagos, Nigeria", emailAddr: g("email"), phone: g("phone") }); });
-      } else added.push({ name: f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "), role: "Unspecified", location: "Lagos, Nigeria" });
-    }
-    if (added.length) {
-      S.setCands((l) => [...added.map((a) => newCandidate({ ...a, recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, timeline: [{ t: "Uploaded by " + S.me.first, d: todayStr(), done: true }] })), ...l]);
-      count += added.length;
-    }
+  const setA = (i, v) => setAnswers((arr) => { const next = arr.slice(); next[i] = v; return next; });
 
-    // Resumes (PDF, Word, text, images): inserted first, then handed to AI for real scoring.
-    for (const f of pdfs) {
-      setStatus("Scoring " + f.name + "…");
-      const c = newCandidate({ name: f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " "), role: "Unspecified", location: "Lagos, Nigeria", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, timeline: [{ t: "Uploaded by " + S.me.first, d: todayStr(), done: true }] });
-      try {
-        await S.insertCandidateAwait(c);
-        await S.uploadResume(c.id, f);
-        count++;
-        await S.aiScreen("score_cv", { candidateId: c.id });
-      } catch (e) { aiFailures++; toast(f.name + ": " + e.message); }
-    }
-
-    setBusy(false); setStatus("");
-    if (!count) { toast("No candidates found. CSV needs name, role and location columns."); return; }
-    toast(count + " candidate(s) added" + (aiFailures ? `, ${aiFailures} not AI-scored` : ""));
-    setPage("candidates");
+  // Creates the draft candidate row the first time it's needed (Check fit or Submit),
+  // then reuses the same row for the rest of this flow.
+  const ensureDraft = async () => {
+    if (candId) return candId;
+    if (!name.trim()) { toast("Enter the candidate's name"); return null; }
+    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", location: "Lagos, Nigeria", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
+    await S.insertCandidateAwait(c);
+    setCandId(c.id);
+    return c.id;
   };
+
+  const checkFit = async () => {
+    if (!jobId) { toast("Pick a job first"); return; }
+    if (!file && !candId) { toast("Upload a resume first"); return; }
+    setChecking(true);
+    try {
+      const id = await ensureDraft();
+      if (!id) { setChecking(false); return; }
+      if (file) { await S.uploadResume(id, file); setFile(null); }
+      const r = await S.checkFit(id, jobId, job);
+      setFit(r);
+    } catch (e) { toast(e.message || "Could not check fit"); }
+    setChecking(false);
+  };
+
+  const submit = async () => {
+    if (!jobId) { toast("Pick a job first"); return; }
+    if (!file && !candId) { toast("Upload a resume first"); return; }
+    if (qs.length && qs.some((_, i) => !(answers[i] || "").trim())) { toast("Answer every screening question first"); return; }
+    setSubmitting(true);
+    try {
+      const id = await ensureDraft();
+      if (!id) { setSubmitting(false); return; }
+      if (file) { await S.uploadResume(id, file); setFile(null); }
+      await S.submitDraftCandidate(id, jobId, qs.map((_, i) => answers[i] || ""), job);
+      toast("Candidate added");
+      setPage("candidates");
+    } catch (e) { toast(e.message || "Could not add candidate"); }
+    setSubmitting(false);
+  };
+
+  const startOver = () => { setJobId(""); setAnswers([]); setName(""); setEmailAddr(""); setPhone(""); setFileName(""); setFile(null); setCandId(null); setFit(null); };
+
+  const FIT_TONE = { "Perfect fit": "em", "Possible fit": "warn", "Not a fit": "danger" };
+
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <button onClick={() => setPage("candidates")} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Candidates</button>
-      <SectionTitle size="text-3xl md:text-4xl" title="Upload candidates" sub="Add resumes (AI reads and scores them) or a CSV spreadsheet of candidates." />
-      <Card className="md:max-w-xl">
-        <label className="flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed py-10 cursor-pointer text-center" style={{ borderColor: "#D5D2C7", background: "#FAF8F3" }}>
-          <Upload size={22} color={C.ink2} />
-          <div className="text-sm font-medium">{file || "Choose files"}</div>
-          <div className="text-xs" style={{ color: C.ink3 }}>Resumes: PDF, Word, text or photo (AI-scored) · or CSV</div>
-          <input type="file" multiple accept={RESUME_ACCEPT + ",.csv"} className="hidden" onChange={(e) => { setFiles(Array.from(e.target.files)); setFile(e.target.files.length ? `${e.target.files.length} file(s) selected` : ""); }} />
-        </label>
-        <div className="mt-4"><Btn kind="primary" full onClick={upload} disabled={busy}>{busy ? <>{status || "Uploading"} <InlineDots color="#fff" /></> : "Upload and rate"}</Btn></div>
+      <SectionTitle size="text-3xl md:text-4xl" title="Add candidate" sub="Pick the job, then their resume and (if you're ready) the screening answers." />
+      <Card className="md:max-w-xl flex flex-col gap-4">
+        <div>
+          <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Job</div>
+          <select className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: C.line, color: C.ink }} value={jobId} onChange={(e) => { setJobId(e.target.value); setAnswers([]); setFit(null); }}>
+            <option value="">Choose a job…</option>
+            {openJobs.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
+          </select>
+        </div>
+        {job && qs.length > 0 && (
+          <div className="rounded-xl p-3" style={{ background: C.canvas }}>
+            <div className="text-xs font-medium mb-2" style={{ color: C.ink2 }}>Screening questions for {job.role}</div>
+            <div className="space-y-2.5">
+              {qs.map((q, i) => (
+                <div key={i}>
+                  <div className="text-xs mb-1" style={{ color: C.ink2 }}>{i + 1}. {q}</div>
+                  <textarea className="w-full text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} rows={2} value={answers[i] || ""} onChange={(e) => setA(i, e.target.value)} placeholder="Their answer…" />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Name</div>
+            <input className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: C.line, color: C.ink }} value={name} onChange={(e) => setName(e.target.value)} disabled={!!candId} placeholder="Candidate's name" />
+          </div>
+          <div>
+            <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Email (optional)</div>
+            <input className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: C.line, color: C.ink }} value={emailAddr} onChange={(e) => setEmailAddr(e.target.value)} disabled={!!candId} placeholder="name@example.com" />
+          </div>
+        </div>
+        <div>
+          <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Resume</div>
+          <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed py-6 cursor-pointer text-center" style={{ borderColor: "#D5D2C7", background: "#FAF8F3" }}>
+            <Upload size={20} color={C.ink2} />
+            <div className="text-sm font-medium">{fileName || (candId ? "Resume on file — choose to replace" : "Choose a file")}</div>
+            <div className="text-xs" style={{ color: C.ink3 }}>PDF, Word, text or photo</div>
+            <input type="file" accept={RESUME_ACCEPT} className="hidden" onChange={(e) => { const f = e.target.files[0]; if (f) { setFile(f); setFileName(f.name); setFit(null); } }} />
+          </label>
+        </div>
+        {fit && (
+          <div className="rounded-xl p-3 border" style={{ borderColor: C.line, background: C.canvas }}>
+            <div className="flex items-center gap-2 mb-1"><Pill tone={FIT_TONE[fit.verdict] || "neutral"}>{fit.verdict}</Pill><span className="text-xs" style={{ color: C.ink2 }}>Fit {fit.score}% · resume only</span></div>
+            <div className="text-sm" style={{ color: C.ink }}>{fit.reasoning}</div>
+            <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>Only you can see this check — it won't show up for anyone else unless you submit below.</div>
+          </div>
+        )}
+        <div className="flex gap-2.5 flex-wrap">
+          <Btn onClick={checkFit} disabled={checking || submitting}>{checking ? <>Checking <InlineDots /></> : "Check fit (resume only)"}</Btn>
+          <Btn kind="primary" onClick={submit} disabled={checking || submitting}>{submitting ? <>Adding <InlineDots color="#fff" /></> : "Submit candidate"}</Btn>
+          {(candId || jobId) && <button onClick={startOver} className="text-xs px-2" style={{ color: C.ink3 }}>Start over</button>}
+        </div>
       </Card>
     </div>
   );
@@ -3709,7 +3782,8 @@ export default function App() {
     updateNotificationPrefs: (prefs) => { setMe((m) => ({ ...m, notificationPrefs: prefs })); return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { notification_prefs: prefs } }).catch((e) => toast(e.message)); },
     team: buildTeam(data.users, data.cands, data.placements),
     openCandidate: (id) => setCandId(id),
-    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null } }),
+    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, is_draft: !!c.isDraft } }),
+    logAudit,
     setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
       return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => {
         setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status } : x)) }));
@@ -3730,6 +3804,29 @@ export default function App() {
     },
     /* Routing: the role shows on the candidate's page; their company card appears once they accept. */
     routeToJob: (candidateId, jobId) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending" } }),
+    /* "Add candidate" flow — quick, resume-only fit check on a draft candidate that stays
+       invisible to everyone but its creator (enforced by RLS on is_draft) until Submit.
+       Still persisted on the backend and logged to the audit log, per the AI's own result. */
+    checkFit: async (candidateId, jobId, job) => {
+      const r = await aiCall("check_fit", { candidateId, jobId });
+      logAudit("checked fit", "candidate", candidateId, (job ? job.role + " – " + job.client : "") + ": " + r.verdict);
+      return r;
+    },
+    /* Submit finishes the draft: clears is_draft (making the candidate visible to staff),
+       saves the resume-derived fields via score_cv, then attaches to the job with the
+       answered screening questions — same pipeline as any other candidate from here on. */
+    submitDraftCandidate: async (candidateId, jobId, screeningAnswers, job) => {
+      await sbFetch("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", token: session.token, body: { is_draft: false } });
+      try { await aiCall("score_cv", { candidateId }); } catch (e) { /* resume may already be scored from Check fit */ }
+      let rows;
+      try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, stage: "In review", screening_answers: screeningAnswers || [] } }); }
+      catch (e) { toast(e.message); throw e; }
+      reload();
+      const row = rows && rows[0];
+      if (row) aiCall("screen", { linkId: row.id }).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
+      logAudit("added candidate", "candidate", candidateId, job ? job.role + " – " + job.client : "");
+      return row;
+    },
     setStage: (linkId, stage) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { stage } }),
     setScreeningAnswers: (linkId, screeningAnswers) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { screening_answers: screeningAnswers } }),
     unlinkJob: (linkId) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "DELETE" }),
@@ -3799,7 +3896,7 @@ export default function App() {
   if (candidate) content = <CandidateDetail key={candidate.id} candidate={candidate} onBack={() => setCandId(null)} toast={toast} S={S} />;
   else if (page === "overview") content = role === "recruiter" ? <OverviewRecruiter S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "candidates") content = <CandidatesList scope={scope} data={candData} openCandidate={(c) => setCandId(c.id)} setPage={setPage} S={S} toast={toast} />;
-  else if (page === "uploadCandidates") content = <UploadCandidates setPage={setPage} toast={toast} S={S} />;
+  else if (page === "uploadCandidates") content = <AddCandidate setPage={setPage} toast={toast} S={S} />;
   else if (page === "inbox") content = <InboxPage toast={toast} S={S} />;
   else if (page === "jobs") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "postJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;

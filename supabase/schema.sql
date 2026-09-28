@@ -691,6 +691,26 @@ create trigger candidates_guard_status before update on public.candidates
 revoke execute on function public.guard_candidate_status() from public, anon, authenticated;
 
 -- =====================================================================
+-- Draft candidates: the "Add candidate" flow lets a recruiter (or Rec
+-- Ops/Admin) run a resume-only "check fit" pass against a job before
+-- deciding whether to pursue a candidate at all. That check is saved on
+-- the backend and logged to the audit log, but the candidate must stay
+-- invisible to everyone except whoever created it — including staff —
+-- until a full Submit (resume + answered screening questions) clears
+-- is_draft. Enforced at the RLS layer, not just hidden in the UI.
+-- =====================================================================
+alter table public.candidates add column if not exists is_draft boolean not null default false;
+
+drop policy if exists cand_read on public.candidates;
+create policy cand_read on public.candidates for select to authenticated
+  using (recruiter_id = auth.uid() or (public.is_staff() and not is_draft));
+
+drop policy if exists cand_update on public.candidates;
+create policy cand_update on public.candidates for update to authenticated
+  using (recruiter_id = auth.uid() or (public.is_staff() and not is_draft))
+  with check (recruiter_id = auth.uid() or (public.is_staff() and not is_draft));
+
+-- =====================================================================
 -- Industry experience per employer (migration candidate_industries, 28 Sep 2026).
 -- Filled by the ai-screen "industries" action and on first screening: each employer on
 -- the resume is looked up on the web. Item: {company, title, from, to, industry,
