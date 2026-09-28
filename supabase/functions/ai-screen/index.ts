@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
-import { screenLink, reviewMatch, benchFits, parallelTitles, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
+import { screenLink, reviewMatch, benchFits, parallelTitles, draftFollowups, dedupeQuestions, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
@@ -246,7 +246,7 @@ Deno.serve(async (req: Request) => {
     const { action } = body;
 
     // Card-level actions take a linkId (one candidate on one job).
-    if (action === "screen" || action === "approve_questions") {
+    if (action === "screen" || action === "approve_questions" || action === "draft_followups") {
       const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", body.linkId).maybeSingle();
       if (!link) return json({ error: "Screening card not found" }, 404);
       const { data: owner } = await admin.from("candidates").select("recruiter_id,ai_locked").eq("id", link.candidate_id).single();
@@ -255,6 +255,12 @@ Deno.serve(async (req: Request) => {
       if (link.candidate_response !== "accepted") return json({ error: "The candidate hasn't accepted this role yet" }, 409);
 
       if (action === "screen") return json({ ok: true, ai: await screenLink(admin, link.id, askAI, loadResume) });
+      // Draft follow-up questions from the card's review (allowed on locked cards).
+      if (action === "draft_followups") {
+        const f0 = link.ai?.followups;
+        if (f0 && f0.state !== "draft") return json({ error: "Questions were already sent to this candidate" }, 409);
+        return json({ ok: true, ai: await draftFollowups(admin, link.id, askAI) });
+      }
 
       // approve_questions: only Rec Ops and Admins can send follow-up questions to a candidate.
       if (!isStaff) return json({ error: "Only Rec Ops or Admins can approve screening questions" }, 403);
@@ -371,7 +377,8 @@ Deno.serve(async (req: Request) => {
       const result = await askAI(system, content, resume, 1200);
       const rawVerdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
       const checked = enforceChecklist(result.requirements, clampScore(result.score), rawVerdict, "Perfect fit", "Possible fit", "Not a fit");
-      const verdict = checked.verdict;
+      // No screening answers exist yet, so a rejection is only ever "possible".
+      const verdict = checked.verdict === "Not a fit" ? "Possible reject" : checked.verdict;
       const score = checked.score;
       await admin.from("candidates").update({
         screening: { state: "checked_fit", jobId: job.id, verdict, score, reasoning: String(result.reasoning || "").slice(0, 800), checkedAt: new Date().toISOString() },
@@ -472,7 +479,7 @@ Deno.serve(async (req: Request) => {
         jobBlock(job) +
         (jobQs.length ? `\nThe job's own screening questions (already asked separately):\n${jobQs.map((q, i) => `${i + 1}. ${q}`).join("\n")}` : "");
       const result = await askAI(system, content, resume, 400);
-      const questions = (result.questions || []).slice(0, 3);
+      const questions = dedupeQuestions(result.questions, jobQs, 3);
       await admin.from("candidates").update({
         screening: { state: "pending", questions, jobId: body.jobId },
       }).eq("id", candidateId);

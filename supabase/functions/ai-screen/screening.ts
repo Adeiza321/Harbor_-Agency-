@@ -14,7 +14,10 @@ import { lookupIndustries, industryText } from "./industry.ts";
 type Ask = (system: string, text: string, resume: ResumeInput | null, maxTokens: number) => Promise<any>;
 type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null; why?: string }>;
 
-export const VERDICTS = ["Perfect fit", "Possible fit", "Reject"];
+export const VERDICTS = ["Perfect fit", "Possible fit", "Possible reject", "Reject"];
+// Nobody is fully rejected before they've answered screening questions for the job: a would-be
+// rejection becomes "Possible reject", with follow-up questions drafted to settle it.
+export const softenReject = (verdict: string, hasAnswers: boolean) => (verdict === "Reject" && !hasAnswers ? "Possible reject" : verdict);
 
 // Manually reviewed candidates are locked (candidates.ai_locked). The database also
 // refuses AI writes to them, but checking here gives the recruiter a clear message.
@@ -100,6 +103,7 @@ const clampScore = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n
 export function normalizeVerdict(v: unknown): string {
   const s = String(v || "").toLowerCase();
   if (s.includes("perfect")) return "Perfect fit";
+  if (s.includes("possible reject")) return "Possible reject";
   if (s.includes("reject") || s.includes("not a fit") || s.includes("not fit")) return "Reject";
   return "Possible fit";
 }
@@ -144,6 +148,16 @@ const TOPICS: RegExp[] = [
 ];
 const topicOf = (s: string) => TOPICS.findIndex((re) => re.test(norm(s)));
 
+// Content words of a question, for spotting the same question asked in other words.
+const QSTOP = new Set(["what", "your", "have", "does", "with", "that", "this", "about", "would", "could", "please", "describe", "tell", "much", "many", "which", "when", "where", "there", "their", "they", "been", "were", "will", "from", "into", "experience", "years", "role", "work", "worked", "working", "currently", "any", "you", "the", "and", "for", "are", "can", "did", "how", "long", "give", "example", "examples", "share"]);
+const qWords = (s: string) => new Set(norm(s).split(" ").filter((w) => w.length > 2 && !QSTOP.has(w)).map((w) => w.replace(/(ing|ed|es|s)$/, "")));
+export function sameQuestion(a: string, b: string) {
+  const x = qWords(a), y = qWords(b);
+  if (!x.size || !y.size) return false;
+  let shared = 0; x.forEach((w) => { if (y.has(w)) shared++; });
+  return shared >= 2 && shared / Math.min(x.size, y.size) >= 0.6;
+}
+
 export function dedupeQuestions(proposed: unknown, asked: string[], limit = 3): string[] {
   const seen = new Set(asked.map(norm));
   const topics = new Set(asked.map(topicOf).filter((t) => t >= 0));
@@ -153,6 +167,7 @@ export function dedupeQuestions(proposed: unknown, asked: string[], limit = 3): 
     const n = norm(s);
     const t = topicOf(s);
     if (!s || seen.has(n) || (t >= 0 && topics.has(t))) continue;
+    if (asked.some((a) => sameQuestion(s, a)) || out.some((a) => sameQuestion(s, a))) continue; // same question, other words
     seen.add(n);
     if (t >= 0) topics.add(t);
     out.push(s.slice(0, 300));
@@ -193,6 +208,8 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   });
   const asked = askedQuestions(links, jobOf);
 
+  const jobQs: string[] = (Array.isArray(job.screening_questions) ? job.screening_questions : []).filter(Boolean).map(String);
+  const noAnswers = here.length === 0;
   const f = link.ai?.followups;
   const final = f?.state === "answered";
   const keepFollowups = f && (f.state === "sent" || f.state === "answered" || f.manual);
@@ -212,7 +229,10 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     "verdict: 'Perfect fit' = every must-have met (step 5); 'Possible fit' = promising but at least one must-have partial or not met, or open questions; 'Reject' = missing a hard requirement or several core requirements, or clearly incompatible. " +
     "salary_expectation: the salary the candidate themselves said they expect, as they stated it (keep amount, currency and period), taken from their answers; '' if they never stated one. " +
     (mayAsk
-      ? "questions: up to 3 short follow-up questions (under 25 words each) that would settle the most important open points for THIS job. NEVER repeat or rephrase anything in the 'Already asked' list, and never ask for something already answered anywhere in the material (e.g. no salary question if they already gave a salary). If nothing important is unclear, or the verdict is Reject, return []."
+      ? "questions: up to 3 short follow-up questions (under 25 words each) that would settle the most important open points for THIS job. NEVER repeat or rephrase anything in the 'Already asked' list or in this job's own screening questions, and never ask for something already answered anywhere in the material (e.g. no salary question if they already gave a salary). " +
+        (noAnswers
+          ? "The candidate has NOT answered any screening questions for this job yet, so they can't be finally rejected: always give up to 3 questions aimed at the must-haves you marked 'not met' or 'partial', so the recruiter can screen them before deciding."
+          : "If nothing important is unclear, or the verdict is Reject, return [].")
       : "questions: always [].") +
     (final ? " This is the final screening, after the candidate answered the follow-up questions." : "");
 
@@ -225,13 +245,14 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     industryText(industries) + "\n" +
     `\nAnswers for this job:\n${here.length ? fmt(here) : "(none yet)"}\n` +
     `\nAnswers given for other jobs:\n${elsewhere.length ? fmt(elsewhere) : "(none)"}\n` +
+    `\nThis job's own screening questions (never repeat or rephrase):\n${jobQs.length ? jobQs.map((q) => "- " + q).join("\n") : "(none)"}\n` +
     `\nAlready asked (never ask these again):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}`;
 
   const result = await askAI(system, content, resume, 2500);
   const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit", "Reject");
-  const verdict = checked.verdict;
+  const verdict = softenReject(checked.verdict, !noAnswers);
   const score = checked.score;
-  const questions = mayAsk && verdict !== "Reject" ? dedupeQuestions(result.questions, asked) : [];
+  const questions = mayAsk && verdict !== "Reject" ? dedupeQuestions(result.questions, [...asked, ...jobQs]) : [];
 
   const followups = keepFollowups
     ? f
@@ -297,9 +318,12 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
     "summary: 2-3 sentences on how they fit THIS role, naming the most important must-have that is still unproven. " +
     "questions: 3 to 6 short questions (under 30 words each) that would confirm the fit for THIS role, most important first, aimed at must-haves marked 'partial' or 'not met' and at anything this role needs that earlier answers don't cover. " +
     "For each question, if the candidate has ALREADY answered it (or something that settles it) in the answers provided, set already_answered true and put a one-sentence summary of what they said in 'answer'; otherwise already_answered false and answer ''. " +
-    "Include salary, start date or work authorisation only if they have not already answered it.";
+    "Include salary, start date or work authorisation only if they have not already answered it. " +
+    "Never repeat or rephrase any of this job's own screening questions (listed below): they are asked separately.";
+  const jobQs: string[] = (Array.isArray(job.screening_questions) ? job.screening_questions : []).filter(Boolean).map(String);
   const content =
     jobText(job) + "\n\n" +
+    `This job's own screening questions (never repeat or rephrase):\n${jobQs.length ? jobQs.map((q) => "- " + q).join("\n") : "(none)"}\n\n` +
     (resume ? "The candidate's CV is included.\n" : `No readable CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
     candidateFacts(candidate) + "\n" +
     industryText(industries) + "\n" +
@@ -307,12 +331,14 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
 
   const result = await askAI(system, content, resume, 3000);
   const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit", "Reject");
+  // Nobody has answered this new job's screening questions yet, so a rejection stays "possible".
+  const answeredHere = links.some((l) => l.job_id === job.id && answersOn(l, job).length > 0);
   const review = {
     job_id: job.id,
     role: job.role_title,
     company: job.client,
     fit: checked.score,
-    verdict: checked.verdict,
+    verdict: softenReject(checked.verdict, answeredHere),
     verdict_reason: String(result.verdict_reason || "").slice(0, 400),
     summary: String(result.summary || "").slice(0, 1200),
     requirements: cleanReqs(result.requirements),
@@ -320,7 +346,7 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
       q: String(x?.q || "").slice(0, 300),
       already_answered: !!x?.already_answered,
       answer: String(x?.answer || "").slice(0, 400),
-    })).filter((x: any) => x.q),
+    })).filter((x: any) => x.q && !jobQs.some((j) => norm(j) === norm(x.q) || sameQuestion(j, x.q))),
     usedResume: !!resume,
     answersUsed: answered.length,
     reviewedAt: new Date().toISOString(),
@@ -423,4 +449,35 @@ export async function parallelTitles(admin: any, candidateId: string, askAI: Ask
   if (!titles.length) throw new Error("The AI didn't return any titles");
   await admin.from("candidates").update({ parallel_titles: titles, parallel_titles_at: new Date().toISOString() }).eq("id", candidateId);
   return titles;
+}
+
+// Draft follow-up questions for a card from its current review: aimed at the must-haves that
+// aren't met, never repeating the job's own screening questions or anything already asked.
+// Only ai.followups is written, so this works on manually reviewed (locked) cards too.
+export async function draftFollowups(admin: any, linkId: string, askAI: Ask) {
+  const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", linkId).single();
+  if (!link) throw new Error("Screening card not found");
+  const { data: allLinks } = await admin.from("candidate_jobs").select("*").eq("candidate_id", link.candidate_id);
+  const links: any[] = allLinks || [link];
+  const { data: jobs } = await admin.from("jobs").select("*").in("id", [...new Set(links.map((l) => l.job_id))]);
+  const jobOf = (id: string) => (jobs || []).find((j: any) => j.id === id);
+  const job = jobOf(link.job_id);
+  if (!job) throw new Error("This job no longer exists");
+  const jobQs: string[] = (Array.isArray(job.screening_questions) ? job.screening_questions : []).filter(Boolean).map(String);
+  const asked = [...askedQuestions(links, jobOf), ...jobQs];
+  const answered = links.flatMap((l) => answersOn(l, jobOf(l.job_id)));
+  const open = (link.ai?.requirements || []).filter((r: any) => r.status !== "met").sort((a: any, b: any) => (a.type === "must" ? 0 : 1) - (b.type === "must" ? 0 : 1));
+  if (!open.length) throw new Error("Nothing on this card's checklist is unmet, so there's nothing to screen for");
+  const system = "You write short candidate screening questions for a recruiter. Reply with STRICT JSON only: {\"questions\": string[]}. " +
+    "Up to 3 questions (under 25 words each), most important first, each aimed at one of the open requirements below (must-haves first), asking for specifics (where, how long, what they did). " +
+    "NEVER repeat or rephrase any already-asked question, and never ask for something the candidate has already answered.";
+  const text = `Job: ${job.role_title} at ${job.client}.\nOpen requirements:\n` + open.map((r: any) => `- [${r.type}] ${r.requirement} (${r.status}${r.evidence ? ": " + r.evidence : ""})`).join("\n") +
+    `\n\nAlready asked (never repeat):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}` +
+    `\n\nAlready answered:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}`).join("\n") : "(nothing yet)"}`;
+  const out = await askAI(system, text, null, 600);
+  const questions = dedupeQuestions(out?.questions, asked);
+  if (!questions.length) throw new Error("Every question the AI suggested has already been asked. Add one yourself instead.");
+  const ai = { ...(link.ai || {}), followups: { state: "draft", questions: questions.map((q) => ({ q })) } };
+  await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
+  return ai;
 }

@@ -558,7 +558,7 @@ function busyWith(c, jobs) {
 // A role counts as a fit only after the full AI review (location, seniority, skills,
 // every requirement) rated them Possible or Perfect fit at 60% or more.
 const FIT_MIN = 60;
-const isRealFit = (m) => !!(m && m.reviewedAt && m.verdict && m.verdict !== "Reject" && (m.fit || 0) >= FIT_MIN);
+const isRealFit = (m) => !!(m && m.reviewedAt && ["Perfect fit", "Possible fit"].includes(m.verdict) && (m.fit || 0) >= FIT_MIN);
 // Reviewed fits for this job among people who are free to be pitched and aren't on it yet.
 function benchFitsFor(job, S) {
   return S.cands
@@ -1804,13 +1804,13 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
 /* ------------------------------------------------------------------------- */
 /* AI screening: one collapsible card per company the candidate is on.       */
 /* ------------------------------------------------------------------------- */
-const VERDICT_TONE = { "Perfect fit": "em", "Possible fit": "warn", Reject: "danger" };
+const VERDICT_TONE = { "Perfect fit": "em", "Possible fit": "warn", "Possible reject": "danger", Reject: "danger" };
 const FOLLOW_PILL = { draft: ["Waiting for approval", "warn"], sent: ["Sent · waiting for answers", "info"], answered: ["Answered", "em"] };
 const NICE_RE = /\s*\((nice to have|preferred)\)\s*$/i;
 // Why the card has its verdict: the stored reason, or one built from the must-have checklist.
 function verdictWhy(ai) {
   // The label already names the verdict, so drop a reason that starts by repeating it.
-  if (ai.verdict_reason) return String(ai.verdict_reason).replace(/^(perfect fit|possible fit|not a fit|rejected?)(\s*\([^)]*\))?[.:]\s*/i, "");
+  if (ai.verdict_reason) return String(ai.verdict_reason).replace(/^(perfect fit|possible fit|possible reject|not a fit|rejected?)(\s+for this (client|role|job))?(\s*\([^)]*\))?[.:]\s*/i, "");
   const must = (ai.requirements || []).filter((r) => r.type === "must");
   if (!must.length) return "";
   const miss = must.filter((r) => r.status === "not met").map((r) => r.requirement);
@@ -1894,6 +1894,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const setQ = (i, v) => setDrafts(qList.map((q, k) => (k === i ? v : q)));
   const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { toast(err.message); } setBusy(""); };
   const screen = () => run("screen", async () => { await S.aiScreen("screen", { linkId: link.id }); toast("Screened for " + job.client); });
+  const draftQs = () => run("draft", async () => { await S.aiScreen("draft_followups", { linkId: link.id }); toast("Screening questions drafted for " + first); });
   const approve = () => run("approve", async () => {
     const qs = qList.map((q) => q.trim()).filter(Boolean);
     if (!qs.length) throw new Error("Add at least one question");
@@ -1969,6 +1970,12 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               {why && ai.verdict && (
                 <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed" style={{ background: (TONE[VERDICT_TONE[ai.verdict]] || TONE.neutral).bg }}>
                   <span className="font-semibold" style={{ color: (TONE[VERDICT_TONE[ai.verdict]] || TONE.neutral).fg }}>Why {ai.verdict === "Reject" ? "rejected" : ai.verdict.toLowerCase()}: </span>{why}
+                </div>
+              )}
+              {ai.verdict === "Possible reject" && (
+                <div className="rounded-lg border px-3 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ borderColor: C.line }}>
+                  <span><span className="font-medium">Not a final rejection.</span> <span style={{ color: C.ink2 }}>{first} hasn't answered any screening questions for this job yet. Screen them with the AI follow-up questions {f ? "below" : ""} before deciding.</span></span>
+                  {!f && <Btn onClick={draftQs} disabled={!!busy} className="shrink-0 text-xs px-3 py-1.5">{busy === "draft" ? <>Drafting <InlineDots /></> : "Draft screening questions"}</Btn>}
                 </div>
               )}
               {reqGroups.length > 0 && (
@@ -4060,7 +4067,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
 
   const startOver = () => { setJobId(""); setAnswers([]); setName(""); setEmailAddr(""); setPhone(""); setFileName(""); setFile(null); setCandId(null); setFit(null); };
 
-  const FIT_TONE = { "Perfect fit": "em", "Possible fit": "warn", "Not a fit": "danger" };
+  const FIT_TONE = { "Perfect fit": "em", "Possible fit": "warn", "Possible reject": "danger", "Not a fit": "danger" };
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
