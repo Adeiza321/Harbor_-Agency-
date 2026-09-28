@@ -4022,7 +4022,8 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [fit, setFit] = useState(null);
-  // Email check: one email = one candidate, so two recruiters can't both register the same person.
+  // Email check: the same person can be submitted to different jobs, but only once to the same
+  // job, so two recruiters can't dispute one application.
   const [dup, setDup] = useState({ state: "idle" }); // idle | checking | ok | taken | error
   const emailOk = EMAIL_RE.test(emailAddr.trim());
   useEffect(() => {
@@ -4032,19 +4033,19 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
     let live = true;
     setDup((d) => ({ ...d, state: "checking" }));
     const t = setTimeout(() => {
-      S.checkCandidateEmail(em, name.trim())
-        .then((r) => { if (live) setDup({ state: r && r.match ? "taken" : "ok", match: r && r.match, similar: (r && r.similar) || [] }); })
+      S.checkCandidateEmail(em, name.trim(), jobId)
+        .then((r) => { if (live) setDup({ state: r && r.match ? "taken" : "ok", match: r && r.match, elsewhere: ((r && r.elsewhere) || []).filter((x) => x.jobs && x.jobs.length), similar: (r && r.similar) || [] }); })
         .catch(() => { if (live) setDup({ state: "error" }); });
     }, 450);
     return () => { live = false; clearTimeout(t); };
-  }, [emailAddr, name, candId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [emailAddr, name, jobId, candId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Nothing is created until the email is valid and not already registered.
   const emailBlock = () => {
     if (candId) return false;
     if (!emailAddr.trim()) { toast("Enter the candidate's email"); return true; }
     if (!emailOk) { toast("That email doesn't look right"); return true; }
     if (dup.state === "checking") { toast("Still checking the email. Try again in a second."); return true; }
-    if (dup.state === "taken") { toast(dup.match.mine ? "You've already registered this candidate" : "This candidate is already registered to " + dup.match.recruiter); return true; }
+    if (dup.state === "taken") { toast(dup.match.mine ? "You've already submitted this candidate to this job" : "This candidate is already on this job, submitted by " + dup.match.recruiter); return true; }
     return false;
   };
 
@@ -4131,17 +4132,23 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
             <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Email</div>
             <input type="email" className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: dup.state === "taken" ? C.dangerFg : C.line, color: C.ink }} value={emailAddr} onChange={(e) => setEmailAddr(e.target.value)} disabled={!!candId} placeholder="name@example.com" aria-describedby="email-check" />
             <div id="email-check" className="text-xs mt-1 min-h-[16px]" style={{ color: dup.state === "ok" ? TONE.em.fg : C.ink3 }} aria-live="polite">
-              {candId ? "" : !emailAddr.trim() ? "Checked against everyone in Harbor so a candidate is only registered once." : !emailOk ? "Enter a full email address." : dup.state === "checking" ? "Checking…" : dup.state === "ok" ? "✓ Not registered yet" : dup.state === "error" ? "Couldn't check the email right now. It's checked again when you submit." : ""}
+              {candId ? "" : !emailAddr.trim() ? "Checked so the same person isn't submitted to one job twice." : !emailOk ? "Enter a full email address." : dup.state === "checking" ? "Checking…" : dup.state === "ok" ? (job ? "✓ Not on this job yet" : "✓ Pick a job to finish the check") : dup.state === "error" ? "Couldn't check the email right now. It's checked again when you submit." : ""}
             </div>
           </div>
         </div>
         {!candId && dup.state === "taken" && (
           <div className="rounded-xl p-3 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ background: TONE.danger.bg }} role="alert">
             <span>
-              <span className="font-semibold" style={{ color: TONE.danger.fg }}>{dup.match.mine ? "You've already registered " + dup.match.name + "." : "Already registered to " + dup.match.recruiter + "."}</span>{" "}
-              <span style={{ color: C.ink }}>{dup.match.mine ? "Added " + fdate(dup.match.since) + ". Use their existing profile instead of adding them again." : dup.match.name + " was added on " + fdate(dup.match.since) + ". To avoid an ownership dispute they can't be registered twice. Ask Rec Ops if you think this is wrong."}</span>
+              <span className="font-semibold" style={{ color: TONE.danger.fg }}>{dup.match.mine ? "You've already submitted " + dup.match.name + " to this job." : dup.match.name + " is already on this job."}</span>{" "}
+              <span style={{ color: C.ink }}>{dup.match.mine ? "Submitted " + fdate(dup.match.since) + ". Use their existing profile." : "Submitted by " + dup.match.recruiter + " on " + fdate(dup.match.since) + ". A candidate can only be submitted once per job, so this would be a disputed application. Ask Rec Ops if you think this is wrong."}</span>
             </span>
             {dup.match.candidateId && <Btn onClick={() => S.openCandidate(dup.match.candidateId)} className="shrink-0 text-xs px-3 py-1.5">Open their profile</Btn>}
+          </div>
+        )}
+        {!candId && dup.state === "ok" && (dup.elsewhere || []).length > 0 && (
+          <div className="rounded-xl p-3 text-sm" style={{ background: TONE.info.bg }}>
+            <span className="font-semibold" style={{ color: TONE.info.fg }}>Already in Harbor for other jobs. </span>
+            <span style={{ color: C.ink }}>{dup.elsewhere.map((x) => x.name + " (" + (x.mine ? "yours" : x.recruiter) + "): " + x.jobs.join(", ")).join("; ")}. {job ? "You can still submit them for this job." : ""}</span>
           </div>
         )}
         {!candId && dup.state !== "taken" && (dup.similar || []).length > 0 && (
@@ -4507,7 +4514,7 @@ export default function App() {
       return call("/rest/v1/placements?id=eq." + id, { method: "PATCH", body: patch })
         .then(() => logAudit("updated", "placement", id, (pl ? pl.name : "") + ": " + Object.keys(patch).join(", "))); },
     claimInvoiceNumber: () => sbFetch("/rest/v1/rpc/claim_invoice_number", { method: "POST", token: session.token, body: {} }),
-    checkCandidateEmail: (email, name) => sbFetch("/rest/v1/rpc/check_candidate_email", { method: "POST", token: session.token, body: { p_email: email || "", p_name: name || "" } }),
+    checkCandidateEmail: (email, name, jobId) => sbFetch("/rest/v1/rpc/check_candidate_email", { method: "POST", token: session.token, body: { p_email: email || "", p_name: name || "", p_job_id: jobId || null } }),
     deletePlacement: (id) => { const pl = data.placements.find((x) => x.id === id);
       return call("/rest/v1/placements?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "placement", id, pl ? pl.name + " (" + pl.fee + ")" : "")); },
     campaigns: data.campaigns,

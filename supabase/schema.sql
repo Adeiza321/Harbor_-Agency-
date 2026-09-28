@@ -959,3 +959,112 @@ create trigger candidates_guard_email before insert or update of email, is_draft
 create unique index if not exists candidates_email_unique on public.candidates (public.norm_email(email))
   where not is_draft and public.norm_email(email) is not null;
 
+-- =====================================================================
+-- Candidate email check, per job (Migration candidate_email_check_per_job, 28 Sep 2026).
+-- The same person (same email, "+tags" ignored) can be submitted to different jobs, but only
+-- once to the same job, so two recruiters can't dispute one application.
+drop trigger if exists candidates_guard_email on public.candidates;
+drop function if exists public.guard_candidate_email();
+drop index if exists public.candidates_email_unique;
+create index if not exists candidates_norm_email_idx on public.candidates (public.norm_email(email));
+
+-- Refuse a job card when someone with the same email is already on that job.
+create or replace function public.guard_candidate_job_email() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare em text; r record;
+begin
+  select public.norm_email(email) into em from candidates where id = new.candidate_id;
+  if em is null then return new; end if;
+  select c.name, p.full_name, l.created_at into r
+    from candidate_jobs l join candidates c on c.id = l.candidate_id left join profiles p on p.id = c.recruiter_id
+   where l.job_id = new.job_id and l.candidate_id <> new.candidate_id and not c.is_draft and public.norm_email(c.email) = em
+   order by l.created_at limit 1;
+  if found then
+    raise exception 'This candidate (same email) is already on this job, submitted by % on %. A candidate can only be submitted once per job.',
+      coalesce(nullif(r.full_name, ''), 'another recruiter'), to_char(r.created_at, 'DD Mon YYYY') using errcode = '23505';
+  end if;
+  return new;
+end $$;
+revoke execute on function public.guard_candidate_job_email() from public, anon, authenticated;
+drop trigger if exists candidate_jobs_guard_email on public.candidate_jobs;
+create trigger candidate_jobs_guard_email before insert or update of job_id, candidate_id on public.candidate_jobs
+  for each row execute function public.guard_candidate_job_email();
+
+-- Changing a candidate's email to one that's already on the same job is refused too.
+create or replace function public.guard_candidate_email_jobs() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare em text := public.norm_email(new.email); r record;
+begin
+  if em is null or new.is_draft or public.norm_email(old.email) is not distinct from em then return new; end if;
+  select j.role_title, j.client into r
+    from candidate_jobs mine join candidate_jobs other on other.job_id = mine.job_id and other.candidate_id <> new.id
+    join candidates c on c.id = other.candidate_id join jobs j on j.id = mine.job_id
+   where mine.candidate_id = new.id and not c.is_draft and public.norm_email(c.email) = em limit 1;
+  if found then
+    raise exception 'Another candidate with this email is already on % at %. A candidate can only be submitted once per job.', r.role_title, r.client using errcode = '23505';
+  end if;
+  return new;
+end $$;
+revoke execute on function public.guard_candidate_email_jobs() from public, anon, authenticated;
+drop trigger if exists candidates_guard_email_jobs on public.candidates;
+create trigger candidates_guard_email_jobs before update of email on public.candidates
+  for each row execute function public.guard_candidate_email_jobs();
+
+-- Lookup for the Add candidate form: is this email already on the chosen job (blocks), where
+-- else is it registered (info only), and anyone with the same name under another email (warning).
+drop function if exists public.check_candidate_email(text, text);
+create or replace function public.check_candidate_email(p_email text, p_name text default '', p_job_id uuid default null) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  em text := public.norm_email(p_email);
+  nm text := lower(regexp_replace(trim(coalesce(p_name, '')), '\s+', ' ', 'g'));
+  r record;
+  res jsonb := '{}'::jsonb;
+  x jsonb;
+begin
+  if me is null or not exists (select 1 from profiles where id = me and status = 'Active') then
+    raise exception 'Not signed in' using errcode = '42501';
+  end if;
+  if em is not null and p_job_id is not null then
+    select c.id, c.name, c.recruiter_id, l.created_at, l.stage, p.full_name into r
+      from candidate_jobs l join candidates c on c.id = l.candidate_id left join profiles p on p.id = c.recruiter_id
+     where l.job_id = p_job_id and not c.is_draft and public.norm_email(c.email) = em
+     order by l.created_at limit 1;
+    if found then
+      res := jsonb_build_object('match', jsonb_build_object(
+        'name', r.name, 'recruiter', coalesce(nullif(r.full_name, ''), 'another recruiter'), 'since', r.created_at, 'stage', r.stage,
+        'mine', r.recruiter_id = me, 'candidateId', case when r.recruiter_id = me or public.is_staff() then r.id end));
+    end if;
+  end if;
+  if em is not null then
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'name', y.name, 'recruiter', coalesce(nullif(y.full_name, ''), 'another recruiter'), 'since', y.created_at,
+             'mine', y.recruiter_id = me, 'candidateId', case when y.recruiter_id = me or public.is_staff() then y.id end,
+             'jobs', y.jobs)), '[]'::jsonb) into x
+      from (select c.id, c.name, c.recruiter_id, c.created_at, p.full_name,
+                   coalesce((select jsonb_agg(j.role_title || ' – ' || j.client order by l.created_at)
+                               from candidate_jobs l join jobs j on j.id = l.job_id
+                              where l.candidate_id = c.id and (p_job_id is null or l.job_id <> p_job_id)), '[]'::jsonb) jobs
+              from candidates c left join profiles p on p.id = c.recruiter_id
+             where not c.is_draft and public.norm_email(c.email) = em
+             order by c.created_at limit 5) y;
+    res := res || jsonb_build_object('elsewhere', x);
+  end if;
+  if length(nm) >= 3 then
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'name', y.name, 'recruiter', coalesce(nullif(y.full_name, ''), 'another recruiter'), 'since', y.created_at,
+             'mine', y.recruiter_id = me, 'candidateId', case when y.recruiter_id = me or public.is_staff() then y.id end)), '[]'::jsonb)
+      into x
+      from (select c.id, c.name, c.recruiter_id, c.created_at, p.full_name
+              from candidates c left join profiles p on p.id = c.recruiter_id
+             where not c.is_draft and lower(regexp_replace(trim(c.name), '\s+', ' ', 'g')) = nm
+               and (em is null or coalesce(public.norm_email(c.email), '') <> em)
+             order by c.created_at limit 5) y;
+    res := res || jsonb_build_object('similar', x);
+  end if;
+  return res;
+end $$;
+revoke execute on function public.check_candidate_email(text, text, uuid) from public, anon;
+grant execute on function public.check_candidate_email(text, text, uuid) to authenticated;
+
