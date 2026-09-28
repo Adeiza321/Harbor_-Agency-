@@ -813,3 +813,33 @@ create or replace function public.app_role() returns text
 language sql stable security definer set search_path = public as $$
   select role from public.profiles where id = auth.uid() and status = 'Active'
 $$;
+
+-- =====================================================================
+-- Billing details and invoices (migration billing_details_and_invoices, 28 Sep 2026).
+-- placements: start date, per-entry guarantee (0 = none), date billed, and the saved
+-- invoice (number, dates, bill to / from, lines, tax, totals). agency_settings: company
+-- details printed on invoices, and invoice numbering handed out by claim_invoice_number().
+-- =====================================================================
+alter table public.placements
+  add column if not exists start_date date,
+  add column if not exists guarantee_days integer check (guarantee_days is null or guarantee_days >= 0),
+  add column if not exists billed_at timestamptz,
+  add column if not exists invoice jsonb not null default '{}'::jsonb;
+
+alter table public.agency_settings
+  add column if not exists company jsonb not null default '{}'::jsonb,
+  add column if not exists invoice_prefix text not null default 'INV',
+  add column if not exists next_invoice_number integer not null default 1;
+
+create or replace function public.claim_invoice_number() returns text
+language plpgsql security definer set search_path = public as $$
+declare n integer; p text;
+begin
+  if not public.is_staff() then raise exception 'Only Rec Ops or Admins can raise invoices'; end if;
+  update agency_settings set next_invoice_number = next_invoice_number + 1 where id = 1
+    returning next_invoice_number - 1, invoice_prefix into n, p;
+  if n is null then raise exception 'Agency settings missing'; end if;
+  return coalesce(nullif(p, ''), 'INV') || '-' || to_char(now(), 'YYYY') || '-' || lpad(n::text, 4, '0');
+end $$;
+revoke all on function public.claim_invoice_number() from public;
+grant execute on function public.claim_invoice_number() to authenticated;

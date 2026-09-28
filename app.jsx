@@ -165,7 +165,9 @@ function mapAll(d) {
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", ai: a.ai_score || 0, when: ago(a.created_at), assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, candidateId: a.candidate_id }));
   const today = new Date();
-  const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now() }));
+  const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
+    startDate: p.start_date || null, guaranteeDays: p.guarantee_days != null ? p.guarantee_days : null, guaranteeEnds: p.guarantee_ends || null,
+    billedAt: p.billed_at ? new Date(p.billed_at).getTime() : null, invoice: p.invoice || {}, incentiveCurrency: p.recruiter_incentive_currency || p.fee_currency || "NGN" }));
   const campaigns = d.campaigns.map((c) => ({ id: c.id, name: c.name, meta: pname(c.created_by).split(" ")[0] + " \u00b7 " + fdate(c.created_at), audience: c.audience ? c.audience.toLocaleString() : "-", delivered: c.delivered ? c.delivered.toLocaleString() : "-", opened: c.opened_pct || 0, status: c.status }));
   const ads = d.ads.map((a) => ({ id: a.id, job: a.job_title, client: a.client || "", channels: a.channels, payerType: a.payer_type, payer: a.payer_type === "agency" ? "Agency" : pname(a.created_by) + " (recruiter)", budget: naira(a.budget), spent: naira(a.spent), apps: a.applicants, status: a.status }));
   const set = d.settings || {};
@@ -179,9 +181,9 @@ function mapAll(d) {
     createdAt: new Date(a.created_at).getTime(),
   })).sort((a, b) => b.createdAt - a.createdAt);
   return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users: d.profiles.map(mapUser),
-    settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days || 60, ai: set.ai_screening !== false,
+    settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
-      integrations: set.integrations || {} } };
+      integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV" } };
 }
 function buildTeam(users, cands, placements) {
   return users.filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops")).map((u) => {
@@ -3126,6 +3128,8 @@ function NewBillingModal({ open, onClose, toast, S }) {
   const [feeCur, setFeeCur] = useState("NGN");
   const [incentive, setIncentive] = useState("");
   const [incentiveCur, setIncentiveCur] = useState("NGN");
+  const [startDate, setStartDate] = useState(() => ymdToday());
+  const [gDays, setGDays] = useState(String(S.settings.guaranteeDays != null ? S.settings.guaranteeDays : 60));
   const [busy, setBusy] = useState(false);
   const cand = S.cands.find((c) => c.id === candId) || null;
   const job = S.jobs.find((j) => j.id === jobId) || null;
@@ -3152,7 +3156,7 @@ function NewBillingModal({ open, onClose, toast, S }) {
     if (!num(fee)) { toast("Enter the client fee"); return; }
     setBusy(true);
     try {
-      await S.insertPlacement({ name: cand.name, role: job ? job.role + ", " + job.client : cand.role, candidateId: cand.id, jobId: job ? job.id : null, recruiterId: cand.recruiterId, recruiterInit: cand.recruiterInit, fee: num(fee), feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur });
+      await S.insertPlacement({ name: cand.name, role: job ? job.role + ", " + job.client : cand.role, candidateId: cand.id, jobId: job ? job.id : null, recruiterId: cand.recruiterId, recruiterInit: cand.recruiterInit, fee: num(fee), feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur , startDate, guaranteeDays: gDays === "" ? null : Math.max(0, Number(gDays) || 0)});
       toast("Billing entry created"); setCandId(""); setJobId(""); setFee(""); setIncentive(""); onClose();
     } catch (e) { toast(e.message || "Could not create billing entry"); }
     setBusy(false);
@@ -3185,8 +3189,214 @@ function NewBillingModal({ open, onClose, toast, S }) {
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className={sel} style={selStyle} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={incentiveCur} onChange={(e) => setIncentiveCur(e.target.value)} className={sel} style={selStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Start date</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={sel} style={selStyle} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee (days)</label><input type="number" min="0" value={gDays} onChange={(e) => setGDays(e.target.value)} className={sel} style={selStyle} /></div>
+        </div>
+        <div className="text-xs" style={{ color: C.ink3 }}>0 days means no guarantee: the entry is ready to invoice straight away.</div>
         {job && <div className="text-xs" style={{ color: C.ink3 }}>Prefilled from {job.role}'s billing settings — edit as needed.</div>}
         <Btn kind="primary" full disabled={busy} onClick={submit}>{busy ? <>Creating <InlineDots color="#fff" /></> : "Create billing entry"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+/* Date helpers for billing (dates stored as YYYY-MM-DD). */
+const ymdOf = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+const ymdToday = () => ymdOf(new Date());
+const addDays = (ymd, n) => { const d = new Date((ymd || ymdToday()) + "T00:00:00"); d.setDate(d.getDate() + (Number(n) || 0)); return ymdOf(d); };
+const longDate = (ymd) => ymd ? new Date(ymd + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "";
+const money2 = (n, cur) => { try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: cur || "NGN", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(Number(n || 0)); } catch (e) { return (cur || "") + " " + Number(n || 0).toFixed(2); } };
+const esc = (v) => String(v == null ? "" : v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const BILLING_STATUSES = [["Guarantee", "In guarantee"], ["Ready", "Ready to invoice"], ["Invoiced", "Invoiced"], ["Paid", "Paid"], ["Fallout", "Fallout"]];
+const COMPANY_FIELDS = [["name", "Company name"], ["address", "Address"], ["email", "Email"], ["phone", "Phone"], ["taxId", "Tax ID / RC number"], ["bankName", "Bank name"], ["accountName", "Account name"], ["accountNumber", "Account number"], ["swift", "SWIFT / BIC"], ["sortCode", "Sort code / routing"]];
+
+/* The invoice as a printable page. Opens in a print window; "Save as PDF" there downloads it. */
+function invoiceHtml(inv) {
+  const f = inv.from || {}, t = inv.to || {}, cur = inv.currency;
+  const lines = (inv.items || []).filter((x) => x.description || Number(x.amount));
+  const sub = lines.reduce((a, x) => a + (Number(x.amount) || 0), 0), tax = sub * (Number(inv.taxRate) || 0) / 100;
+  const row = (label, v) => v ? `<div>${label ? `<span class="k">${esc(label)}:</span> ` : ""}${esc(v)}</div>` : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(inv.number || "Invoice")}${t.company ? " - " + esc(t.company) : ""}</title>
+<style>@page{size:A4;margin:18mm}*{box-sizing:border-box}body{font-family:Helvetica,Arial,sans-serif;color:#1b1b1b;font-size:12px;line-height:1.5;margin:0}
+.top{display:flex;justify-content:space-between;gap:24px}.h{font-size:28px;letter-spacing:2px;font-weight:700;margin:0 0 6px}.co{font-size:16px;font-weight:700}
+.k{color:#777}.cols{display:flex;gap:24px;margin:28px 0 20px}.cols>div{flex:1}.lab{font-size:10px;letter-spacing:1px;color:#777;margin-bottom:4px}
+table{width:100%;border-collapse:collapse;margin-top:6px}th{text-align:left;font-size:10px;letter-spacing:1px;color:#777;border-bottom:1px solid #ccc;padding:6px 0}
+td{padding:8px 0;border-bottom:1px solid #eee;vertical-align:top;font-size:12px}.r{text-align:right}.tot{margin-left:auto;width:45%;margin-top:12px}.tot div{display:flex;justify-content:space-between;padding:3px 0}
+.grand{font-weight:700;font-size:14px;border-top:1px solid #ccc;margin-top:4px;padding-top:6px!important}.pay{margin-top:28px;padding-top:12px;border-top:1px solid #eee}</style></head>
+<body><div class="top"><div><div class="co">${esc(f.name)}</div>${row("", f.address)}${row("", [f.email, f.phone].filter(Boolean).join(" · "))}${row("Tax ID", f.taxId)}</div>
+<div style="text-align:right"><div class="h">INVOICE</div>${row("Invoice no.", inv.number)}${row("Invoice date", longDate(inv.date))}${row("Due date", longDate(inv.dueDate))}</div></div>
+<div class="cols"><div><div class="lab">BILL TO</div><div style="font-weight:700">${esc(t.company)}</div>${row("", t.contact && "Attn: " + t.contact)}${row("", t.address)}${row("", t.email)}</div>
+<div><div class="lab">BILL FROM</div><div style="font-weight:700">${esc(f.name)}</div>${row("", inv.preparedBy)}${row("", f.email)}</div></div>
+<table><thead><tr><th>DESCRIPTION</th><th class="r">AMOUNT</th></tr></thead><tbody>${lines.map((x) => `<tr><td>${esc(x.description)}</td><td class="r">${esc(money2(x.amount, cur))}</td></tr>`).join("")}</tbody></table>
+<div class="tot"><div><span>Subtotal</span><span>${esc(money2(sub, cur))}</span></div><div><span>Tax (${esc(Number(inv.taxRate) || 0)}%)</span><span>${esc(money2(tax, cur))}</span></div><div class="grand"><span>Total due</span><span>${esc(money2(sub + tax, cur))}</span></div></div>
+<div class="pay"><div class="lab">PAYMENT DETAILS</div>${row("Bank", f.bankName)}${row("Account name", f.accountName)}${row("Account number", f.accountNumber)}${row("SWIFT / BIC", f.swift)}${row("Sort code / routing", f.sortCode)}${row("Terms", inv.terms)}${inv.notes ? `<div style="margin-top:8px">${esc(inv.notes)}</div>` : ""}</div>
+</body></html>`;
+}
+function printInvoice(inv) {
+  const fr = document.createElement("iframe");
+  fr.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  document.body.appendChild(fr);
+  const d = fr.contentWindow.document; d.open(); d.write(invoiceHtml(inv)); d.close();
+  setTimeout(() => { try { fr.contentWindow.focus(); fr.contentWindow.print(); } catch (e) { /* ignore */ } setTimeout(() => fr.remove(), 60000); }, 250);
+}
+
+/* Billing entry: details, guarantee progress, status, and the invoice to the client. */
+function BillingDetailModal({ p, role, onClose, toast, S }) {
+  const staff = role !== "recruiter";
+  const job = p.jobId ? S.jobs.find((j) => j.id === p.jobId) : null;
+  const rec = (S.users || []).find((u) => u.id === p.recruiterId);
+  const [startDate, setStartDate] = useState(p.startDate || (p.createdAt ? ymdOf(new Date(p.createdAt)) : ymdToday()));
+  const [gDays, setGDays] = useState(String(p.guaranteeDays != null ? p.guaranteeDays : S.settings.guaranteeDays != null ? S.settings.guaranteeDays : 60));
+  const [status, setStatus] = useState(p.status);
+  const [busy, setBusy] = useState("");
+  const days = Math.max(0, Number(gDays) || 0);
+  const ends = addDays(startDate, days);
+  const t0 = new Date(startDate + "T00:00:00").getTime(), t1 = new Date(ends + "T00:00:00").getTime(), now = Date.now();
+  const pct = days === 0 ? 100 : Math.max(0, Math.min(100, ((now - t0) / (t1 - t0)) * 100));
+  const dayN = Math.max(0, Math.min(days, Math.floor((now - t0) / 864e5)));
+  const left = Math.max(0, Math.ceil((t1 - now) / 864e5));
+  const started = now >= t0;
+  const barColor = status === "Fallout" ? C.dangerFg : pct >= 100 ? C.em : "#1D9E75";
+
+  // Invoice: saved on the entry; company details come from Settings when empty.
+  const co = S.settings.company || {};
+  const saved = p.invoice || {};
+  const [inv, setInv] = useState(() => ({
+    number: saved.number || "", date: saved.date || ymdToday(), termsDays: saved.termsDays != null ? saved.termsDays : (co.termsDays != null ? co.termsDays : 30),
+    to: { company: (job && job.client) || "", contact: "", address: "", email: "", ...(saved.to || {}) },
+    from: { ...COMPANY_FIELDS.reduce((o, [k]) => ({ ...o, [k]: co[k] || "" }), {}), ...(saved.from || {}) },
+    items: saved.items && saved.items.length ? saved.items : [{ description: "Placement fee: " + p.name + (p.role ? ", " + p.role : "") + (startDate ? ". Start date " + longDate(startDate) + "." : ""), amount: p.feeNum || 0 }],
+    taxRate: saved.taxRate != null ? saved.taxRate : 0, notes: saved.notes || "", preparedBy: saved.preparedBy || S.me.name || "",
+  }));
+  const [showInv, setShowInv] = useState(!!saved.number || p.status === "Ready");
+  const setTo = (k, v) => setInv((x) => ({ ...x, to: { ...x.to, [k]: v } }));
+  const setFrom = (k, v) => setInv((x) => ({ ...x, from: { ...x.from, [k]: v } }));
+  const setItem = (i, k, v) => setInv((x) => ({ ...x, items: x.items.map((it, n) => (n === i ? { ...it, [k]: v } : it)) }));
+  const subtotal = inv.items.reduce((a, x) => a + (Number(x.amount) || 0), 0), tax = subtotal * (Number(inv.taxRate) || 0) / 100;
+  const dueDate = addDays(inv.date, inv.termsDays);
+  const full = () => ({ ...inv, dueDate, currency: p.feeCurrency, terms: "Payment within " + (Number(inv.termsDays) || 0) + " days", subtotal, tax, total: subtotal + tax });
+
+  const saveDetails = async () => {
+    setBusy("details");
+    try {
+      const patch = { start_date: startDate, guarantee_days: days, guarantee_ends: ends };
+      let st = status;
+      if (days === 0 && st === "Guarantee") st = "Ready";
+      if (st !== p.status) patch.status = st;
+      await S.updatePlacement(p.id, patch);
+      setStatus(st); toast("Billing entry updated"); S.reload && S.reload();
+    } catch (e) { toast(e.message); }
+    setBusy("");
+  };
+  const saveInvoice = async (andPrint) => {
+    setBusy(andPrint ? "print" : "invoice");
+    try {
+      let number = (inv.number || "").trim();
+      if (!number) { number = await S.claimInvoiceNumber(); setInv((x) => ({ ...x, number })); }
+      const data = { ...full(), number };
+      const patch = { invoice: data };
+      if (!["Invoiced", "Paid"].includes(p.status)) { patch.status = "Invoiced"; setStatus("Invoiced"); }
+      if (!p.billedAt) patch.billed_at = new Date().toISOString();
+      await S.updatePlacement(p.id, patch);
+      toast("Invoice " + number + " saved"); S.reload && S.reload();
+      if (andPrint) printInvoice(data);
+    } catch (e) { toast(e.message); }
+    setBusy("");
+  };
+  const inp = "w-full mt-1 rounded-lg border px-2.5 py-2 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const L = ({ children }) => <div className="text-xs" style={{ color: C.ink3 }}>{children}</div>;
+  return (
+    <Modal open onClose={onClose} title={p.name} wide>
+      <div className="flex flex-col gap-4">
+        <div className="text-sm -mt-3" style={{ color: C.ink2 }}>{p.role}</div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
+          <div><L>START DATE</L>{staff ? <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{longDate(startDate)}</div>}</div>
+          <div><L>GUARANTEE (DAYS)</L>{staff ? <input type="number" min="0" value={gDays} onChange={(e) => setGDays(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{days} days</div>}</div>
+          <div><L>GUARANTEE ENDS</L><div className="text-sm mt-1">{days === 0 ? "No guarantee" : longDate(ends)}</div></div>
+          <div><L>DATE BILLED</L><div className="text-sm mt-1">{p.billedAt ? new Date(p.billedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "Not billed yet"}</div></div>
+          <div><L>CLIENT FEE</L><div className="text-sm mt-1 font-medium">{p.fee}</div></div>
+          <div><L>RECRUITER DUE</L><div className="text-sm mt-1">{p.incentive || "–"}{rec ? " · " + rec.name : ""}</div></div>
+        </div>
+        <div>
+          <div className="flex justify-between text-xs mb-1.5" style={{ color: C.ink3 }}>
+            <span>{days === 0 ? "NO GUARANTEE PERIOD" : !started ? "GUARANTEE STARTS " + longDate(startDate).toUpperCase() : pct >= 100 ? "GUARANTEE CLEARED" : "GUARANTEE · DAY " + dayN + " OF " + days}</span>
+            <span>{days > 0 && started && pct < 100 ? left + " day" + (left === 1 ? "" : "s") + " left" : ""}</span>
+          </div>
+          <div className="h-2.5 rounded-full overflow-hidden" style={{ background: C.line }} role="progressbar" aria-valuenow={Math.round(pct)} aria-valuemin={0} aria-valuemax={100} aria-label="Guarantee progress">
+            <div className="h-full rounded-full" style={{ width: pct + "%", background: barColor, transition: "width .3s" }} />
+          </div>
+          <div className="flex justify-between text-xs mt-1" style={{ color: C.ink2 }}><span>{longDate(startDate)}</span><span>{days === 0 ? "" : longDate(ends)}</span></div>
+        </div>
+        {staff && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm" style={{ color: C.ink2 }}>Status</span>
+            <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-lg border px-2.5 py-2 text-sm outline-none" style={inpS} aria-label="Billing status">
+              {BILLING_STATUSES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+            <Btn kind="primary" onClick={saveDetails} disabled={!!busy}>{busy === "details" ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
+            {p.candidateId && <button type="button" onClick={() => { onClose(); S.openCandidate(p.candidateId); }} className="text-sm ml-auto" style={{ color: C.em }}>View candidate</button>}
+          </div>
+        )}
+
+        {staff && (
+          <div className="rounded-xl border" style={{ borderColor: C.line }}>
+            <button type="button" onClick={() => setShowInv((v) => !v)} aria-expanded={showInv} className="w-full flex items-center gap-2 px-3.5 py-3 text-left">
+              <span className="text-sm font-semibold">{saved.number ? "Invoice " + saved.number : "Raise invoice"}</span>
+              {saved.number && <Pill tone="em">Saved</Pill>}
+              <ChevronDown size={16} color={C.ink2} className="ml-auto" style={{ transform: showInv ? "rotate(180deg)" : "none" }} />
+            </button>
+            {showInv && (
+              <div className="px-3.5 pb-3.5 flex flex-col gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div><L>INVOICE NUMBER</L><input value={inv.number} onChange={(e) => setInv({ ...inv, number: e.target.value })} placeholder="Assigned when saved" className={inp} style={inpS} /></div>
+                  <div><L>INVOICE DATE</L><input type="date" value={inv.date} onChange={(e) => setInv({ ...inv, date: e.target.value })} className={inp} style={inpS} /></div>
+                  <div><L>PAYMENT TERMS (DAYS)</L><input type="number" min="0" value={inv.termsDays} onChange={(e) => setInv({ ...inv, termsDays: e.target.value })} className={inp} style={inpS} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>Due {longDate(dueDate)}</div></div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-2">
+                    <div className="text-xs font-semibold" style={{ color: C.ink3 }}>BILL TO</div>
+                    {[["company", "Company"], ["contact", "Contact person"], ["address", "Address"], ["email", "Email"]].map(([k, l]) => (
+                      <input key={k} value={inv.to[k]} onChange={(e) => setTo(k, e.target.value)} placeholder={l} aria-label={"Bill to " + l} className={inp} style={inpS} />
+                    ))}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <div className="text-xs font-semibold" style={{ color: C.ink3 }}>BILL FROM <span className="font-normal">· from Settings, edit for this invoice</span></div>
+                    {COMPANY_FIELDS.map(([k, l]) => (
+                      <input key={k} value={inv.from[k]} onChange={(e) => setFrom(k, e.target.value)} placeholder={l} aria-label={"Bill from " + l} className={inp} style={inpS} />
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="text-xs font-semibold" style={{ color: C.ink3 }}>DESCRIPTION AND AMOUNT ({p.feeCurrency})</div>
+                  {inv.items.map((it, i) => (
+                    <div key={i} className="flex gap-2 items-start">
+                      <textarea value={it.description} onChange={(e) => setItem(i, "description", e.target.value)} rows={2} aria-label={"Line " + (i + 1) + " description"} className={inp + " flex-1"} style={inpS} />
+                      <input type="number" value={it.amount} onChange={(e) => setItem(i, "amount", e.target.value)} aria-label={"Line " + (i + 1) + " amount"} className={inp} style={{ ...inpS, width: 140 }} />
+                      {inv.items.length > 1 && <button type="button" aria-label="Remove line" onClick={() => setInv((x) => ({ ...x, items: x.items.filter((_, n) => n !== i) }))} className="mt-2" style={{ color: C.ink3 }}><X size={15} /></button>}
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => setInv((x) => ({ ...x, items: [...x.items, { description: "", amount: 0 }] }))} className="text-xs font-medium w-fit" style={{ color: C.em }}>+ Add a line</button>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                  <div className="flex-1"><L>NOTES (OPTIONAL)</L><input value={inv.notes} onChange={(e) => setInv({ ...inv, notes: e.target.value })} placeholder="e.g. Please quote the invoice number with payment" className={inp} style={inpS} /></div>
+                  <div style={{ width: 110 }}><L>TAX %</L><input type="number" min="0" value={inv.taxRate} onChange={(e) => setInv({ ...inv, taxRate: e.target.value })} className={inp} style={inpS} /></div>
+                </div>
+                <div className="self-end text-sm flex flex-col gap-1" style={{ minWidth: 240 }}>
+                  <div className="flex justify-between"><span style={{ color: C.ink2 }}>Subtotal</span><span>{money2(subtotal, p.feeCurrency)}</span></div>
+                  <div className="flex justify-between"><span style={{ color: C.ink2 }}>Tax ({Number(inv.taxRate) || 0}%)</span><span>{money2(tax, p.feeCurrency)}</span></div>
+                  <div className="flex justify-between font-semibold pt-1" style={{ borderTop: `1px solid ${C.line}` }}><span>Total due</span><span>{money2(subtotal + tax, p.feeCurrency)}</span></div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <Btn kind="primary" onClick={() => saveInvoice(false)} disabled={!!busy}>{busy === "invoice" ? <>Saving <InlineDots color="#fff" /></> : "Save invoice"}</Btn>
+                  <Btn icon={Download} onClick={() => saveInvoice(true)} disabled={!!busy}>{busy === "print" ? "Preparing…" : "Save and download PDF"}</Btn>
+                </div>
+                <div className="text-xs" style={{ color: C.ink3 }}>Saving sets the entry to Invoiced and records the date billed. Download opens the print view: choose "Save as PDF".</div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );
@@ -3199,7 +3409,9 @@ function BillingPage({ role, toast, S }) {
   const list = role === "recruiter" ? S.placements.filter((p) => p.recruiterId === S.me.id) : S.placements;
   const setSt = (id, st, msg) => { S.setPlacementStatus(id, st); toast(msg); };
   const count = (s) => list.filter((p) => p.status === s).length;
-  const openRow = (p) => { if (p.candidateId) S.openCandidate(p.candidateId); else toast("No linked candidate record to open"); };
+  const [detailId, setDetailId] = useState(null);
+  const openRow = (p) => setDetailId(p.id);
+  const detail = detailId ? S.placements.find((p) => p.id === detailId) : null;
   const confirmDelete = () => {
     setDelBusy(true);
     S.deletePlacement(delTarget.id).then(() => { toast("Billing entry deleted"); setDelTarget(null); }).catch((e) => toast(e.message || "Could not delete")).finally(() => setDelBusy(false));
@@ -3242,6 +3454,7 @@ function BillingPage({ role, toast, S }) {
         />
       </Card>
       <NewBillingModal open={open} onClose={() => setOpen(false)} toast={toast} S={S} />
+      {detail && <BillingDetailModal key={detail.id} p={detail} role={role} onClose={() => setDetailId(null)} toast={toast} S={S} />}
       <ConfirmModal
         open={!!delTarget}
         onClose={() => setDelTarget(null)}
@@ -3470,9 +3683,11 @@ function AgencyTab({ toast, S }) {
   const [defaultCurrency, setDefaultCurrency] = useState(S.settings.defaultCurrency);
   const [defaultCountry, setDefaultCountry] = useState(S.settings.defaultCountry);
   const [busy, setBusy] = useState(false);
+  const [company, setCompany] = useState(() => ({ ...(S.settings.company || {}) }));
+  const [invoicePrefix, setInvoicePrefix] = useState(S.settings.invoicePrefix || "INV");
   const save = () => {
     setBusy(true);
-    S.saveSettings({ ...S.settings, name, guaranteeDays: num(guarantee) || 60, ai: auto, defaultCurrency, defaultCountry })
+    S.saveSettings({ ...S.settings, name, guaranteeDays: guarantee === "" ? 60 : Math.max(0, Number(guarantee) || 0), ai: auto, defaultCurrency, defaultCountry, company, invoicePrefix })
       .then(() => toast("Settings saved")).catch(() => {}).finally(() => setBusy(false));
   };
   return (
@@ -3497,6 +3712,16 @@ function AgencyTab({ toast, S }) {
         <div><div className="text-sm font-medium">AI screening questions</div><div className="text-xs" style={{ color: C.ink2 }}>Draft questions for every new candidate. You approve before they send.</div></div>
         <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: auto ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${auto ? "ml-auto" : ""}`} /></div>
       </button>
+      <div className="pt-3 flex flex-col gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
+        <div><div className="text-sm font-medium">Invoice details</div><div className="text-xs" style={{ color: C.ink2 }}>Printed on invoices as "Bill from" and payment details. Anything left blank stays blank on the invoice.</div></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {COMPANY_FIELDS.map(([k, l]) => (
+            <div key={k} className={k === "address" ? "sm:col-span-2" : ""}><label className="text-xs font-medium" style={{ color: C.ink2 }}>{l}</label><input value={company[k] || ""} onChange={(e) => setCompany({ ...company, [k]: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+          ))}
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Default payment terms (days)</label><input type="number" min="0" value={company.termsDays != null ? company.termsDays : 30} onChange={(e) => setCompany({ ...company, termsDays: e.target.value === "" ? null : Number(e.target.value) })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Invoice number prefix</label><input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>Numbers look like {invoicePrefix || "INV"}-{new Date().getFullYear()}-0001</div></div>
+        </div>
+      </div>
       <Btn kind="primary" disabled={busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
     </Card>
   );
@@ -4050,11 +4275,13 @@ export default function App() {
     placements: data.placements,
     /* p: { name, role, candidateId, jobId, recruiterId, recruiterInit, fee, feeCurrency, incentive, incentiveCurrency } */
     insertPlacement: async (p) => {
-      const guaranteeEnds = new Date(Date.now() + (data.settings.guaranteedDays || 60) * 864e5).toISOString().slice(0, 10);
-      const row = { id: uid(), name: p.name, role: p.role, candidateId: p.candidateId || null, jobId: p.jobId || null, recruiterId: p.recruiterId || null, recruiter: p.recruiterInit || "", fee: money(p.fee, p.feeCurrency), feeNum: Number(p.fee) || 0, feeCurrency: p.feeCurrency || "NGN", incentive: p.incentive != null && p.incentive !== "" ? money(p.incentive, p.incentiveCurrency) : null, incentiveNum: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, guarantee: "Ends " + fdate(guaranteeEnds), status: "Guarantee", createdAt: Date.now() };
+      const gDays = p.guaranteeDays != null && p.guaranteeDays !== "" ? Math.max(0, Number(p.guaranteeDays)) : (data.settings.guaranteeDays != null ? data.settings.guaranteeDays : 60);
+      const startDate = p.startDate || ymdToday();
+      const guaranteeEnds = addDays(startDate, gDays);
+      const row = { id: uid(), name: p.name, role: p.role, candidateId: p.candidateId || null, jobId: p.jobId || null, recruiterId: p.recruiterId || null, recruiter: p.recruiterInit || "", fee: money(p.fee, p.feeCurrency), feeNum: Number(p.fee) || 0, feeCurrency: p.feeCurrency || "NGN", incentive: p.incentive != null && p.incentive !== "" ? money(p.incentive, p.incentiveCurrency) : null, incentiveNum: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, guarantee: "Ends " + fdate(guaranteeEnds), status: gDays === 0 ? "Ready" : "Guarantee", createdAt: Date.now(), startDate, guaranteeDays: gDays, guaranteeEnds, billedAt: null, invoice: {} };
       setData((d) => ({ ...d, placements: [row, ...d.placements] }));
       try {
-        await call("/rest/v1/placements", { method: "POST", body: { id: row.id, candidate_name: p.name, role_desc: p.role, candidate_id: p.candidateId || null, job_id: p.jobId || null, recruiter_id: p.recruiterId || null, fee: Number(p.fee) || 0, fee_currency: p.feeCurrency || "NGN", recruiter_incentive: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, recruiter_incentive_currency: p.incentiveCurrency || null, guarantee_ends: guaranteeEnds, status: "Guarantee" } });
+        await call("/rest/v1/placements", { method: "POST", body: { id: row.id, candidate_name: p.name, role_desc: p.role, candidate_id: p.candidateId || null, job_id: p.jobId || null, recruiter_id: p.recruiterId || null, fee: Number(p.fee) || 0, fee_currency: p.feeCurrency || "NGN", recruiter_incentive: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, recruiter_incentive_currency: p.incentiveCurrency || null, guarantee_ends: guaranteeEnds, start_date: startDate, guarantee_days: gDays, status: gDays === 0 ? "Ready" : "Guarantee" } });
         logAudit("created", "placement", row.id, p.name + (p.role ? " — " + p.role : "") + " (" + row.fee + ")");
         // Being billed IS being placed — a candidate can't sit at "Rejected"/anything
         // else while a placement exists for them, or Billing and their own status
@@ -4075,6 +4302,10 @@ export default function App() {
           logAudit("status changed", "placement", id, (pl ? pl.name : "") + ": " + (pl ? pl.status : "?") + " → " + status);
         })
         .catch((e) => toast(e.message)); },
+    updatePlacement: (id, patch) => { const pl = data.placements.find((x) => x.id === id);
+      return call("/rest/v1/placements?id=eq." + id, { method: "PATCH", body: patch })
+        .then(() => logAudit("updated", "placement", id, (pl ? pl.name : "") + ": " + Object.keys(patch).join(", "))); },
+    claimInvoiceNumber: () => sbFetch("/rest/v1/rpc/claim_invoice_number", { method: "POST", token: session.token, body: {} }),
     deletePlacement: (id) => { const pl = data.placements.find((x) => x.id === id);
       return call("/rest/v1/placements?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "placement", id, pl ? pl.name + " (" + pl.fee + ")" : "")); },
     campaigns: data.campaigns,
@@ -4134,7 +4365,7 @@ export default function App() {
       logAudit("deleted", "user", id, u ? u.name : ""); reload();
     },
     settings: data.settings,
-    saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {} } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
+    saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {}, company: v.company || {}, invoice_prefix: v.invoicePrefix || "INV" } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
     auditLog: data.auditLog,
     /* Deletes rejected candidates older than the retention window (data-privacy tab computes the eligible list). */
     purgeCandidates: async (ids) => {
