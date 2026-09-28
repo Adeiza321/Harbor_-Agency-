@@ -1068,3 +1068,8 @@ end $$;
 revoke execute on function public.check_candidate_email(text, text, uuid) from public, anon;
 grant execute on function public.check_candidate_email(text, text, uuid) to authenticated;
 
+
+-- migration: candidate_current_title
+alter table public.candidates add column if not exists current_title text;
+alter table public.candidates add column if not exists current_company text;
+alter table public.candidates add column if not exists profile_read_at timestamptz;

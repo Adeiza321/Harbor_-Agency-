@@ -1,7 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
-import { screenLink, reviewMatch, benchFits, parallelTitles, draftFollowups, dedupeQuestions, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
+import { screenLink, reviewMatch, benchFits, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
+import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -331,6 +332,33 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true });
     }
 
+    // Re-read profile facts (current title/employer, experience, location, phone, notice, pay,
+    // skills) from the resume and everything the candidate has answered. Replaces those fields.
+    // Allowed on locked candidates, except skills, which are part of the locked review.
+    if (action === "read_profile") {
+      const { resume, why } = await loadResume(admin, candidate);
+      if (!resume) return json({ error: why }, 400);
+      const { data: links } = await admin.from("candidate_jobs").select("*").eq("candidate_id", candidateId);
+      const { data: ljobs } = (links || []).length ? await admin.from("jobs").select("*").in("id", [...new Set((links || []).map((l: any) => l.job_id))]) : { data: [] };
+      const answers = (links || []).flatMap((l: any) => answersOn(l, (ljobs || []).find((j: any) => j.id === l.job_id)));
+      const system = "You read a candidate's resume for a recruitment agency and record their profile facts. Reply with STRICT JSON only: " +
+        `{${PROFILE_SHAPE}}. ` + PROFILE_RULES + "For 'notice' and 'pay', the candidate's own answers win over the CV.";
+      const text = "The candidate's CV is included.\n\nTheir answers to screening questions (their own words):\n" +
+        (answers.length ? answers.map((x: any) => `Q: ${x.q}\nA: ${x.a}`).join("\n\n") : "(none yet)");
+      const prof = cleanProfile(await askAI(system, text, resume, 1500));
+      const patch: Record<string, unknown> = {
+        current_title: prof.current_title || null, current_company: prof.current_company || null,
+        experience: prof.experience || "-", location: prof.location || null, notice: prof.notice || null, pay: prof.pay || null,
+        profile_read_at: new Date().toISOString(),
+      };
+      if (prof.phone) patch.phone = prof.phone;
+      const skillsLocked = !!candidate.ai_locked;
+      if (!skillsLocked && prof.skills.length) patch.skills = prof.skills;
+      const { error } = await admin.from("candidates").update(patch).eq("id", candidateId);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true, profile: prof, skillsLocked });
+    }
+
     // Parallel titles from the full CV. Allowed on locked candidates (not part of the review).
     if (action === "parallel_titles") return json({ ok: true, titles: await parallelTitles(admin, candidateId, askAI, loadResume) });
 
@@ -420,34 +448,36 @@ Deno.serve(async (req: Request) => {
         "Use BOTH together: the CV shows their track record; the screening answers add or clarify skills, experience, salary expectation, notice period and availability. " +
         "Where an answer adds a relevant skill or experience the CV doesn't show, give credit for it. Where an answer contradicts the CV, list that in 'gaps' so the recruiter can check it. " +
         "Reply with STRICT JSON only, no markdown, no commentary, matching exactly this shape: " +
-        `{${REQS_SHAPE}, "skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string, "phone": string, "location": string, "parallel_titles": string[]}. ` +
-        PARALLEL_RULE +
+        `{${REQS_SHAPE}, ${PROFILE_SHAPE}, "strengths": string[], "gaps": string[], "score": number (0-100), "parallel_titles": string[]}. ` +
+        PROFILE_RULES + PARALLEL_RULE +
         (job ? RUBRIC + "score is the checklist score for this job, adjusted only for (if answered) salary and availability fit. " : "No job is attached: score general employability, list requirements as []. ") +
         "Salary: be flexible, only count it against them if it is clearly and substantially over the job's budget. " +
-        "'experience' is a short summary like '6 yrs backend engineering'. 'notice' is their notice period and 'pay' their salary expectation (amount, currency and period as stated): short strings taken from the screening answers if given there, else from the CV if stated, else '-'. " +
-        "'phone' is the candidate's phone/mobile number exactly as written on the CV (digits, spaces, dashes, parens as given), or '' if none is present. " +
-        "'location' is the candidate's city and state/region (and country if not obviously the same country as the job) as stated on the CV, e.g. 'Austin, TX', or '' if none is present — never guess a location from an area code or any other indirect clue, only use it if the CV states it directly.";
+        "For 'notice' and 'pay', the candidate's screening answers win over the CV.";
 
       const result = await askAI(system, context, resume, 2500);
       const score = job ? enforceChecklist(result.requirements, clampScore(result.score), "", "", "").score : clampScore(result.score);
+      const prof = cleanProfile(result);
       const patch: Record<string, unknown> = {
-        skills: result.skills || [],
+        skills: prof.skills,
         strengths: result.strengths || [],
         gaps: result.gaps || [],
         ai_score: score,
-        experience: result.experience || "-",
+        experience: prof.experience || "-",
+        current_title: prof.current_title || null,
+        current_company: prof.current_company || null,
+        profile_read_at: new Date().toISOString(),
       };
       const titles = cleanTitles(result.parallel_titles);
       if (titles.length) { patch.parallel_titles = titles; patch.parallel_titles_at = new Date().toISOString(); }
       // Notice and salary expectation: answers to screening questions win, so the resume
       // only fills these when nothing is on file yet.
       const blank = (v: unknown) => !v || String(v).trim() === "" || String(v).trim() === "-";
-      if (blank(candidate.notice)) patch.notice = result.notice || "-";
-      if (blank(candidate.pay)) patch.pay = result.pay || "-";
+      if (blank(candidate.notice)) patch.notice = prof.notice || "-";
+      if (blank(candidate.pay)) patch.pay = prof.pay || "-";
       // Only fill phone/location from the CV if the candidate doesn't already have one on
       // file — never let a re-score silently overwrite a value staff typed in themselves.
-      if (result.phone && !candidate.phone) patch.phone = result.phone;
-      if (result.location && !candidate.location) patch.location = result.location;
+      if (prof.phone && !candidate.phone) patch.phone = prof.phone;
+      if (prof.location && !candidate.location) patch.location = prof.location;
       await admin.from("candidates").update(patch).eq("id", candidateId);
       // The per-job fit shown on the job page and the candidate's Jobs card.
       if (job && material.linkId) await admin.from("candidate_jobs").update({ fit: score }).eq("id", material.linkId);

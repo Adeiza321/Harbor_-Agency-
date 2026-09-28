@@ -387,7 +387,7 @@ export const isBusy = (c: any, links: any[]) =>
 async function fillMissingTitles(admin: any, cands: any[], askAI: Ask) {
   const missing = cands.filter((c) => !(Array.isArray(c.parallel_titles) && c.parallel_titles.length)).slice(0, 30);
   if (!missing.length) return 0;
-  const lines = missing.map((c, i) => `${i + 1}. id=${c.id} | current title: ${c.role_title || "?"} | experience: ${c.experience || "?"} | location: ${c.location || "?"} | skills: ${(c.skills || []).slice(0, 15).join(", ") || "?"} | strengths: ${(c.strengths || []).slice(0, 6).join("; ") || "?"} | employers: ${(Array.isArray(c.industries) ? c.industries : []).slice(0, 5).map((x: any) => x.company + (x.industry ? " (" + x.industry + ")" : "")).join(", ") || "?"}`);
+  const lines = missing.map((c, i) => `${i + 1}. id=${c.id} | current title: ${c.current_title || "?"} | experience: ${c.experience || "?"} | location: ${c.location || "?"} | skills: ${(c.skills || []).slice(0, 15).join(", ") || "?"} | strengths: ${(c.strengths || []).slice(0, 6).join("; ") || "?"} | employers: ${(Array.isArray(c.industries) ? c.industries : []).slice(0, 5).map((x: any) => x.company + (x.industry ? " (" + x.industry + ")" : "")).join(", ") || "?"}`);
   const system = "You are a recruitment analyst. For each candidate below, list their parallel job titles. Reply with STRICT JSON only: {\"candidates\": [{\"id\": string, \"parallel_titles\": string[]}]}. " + PARALLEL_RULE;
   const out = await askAI(system, lines.join("\n"), null, 3000);
   let n = 0;
@@ -405,7 +405,7 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("This job no longer exists");
   const { data: cands } = await admin.from("candidates")
-    .select("id,name,role_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,candidate_jobs(job_id,stage,candidate_response)")
+    .select("id,name,role_title,current_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,candidate_jobs(job_id,stage,candidate_response)")
     .eq("is_draft", false);
   let busy = 0;
   const free = (cands || []).filter((c: any) => {
@@ -416,8 +416,9 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
   });
   let titled = 0;
   try { titled = await fillMissingTitles(admin, free, askAI); } catch (e) { console.error("parallel titles", String((e as Error)?.message || e)); }
-  // Only people whose parallel titles (or current title) match this job's title.
-  const pool = free.map((c: any) => ({ c, score: titleScore(job.role_title, [c.role_title, ...(Array.isArray(c.parallel_titles) ? c.parallel_titles : [])].filter(Boolean)) }))
+  // Only people whose parallel titles (or their own current title) match this job's title.
+  // role_title is the job they were added for, not their own title, so it isn't used.
+  const pool = free.map((c: any) => ({ c, score: titleScore(job.role_title, [c.current_title, ...(Array.isArray(c.parallel_titles) ? c.parallel_titles : [])].filter(Boolean)) }))
     .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score);
 
   // Reuse a review of this job from the last 14 days; review the closest others.
@@ -442,7 +443,7 @@ export async function parallelTitles(admin: any, candidateId: string, askAI: Ask
   if (!c) throw new Error("Candidate not found");
   const { resume } = await loadResume(admin, c);
   const system = "You are a recruitment analyst. Reply with STRICT JSON only: {\"parallel_titles\": string[]}. " + PARALLEL_RULE;
-  const text = (resume ? "The candidate's CV is included.\n" : "") + `Current title: ${c.role_title || "?"}. Experience: ${c.experience || "?"}. ` + candidateFacts(c) +
+  const text = (resume ? "The candidate's CV is included.\n" : "") + `Current title: ${c.current_title || "?"}. Experience: ${c.experience || "?"}. ` + candidateFacts(c) +
     `\nSkills: ${(c.skills || []).join(", ") || "?"}.\n` + industryText(c.industries);
   const out = await askAI(system, text, resume, 600);
   const titles = cleanTitles(out?.parallel_titles);

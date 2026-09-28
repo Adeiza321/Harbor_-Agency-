@@ -160,6 +160,7 @@ function mapAll(d) {
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
+    currentTitle: c.current_title || "", currentCompany: c.current_company || "", profileReadAt: c.profile_read_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
@@ -577,6 +578,28 @@ function realMatches(c, S) {
 }
 
 /* Helpers */
+// Long text shown in two lines with a "more" toggle.
+function Clamp({ text, lines = 2, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const long = String(text || "").length > 70;
+  return (
+    <div className={className}>
+      <div style={!open && long ? { display: "-webkit-box", WebkitLineClamp: lines, WebkitBoxOrient: "vertical", overflow: "hidden" } : null}>{text}</div>
+      {long && <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs font-normal underline mt-0.5" style={{ color: C.ink2 }} aria-expanded={open}>{open ? "Less" : "More"}</button>}
+    </div>
+  );
+}
+// Skill pills: the first 12, then "+N more".
+function SkillPills({ skills, max = 12 }) {
+  const [open, setOpen] = useState(false);
+  const shown = open ? skills : skills.slice(0, max);
+  return (
+    <div className="flex flex-wrap gap-1.5 items-center">
+      {shown.map((s, i) => <Pill key={i} tone="neutral">{s}</Pill>)}
+      {skills.length > max && <button type="button" onClick={() => setOpen((v) => !v)} className="text-xs underline px-1" style={{ color: C.ink2 }} aria-expanded={open}>{open ? "Show fewer" : "+" + (skills.length - max) + " more"}</button>}
+    </div>
+  );
+}
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const todayStr = () => new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 function downloadCSV(name, rows) {
@@ -591,11 +614,7 @@ const scoreFor = (seed) => 60 + (Array.from(seed).reduce((a, c) => a + c.charCod
 const flat = (c) => ({ name: c.name, role: c.role, location: c.location, recruiter: c.recruiter || "", status: c.status, ai: c.ai, email: c.email });
 /* How many company cards have follow-up questions in a given state (draft / sent / answered). */
 const countFollowups = (cands, state) => cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.ai && l.ai.followups && l.ai.followups.state === state).length, 0);
-// location/phone default to blank, never a guessed value: the AI screener (score_cv) only fills
-// them from the resume when the candidate doesn't already have one on file, so a hardcoded
-// default here would silently block that fill forever. Let the UI show "not set" instead and
-// leave resume + screening answers as the only source of truth.
-const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
+const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "Lagos, Nigeria", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
 
 /* Desktop detection in JS, so layout never depends on responsive classes being available */
 function useDesktop() {
@@ -1398,6 +1417,19 @@ function OverviewRecruiter({ S }) {
 
 /* Candidates list */
 function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S, toast }) {
+  const [rereading, setRereading] = useState(null); // "3/18" while re-reading resumes
+  // Rec Ops/Admin: re-read profile details from every resume on file, one at a time.
+  const rereadAll = async () => {
+    const list = data.filter((c) => c.cv);
+    if (!list.length) { toast("No resumes on file"); return; }
+    let done = 0, failed = 0;
+    for (const c of list) {
+      setRereading((done + failed + 1) + "/" + list.length);
+      try { await S.aiScreen("read_profile", { candidateId: c.id }); done++; } catch (e) { failed++; }
+    }
+    setRereading(null);
+    toast("Re-read " + plural(done, "resume") + (failed ? ". " + failed + " couldn't be read." : "."));
+  };
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
   const [showF, setShowF] = useState(false);
@@ -1427,6 +1459,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
         <div className="flex gap-2.5">
           <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Btn>
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
+          {S.role !== "recruiter" && <Btn icon={Sparkles} onClick={rereadAll} disabled={!!rereading} className="flex-1 md:flex-none justify-center">{rereading ? "Re-reading " + rereading : "Re-read resumes"}</Btn>}
           <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
@@ -1532,6 +1565,15 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       toast(r && r.rescreened ? "Resume read. " + r.rescreened + (r.rescreened === 1 ? " company" : " companies") + " rescreened." : "Resume read");
     } catch (e) { toast("Resume saved, but the AI couldn't read it: " + e.message); }
     setAiBusy(false);
+  };
+  const [readBusy, setReadBusy] = useState(false);
+  const readProfile = async () => {
+    setReadBusy(true);
+    try {
+      const r = await S.aiScreen("read_profile", { candidateId: candidate.id });
+      toast(r && r.skillsLocked ? "Details re-read from the resume. Skills kept, because the review is locked." : "Details re-read from the resume");
+    } catch (e) { toast(e.message); }
+    setReadBusy(false);
   };
   const removeResume = async () => {
     setResumeDelBusy(true);
@@ -1651,7 +1693,10 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <Avatar init={candidate.name.split(" ").map((x) => x[0]).join("")} tone="em" size={64} />
               <div className="flex-1 min-w-0">
                 <div className="text-2xl md:text-3xl" style={{ ...SERIF }}>{candidate.name}</div>
-                <div className="text-sm font-medium mt-0.5" style={{ color: C.em }}>{candidate.role || "Role not set"}</div>
+                {candidate.currentTitle
+                  ? <div className="text-sm font-medium mt-0.5" style={{ color: C.ink }}>{candidate.currentTitle}{candidate.currentCompany ? " at " + candidate.currentCompany : ""}</div>
+                  : null}
+                <div className="text-sm font-medium mt-0.5" style={{ color: C.em }}>{candidate.currentTitle ? "Added for " : ""}{candidate.role || "Role not set"}</div>
                 <div className="text-sm flex items-center gap-1 mt-0.5" style={{ color: C.ink2 }}><MapPin size={13} className="shrink-0" />{candidate.location || "Location not set"}</div>
               </div>
             </div>
@@ -1702,14 +1747,12 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             )}
             <div className="grid grid-cols-3 gap-4 mb-4">
               {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Salary expectation", candidate.pay]].map(([l, v]) => (
-                <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><div className="text-sm font-medium mt-0.5 break-words">{v || "-"}</div></div>
+                <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><Clamp text={v || "-"} className="text-sm font-medium mt-0.5 break-words" /></div>
               ))}
             </div>
             <div className="mb-4">
               <div className="text-xs mb-1.5" style={{ color: C.ink3 }}>SKILLS</div>
-              {candidate.skills.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">{candidate.skills.map((s, i) => <Pill key={i} tone="neutral">{s}</Pill>)}</div>
-              ) : <div className="text-sm" style={{ color: C.ink3 }}>No skills on file yet.</div>}
+              {candidate.skills.length > 0 ? <SkillPills skills={candidate.skills} /> : <div className="text-sm" style={{ color: C.ink3 }}>No skills on file yet.</div>}
             </div>
             <IndustryExperience candidate={candidate} S={S} toast={toast} />
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -1722,6 +1765,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                   <>
                     <Download size={15} color={C.em} className="shrink-0" />
                     <button type="button" onClick={() => S.openResume(candidate.cv)} className="text-sm font-medium" style={{ color: C.em }} title={candidate.cvName || "Resume"}>View resume</button>
+                    <button type="button" onClick={readProfile} disabled={readBusy} className="text-xs underline mx-1" style={{ color: C.ink2 }} title="Replaces current title, experience, location, phone, notice, pay and skills with what the resume and their answers say">{readBusy ? "Re-reading…" : "Re-read details"}</button>
                     <button type="button" aria-label="Remove resume" title="Remove resume" onClick={() => setResumeDel(true)} className="w-6 h-6 rounded-full border flex items-center justify-center" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={11} strokeWidth={2.5} /></button>
                   </>
                 ) : (
@@ -2290,10 +2334,8 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
 /* Roles the candidate could fit that they're not on yet. Review fit opens the fit review;
    routing from there sends the role to their candidate page and the company card appears
    once they accept. Names and scores come from the live job and the latest review. */
-const MATCHES_COLLAPSED_COUNT = 3;
 function MatchesCard({ candidate, S, toast }) {
   const [reviewJob, setReviewJob] = useState(null);
-  const [showAllMatches, setShowAllMatches] = useState(false);
   const [titlesBusy, setTitlesBusy] = useState(false);
   const busy = busyWith(candidate, S.jobs);
   const refreshTitles = () => {
@@ -2331,7 +2373,7 @@ function MatchesCard({ candidate, S, toast }) {
       <SectionTitle title="Other roles they could fit" sub="Roles the full AI review rated a fit on location, experience, skills and requirements. A company card appears once you route them and they accept." size="text-xl" />
       {titles}
       {!rows.length && <div className="text-sm mt-3" style={{ color: C.ink2 }}>No reviewed fits on open roles yet.</div>}
-      {(showAllMatches ? rows : rows.slice(0, MATCHES_COLLAPSED_COUNT)).map(({ m, job }) => {
+      {rows.map(({ m, job }) => {
         const link = candidate.jobLinks.find((l) => l.jobId === job.id) || null;
         return (
           <div key={job.id} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -2345,11 +2387,6 @@ function MatchesCard({ candidate, S, toast }) {
           </div>
         );
       })}
-      {rows.length > MATCHES_COLLAPSED_COUNT && (
-        <button onClick={() => setShowAllMatches((v) => !v)} className="text-xs underline mt-2" style={{ color: C.ink2 }}>
-          {showAllMatches ? "Show less" : "See all " + rows.length}
-        </button>
-      )}
       {others.length > 0 && (
         <div className="pt-2.5" style={{ borderTop: rows.length ? `1px solid ${C.line}` : "none" }}>
           <select value="" onChange={(e) => { const j = S.jobs.find((x) => x.id === e.target.value); if (j) setReviewJob(j); }} aria-label="Review fit for another open job"
@@ -4067,7 +4104,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   const ensureDraft = async () => {
     if (candId) return candId;
     if (!name.trim()) { toast("Enter the candidate's name"); return null; }
-    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
+    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", location: "Lagos, Nigeria", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
     await S.insertCandidateAwait(c);
     setCandId(c.id);
     return c.id;
@@ -4476,7 +4513,7 @@ export default function App() {
     cands: data.cands, updateCand,
     deleteCandidate: (id) => { const c = data.cands.find((x) => x.id === id); return call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "candidate", id, c ? c.name : "")); },
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
-      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
+      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
     jobs: data.jobs, updateJob,
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
@@ -4607,7 +4644,7 @@ export default function App() {
     // Opens Billing with the new billing entry form ready for this candidate.
     startBilling: (id) => { setCandId(null); setBillFor(id); setPage("billing"); },
     billFor, clearBillFor: () => setBillFor(null),
-    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
+    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, is_draft: !!c.isDraft } }),
     logAudit,
     setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
       return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => {
