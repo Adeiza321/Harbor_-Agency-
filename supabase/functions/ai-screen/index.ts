@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
-import { screenLink, reviewMatch, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
+import { screenLink, reviewMatch, benchFits, parallelTitles, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
@@ -182,7 +182,8 @@ async function screeningMaterial(admin: any, candidate: any, job: any, includeAi
 const jobBlock = (job: any) =>
   `Job: ${job.role_title} at ${job.client}.\nDescription:\n${job.description || "(no description given)"}\n` +
   `Salary range: ${job.min_pay || "?"} - ${job.max_pay || "?"} ${job.currency || "NGN"}/year.` +
-  (job.location ? `\nLocation: ${job.location}` : "") + (job.country ? `\nHiring country: ${job.country}` : "");
+  (job.location ? `\nLocation: ${job.location}` : "") + (job.country ? `\nHiring country: ${job.country}` : "") +
+  (job.work_setup ? `\nWork setup: ${job.work_setup}` : "") + (job.employment_type ? `\nEmployment type: ${job.employment_type}` : "");
 
 const clampScore = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
@@ -267,6 +268,13 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, ai });
     }
 
+    // Bench check (Rec Ops/Admin): review the closest non-busy people in Harbor against a job.
+    if (action === "bench_fits") {
+      if (!isStaff) return json({ error: "Only Rec Ops or Admins can check the bench" }, 403);
+      if (!body.jobId) return json({ error: "jobId is required" }, 400);
+      return json({ ok: true, ...(await benchFits(admin, body.jobId, askAI, loadResume)) });
+    }
+
     // Review a candidate against a role they're not on yet, and route them to it with
     // questions attached. Routing keeps the normal flow: the candidate accepts on their page,
     // then the card appears under Companies. Rec Ops/Admin questions go out as sent;
@@ -316,6 +324,9 @@ Deno.serve(async (req: Request) => {
       await admin.from("candidates").update({ resume_path: null, resume_name: null, cv_path: null }).eq("id", candidateId);
       return json({ ok: true });
     }
+
+    // Parallel titles from the full CV. Allowed on locked candidates (not part of the review).
+    if (action === "parallel_titles") return json({ ok: true, titles: await parallelTitles(admin, candidateId, askAI, loadResume) });
 
     // Industry experience: look up every employer on the resume. Allowed on locked candidates
     // (employer facts, not the review). Nothing is saved if the lookup fails.
@@ -402,7 +413,8 @@ Deno.serve(async (req: Request) => {
         "Use BOTH together: the CV shows their track record; the screening answers add or clarify skills, experience, salary expectation, notice period and availability. " +
         "Where an answer adds a relevant skill or experience the CV doesn't show, give credit for it. Where an answer contradicts the CV, list that in 'gaps' so the recruiter can check it. " +
         "Reply with STRICT JSON only, no markdown, no commentary, matching exactly this shape: " +
-        `{${REQS_SHAPE}, "skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string, "phone": string, "location": string}. ` +
+        `{${REQS_SHAPE}, "skills": string[], "strengths": string[], "gaps": string[], "score": number (0-100), "experience": string, "notice": string, "pay": string, "phone": string, "location": string, "parallel_titles": string[]}. ` +
+        PARALLEL_RULE +
         (job ? RUBRIC + "score is the checklist score for this job, adjusted only for (if answered) salary and availability fit. " : "No job is attached: score general employability, list requirements as []. ") +
         "Salary: be flexible, only count it against them if it is clearly and substantially over the job's budget. " +
         "'experience' is a short summary like '6 yrs backend engineering'. 'notice' is their notice period and 'pay' their salary expectation (amount, currency and period as stated): short strings taken from the screening answers if given there, else from the CV if stated, else '-'. " +
@@ -418,6 +430,8 @@ Deno.serve(async (req: Request) => {
         ai_score: score,
         experience: result.experience || "-",
       };
+      const titles = cleanTitles(result.parallel_titles);
+      if (titles.length) { patch.parallel_titles = titles; patch.parallel_titles_at = new Date().toISOString(); }
       // Notice and salary expectation: answers to screening questions win, so the resume
       // only fills these when nothing is on file yet.
       const blank = (v: unknown) => !v || String(v).trim() === "" || String(v).trim() === "-";

@@ -159,6 +159,7 @@ function mapAll(d) {
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
+    parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
@@ -545,19 +546,34 @@ function RecruiterPerformanceChart({ S }) {
    highest first, capped at 5. */
 const STOPWORDS = new Set(["and", "the", "for", "with", "a", "of", "to", "in", "on", "or", "an"]);
 const words = (s) => (s || "").toLowerCase().match(/[a-z0-9+]+/g)?.filter((w) => w.length > 1 && !STOPWORDS.has(w)) || [];
-function suggestFits(job, cands) {
-  const jobWords = new Set([...words(job.role), ...words(job.description)]);
-  return cands
-    .filter((c) => ["Active file", "In review"].includes(c.status) && !c.endorsed.some((e) => e.company === job.client && e.role === job.role))
-    .map((c) => {
-      const candWords = new Set([...words(c.role), ...(c.skills || []).flatMap(words), ...(c.strengths || []).flatMap(words)]);
-      let score = 0; jobWords.forEach((w) => { if (candWords.has(w)) score++; });
-      return { c, score };
-    })
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5)
-    .map((x) => x.c);
+// Parallel work: someone at Interview or Offer on another role, or already Placed/Hired,
+// is never pitched for a new one. Returns what they're busy with, or null.
+const BUSY_STAGES = ["Interview", "Offer", "Placed"];
+function busyWith(c, jobs) {
+  const l = (c.jobLinks || []).find((x) => x.response !== "declined" && BUSY_STAGES.includes(x.stage));
+  if (l) { const j = (jobs || []).find((x) => x.id === l.jobId); return l.stage + (j ? " with " + j.client : ""); }
+  if (["Interview", "Placed", "Hired"].includes(c.status)) return c.status;
+  return null;
+}
+// A role counts as a fit only after the full AI review (location, seniority, skills,
+// every requirement) rated them Possible or Perfect fit at 60% or more.
+const FIT_MIN = 60;
+const isRealFit = (m) => !!(m && m.reviewedAt && m.verdict && m.verdict !== "Reject" && (m.fit || 0) >= FIT_MIN);
+// Reviewed fits for this job among people who are free to be pitched and aren't on it yet.
+function benchFitsFor(job, S) {
+  return S.cands
+    .filter((c) => !c.jobLinks.some((l) => l.jobId === job.id) && !busyWith(c, S.jobs))
+    .map((c) => ({ c, m: (c.matches || []).find((m) => m.job_id === job.id) }))
+    .filter((x) => isRealFit(x.m))
+    .sort((a, b) => (b.m.fit || 0) - (a.m.fit || 0));
+}
+// Open roles a candidate really fits (for the profile card, dashboard and counts).
+function realMatches(c, S) {
+  if (busyWith(c, S.jobs)) return [];
+  return (c.matches || []).filter((m) => {
+    const j = S.jobs.find((x) => x.id === m.job_id);
+    return j && j.status !== "Closed" && !c.jobLinks.some((l) => l.jobId === j.id) && isRealFit(m);
+  });
 }
 
 /* Helpers */
@@ -793,10 +809,44 @@ function ConfirmModal({ open, onClose, title, body, confirmLabel = "Delete", onC
 }
 
 /* Responsive data table: real table on desktop, cards on mobile */
-function DataTable({ columns, rows, onRowClick, keyField = "id", empty = "Nothing here yet." }) {
+// Page numbers to show: first, last, and the pages around the current one, with gaps as "…".
+function pageList(page, pages) {
+  const want = new Set([1, pages, page - 1, page, page + 1].filter((n) => n >= 1 && n <= pages));
+  const out = []; let prev = 0;
+  [...want].sort((a, b) => a - b).forEach((n) => { if (n - prev > 1) out.push("…" + n); out.push(n); prev = n; });
+  return out;
+}
+function Pager({ page, pages, size, total, onPage, onSize }) {
+  const from = total ? (page - 1) * size + 1 : 0, to = Math.min(total, page * size);
+  const btn = (active) => ({ minWidth: 32, height: 32, borderRadius: 8, fontSize: 13, border: `1px solid ${active ? C.ink : C.line}`, background: active ? C.ink : "#fff", color: active ? "#fff" : C.ink });
+  return (
+    <nav aria-label="Pages" className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 mt-2" style={{ borderTop: `1px solid ${C.line}` }}>
+      <div className="text-xs" style={{ color: C.ink2 }}>Showing {from}–{to} of {total}</div>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button type="button" onClick={() => onPage(page - 1)} disabled={page <= 1} className="px-2.5 text-xs disabled:opacity-40" style={btn(false)} aria-label="Previous page">‹ Prev</button>
+        {pageList(page, pages).map((n) => typeof n === "string"
+          ? <span key={n} className="px-1 text-xs" style={{ color: C.ink3 }}>…</span>
+          : <button type="button" key={n} onClick={() => onPage(n)} aria-current={n === page ? "page" : undefined} style={btn(n === page)}>{n}</button>)}
+        <button type="button" onClick={() => onPage(page + 1)} disabled={page >= pages} className="px-2.5 text-xs disabled:opacity-40" style={btn(false)} aria-label="Next page">Next ›</button>
+        <select value={size} onChange={(e) => onSize(Number(e.target.value))} aria-label="Rows per page" className="text-xs rounded-lg border px-2 ml-1" style={{ borderColor: C.line, height: 32, background: "#fff" }}>
+          {[10, 25, 50].map((n) => <option key={n} value={n}>{n} per page</option>)}
+        </select>
+      </div>
+    </nav>
+  );
+}
+
+function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty = "Nothing here yet.", pageSize = 10 }) {
   const desktop = useDesktop();
   const primary = columns[0];
   const rest = columns.slice(1);
+  const [size, setSize] = useState(pageSize);
+  const [page, setPage] = useState(1);
+  // A filter or search that changes the list starts again from page 1.
+  useEffect(() => { setPage(1); }, [allRows.length]);
+  const pages = Math.max(1, Math.ceil(allRows.length / size));
+  const cur = Math.min(page, pages);
+  const rows = allRows.slice((cur - 1) * size, cur * size);
   return (
     <div>
       <table className="w-full text-sm" style={{ display: desktop ? "table" : "none" }}>
@@ -828,7 +878,8 @@ function DataTable({ columns, rows, onRowClick, keyField = "id", empty = "Nothin
           </div>
         ))}
       </div>
-      {rows.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{empty}</div>}
+      {allRows.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{empty}</div>}
+      {allRows.length > 10 && <Pager page={cur} pages={pages} size={size} total={allRows.length} onPage={(n) => setPage(Math.max(1, Math.min(pages, n)))} onSize={(n) => { setSize(n); setPage(1); }} />}
     </div>
   );
 }
@@ -1326,7 +1377,7 @@ function OverviewRecruiter({ S }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
         <AttentionList title="Your next steps" S={S} items={(() => {
-          const matches = S.cands.filter((c) => (c.matches || []).length > 0).map((c) => ({ id: c.id, name: c.name, sub: plural(c.matches.length, "role") }));
+          const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
           const routed = linkPeople(S, (l) => l.response === "pending");
           return [
@@ -2229,27 +2280,53 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
    once they accept. Names and scores come from the live job and the latest review. */
 function MatchesCard({ candidate, S, toast }) {
   const [reviewJob, setReviewJob] = useState(null);
-  const onJob = (id) => candidate.jobLinks.some((l) => l.jobId === id && l.response === "accepted");
-  const rows = (candidate.matches || [])
+  const [titlesBusy, setTitlesBusy] = useState(false);
+  const busy = busyWith(candidate, S.jobs);
+  const refreshTitles = () => {
+    setTitlesBusy(true);
+    S.aiScreen("parallel_titles", { candidateId: candidate.id }).then(() => toast("Parallel titles updated")).catch((e) => toast(e.message)).finally(() => setTitlesBusy(false));
+  };
+  const titles = (
+    <div className="mt-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-medium" style={{ color: C.ink2 }}>PARALLEL TITLES · roles they could be hired into now</div>
+        <button onClick={refreshTitles} disabled={titlesBusy} className="text-xs underline shrink-0" style={{ color: C.ink2 }}>{titlesBusy ? "Updating…" : candidate.parallelTitles.length ? "Refresh" : "Work out titles"}</button>
+      </div>
+      <div className="flex flex-wrap gap-1.5 mt-1.5">
+        {candidate.parallelTitles.length
+          ? candidate.parallelTitles.map((t) => <span key={t} className="text-xs rounded-full px-2.5 py-1" style={{ background: C.canvas, color: C.ink }}>{t}</span>)
+          : <span className="text-xs" style={{ color: C.ink2 }}>Not worked out yet. They're added at the next screening, or now with the link above.</span>}
+      </div>
+      <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Bench checks for a new job only consider people whose parallel titles match it.</div>
+    </div>
+  );
+  if (busy) return (
+    <Card>
+      <SectionTitle title="Other roles they could fit" size="text-xl" />
+      <div className="text-sm mt-2" style={{ color: C.ink2 }}>At {busy}. Not pitched for other roles until that process ends.</div>
+      {titles}
+    </Card>
+  );
+  const rows = realMatches(candidate, S)
     .map((m) => ({ m, job: S.jobs.find((j) => j.id === m.job_id) }))
-    .filter((x) => x.job && x.job.status !== "Closed" && !onJob(x.job.id))
     .sort((a, b) => (b.m.fit || 0) - (a.m.fit || 0));
   const listed = new Set(rows.map((x) => x.job.id));
   const others = S.jobs.filter((j) => j.status !== "Closed" && !listed.has(j.id) && !candidate.jobLinks.some((l) => l.jobId === j.id));
-  if (!rows.length && !others.length) return null;
   return (
     <Card>
-      <SectionTitle title="Other roles they could fit" sub="Review their fit before routing. A company card appears once you route them and they accept." size="text-xl" />
+      <SectionTitle title="Other roles they could fit" sub="Roles the full AI review rated a fit on location, experience, skills and requirements. A company card appears once you route them and they accept." size="text-xl" />
+      {titles}
+      {!rows.length && <div className="text-sm mt-3" style={{ color: C.ink2 }}>No reviewed fits on open roles yet.</div>}
       {rows.map(({ m, job }) => {
         const link = candidate.jobLinks.find((l) => l.jobId === job.id) || null;
         return (
           <div key={job.id} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
-            <div className="min-w-0"><div className="text-sm font-medium truncate">{job.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{job.client}{m.reviewedAt ? " · reviewed " + fdate(m.reviewedAt) : " · not reviewed yet"}</div></div>
+            <div className="min-w-0"><div className="text-sm font-medium truncate">{job.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{job.client} · reviewed {fdate(m.reviewedAt)}</div></div>
             <div className="flex items-center gap-2 shrink-0">
               {m.fit != null && <span className="text-sm font-medium">{m.fit}%</span>}
               {m.verdict && <Pill tone={VERDICT_TONE[m.verdict] || "neutral"}>{m.verdict}</Pill>}
               {link && <span className="text-xs font-medium" style={{ color: link.response === "declined" ? C.dangerFg : C.warnFg }}>{link.response === "declined" ? "Declined" : "Waiting to accept"}</span>}
-              <Btn onClick={() => setReviewJob(job)} className="text-xs px-3 py-1.5">{m.reviewedAt ? "Open review" : "Review fit"}</Btn>
+              <Btn onClick={() => setReviewJob(job)} className="text-xs px-3 py-1.5">Open review</Btn>
             </div>
           </div>
         );
@@ -2421,6 +2498,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   const [delOpen, setDelOpen] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
   const [fitFor, setFitFor] = useState(null);
+  const [benchBusy, setBenchBusy] = useState(false);
   if (!job) return (
     <div className="flex flex-col gap-4">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Jobs</button>
@@ -2434,7 +2512,16 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   const activeCount = candidates.filter((c) => !c.link || !["Rejected", "Withdrawn"].includes(c.link.stage)).length;
   const setStatus = (v) => S.setJobStatus(job.id, v);
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
-  const fits = suggestFits(job, S.cands).filter((c) => !c.jobLinks.some((l) => l.jobId === job.id));
+  const fits = benchFitsFor(job, S);
+  const lastBench = Math.max(0, ...S.cands.flatMap((c) => (c.matches || []).filter((m) => m.job_id === job.id && m.reviewedAt).map((m) => new Date(m.reviewedAt).getTime())));
+  const checkBench = () => {
+    setBenchBusy(true);
+    S.aiScreen("bench_fits", { jobId: job.id })
+      .then((r) => toast(r.considered
+        ? plural(r.considered, "person", "people") + " with a matching title. Reviewed " + r.reviewed + (r.reused ? ", reused " + r.reused + " recent review" + (r.reused > 1 ? "s" : "") : "") + (r.busy ? ". " + r.busy + " busy elsewhere, left out." : ".") + (r.errors && r.errors.length ? " " + r.errors.length + " couldn't be reviewed." : "")
+        : "No one free on the bench has a parallel title matching this role" + (r.busy ? " (" + r.busy + " busy elsewhere)." : ".")))
+      .catch((e) => toast(e.message)).finally(() => setBenchBusy(false));
+  };
 
   // Engage/disengage: job_recruiters is "who's on it now"; job_engagements is the permanent
   // history admins review (per job: who, how long, and why they stepped back).
@@ -2560,19 +2647,31 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         </Card>
       )}
       {fitFor && <FitReviewModal open onClose={() => setFitFor(null)} candidate={S.cands.find((x) => x.id === fitFor.id) || fitFor} job={job} S={S} toast={toast} />}
-      {S.role !== "recruiter" && fits.length > 0 && (
+      {S.role !== "recruiter" && job.status !== "Closed" && (
         <Card>
-          <SectionTitle title="Candidates who might fit this role" sub="From your existing bench, matched on skills and role. Route sends the role to their candidate page to accept." size="text-xl" />
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <SectionTitle title="Candidates who might fit this role" sub="Only people whose parallel job titles match this role are reviewed, on location, work setup, experience, skills and every requirement. Anyone at Interview or Offer on another role is left out." size="text-xl" />
+            <Btn icon={Sparkles} onClick={checkBench} disabled={benchBusy} className="shrink-0">{benchBusy ? "Checking…" : "Check the bench"}</Btn>
+          </div>
+          {lastBench > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Last checked {fdate(lastBench)} · {plural(fits.length, "fit")}</div>}
           <div className="flex flex-col gap-2 mt-3">
-            {fits.map((c) => (
-              <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl border p-3" style={{ borderColor: C.line }}>
-                <div className="flex items-center gap-3 min-w-0 cursor-pointer" onClick={() => S.openCandidate(c.id)}>
-                  <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone="em" />
-                  <div className="min-w-0"><div className="font-medium text-sm truncate">{c.name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{c.role}{c.recruiter ? " · " + c.recruiter : ""}</div></div>
+            {fits.map(({ c, m }) => (
+              <div key={c.id} className="rounded-xl border p-3" style={{ borderColor: C.line }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0 cursor-pointer" onClick={() => S.openCandidate(c.id)}>
+                    <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone="em" />
+                    <div className="min-w-0"><div className="font-medium text-sm truncate">{c.name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[c.role, c.location, c.recruiter].filter(Boolean).join(" · ")}</div></div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-sm font-medium">{m.fit}%</span>
+                    <Pill tone={VERDICT_TONE[m.verdict] || "neutral"}>{m.verdict}</Pill>
+                  </div>
                 </div>
-                <div className="flex gap-2 shrink-0"><Btn onClick={() => setFitFor(c)}>Review fit</Btn><Btn kind="primary" onClick={() => reroute(c)}>Route</Btn></div>
+                {m.verdict_reason && <div className="text-xs mt-2" style={{ color: C.ink2 }}>{m.verdict_reason}</div>}
+                <div className="flex gap-2 mt-2 justify-end"><Btn onClick={() => setFitFor(c)}>Open review</Btn><Btn kind="primary" onClick={() => reroute(c)}>Route</Btn></div>
               </div>
             ))}
+            {!fits.length && <div className="text-sm" style={{ color: C.ink2 }}>{lastBench ? "No one on the bench meets this role's must-haves yet." : "Not checked yet. Check the bench to review the closest people already in Harbor."}</div>}
           </div>
         </Card>
       )}

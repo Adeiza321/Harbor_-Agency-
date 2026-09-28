@@ -843,3 +843,40 @@ begin
 end $$;
 revoke all on function public.claim_invoice_number() from public;
 grant execute on function public.claim_invoice_number() to authenticated;
+
+-- =====================================================================
+-- Parallel titles (Migration parallel_titles_and_portal_fits, 28 Sep 2026).
+alter table public.candidates add column if not exists parallel_titles jsonb not null default '[]'::jsonb;
+alter table public.candidates add column if not exists parallel_titles_at timestamptz;
+
+-- Parallel work (Migration portal_matches_reviewed_not_busy, 28 Sep 2026): "Roles that fit you"
+-- only shows roles the full AI review rated Possible/Perfect fit at 60%+, and nothing while the
+-- candidate is at Interview or Offer on another role, or already placed.
+create or replace function public.candidate_portal(p_token text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'name', c.name,
+    'endorsements', coalesce((select jsonb_agg(jsonb_build_object('company', e.company, 'role', e.role_title, 'status', e.status))
+                              from candidate_endorsements e where e.candidate_id = c.id), '[]'::jsonb),
+    'matches', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client, 'fit', (m->>'fit')::int))
+                         from jsonb_array_elements(c.matches) m
+                         join jobs j on j.id::text = m->>'job_id'
+                         where (m->>'fit')::int >= 60 and m ? 'reviewedAt' and coalesce(m->>'verdict', '') in ('Perfect fit', 'Possible fit')
+                           and coalesce(j.status, '') <> 'Closed'
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id and l.job_id = j.id)
+                           -- parallel work: nothing new is pitched while they're at Interview/Offer elsewhere or placed
+                           and c.status not in ('Interview', 'Placed', 'Hired')
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id
+                                             and l.candidate_response <> 'declined' and l.stage in ('Interview', 'Offer', 'Placed'))), '[]'::jsonb),
+    'routed', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client, 'location', j.location) order by l.created_at)
+                        from candidate_jobs l join jobs j on j.id = l.job_id
+                        where l.candidate_id = c.id and l.candidate_response = 'pending'), '[]'::jsonb),
+    'questions', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client,
+                             'questions', (select coalesce(jsonb_agg(x->>'q'), '[]'::jsonb) from jsonb_array_elements(l.ai->'followups'->'questions') x)) order by l.created_at)
+                           from candidate_jobs l join jobs j on j.id = l.job_id
+                           where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'sent'), '[]'::jsonb),
+    'answered', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client))
+                          from candidate_jobs l join jobs j on j.id = l.job_id
+                          where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'answered'), '[]'::jsonb))
+  from candidates c where c.portal_token = p_token
+$$;
