@@ -128,7 +128,7 @@ function mapAll(d) {
   const ends = d.candidates.flatMap((c) => c.candidate_endorsements || []);
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
     const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
-    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(), screeningQuestions: j.screening_questions || [],
+    return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", workSetup: j.work_setup || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(), screeningQuestions: j.screening_questions || [],
       billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
       incentiveType: j.incentive_type || "percent", incentiveAmount: j.incentive_amount, incentiveCurrency: j.incentive_currency || j.currency || "NGN",
       recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
@@ -1092,7 +1092,7 @@ function OverviewRecruiter({ S }) {
 }
 
 /* Candidates list */
-function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
+function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S, toast }) {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
   const [showF, setShowF] = useState(false);
@@ -1122,7 +1122,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, S, toast }) {
         <div className="flex gap-2.5">
           <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Btn>
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
-          <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={() => setPage("uploadCandidates")}>Add candidate</Btn>
+          <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
       <Card>
@@ -2164,7 +2164,7 @@ function InboxPage({ toast, S }) {
   );
 }
 
-function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
+function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddCandidate }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -2215,6 +2215,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
           </div>
           <div className="flex flex-wrap gap-2">
             <Btn icon={Copy} onClick={copyLink}>Copy link</Btn>
+            <Btn icon={Upload} kind="dark" onClick={onAddCandidate}>Add candidate</Btn>
             <Btn onClick={() => onPromote(job.role)}>Promote</Btn>
             {S.role === "recruiter" && (myOpenEngagement
               ? <Btn onClick={() => setReasonOpen(true)} disabled={busy}>Disengage</Btn>
@@ -2248,6 +2249,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted }) {
         {(job.location || job.country || job.minPay || job.maxPay) && (
           <div className="flex flex-wrap gap-4 mb-4 text-sm" style={{ color: C.ink2 }}>
             {job.location && <span>{job.location}</span>}
+            {job.workSetup && <span>{job.workSetup}</span>}
             {job.country && <span>Hiring in {job.country}</span>}
             {(job.minPay || job.maxPay) && <span>{job.minPay ? money(job.minPay, job.currency) : "?"} – {job.maxPay ? money(job.maxPay, job.currency) : "?"} / year</span>}
           </div>
@@ -2408,6 +2410,8 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const [title, setTitle] = useState(editJob ? editJob.role : "");
   const [client, setClient] = useState(editJob ? editJob.client : "");
   const [location, setLocation] = useState(editJob ? (editJob.location || "Lagos, Nigeria") : (S.settings.defaultCountry === "Nigeria" ? "Lagos, Nigeria" : S.settings.defaultCountry || "Lagos, Nigeria"));
+  const [workSetup, setWorkSetup] = useState(editJob ? (editJob.workSetup || "") : "");
+  const [importBusy, setImportBusy] = useState(false);
   const [minPay, setMinPay] = useState(editJob && editJob.minPay != null ? String(editJob.minPay) : "");
   const [maxPay, setMaxPay] = useState(editJob && editJob.maxPay != null ? String(editJob.maxPay) : "");
   const [description, setDescription] = useState(editJob ? (editJob.description || "") : "");
@@ -2442,6 +2446,29 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     setTitle(draftAi.title || title); setDescription(draftAi.description || description); setDraftAi(null);
     toast("AI version applied. You can still edit it.");
   };
+  // Upload a job spec / brief file (PDF, Word, text, image) and have AI read it to fill in
+  // the form below — title, client, location, salary, work setup and description — so the
+  // person doesn't have to retype a brief they already have. Nothing is saved until they
+  // review the fields and publish or save as usual.
+  const importFromFile = async (file) => {
+    if (!file) return;
+    setImportBusy(true);
+    try {
+      const r = await S.parseJobDoc(file);
+      if (r.title) setTitle(r.title);
+      if (r.client) setClient(r.client);
+      if (r.location) setLocation(r.location);
+      if (r.workSetup && ["Hybrid", "Remote", "Onsite"].includes(r.workSetup)) setWorkSetup(r.workSetup);
+      if (r.country) setCountry(r.country);
+      if (r.currency) setCurrency(r.currency);
+      if (r.minPay) setMinPay(String(r.minPay));
+      if (r.maxPay) setMaxPay(String(r.maxPay));
+      if (r.description) setDescription(r.description);
+      if (Array.isArray(r.screeningQuestions) && r.screeningQuestions.length) setQuestions(r.screeningQuestions);
+      toast("Filled in from the file — check it over before publishing.");
+    } catch (e) { toast(e.message || "Couldn't read that file"); }
+    setImportBusy(false);
+  };
   const inp = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
   const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
   const publish = (status) => {
@@ -2449,7 +2476,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     const id = uid();
     const slug = (client[0] + title.split(" ").map((w) => w[0]).join("")).toLowerCase() + "-" + String(S.jobs.length + 1).padStart(2, "0");
     const link = "harbor.link/j/" + slug;
-    S.setJobs((l) => [{ id, role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
+    S.setJobs((l) => [{ id, role: title, client, location, workSetup, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
       billingType, billingAmount: num(billingAmount) || null, billingCurrency,
       incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency,
       screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
@@ -2457,13 +2484,13 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     setDone({ link, id, status, title, client });
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
-  const reset = () => { setDone(null); setTitle(""); setClient(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setIncentiveAmount(""); setQuestions([""]); };
+  const reset = () => { setDone(null); setTitle(""); setClient(""); setWorkSetup(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setIncentiveAmount(""); setQuestions([""]); };
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const saveEdit = () => {
     if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
     setBusy(true);
     S.updateJob(editJob.id, {
-      role: title, client, location, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
+      role: title, client, location, workSetup, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
       billingType, billingAmount: num(billingAmount) || null, billingCurrency,
       incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency,
       screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
@@ -2488,12 +2515,29 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <Card className="md:col-span-2 flex flex-col gap-4">
+          <div>
+            <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed py-5 cursor-pointer text-center" style={{ borderColor: "#D5D2C7", background: "#FAF8F3" }}>
+              <Upload size={18} color={C.ink2} />
+              <div className="text-sm font-medium">{importBusy ? <>Reading file <InlineDots /></> : "Upload a job brief (optional)"}</div>
+              <div className="text-xs" style={{ color: C.ink3 }}>PDF, Word, text or photo — AI fills in the fields below for you to check</div>
+              <input type="file" accept={RESUME_ACCEPT} className="hidden" disabled={importBusy} onChange={(e) => { const f = e.target.files[0]; if (f) importFromFile(f); e.target.value = ""; }} />
+            </label>
+          </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Job title</label><input value={title} onChange={(e) => setTitle(e.target.value)} className={inp} style={inpStyle} /></div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client</label><input value={client} onChange={(e) => setClient(e.target.value)} className={inp} style={inpStyle} /></div>
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} style={inpStyle} /></div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Work setup</label>
+              <select value={workSetup} onChange={(e) => setWorkSetup(e.target.value)} className={inp} style={inpStyle}>
+                <option value="">Not specified</option>
+                <option value="Onsite">Onsite</option>
+                <option value="Hybrid">Hybrid</option>
+                <option value="Remote">Remote</option>
+              </select>
+            </div>
             <div>
               <label className="text-xs font-medium" style={{ color: C.ink2 }}>Hiring country</label>
               <input list="harbor-countries" value={country} placeholder="Where are you looking for candidates?" onChange={(e) => { const v = e.target.value; setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} className={inp} style={inpStyle} />
@@ -3262,9 +3306,11 @@ const fileToBase64 = (f) => new Promise((resolve, reject) => {
    everyone but them (enforced by RLS on candidates.is_draft), though it's still saved on
    the backend and logged to the audit log. Nothing shows up for Admin/Rec Ops until
    Submit, which needs the resume AND the job's screening questions answered. */
-function AddCandidate({ setPage, toast, S }) {
+function AddCandidate({ setPage, toast, S, initialJobId }) {
   const openJobs = S.jobs.filter((j) => j.status !== "Closed");
-  const [jobId, setJobId] = useState("");
+  // Coming from a specific job's page pre-selects it here; opened from the Candidates
+  // page directly (initialJobId null), the recruiter picks the job themselves below.
+  const [jobId, setJobId] = useState(initialJobId && S.jobs.some((j) => j.id === initialJobId) ? initialJobId : "");
   const job = jobId ? S.jobs.find((j) => j.id === jobId) : null;
   const qs = (job && job.screeningQuestions) || [];
   const [answers, setAnswers] = useState([]);
@@ -3553,6 +3599,7 @@ export default function App() {
   const [query, setQueryRaw] = useState("");
   const [candId, setCandId] = useState(null);
   const [jobId, setJobId] = useState(null);
+  const [addCandidateJobId, setAddCandidateJobId] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [toastText, setToastText] = useState("");
   const [promote, setPromote] = useState({ open: false, job: "" });
@@ -3640,7 +3687,7 @@ export default function App() {
   };
 
   // Local job field -> jobs table column, for the fields a person can edit after posting.
-  const JOB_FIELD_MAP = { role: "role_title", client: "client", location: "location", minPay: "min_pay", maxPay: "max_pay", description: "description", currency: "currency", country: "country", seo: "seo",
+  const JOB_FIELD_MAP = { role: "role_title", client: "client", location: "location", workSetup: "work_setup", minPay: "min_pay", maxPay: "max_pay", description: "description", currency: "currency", country: "country", seo: "seo",
     billingType: "billing_type", billingAmount: "billing_amount", billingCurrency: "billing_currency",
     incentiveType: "incentive_type", incentiveAmount: "incentive_amount", incentiveCurrency: "incentive_currency",
     screeningQuestions: "screening_questions", status: "status" };
@@ -3668,7 +3715,7 @@ export default function App() {
     jobs: data.jobs, updateJob,
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
-      setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
+      setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, work_setup: j.workSetup || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
         billing_type: j.billingType || "percent", billing_amount: j.billingAmount || null, billing_currency: j.billingCurrency || j.currency || "NGN",
         incentive_type: j.incentiveType || "percent", incentive_amount: j.incentiveAmount || null, incentive_currency: j.incentiveCurrency || j.currency || "NGN",
         screening_questions: j.screeningQuestions || [],
@@ -3863,6 +3910,13 @@ export default function App() {
       const r = await fetch(SB_URL + "/functions/v1/job-redraft", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "AI redraft failed"); return j;
     },
+    /* Reads an uploaded job brief (PDF, Word, text, photo) and has AI pull the job fields
+       out of it, to prefill "Post a job" (job-redraft Edge Function, "extract" mode). */
+    parseJobDoc: async (file) => {
+      const data = await fileToBase64(file);
+      const r = await fetch(SB_URL + "/functions/v1/job-redraft", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ mode: "extract", file: { name: file.name, data } }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "Couldn't read that file"); return j;
+    },
     aiScreen: aiCall,
     /* Your own account: name/phone update straight to your profiles row, avatar via the public `avatars` bucket. */
     updateMyProfile: (patch) => {
@@ -3895,13 +3949,13 @@ export default function App() {
   let content;
   if (candidate) content = <CandidateDetail key={candidate.id} candidate={candidate} onBack={() => setCandId(null)} toast={toast} S={S} />;
   else if (page === "overview") content = role === "recruiter" ? <OverviewRecruiter S={S} /> : <OverviewRecOps S={S} />;
-  else if (page === "candidates") content = <CandidatesList scope={scope} data={candData} openCandidate={(c) => setCandId(c.id)} setPage={setPage} S={S} toast={toast} />;
-  else if (page === "uploadCandidates") content = <AddCandidate setPage={setPage} toast={toast} S={S} />;
+  else if (page === "candidates") content = <CandidatesList scope={scope} data={candData} openCandidate={(c) => setCandId(c.id)} setPage={setPage} onAddCandidate={() => { setAddCandidateJobId(null); setPage("uploadCandidates"); }} S={S} toast={toast} />;
+  else if (page === "uploadCandidates") content = <AddCandidate setPage={setPage} toast={toast} S={S} initialJobId={addCandidateJobId} />;
   else if (page === "inbox") content = <InboxPage toast={toast} S={S} />;
   else if (page === "jobs") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "postJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "editJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} editJob={data.jobs.find((j) => j.id === jobId)} />;
-  else if (page === "jobDetail") content = <JobDetail job={data.jobs.find((j) => j.id === jobId)} S={S} toast={toast} onBack={() => setPage("jobs")} onPromote={onPromote} onEdit={() => setPage("editJob")} onDeleted={() => setPage("jobs")} />;
+  else if (page === "jobDetail") content = <JobDetail job={data.jobs.find((j) => j.id === jobId)} S={S} toast={toast} onBack={() => setPage("jobs")} onPromote={onPromote} onEdit={() => setPage("editJob")} onDeleted={() => setPage("jobs")} onAddCandidate={() => { setAddCandidateJobId(jobId); setPage("uploadCandidates"); }} />;
   else if (page === "campaigns") content = <CampaignsPage toast={toast} S={S} />;
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
   else if (page === "ads") content = <AdsPage role={role} toast={toast} onPromote={onPromote} S={S} />;

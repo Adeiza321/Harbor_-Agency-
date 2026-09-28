@@ -721,3 +721,11 @@ create policy cand_update on public.candidates for update to authenticated
 alter table public.candidates
   add column if not exists industries jsonb not null default '[]'::jsonb,
   add column if not exists industries_checked_at timestamptz;
+
+-- =====================================================================
+-- Work setup per job (migration job_work_setup, 28 Sep 2026).
+-- Onsite / Hybrid / Remote, set on "Post a job" (or by the "Upload a job brief" AI
+-- extraction) and editable afterwards from "Edit job". Free text at the DB layer so a
+-- stray value from an old client never blocks a save; the UI only offers the three.
+-- =====================================================================
+alter table public.jobs add column if not exists work_setup text;
