@@ -22659,9 +22659,10 @@
   }
   function AttentionList({ title, items, S }) {
     const [open, setOpen] = (0, import_react3.useState)(null);
+    const rows = items.filter((r) => (r.people || []).length > 0);
     return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(Card, { children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(SectionTitle, { title }),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mt-3 flex flex-col", children: items.map((r, i) => {
+      rows.length === 0 ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "text-sm py-6 text-center", style: { color: C.ink3 }, children: "Nothing needs attention right now." }) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "mt-3 flex flex-col", children: rows.map((r, i) => {
         const people = r.people || [];
         const click = () => {
           if (people.length === 1 && people[0].onOpen) return people[0].onOpen();

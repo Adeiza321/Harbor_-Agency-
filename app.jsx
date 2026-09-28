@@ -433,11 +433,17 @@ function SubmissionsCard({ S, recruiterId, title = "Submissions and placements" 
    straight to their profile, several expand into a clickable list. */
 function AttentionList({ title, items, S }) {
   const [open, setOpen] = useState(null);
+  // Only show rows that actually have something in them — an item with 0 people is nothing to
+  // act on, so it's just clutter here.
+  const rows = items.filter((r) => (r.people || []).length > 0);
   return (
     <Card>
       <SectionTitle title={title} />
+      {rows.length === 0 ? (
+        <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Nothing needs attention right now.</div>
+      ) : (
       <div className="mt-3 flex flex-col">
-        {items.map((r, i) => {
+        {rows.map((r, i) => {
           const people = r.people || [];
           const click = () => {
             if (people.length === 1 && people[0].onOpen) return people[0].onOpen();
@@ -467,6 +473,7 @@ function AttentionList({ title, items, S }) {
           );
         })}
       </div>
+      )}
     </Card>
   );
 }
