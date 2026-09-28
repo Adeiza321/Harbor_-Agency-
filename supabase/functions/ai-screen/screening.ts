@@ -10,6 +10,7 @@
 
 import type { ResumeInput } from "./resume.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
+import { cleanPay } from "./profile.ts";
 
 type Ask = (system: string, text: string, resume: ResumeInput | null, maxTokens: number) => Promise<any>;
 type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null; why?: string }>;
@@ -242,7 +243,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     "If an answer contradicts the CV, list it in gaps. " +
     "summary: 2-3 sentences a recruiter reads first; mention the most important unmet must-have if there is one. strengths and gaps: at most 6 each, a few words each. requirements: the checklist from step 1-2, evidence in a few words. " +
     "verdict: 'Perfect fit' = every must-have met (step 5); 'Good fit' = most must-haves met and worth sending to the client now (step 5); 'Possible fit' = promising but at least one must-have partial or not met, or open questions; 'Reject' = missing a hard requirement or several core requirements, or clearly incompatible. " +
-    "salary_expectation: the salary the candidate themselves said they expect, as they stated it (keep amount, currency and period), taken from their answers; '' if they never stated one. " +
+    "salary_expectation: the salary the candidate themselves said they expect, taken from their answers, shortened to amount, currency and period only (e.g. '$150k–$200k/yr', '$85–$115/hr', '₦12m/yr'); no explanations or conversions; '' if they never stated one. " +
     (mayAsk
       ? "questions: up to 3 short follow-up questions (under 25 words each) that would settle the most important open points for THIS job. NEVER repeat or rephrase anything in the 'Already asked' list or in this job's own screening questions, and never ask for something already answered anywhere in the material (e.g. no salary question if they already gave a salary). " +
         (noAnswers
@@ -294,8 +295,8 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   const cpatch: Record<string, unknown> = { ai_score: score };
   const titles = cleanTitles(result.parallel_titles);
   if (titles.length) { cpatch.parallel_titles = titles; cpatch.parallel_titles_at = new Date().toISOString(); }
-  const salary = String(result.salary_expectation || "").trim();
-  if (salary && salary !== "-") cpatch.pay = salary.slice(0, 120);
+  const salary = cleanPay(result.salary_expectation);
+  if (salary) cpatch.pay = salary;
   await admin.from("candidates").update(cpatch).eq("id", candidate.id);
   return ai;
 }

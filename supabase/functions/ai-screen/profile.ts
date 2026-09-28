@@ -20,6 +20,35 @@ const str = (v: unknown, n: number) => {
   return s === "-" || /^(n\/a|none|not stated|unknown)$/i.test(s) ? "" : s.slice(0, n);
 };
 
+// Salary expectation in one short form: amount, currency and period only ("$150k–$200k/yr",
+// "$85–$115/hr"). Explanations, conversions and asides are dropped.
+const AMOUNT = "(?:[$₦£€]\\s?\\d[\\d,.]*\\s?[kKmM]?|\\d[\\d,.]*\\s?[kKmM]\\b|\\d[\\d,.]{2,})";
+const RANGE_RE = new RegExp(AMOUNT + "(?:\\s*(?:–|—|-|to)\\s*" + AMOUNT + ")?", "i");
+const periodOf = (s: string) =>
+  /\b(hour|hourly|hr)\b|\/\s?h(ou)?r\b/i.test(s) ? "/hr" : /\b(month|monthly|mo)\b|\/\s?mo\b/i.test(s) ? "/mo" : /\b(year|yearly|annum|annual|annually|yr|salary)\b|\/\s?yr\b/i.test(s) ? "/yr" : "";
+function tidyRange(part: string) {
+  const m = part.match(RANGE_RE);
+  if (!m) return "";
+  let range = m[0].replace(/\s*(–|—|-|to)\s*(?=[$₦£€\d])/i, "–").replace(/\s+/g, "").replace(/[.,]+$/, "");
+  // A currency written as a code ("USD 150,000", "100000 NGN") becomes its symbol.
+  const code = part.match(/\b(USD|NGN|GBP|EUR|CAD)\b/i);
+  if (code && !/[$₦£€]/.test(range)) {
+    const sym = ({ usd: "$", ngn: "₦", gbp: "£", eur: "€", cad: "CA$" } as Record<string, string>)[code[1].toLowerCase()];
+    range = range.split("–").map((x) => sym + x).join("–");
+  }
+  return range + periodOf(part);
+}
+export function cleanPay(v: unknown) {
+  const s = str(v, 400).replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  // Two alternatives ("$36/hr or $80,000/yr") keep both, each in short form.
+  const alts = s.split(/\s+or\s+/i).map(tidyRange).filter(Boolean);
+  if (alts.length > 1) return alts.slice(0, 2).join(" or ").slice(0, 60);
+  const one = tidyRange(s);
+  // No amount at all: keep a short note like "Negotiable", drop a long sentence.
+  return one || (s.length <= 40 ? s : "");
+}
+
 export function cleanProfile(r: any) {
   const rawLoc = str(r?.location, 120);
   // A hedged location ("to confirm", "area code") is a guess, so it's dropped, not trimmed.
@@ -43,7 +72,7 @@ export function cleanProfile(r: any) {
     location,
     phone: str(r?.phone, 40),
     notice: str(r?.notice, 80),
-    pay: str(r?.pay, 60),
+    pay: cleanPay(r?.pay),
     skills,
   };
 }
