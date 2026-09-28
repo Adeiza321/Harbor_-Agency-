@@ -14,7 +14,10 @@ import { lookupIndustries, industryText } from "./industry.ts";
 type Ask = (system: string, text: string, resume: ResumeInput | null, maxTokens: number) => Promise<any>;
 type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null; why?: string }>;
 
-export const VERDICTS = ["Perfect fit", "Possible fit", "Possible reject", "Reject"];
+export const VERDICTS = ["Perfect fit", "Good fit", "Possible fit", "Possible reject", "Reject"];
+// "Good fit": most must-haves met (at least two thirds, at most one not met) and strong enough
+// to send to the client now, even though it isn't perfect.
+export const GOOD_FIT = "Good fit";
 // Nobody is fully rejected before they've answered screening questions for the job: a would-be
 // rejection becomes "Possible reject", with follow-up questions drafted to settle it.
 export const softenReject = (verdict: string, hasAnswers: boolean) => (verdict === "Reject" && !hasAnswers ? "Possible reject" : verdict);
@@ -33,7 +36,7 @@ export const RUBRIC =
   "2) For each requirement decide 'met', 'partial' or 'not met'. Only mark 'met' when the CV or the candidate's answers describe actual work performed that shows it: a role, a responsibility, a project, or an answer with specifics. A word that only appears in a skills or keywords list, a headline or a professional summary, without a role that describes the work, is NOT evidence: mark it 'not met' if nothing else supports it, 'partial' at most. " +
   "3) Quantities matter. When the job asks for a number of years, or for 'significant' experience in something (a type of firm, a function), count the dated time the CV actually shows in that thing. Undated or very short exposure is 'partial', not 'met'. Separately, never penalise someone for changing jobs often or for short stays in general; only measure the experience the job asks for. " +
   "4) Score from the checklist, not from overall impression: start at 100; for each must-have 'not met' subtract 10-15; for each must-have 'partial' subtract 5-8; for each preferred item not met subtract 2-3. If a required licence, certification, degree or work authorisation is not met, the score must be 45 or lower and the verdict must be the rejection option. " +
-  "5) 'Perfect fit' ONLY when every must-have is 'met'. Any must-have that is 'partial' or 'not met' means 'Possible fit' at best. Scores of 90 or more are for candidates who meet every must-have and most preferred items, and should be rare. " +
+  "5) 'Perfect fit' ONLY when every must-have is 'met'. 'Good fit' when most must-haves are 'met' (at least two thirds of them, and no more than one 'not met'), nothing missing is a hard requirement such as a required licence, certification, degree or work authorisation, and you would recommend sending them to the client now. Otherwise any must-have that is 'partial' or 'not met' means 'Possible fit' at best. Scores of 90 or more are for candidates who meet every must-have and most preferred items, and should be rare. " +
   "6) 'gaps' must name every must-have that is 'not met' or 'partial', most important first. List must-have gaps before any preferred gap, and end every gap about a preferred item with ' (nice to have)'. 'strengths' must only list things backed by described work. Be accurate and specific; never pad strengths. " +
   "7) Preferred items are never a reason to reject. A candidate who has no must-have marked 'not met' must NOT get the rejection verdict, however many preferred items they lack; missing preferred items only lower the score slightly. " +
   "8) Industry alignment: compare the candidate's industry experience (from the looked-up employer list when given, otherwise the CV) with the industry the job asks for. It counts exactly as the job description ranks it (must or preferred). An employer marked 'unsure' is unknown industry: never count it as a match. " +
@@ -51,7 +54,12 @@ export function enforceChecklist(reqs: unknown, score: number, verdict: string, 
   let s = score, v = verdict;
   if (notMet) s = Math.min(s, 75);
   else if (partial) s = Math.min(s, 85);
-  if ((notMet || partial) && v === perfect) v = possible;
+  // Good fit needs most must-haves met: two thirds or more, and at most one not met.
+  const met = must.length - notMet - partial;
+  const goodOk = must.length > 0 && met / must.length >= 2 / 3 && notMet <= 1;
+  if ((notMet || partial) && v === perfect && perfect) v = goodOk ? GOOD_FIT : possible;
+  if (v === GOOD_FIT && !goodOk) v = possible;
+  if (v === GOOD_FIT) s = Math.max(s, 70);
   // Preferred items can never reject a candidate: with every must-have at least
   // partly met, a rejection becomes "possible fit" and the score keeps a floor.
   if (reject && must.length && !notMet && v === reject) { v = possible; s = Math.max(s, 60); }
@@ -103,6 +111,7 @@ const clampScore = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n
 export function normalizeVerdict(v: unknown): string {
   const s = String(v || "").toLowerCase();
   if (s.includes("perfect")) return "Perfect fit";
+  if (s.includes("good")) return GOOD_FIT;
   if (s.includes("possible reject")) return "Possible reject";
   if (s.includes("reject") || s.includes("not a fit") || s.includes("not fit")) return "Reject";
   return "Possible fit";
@@ -119,8 +128,10 @@ export function answersOn(link: any, job: any): { q: string; a: string; kind: st
     if (q && ans && String(ans).trim()) out.push({ q, a: String(ans).trim(), kind: "application" });
   });
   const f = link.ai?.followups;
+  // Follow-up answers count whether the candidate gave them on their page or a recruiter
+  // typed them in from a call (possibly only some of them so far).
+  for (const x of f?.questions || []) if (x?.q && x?.a && String(x.a).trim()) out.push({ q: x.q, a: String(x.a).trim(), kind: "follow-up" });
   if (f?.state === "answered") {
-    for (const x of f.questions || []) if (x?.q && x?.a && String(x.a).trim()) out.push({ q: x.q, a: String(x.a).trim(), kind: "follow-up" });
     if (f.reply && String(f.reply).trim()) out.push({ q: (f.questions || []).map((x: any) => x.q).join(" / ") || "Screening reply", a: String(f.reply).trim(), kind: "follow-up" });
   }
   return out;
@@ -134,6 +145,8 @@ export function askedQuestions(links: any[], jobOf: (id: string) => any): string
     for (const q of j?.screening_questions || []) if (q) out.push(String(q));
     const f = l.ai?.followups;
     if (f && f.state !== "draft") for (const x of f.questions || []) if (x?.q) out.push(String(x.q));
+    // Questions a recruiter removed as unnecessary are never suggested again.
+    for (const q of Array.isArray(l.ai?.dismissedQuestions) ? l.ai.dismissedQuestions : []) if (q) out.push(String(q));
   }
   return out;
 }
@@ -212,21 +225,23 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   const noAnswers = here.length === 0;
   const f = link.ai?.followups;
   const final = f?.state === "answered";
-  const keepFollowups = f && (f.state === "sent" || f.state === "answered" || f.manual);
+  // Keep follow-ups that went out, were answered, were written by a person, or already have
+  // answers typed in from a call; only an untouched AI draft is replaced.
+  const keepFollowups = f && (f.state === "sent" || f.state === "answered" || f.manual || (f.questions || []).some((x: any) => x?.a));
   const mayAsk = !keepFollowups;
 
   const system =
     "You are a recruitment analyst screening one candidate for one job. You get their CV (attached, or as extracted text) and everything they have answered so far: " +
     "this job's application questions, any follow-up questions, and answers they gave while being screened for other jobs. Use ALL of it — e.g. a salary or notice period they gave for another job still applies. " +
     "Reply with STRICT JSON only: " +
-    `{${REQS_SHAPE}, "summary": string, "strengths": string[], "gaps": string[], "score": number (0-100), "verdict": "Perfect fit" | "Possible fit" | "Reject", "verdict_reason": string, "salary_expectation": string, "parallel_titles": string[], "questions": string[]}. ` +
+    `{${REQS_SHAPE}, "summary": string, "strengths": string[], "gaps": string[], "score": number (0-100), "verdict": "Perfect fit" | "Good fit" | "Possible fit" | "Reject", "verdict_reason": string, "salary_expectation": string, "parallel_titles": string[], "questions": string[]}. ` +
     PARALLEL_RULE +
     RUBRIC +
     "Judge ONLY on: (1) the requirement checklist above, from the CV and anything the answers add; " +
     "(2) salary expectation vs budget — be flexible, only count it against them if clearly and substantially over; (3) availability vs the role's timeline. " +
     "If an answer contradicts the CV, list it in gaps. " +
     "summary: 2-3 sentences a recruiter reads first; mention the most important unmet must-have if there is one. strengths and gaps: at most 6 each, a few words each. requirements: the checklist from step 1-2, evidence in a few words. " +
-    "verdict: 'Perfect fit' = every must-have met (step 5); 'Possible fit' = promising but at least one must-have partial or not met, or open questions; 'Reject' = missing a hard requirement or several core requirements, or clearly incompatible. " +
+    "verdict: 'Perfect fit' = every must-have met (step 5); 'Good fit' = most must-haves met and worth sending to the client now (step 5); 'Possible fit' = promising but at least one must-have partial or not met, or open questions; 'Reject' = missing a hard requirement or several core requirements, or clearly incompatible. " +
     "salary_expectation: the salary the candidate themselves said they expect, as they stated it (keep amount, currency and period), taken from their answers; '' if they never stated one. " +
     (mayAsk
       ? "questions: up to 3 short follow-up questions (under 25 words each) that would settle the most important open points for THIS job. NEVER repeat or rephrase anything in the 'Already asked' list or in this job's own screening questions, and never ask for something already answered anywhere in the material (e.g. no salary question if they already gave a salary). " +
@@ -271,6 +286,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     answersUsed: here.length + elsewhere.length,
     updatedAt: new Date().toISOString(),
     followups,
+    ...(Array.isArray(link.ai?.dismissedQuestions) ? { dismissedQuestions: link.ai.dismissedQuestions } : {}),
   };
   await admin.from("candidate_jobs").update({ ai, fit: score }).eq("id", link.id);
 
@@ -311,7 +327,7 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
   const system =
     "You are a recruitment analyst checking whether a candidate already in the database is a fit for a NEW role they have not been put forward for. " +
     "You get their CV and every answer they have given while being screened for other roles. Reply with STRICT JSON only: " +
-    `{${REQS_SHAPE}, "summary": string, "score": number (0-100), "verdict": "Perfect fit" | "Possible fit" | "Reject", "verdict_reason": string, ` +
+    `{${REQS_SHAPE}, "summary": string, "score": number (0-100), "verdict": "Perfect fit" | "Good fit" | "Possible fit" | "Reject", "verdict_reason": string, ` +
     `"questions": [{"q": string, "already_answered": boolean, "answer": string}]}. ` +
     RUBRIC +
     "Judge the whole person against the whole role: location and work setup, seniority and years, skills, industry and every stated requirement. Being available is not a reason to call someone a fit. " +

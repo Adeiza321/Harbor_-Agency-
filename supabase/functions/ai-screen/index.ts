@@ -188,6 +188,58 @@ const jobBlock = (job: any) =>
 
 const clampScore = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n) || 0)));
 
+// Re-read profile facts (current title/employer, experience, location, phone, notice, pay,
+// skills) from the resume and everything the candidate has answered. Replaces those fields.
+// Allowed on locked candidates, except skills, which are part of the locked review.
+async function readProfile(admin: any, candidate: any) {
+  const { resume, why } = await loadResume(admin, candidate);
+  if (!resume) return { error: why || "No resume on file" };
+  const { data: links } = await admin.from("candidate_jobs").select("*").eq("candidate_id", candidate.id);
+  const { data: ljobs } = (links || []).length ? await admin.from("jobs").select("*").in("id", [...new Set((links || []).map((l: any) => l.job_id))]) : { data: [] };
+  const answers = (links || []).flatMap((l: any) => answersOn(l, (ljobs || []).find((j: any) => j.id === l.job_id)));
+  const system = "You read a candidate's resume for a recruitment agency and record their profile facts. Reply with STRICT JSON only: " +
+    `{${PROFILE_SHAPE}}. ` + PROFILE_RULES + "For 'notice' and 'pay', the candidate's own answers win over the CV.";
+  const text = "The candidate's CV is included.\n\nTheir answers to screening questions (their own words):\n" +
+    (answers.length ? answers.map((x: any) => `Q: ${x.q}\nA: ${x.a}`).join("\n\n") : "(none yet)");
+  const prof = cleanProfile(await askAI(system, text, resume, 1500));
+  const patch: Record<string, unknown> = {
+    current_title: prof.current_title || null, current_company: prof.current_company || null,
+    experience: prof.experience || "-", location: prof.location || null, notice: prof.notice || null, pay: prof.pay || null,
+    profile_read_at: new Date().toISOString(),
+  };
+  if (prof.phone) patch.phone = prof.phone;
+  const skillsLocked = !!candidate.ai_locked;
+  if (!skillsLocked && prof.skills.length) patch.skills = prof.skills;
+  const { error } = await admin.from("candidates").update(patch).eq("id", candidate.id);
+  if (error) throw new Error(error.message);
+  return { profile: prof, skillsLocked };
+}
+
+async function refreshCandidate(admin: any, candidate: any, step: string, force = false) {
+  if (step === "profile") {
+    const r = await readProfile(admin, candidate);
+    return "error" in r ? { ok: false, step, error: r.error } : { ok: true, step, skillsLocked: r.skillsLocked };
+  }
+  if (step === "industries") {
+    if (!force && Array.isArray(candidate.industries) && candidate.industries.length) return { ok: true, step, skipped: "already looked up" };
+    const { resume, why } = await loadResume(admin, candidate);
+    if (!resume) return { ok: false, step, error: why };
+    const { items, error } = await lookupIndustries(resume);
+    if (!items.length) return { ok: false, step, error: "Couldn't look up the companies: " + (error || "no employers found") };
+    await admin.from("candidates").update({ industries: items, industries_checked_at: new Date().toISOString() }).eq("id", candidate.id);
+    return { ok: true, step, industries: items.length };
+  }
+  if (step === "titles") return { ok: true, step, titles: await parallelTitles(admin, candidate.id, askAI, loadResume) };
+  if (step === "screen") {
+    if (candidate.ai_locked) return { ok: true, step, skipped: "locked (manually reviewed)" };
+    const { data: cards } = await admin.from("candidate_jobs").select("id").eq("candidate_id", candidate.id).eq("candidate_response", "accepted").limit(5);
+    let rescreened = 0; const errors: string[] = [];
+    for (const c of cards || []) { try { await screenLink(admin, c.id, askAI, loadResume); rescreened++; } catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); } }
+    return { ok: !errors.length, step, rescreened, errors };
+  }
+  return { ok: false, step, error: "Unknown step" };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -234,6 +286,20 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true });
     }
 
+    // Maintenance runs (e.g. refreshing every candidate after a screening change) carry a
+    // short-lived token from public.ops_tokens instead of a staff login. Refresh only.
+    const opsKey = req.headers.get("x-harbor-ops") || "";
+    if (opsKey) {
+      const { data: tok } = await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle();
+      if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
+      if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate runs with an ops token" }, 400);
+      const { data: cand } = await admin.from("candidates").select("*").eq("id", body.candidateId).maybeSingle();
+      if (!cand) return json({ error: "Candidate not found" }, 404);
+      const r = await refreshCandidate(admin, cand, String(body.step || ""), !!body.force);
+      if (!r.ok) console.error("ops refresh", cand.id, JSON.stringify(r));
+      return json(r);
+    }
+
     // ---------------------------------------------------------------
     // Everything below needs a signed-in, active Harbor user.
     // ---------------------------------------------------------------
@@ -247,7 +313,7 @@ Deno.serve(async (req: Request) => {
     const { action } = body;
 
     // Card-level actions take a linkId (one candidate on one job).
-    if (action === "screen" || action === "approve_questions" || action === "draft_followups") {
+    if (action === "screen" || action === "approve_questions" || action === "draft_followups" || action === "save_followups") {
       const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", body.linkId).maybeSingle();
       if (!link) return json({ error: "Screening card not found" }, 404);
       const { data: owner } = await admin.from("candidates").select("recruiter_id,ai_locked").eq("id", link.candidate_id).single();
@@ -263,13 +329,55 @@ Deno.serve(async (req: Request) => {
         return json({ ok: true, ai: await draftFollowups(admin, link.id, askAI) });
       }
 
+      // Recruiter edits the follow-up questions by hand: removes ones that aren't needed (never
+      // suggested again) and types in answers the candidate gave on a call or message. Once every
+      // question has an answer the card is rescreened with them (unless the review is locked).
+      if (action === "save_followups") {
+        const f0 = link.ai?.followups || null;
+        if (f0 && f0.state === "answered" && !f0.enteredBy) return json({ error: "The candidate already answered these on their candidate page" }, 409);
+        const items = (Array.isArray(body.questions) ? body.questions : [])
+          .map((x: any) => ({ q: String(x?.q || "").trim().slice(0, 300), a: String(x?.a || "").trim().slice(0, 4000) }))
+          .filter((x: any) => x.q).slice(0, 8);
+        const nq = (q: string) => q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const kept = new Set(items.map((x: any) => nq(x.q)));
+        const before = (f0?.questions || []).map((x: any) => String(x?.q || "")).filter(Boolean);
+        const removed = before.filter((q: string) => !kept.has(nq(q)));
+        const added = items.some((x: any) => !before.some((q: string) => nq(q) === nq(x.q)));
+        const dismissed = [...new Set([...(Array.isArray(link.ai?.dismissedQuestions) ? link.ai.dismissedQuestions : []), ...removed])].slice(-40);
+        const now = new Date().toISOString();
+        const allAnswered = items.length > 0 && items.every((x: any) => x.a);
+        const anyAnswer = items.some((x: any) => x.a);
+        const ai: Record<string, unknown> = { ...(link.ai || {}), dismissedQuestions: dismissed };
+        if (!items.length) delete ai.followups;
+        else {
+          const fu: Record<string, unknown> = { ...(f0 || {}), questions: items };
+          if (added) fu.manual = true;
+          fu.state = allAnswered ? "answered" : f0 && f0.state !== "answered" ? f0.state : (f0?.approvedBy ? "sent" : "draft");
+          if (anyAnswer) { fu.enteredBy = me.full_name || "Recruiter"; fu.enteredAt = now; }
+          if (allAnswered) fu.answeredAt = now; else delete fu.answeredAt;
+          ai.followups = fu;
+        }
+        const { error: upErr } = await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
+        if (upErr) return json({ error: upErr.message }, 500);
+        if (anyAnswer) await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening answers entered by " + (me.full_name || "a recruiter"), done: true });
+        if (allAnswered && body.rescreen !== false) {
+          if (owner?.ai_locked) return json({ ok: true, ai, rescreened: false, locked: true });
+          return json({ ok: true, ai: await screenLink(admin, link.id, askAI, loadResume), rescreened: true });
+        }
+        return json({ ok: true, ai, rescreened: false, removed: removed.length });
+      }
+
       // approve_questions: only Rec Ops and Admins can send follow-up questions to a candidate.
       if (!isStaff) return json({ error: "Only Rec Ops or Admins can approve screening questions" }, 403);
       const f = link.ai?.followups;
       if (f && f.state !== "draft") return json({ error: "These questions were already sent" }, 409);
       const qs = (Array.isArray(body.questions) ? body.questions : []).map((q: unknown) => String(q || "").trim()).filter(Boolean).slice(0, 6);
       if (!qs.length) return json({ error: "Add at least one question" }, 400);
-      const ai = { ...(link.ai || {}), followups: { state: "sent", questions: qs.map((q: string) => ({ q })), approvedBy: me.full_name || "Rec Ops", approvedAt: new Date().toISOString() } };
+      // Drafted questions left out when approving count as removed: never suggested again.
+      const nq = (q: string) => q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const dropped = (f?.questions || []).map((x: any) => String(x?.q || "")).filter((q: string) => q && !qs.some((k: string) => nq(k) === nq(q)));
+      const dismissedQuestions = [...new Set([...(Array.isArray(link.ai?.dismissedQuestions) ? link.ai.dismissedQuestions : []), ...dropped])].slice(-40);
+      const ai = { ...(link.ai || {}), dismissedQuestions, followups: { state: "sent", questions: qs.map((q: string) => ({ q })), approvedBy: me.full_name || "Rec Ops", approvedAt: new Date().toISOString() } };
       await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
       await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening questions sent by " + (me.full_name || "Rec Ops"), done: true });
       return json({ ok: true, ai });
@@ -336,28 +444,14 @@ Deno.serve(async (req: Request) => {
     // skills) from the resume and everything the candidate has answered. Replaces those fields.
     // Allowed on locked candidates, except skills, which are part of the locked review.
     if (action === "read_profile") {
-      const { resume, why } = await loadResume(admin, candidate);
-      if (!resume) return json({ error: why }, 400);
-      const { data: links } = await admin.from("candidate_jobs").select("*").eq("candidate_id", candidateId);
-      const { data: ljobs } = (links || []).length ? await admin.from("jobs").select("*").in("id", [...new Set((links || []).map((l: any) => l.job_id))]) : { data: [] };
-      const answers = (links || []).flatMap((l: any) => answersOn(l, (ljobs || []).find((j: any) => j.id === l.job_id)));
-      const system = "You read a candidate's resume for a recruitment agency and record their profile facts. Reply with STRICT JSON only: " +
-        `{${PROFILE_SHAPE}}. ` + PROFILE_RULES + "For 'notice' and 'pay', the candidate's own answers win over the CV.";
-      const text = "The candidate's CV is included.\n\nTheir answers to screening questions (their own words):\n" +
-        (answers.length ? answers.map((x: any) => `Q: ${x.q}\nA: ${x.a}`).join("\n\n") : "(none yet)");
-      const prof = cleanProfile(await askAI(system, text, resume, 1500));
-      const patch: Record<string, unknown> = {
-        current_title: prof.current_title || null, current_company: prof.current_company || null,
-        experience: prof.experience || "-", location: prof.location || null, notice: prof.notice || null, pay: prof.pay || null,
-        profile_read_at: new Date().toISOString(),
-      };
-      if (prof.phone) patch.phone = prof.phone;
-      const skillsLocked = !!candidate.ai_locked;
-      if (!skillsLocked && prof.skills.length) patch.skills = prof.skills;
-      const { error } = await admin.from("candidates").update(patch).eq("id", candidateId);
-      if (error) return json({ error: error.message }, 500);
-      return json({ ok: true, profile: prof, skillsLocked });
+      const r = await readProfile(admin, candidate);
+      if ("error" in r) return json({ error: r.error }, 400);
+      return json({ ok: true, ...r });
     }
+
+    // Full AI refresh of one candidate, one step per request so nothing hits the time limit:
+    // profile -> industries -> titles -> screen (rescreens every accepted company card).
+    if (action === "refresh_candidate") return json(await refreshCandidate(admin, candidate, String(body.step || ""), !!body.force));
 
     // Parallel titles from the full CV. Allowed on locked candidates (not part of the review).
     if (action === "parallel_titles") return json({ ok: true, titles: await parallelTitles(admin, candidateId, askAI, loadResume) });
@@ -397,13 +491,13 @@ Deno.serve(async (req: Request) => {
 
       const system =
         "You are helping a recruiter decide whether to pursue a candidate for a role, using ONLY their CV — no screening-question answers exist yet. Reply with STRICT JSON only: " +
-        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "verdict_reason": string, "reasoning": string}. ` +
+        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Good fit" | "Possible fit" | "Not a fit", "score": number (0-100), "verdict_reason": string, "reasoning": string}. ` +
         RUBRIC +
         "Judge ONLY on the requirement checklist above, from the CV alone. Do not penalise for salary or availability — those aren't known yet. " +
         "'reasoning' is 2-3 sentences telling the recruiter whether this candidate is worth screening further for this specific role, and why.";
       const content = jobBlock(job) + "\n\nThe candidate's CV is included.";
       const result = await askAI(system, content, resume, 1200);
-      const rawVerdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
+      const rawVerdict = ["Perfect fit", "Good fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
       const checked = enforceChecklist(result.requirements, clampScore(result.score), rawVerdict, "Perfect fit", "Possible fit", "Not a fit");
       // No screening answers exist yet, so a rejection is only ever "possible".
       const verdict = checked.verdict === "Not a fit" ? "Possible reject" : checked.verdict;
@@ -537,7 +631,7 @@ Deno.serve(async (req: Request) => {
       const questions = candidate.screening?.questions || [];
       const system =
         "You are screening a candidate for a recruiter, using BOTH their CV (attached or as extracted text, when present) and their screening answers. Reply with STRICT JSON only: " +
-        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Possible fit" | "Not a fit", "score": number (0-100), "verdict_reason": string, "reasoning": string}. ` +
+        `{${REQS_SHAPE}, "verdict": "Perfect fit" | "Good fit" | "Possible fit" | "Not a fit", "score": number (0-100), "verdict_reason": string, "reasoning": string}. ` +
         RUBRIC +
         "Judge STRICTLY on three things only: (1) the requirement checklist above, from the CV and anything the answers add, (2) salary expectation — be flexible, only count against them if it is clearly and substantially over the job's budget, a normal negotiation-range gap is fine, (3) stated start date — only count against them if it is clearly incompatible with the role's timeline. " +
         "If an answer contradicts the CV, say so. " +
@@ -549,7 +643,7 @@ Deno.serve(async (req: Request) => {
         `\nAI screening questions sent:\n${questions.map((q: string, i: number) => `${i + 1}. ${q}`).join("\n") || "(none recorded)"}\n` +
         `Candidate's reply:\n${answerText}`;
       const result = await askAI(system, content, resume, 2500);
-      const rawVerdict = ["Perfect fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
+      const rawVerdict = ["Perfect fit", "Good fit", "Possible fit", "Not a fit"].includes(result.verdict) ? result.verdict : "Possible fit";
       const checked = enforceChecklist(result.requirements, clampScore(result.score), rawVerdict, "Perfect fit", "Possible fit", "Not a fit");
       const verdict = checked.verdict;
       result.score = checked.score;

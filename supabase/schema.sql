@@ -1073,3 +1073,29 @@ grant execute on function public.check_candidate_email(text, text, uuid) to auth
 alter table public.candidates add column if not exists current_title text;
 alter table public.candidates add column if not exists current_company text;
 alter table public.candidates add column if not exists profile_read_at timestamptz;
+
+-- migration: followup_dismissals_and_ops_tokens
+-- Removed follow-up questions (ai.dismissedQuestions) aren't part of the locked review either.
+create or replace function public.guard_locked_candidate_job()
+ returns trigger language plpgsql set search_path to 'public' as $function$
+begin
+  if coalesce(current_setting('harbor.manual_review', true), '') <> 'on'
+     and (new.fit is distinct from old.fit
+          or (coalesce(new.ai, '{}'::jsonb) - array['followups','dismissedQuestions']) is distinct from (coalesce(old.ai, '{}'::jsonb) - array['followups','dismissedQuestions']))
+     and exists (select 1 from candidates c where c.id = new.candidate_id and c.ai_locked) then
+    raise exception 'This candidate''s review is locked (manually reviewed). Unlock it before re-running AI.'
+      using errcode = 'P0001';
+  end if;
+  return new;
+end $function$;
+
+-- Short-lived tokens for maintenance runs of the ai-screen function (e.g. a one-off refresh of
+-- every candidate). Only the service role can read them: RLS on, no policies, no grants.
+create table if not exists public.ops_tokens (
+  token text primary key,
+  purpose text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+alter table public.ops_tokens enable row level security;
+revoke all on public.ops_tokens from anon, authenticated;

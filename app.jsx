@@ -559,7 +559,7 @@ function busyWith(c, jobs) {
 // A role counts as a fit only after the full AI review (location, seniority, skills,
 // every requirement) rated them Possible or Perfect fit at 60% or more.
 const FIT_MIN = 60;
-const isRealFit = (m) => !!(m && m.reviewedAt && ["Perfect fit", "Possible fit"].includes(m.verdict) && (m.fit || 0) >= FIT_MIN);
+const isRealFit = (m) => !!(m && m.reviewedAt && ["Perfect fit", "Good fit", "Possible fit"].includes(m.verdict) && (m.fit || 0) >= FIT_MIN);
 // Reviewed fits for this job among people who are free to be pitched and aren't on it yet.
 function benchFitsFor(job, S) {
   return S.cands
@@ -614,7 +614,11 @@ const scoreFor = (seed) => 60 + (Array.from(seed).reduce((a, c) => a + c.charCod
 const flat = (c) => ({ name: c.name, role: c.role, location: c.location, recruiter: c.recruiter || "", status: c.status, ai: c.ai, email: c.email });
 /* How many company cards have follow-up questions in a given state (draft / sent / answered). */
 const countFollowups = (cands, state) => cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.ai && l.ai.followups && l.ai.followups.state === state).length, 0);
-const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "Lagos, Nigeria", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
+// location/phone default to blank, never a guessed value: the AI screener (score_cv) only fills
+// them from the resume when the candidate doesn't already have one on file, so a hardcoded
+// default here would silently block that fill forever. Let the UI show "not set" instead and
+// leave resume + screening answers as the only source of truth.
+const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
 
 /* Desktop detection in JS, so layout never depends on responsive classes being available */
 function useDesktop() {
@@ -1418,17 +1422,23 @@ function OverviewRecruiter({ S }) {
 /* Candidates list */
 function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S, toast }) {
   const [rereading, setRereading] = useState(null); // "3/18" while re-reading resumes
-  // Rec Ops/Admin: re-read profile details from every resume on file, one at a time.
+  // Rec Ops/Admin: full AI refresh of everyone with a resume, one candidate and one step at a
+  // time: profile details, employer industries (if not looked up yet), parallel titles, then a
+  // rescreen of their company cards (skipped for locked, manually reviewed candidates).
   const rereadAll = async () => {
     const list = data.filter((c) => c.cv);
     if (!list.length) { toast("No resumes on file"); return; }
     let done = 0, failed = 0;
     for (const c of list) {
       setRereading((done + failed + 1) + "/" + list.length);
-      try { await S.aiScreen("read_profile", { candidateId: c.id }); done++; } catch (e) { failed++; }
+      let ok = true;
+      for (const step of ["profile", "industries", "titles", "screen"]) {
+        try { const r = await S.aiScreen("refresh_candidate", { candidateId: c.id, step }); if (r && r.ok === false) ok = false; } catch (e) { ok = false; }
+      }
+      if (ok) done++; else failed++;
     }
     setRereading(null);
-    toast("Re-read " + plural(done, "resume") + (failed ? ". " + failed + " couldn't be read." : "."));
+    toast("Refreshed " + plural(done, "candidate") + (failed ? ". " + failed + " had a step that didn't finish; run it again for them." : "."));
   };
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
@@ -1459,7 +1469,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
         <div className="flex gap-2.5">
           <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Btn>
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
-          {S.role !== "recruiter" && <Btn icon={Sparkles} onClick={rereadAll} disabled={!!rereading} className="flex-1 md:flex-none justify-center">{rereading ? "Re-reading " + rereading : "Re-read resumes"}</Btn>}
+          {S.role !== "recruiter" && <Btn icon={Sparkles} onClick={rereadAll} disabled={!!rereading} className="flex-1 md:flex-none justify-center">{rereading ? "Refreshing " + rereading : "Refresh AI data"}</Btn>}
           <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
@@ -1853,13 +1863,16 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
 /* ------------------------------------------------------------------------- */
 /* AI screening: one collapsible card per company the candidate is on.       */
 /* ------------------------------------------------------------------------- */
-const VERDICT_TONE = { "Perfect fit": "em", "Possible fit": "warn", "Possible reject": "danger", Reject: "danger" };
+const VERDICT_TONE = { "Perfect fit": "em", "Good fit": "em", "Possible fit": "warn", "Possible reject": "danger", Reject: "danger" };
+// Once a Possible fit is sent to the client, the card reads Good fit: we've decided to put them forward.
+const SENT_STAGES = ["Submitted", "Interview", "Offer", "Placed"];
+const shownVerdict = (verdict, sent) => (sent && verdict === "Possible fit" ? "Good fit" : verdict);
 const FOLLOW_PILL = { draft: ["Waiting for approval", "warn"], sent: ["Sent · waiting for answers", "info"], answered: ["Answered", "em"] };
 const NICE_RE = /\s*\((nice to have|preferred)\)\s*$/i;
 // Why the card has its verdict: the stored reason, or one built from the must-have checklist.
 function verdictWhy(ai) {
   // The label already names the verdict, so drop a reason that starts by repeating it.
-  if (ai.verdict_reason) return String(ai.verdict_reason).replace(/^(perfect fit|possible fit|possible reject|not a fit|rejected?)(\s+for this (client|role|job))?(\s*\([^)]*\))?[.:]\s*/i, "");
+  if (ai.verdict_reason) return String(ai.verdict_reason).replace(/^(perfect fit|good fit|possible fit|possible reject|not a fit|rejected?)(\s+for this (client|role|job))?(\s*\([^)]*\))?[.:]\s*/i, "");
   const must = (ai.requirements || []).filter((r) => r.type === "must");
   if (!must.length) return "";
   const miss = must.filter((r) => r.status === "not met").map((r) => r.requirement);
@@ -1932,12 +1945,19 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const first = candidate.name.split(" ")[0];
   const e = endorsed.find((x) => x.role === job.role) || null;
   const status = e ? e.status : link.stage;
+  // A Possible fit we've put forward to the client reads Good fit.
+  const sent = !!e || SENT_STAGES.includes(link.stage);
+  const verdict = shownVerdict(ai.verdict, sent);
+  const upgraded = !!ai.verdict && verdict !== ai.verdict;
+  // Typing in answers from a call, or removing questions: Rec Ops/Admin or the candidate's recruiter.
+  const canAnswer = staff || candidate.recruiterId === S.me.id;
+  const [answering, setAnswering] = useState(null);
   const [busy, setBusy] = useState("");
   // Editable copy of the drafted follow-up questions; reset whenever a new screening lands.
   const stamp = (ai.updatedAt || "") + (f ? f.state : "");
   const [drafts, setDrafts] = useState(null);
   const [seen, setSeen] = useState(stamp);
-  if (stamp !== seen) { setSeen(stamp); setDrafts(null); }
+  if (stamp !== seen) { setSeen(stamp); setDrafts(null); setAnswering(null); }
   const qList = drafts !== null ? drafts : f && f.state === "draft" ? f.questions.map((x) => x.q) : [];
   const editing = staff && ((f && f.state === "draft") || (!f && drafts !== null));
   const setQ = (i, v) => setDrafts(qList.map((q, k) => (k === i ? v : q)));
@@ -1950,6 +1970,26 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
     await S.aiScreen("approve_questions", { linkId: link.id, questions: qs });
     toast("Sent to " + first + "'s candidate page");
   });
+  // Save follow-ups edited by hand (answers typed in, questions removed). Removed questions are
+  // never suggested again; with every question answered the card is rescreened.
+  const saveFollow = (label, questions, done) => run(label, async () => {
+    const r = await S.aiScreen("save_followups", { linkId: link.id, questions });
+    setAnswering(null); setDrafts(null);
+    toast(done(r || {}));
+  });
+  const startAnswers = () => setAnswering((editing ? qList.map((q) => ({ q, a: "" })) : ((f && f.questions) || []).map((x) => ({ q: x.q, a: x.a || "" }))).filter((x) => String(x.q || "").trim()));
+  const allTyped = !!answering && answering.length > 0 && answering.every((x) => x.a.trim());
+  const saveAnswers = () => saveFollow("answers", answering, (r) =>
+    !answering.length ? "Follow-up questions removed"
+      : !answering.some((x) => x.a.trim()) ? "Saved. Removed questions won't be suggested again"
+      : r.rescreened ? "Answers saved and " + first + " rescreened for " + job.client
+      : r.locked ? "Answers saved. The review is locked, so it wasn't rescreened"
+      : "Answers saved. The AI rescreens once every question has an answer");
+  const removeSaved = (i) => saveFollow("remove", f.questions.filter((_, k) => k !== i).map((x) => ({ q: x.q, a: x.a || "" })), () => "Question removed. It won't be suggested again");
+  const discardAll = () => saveFollow("discard", [], () => "Follow-up questions removed. They won't be suggested again");
+  const xBtn = (onClick, label) => (
+    <button type="button" aria-label={label} title={label} onClick={onClick} disabled={!!busy} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={12} strokeWidth={2.5} /></button>
+  );
   const appQs = job.screeningQuestions || [];
   const answered = appQs.filter((_, i) => String(link.screeningAnswers[i] || "").trim()).length;
   const box = { background: "#fff" };
@@ -1957,7 +1997,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const [showApp, setShowApp] = useState(false);
   const [showFollow, setShowFollow] = useState(null);
   const [showReqs, setShowReqs] = useState(false);
-  const followOpen = showFollow !== null ? showFollow : editing || (f && f.state === "draft");
+  const followOpen = !!answering || (showFollow !== null ? showFollow : editing || (f && f.state === "draft"));
   const why = verdictWhy(ai);
   const gapList = (ai.gaps || []).map((x) => ({ text: String(x).replace(NICE_RE, ""), nice: NICE_RE.test(String(x)) }));
   const mustGaps = gapList.filter((g) => !g.nice), niceGaps = gapList.filter((g) => g.nice);
@@ -1975,13 +2015,13 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
           <div className="text-xs truncate" style={{ color: C.ink2 }}>{group.items.map((x) => x.job.role).join(", ")} · {f && f.state === "sent" ? "Questions sent, waiting for " + first + "'s answers" : status}</div>
         </div>
         {busy === "screen" ? <InlineDots /> : <div className="text-2xl shrink-0" style={{ ...SERIF }}>{ai.score != null ? ai.score + "%" : "–"}</div>}
-        {ai.verdict && <span className="hidden sm:inline"><Pill tone={VERDICT_TONE[ai.verdict] || "neutral"}>{ai.verdict}</Pill></span>}
+        {verdict && <span className="hidden sm:inline"><Pill tone={VERDICT_TONE[verdict] || "neutral"}>{verdict}</Pill></span>}
         <ChevronDown size={18} color={C.ink2} className="shrink-0" style={{ transform: open ? "rotate(180deg)" : "none" }} />
       </button>
       {open && (
         <div className="px-4 pb-4 flex flex-col gap-3.5">
           {group.items.length > 1 && <Tabs tabs={group.items.map((x, i) => ({ key: i, label: x.job.role }))} active={idx} setActive={setIdx} />}
-          {ai.verdict && <span className="sm:hidden w-fit"><Pill tone={VERDICT_TONE[ai.verdict] || "neutral"}>{ai.verdict}</Pill></span>}
+          {verdict && <span className="sm:hidden w-fit"><Pill tone={VERDICT_TONE[verdict] || "neutral"}>{verdict}</Pill></span>}
           {candidate.ai_locked && (
             <div className="rounded-lg p-2.5 flex items-center gap-2 text-xs" style={{ background: C.warnBg, color: C.warnFg }}>
               <Lock size={13} className="shrink-0" /> Locked — manually reviewed. {S.role === "admin" ? "Unlock from the candidate header to let the AI re-screen." : "An admin can unlock it to let the AI re-screen."}
@@ -2016,9 +2056,10 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
                   ))}
                 </div>
               </div>
-              {why && ai.verdict && (
-                <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed" style={{ background: (TONE[VERDICT_TONE[ai.verdict]] || TONE.neutral).bg }}>
-                  <span className="font-semibold" style={{ color: (TONE[VERDICT_TONE[ai.verdict]] || TONE.neutral).fg }}>Why {ai.verdict === "Reject" ? "rejected" : ai.verdict.toLowerCase()}: </span>{why}
+              {(why || upgraded) && verdict && (
+                <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed" style={{ background: (TONE[VERDICT_TONE[verdict]] || TONE.neutral).bg }}>
+                  <span className="font-semibold" style={{ color: (TONE[VERDICT_TONE[verdict]] || TONE.neutral).fg }}>Why {verdict === "Reject" ? "rejected" : verdict.toLowerCase()}: </span>
+                  {upgraded ? <>Sent to {job.client}{e && e.by ? " " + e.by : ""}. The AI rated them a possible fit{why ? ": " + why : "."}</> : why}
                 </div>
               )}
               {ai.verdict === "Possible reject" && (
@@ -2067,8 +2108,27 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               pill={<Pill tone={FOLLOW_PILL[f ? f.state : "draft"][1]}>{FOLLOW_PILL[f ? f.state : "draft"][0]}</Pill>}
               sub={!f || f.state === "draft" ? "Extra questions the AI drafted from what's still unclear after the application questions. Never repeats a question already asked for any job."
                   : f.state === "sent" ? "Approved by " + (f.approvedBy || "Rec Ops") + ". Showing on " + first + "'s candidate page; their answers go straight to the AI."
-                  : "Approved by " + (f.approvedBy || "Rec Ops") + (f.answeredAt ? " · answered " + fdate(f.answeredAt) : "")}>
-              {editing ? (
+                  : (f.enteredBy ? "Answers entered by " + f.enteredBy : "Approved by " + (f.approvedBy || "Rec Ops")) + (f.answeredAt ? " · answered " + fdate(f.answeredAt) : "")}>
+              {answering ? (
+                <>
+                  <div className="text-xs" style={{ color: C.ink2 }}>Type in what {first} told you on a call or message. Remove any question you don't need; it won't be suggested again. Once every question has an answer, the AI rescreens this card with them.</div>
+                  {answering.map((x, i) => (
+                    <div key={i} className="flex gap-2 items-start">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium">{i + 1}. {x.q}</div>
+                        <textarea value={x.a} onChange={(ev) => setAnswering(answering.map((y, k) => (k === i ? { ...y, a: ev.target.value } : y)))} rows={2} placeholder={first + "'s answer"}
+                          className="w-full mt-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }} aria-label={"Answer to question " + (i + 1)} />
+                      </div>
+                      {xBtn(() => setAnswering(answering.filter((_, k) => k !== i)), "Remove question")}
+                    </div>
+                  ))}
+                  {!answering.length && <div className="text-sm" style={{ color: C.ink3 }}>Every question removed. Save to clear them from this card.</div>}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Btn kind="primary" onClick={saveAnswers} disabled={!!busy}>{busy === "answers" ? <>Saving <InlineDots color="#fff" /></> : allTyped && !candidate.ai_locked ? "Save and rescreen" : "Save"}</Btn>
+                    <Btn onClick={() => setAnswering(null)} disabled={!!busy}>Cancel</Btn>
+                  </div>
+                </>
+              ) : editing ? (
                 <>
                   {qList.map((q, i) => (
                     <div key={i} className="flex gap-2 items-start">
@@ -2079,19 +2139,36 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <Btn kind="primary" onClick={approve} disabled={!!busy}>{busy === "approve" ? <>Sending <InlineDots color="#fff" /></> : "Approve and send"}</Btn>
                     <Btn onClick={() => setDrafts([...qList, ""])}>Add a question</Btn>
+                    {qList.some((q) => q.trim()) && <Btn onClick={startAnswers} disabled={!!busy}>Enter answers yourself</Btn>}
+                    {f && <button type="button" onClick={discardAll} disabled={!!busy} className="text-xs font-medium ml-auto" style={{ color: C.ink2 }}>{busy === "discard" ? "Removing…" : "Remove all"}</button>}
                   </div>
                 </>
               ) : f && f.state === "draft" ? (
                 <>
-                  {f.questions.map((x, i) => <div key={i} className="text-sm">{i + 1}. {x.q}</div>)}
-                  <div className="text-xs" style={{ color: C.warnFg }}>Waiting for Rec Ops or an Admin to approve before they're sent.</div>
+                  {f.questions.map((x, i) => (
+                    <div key={i} className="flex gap-2 items-start">
+                      <div className="text-sm flex-1">{i + 1}. {x.q}{x.a && <div className="whitespace-pre-line mt-0.5" style={{ color: C.ink2 }}>{x.a}</div>}</div>
+                      {canAnswer && xBtn(() => removeSaved(i), "Remove question")}
+                    </div>
+                  ))}
+                  <div className="text-xs" style={{ color: C.warnFg }}>Waiting for Rec Ops or an Admin to approve before they're sent{canAnswer ? ", or enter " + first + "'s answers yourself" : ""}.</div>
+                  {canAnswer && <Btn onClick={startAnswers} disabled={!!busy} className="w-fit">Enter answers yourself</Btn>}
                 </>
               ) : (
                 <>
                   {(f.questions || []).map((x, i) => (
-                    <div key={i} className="text-sm"><div className="font-medium">{x.q}</div>{f.state === "answered" && x.a && <div className="whitespace-pre-line mt-0.5" style={{ color: C.ink2 }}>{x.a}</div>}</div>
+                    <div key={i} className="flex gap-2 items-start">
+                      <div className="text-sm flex-1"><div className="font-medium">{x.q}</div>{x.a && <div className="whitespace-pre-line mt-0.5" style={{ color: C.ink2 }}>{x.a}</div>}</div>
+                      {canAnswer && f.state === "sent" && xBtn(() => removeSaved(i), "Remove question")}
+                    </div>
                   ))}
                   {f.reply && <div className="text-sm whitespace-pre-line" style={{ color: C.ink2 }}>{f.reply}</div>}
+                  {canAnswer && (f.state === "sent" || f.enteredBy) && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Btn onClick={startAnswers} disabled={!!busy}>{f.state === "answered" ? "Edit answers" : "Enter answers yourself"}</Btn>
+                      {f.state === "sent" && <span className="text-xs" style={{ color: C.ink3 }}>No reply on their page yet? Type in what they told you.</span>}
+                    </div>
+                  )}
                 </>
               )}
             </Fold>
@@ -2334,8 +2411,10 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
 /* Roles the candidate could fit that they're not on yet. Review fit opens the fit review;
    routing from there sends the role to their candidate page and the company card appears
    once they accept. Names and scores come from the live job and the latest review. */
+const MATCHES_COLLAPSED_COUNT = 3;
 function MatchesCard({ candidate, S, toast }) {
   const [reviewJob, setReviewJob] = useState(null);
+  const [showAllMatches, setShowAllMatches] = useState(false);
   const [titlesBusy, setTitlesBusy] = useState(false);
   const busy = busyWith(candidate, S.jobs);
   const refreshTitles = () => {
@@ -2373,7 +2452,7 @@ function MatchesCard({ candidate, S, toast }) {
       <SectionTitle title="Other roles they could fit" sub="Roles the full AI review rated a fit on location, experience, skills and requirements. A company card appears once you route them and they accept." size="text-xl" />
       {titles}
       {!rows.length && <div className="text-sm mt-3" style={{ color: C.ink2 }}>No reviewed fits on open roles yet.</div>}
-      {rows.map(({ m, job }) => {
+      {(showAllMatches ? rows : rows.slice(0, MATCHES_COLLAPSED_COUNT)).map(({ m, job }) => {
         const link = candidate.jobLinks.find((l) => l.jobId === job.id) || null;
         return (
           <div key={job.id} className="flex items-center justify-between py-2.5 gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -2387,6 +2466,11 @@ function MatchesCard({ candidate, S, toast }) {
           </div>
         );
       })}
+      {rows.length > MATCHES_COLLAPSED_COUNT && (
+        <button onClick={() => setShowAllMatches((v) => !v)} className="text-xs underline mt-2" style={{ color: C.ink2 }}>
+          {showAllMatches ? "Show less" : "See all " + rows.length}
+        </button>
+      )}
       {others.length > 0 && (
         <div className="pt-2.5" style={{ borderTop: rows.length ? `1px solid ${C.line}` : "none" }}>
           <select value="" onChange={(e) => { const j = S.jobs.find((x) => x.id === e.target.value); if (j) setReviewJob(j); }} aria-label="Review fit for another open job"
@@ -4104,7 +4188,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   const ensureDraft = async () => {
     if (candId) return candId;
     if (!name.trim()) { toast("Enter the candidate's name"); return null; }
-    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", location: "Lagos, Nigeria", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
+    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
     await S.insertCandidateAwait(c);
     setCandId(c.id);
     return c.id;
@@ -4144,7 +4228,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
 
   const startOver = () => { setJobId(""); setAnswers([]); setName(""); setEmailAddr(""); setPhone(""); setFileName(""); setFile(null); setCandId(null); setFit(null); setDup({ state: "idle" }); };
 
-  const FIT_TONE = { "Perfect fit": "em", "Possible fit": "warn", "Possible reject": "danger", "Not a fit": "danger" };
+  const FIT_TONE = { "Perfect fit": "em", "Good fit": "em", "Possible fit": "warn", "Possible reject": "danger", "Not a fit": "danger" };
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -4513,7 +4597,7 @@ export default function App() {
     cands: data.cands, updateCand,
     deleteCandidate: (id) => { const c = data.cands.find((x) => x.id === id); return call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "candidate", id, c ? c.name : "")); },
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
-      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
+      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
     jobs: data.jobs, updateJob,
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
@@ -4644,7 +4728,7 @@ export default function App() {
     // Opens Billing with the new billing entry form ready for this candidate.
     startBilling: (id) => { setCandId(null); setBillFor(id); setPage("billing"); },
     billFor, clearBillFor: () => setBillFor(null),
-    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, is_draft: !!c.isDraft } }),
+    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
     logAudit,
     setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
       return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => {
