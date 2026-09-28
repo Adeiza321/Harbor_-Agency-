@@ -1,6 +1,6 @@
 # Harbor
 
-A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin), backed by Supabase (Postgres + Auth + Storage + Edge Functions) and Claude (Anthropic) for CV scoring, screening questions, fit verdicts and job-ad rewriting.
+A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin), backed by Supabase (Postgres + Auth + Storage + Edge Functions) and AI (Claude, Gemini and ChatGPT) for CV scoring, screening questions, fit verdicts and job-ad rewriting.
 
 ## Structure
 
@@ -36,7 +36,11 @@ then inline the bundle into the page (escape `</script` as `<\/script`).
 
 Supabase project ref: `acjmsihvvupqiikxckho`. Secrets live only as Supabase Edge Function secrets (Edge Functions → Secrets) — never in this repo.
 
-AI provider: Claude only. Both AI functions (`ai-screen`, `job-redraft`) call the Anthropic API with the `ANTHROPIC_API_KEY` secret (model from `ANTHROPIC_MODEL`, default `claude-sonnet-5`); employer industry lookups use Claude's web search tool. Gemini and OpenAI are not used, so `GEMINI_API_KEY`, `GEMINI_MODEL` and `OPENAI_API_KEY` secrets can be deleted.
+AI providers (secrets: `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`; optional model overrides `ANTHROPIC_MODEL`, `GEMINI_MODEL`, `OPENAI_MODEL`):
+- Screening, scoring, follow-up questions and fit reviews (`ai-screen`): Claude first (default `claude-haiku-4-5-20251001`, the low-cost model; set `ANTHROPIC_MODEL=claude-sonnet-5` for the stronger one), with Gemini as the backup when Claude fails.
+- Employer industry lookup: Gemini (Google Search) and ChatGPT (web search) run side by side and are cross-checked per employer; Claude web search only if both fail.
+- Job redraft and job-brief extraction (`job-redraft`): Gemini, then ChatGPT, then Claude.
+Use a Gemini key on a billed project for live candidate data: Google's free tier may use prompts (resumes) to improve its products.
 
 ## Working across two workspaces
 

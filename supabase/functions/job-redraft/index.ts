@@ -7,8 +7,9 @@ import { prepareResume, type ResumeInput } from "./resume.ts";
 //   2. Reads an uploaded job brief (PDF, Word, text, photo) and pulls the job's fields
 //      out of it, so a recruiter can drop in a brief instead of retyping it — the
 //      "Upload a job brief" file picker. mode: "extract" with a base64 `file`.
-// AI: Claude only (Anthropic API, ANTHROPIC_API_KEY secret; model from ANTHROPIC_MODEL,
-// default claude-sonnet-5).
+// AI, tried in order until one answers: Gemini (GEMINI_API_KEY; model from GEMINI_MODEL),
+// then ChatGPT (OPENAI_API_KEY; model from OPENAI_MODEL), then Claude (ANTHROPIC_API_KEY;
+// model from ANTHROPIC_MODEL, default the low-cost claude-haiku-4-5).
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -50,7 +51,7 @@ const EXTRACT_SYSTEM =
 
 // One call to Claude; when it is busy (429 rate limit, 529 overloaded, 5xx) wait and retry twice.
 async function askClaude(key: string, body: Record<string, unknown>): Promise<string> {
-  const payload = JSON.stringify({ model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5", ...body });
+  const payload = JSON.stringify({ model: Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5-20251001", ...body });
   let r: Response | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     r = await fetch("https://api.anthropic.com/v1/messages", {
@@ -72,17 +73,93 @@ async function askClaude(key: string, body: Record<string, unknown>): Promise<st
   return (data.content || []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("");
 }
 
-async function extractWithClaude(key: string, resume: ResumeInput): Promise<string> {
-  const content: unknown[] = [];
-  if (resume.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: resume.data } });
-  else if (resume.kind === "image" && ["image/jpeg", "image/png", "image/webp"].includes(resume.mime)) content.push({ type: "image", source: { type: "base64", media_type: resume.mime, data: resume.data } });
-  else if (resume.kind === "image") throw new Error("That photo format isn't supported. Try a JPG, PNG or WEBP.");
-  else content.push({ type: "text", text: "Job brief document:\n\"\"\"\n" + resume.text + "\n\"\"\"" });
+const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-  return await askClaude(key, { max_tokens: 4000, system: EXTRACT_SYSTEM, messages: [{ role: "user", content }] });
+// Gemini, with busy-model retries and fallback models.
+async function askGemini(key: string, system: string, parts: unknown[], maxOut: number, temperature: number): Promise<string> {
+  const models = [...new Set([Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])];
+  const payload = JSON.stringify({
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts }],
+    generationConfig: { responseMimeType: "application/json", temperature, maxOutputTokens: maxOut },
+  });
+  let lastErr = "";
+  for (const model of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "x-goog-api-key": key, "content-type": "application/json" },
+        body: payload,
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        const text = (data.candidates?.[0]?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || "").join("");
+        if (text) return text;
+        lastErr = "Gemini returned no answer"; break;
+      }
+      lastErr = "Gemini: " + String(data?.error?.message || r.statusText).slice(0, 200);
+      console.error("gemini", model, r.status, lastErr);
+      if (r.status === 404) break;
+      if (![429, 500, 503].includes(r.status)) throw new Error(lastErr);
+      await sleep(attempt === 0 ? 1500 : 3000);
+    }
+  }
+  throw new Error(lastErr || "Gemini request failed");
 }
 
-async function handleExtract(input: Record<string, unknown>, anthropicKey: string) {
+// ChatGPT (OpenAI Responses API).
+async function askOpenAI(key: string, system: string, content: unknown[], maxOut: number): Promise<string> {
+  const r = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model: Deno.env.get("OPENAI_MODEL") || "gpt-4.1", instructions: system, input: [{ role: "user", content }], max_output_tokens: maxOut }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error("ChatGPT: " + String(data?.error?.message || r.statusText).slice(0, 200));
+  const text = data.output_text || (Array.isArray(data.output) ? data.output
+    .filter((o: any) => o.type === "message")
+    .flatMap((o: any) => (Array.isArray(o.content) ? o.content : []))
+    .filter((c: any) => c.type === "output_text")
+    .map((c: any) => c.text || "").join("") : "");
+  if (!text) throw new Error("ChatGPT returned no answer");
+  return text;
+}
+
+type Keys = { gemini?: string; openai?: string; anthropic?: string };
+
+// Tries Gemini, then ChatGPT, then Claude; returns the first answer.
+async function askChain(keys: Keys, system: string, resume: ResumeInput | null, text: string, maxOut: number, temperature: number): Promise<string> {
+  const errors: string[] = [];
+  if (keys.gemini) {
+    const parts: unknown[] = [];
+    if (resume?.kind === "pdf") parts.push({ inline_data: { mime_type: "application/pdf", data: resume.data } });
+    else if (resume?.kind === "image") parts.push({ inline_data: { mime_type: resume.mime, data: resume.data } });
+    parts.push({ text });
+    try { return await askGemini(keys.gemini, system, parts, Math.max(maxOut * 3, 8000), temperature); } catch (e) { errors.push(String((e as Error)?.message || e)); }
+  }
+  if (keys.openai && !(resume?.kind === "image" && !["image/jpeg", "image/png", "image/webp"].includes(resume.mime))) {
+    const content: unknown[] = [];
+    if (resume?.kind === "pdf") content.push({ type: "input_file", filename: "brief.pdf", file_data: `data:application/pdf;base64,${resume.data}` });
+    else if (resume?.kind === "image") content.push({ type: "input_image", image_url: `data:${resume.mime};base64,${resume.data}` });
+    content.push({ type: "input_text", text });
+    try { return await askOpenAI(keys.openai, system, content, maxOut); } catch (e) { errors.push(String((e as Error)?.message || e)); console.error("openai", errors[errors.length - 1]); }
+  }
+  if (keys.anthropic) {
+    try { return await extractOrDraftWithClaude(keys.anthropic, system, resume, text, maxOut); } catch (e) { errors.push("Claude: " + String((e as Error)?.message || e)); }
+  }
+  throw new Error(errors.length ? "AI request failed. " + errors.join(" | ") : "AI is not set up yet.");
+}
+
+async function extractOrDraftWithClaude(key: string, system: string, resume: ResumeInput | null, text: string, maxOut: number): Promise<string> {
+  const content: unknown[] = [];
+  if (resume?.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: resume.data } });
+  else if (resume?.kind === "image" && ["image/jpeg", "image/png", "image/webp"].includes(resume.mime)) content.push({ type: "image", source: { type: "base64", media_type: resume.mime, data: resume.data } });
+  else if (resume?.kind === "image") throw new Error("That photo format isn't supported. Try a JPG, PNG or WEBP.");
+  content.push({ type: "text", text });
+  return await askClaude(key, { max_tokens: maxOut, system, messages: [{ role: "user", content }] });
+}
+
+async function handleExtract(input: Record<string, unknown>, keys: Keys) {
   const file = input.file as { name?: string; data?: string } | undefined;
   if (!file?.data) return json({ error: "No file was received" }, 400);
   const bytes = base64ToBytes(file.data);
@@ -91,7 +168,8 @@ async function handleExtract(input: Record<string, unknown>, anthropicKey: strin
 
   let text = "";
   try {
-    text = await extractWithClaude(anthropicKey, resume);
+    const docText = resume.kind === "text" ? "Job brief document:\n\"\"\"\n" + resume.text + "\n\"\"\"" : "The job brief document is attached.";
+    text = await askChain(keys, EXTRACT_SYSTEM, resume.kind === "text" ? null : resume, docText, 4000, 0.2);
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 502);
   }
@@ -127,13 +205,13 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
 
-  const key = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!key) return json({ error: "AI is not set up yet: add an ANTHROPIC_API_KEY secret to this Supabase project." }, 503);
+  const keys: Keys = { gemini: Deno.env.get("GEMINI_API_KEY"), openai: Deno.env.get("OPENAI_API_KEY"), anthropic: Deno.env.get("ANTHROPIC_API_KEY") };
+  if (!keys.gemini && !keys.openai && !keys.anthropic) return json({ error: "AI is not set up yet: add a GEMINI_API_KEY, OPENAI_API_KEY or ANTHROPIC_API_KEY secret to this Supabase project." }, 503);
 
   let input: Record<string, unknown>;
   try { input = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
 
-  if (input.mode === "extract") return await handleExtract(input, key);
+  if (input.mode === "extract") return await handleExtract(input, keys);
 
   const title = clip(input.title, 200).trim();
   const description = clip(input.description, 12000).trim();
@@ -172,7 +250,7 @@ Reply with ONLY a JSON object, no other text: {"title": string, "description": s
 
   let text = "";
   try {
-    text = await askClaude(key, { max_tokens: 3000, system, messages: [{ role: "user", content: facts }] });
+    text = await askChain(keys, system, null, facts, 3000, 0.4);
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 502);
   }

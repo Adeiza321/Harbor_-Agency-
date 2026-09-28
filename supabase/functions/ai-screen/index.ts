@@ -5,8 +5,10 @@ import { lookupIndustries, industryText } from "./industry.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
-// Provider: Claude only (Anthropic API, ANTHROPIC_API_KEY secret; model from ANTHROPIC_MODEL,
-// default claude-sonnet-5).
+// Provider: Claude first (ANTHROPIC_API_KEY; model from ANTHROPIC_MODEL, default the
+// low-cost claude-haiku-4-5). If Claude fails (busy, out of credit, down), the same request
+// goes to Gemini (GEMINI_API_KEY; model from GEMINI_MODEL) so screening keeps working.
+// The checklist guard (enforceChecklist) applies to whichever model answered.
 //
 // Resumes: PDF, Word (.docx/.doc), OpenDocument, RTF, text and images are all read
 // (see resume.ts). Screening material: every judgement uses BOTH the resume and their
@@ -21,7 +23,8 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5";
+const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5-20251001";
+const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
 
 function parseJson(text: string) {
   const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
@@ -36,6 +39,50 @@ const withResumeText = (text: string, resume: ResumeInput | null) =>
   resume?.kind === "text" ? `Candidate's resume (text extracted from their file):\n"""\n${resume.text}\n"""\n\n${text}` : text;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Models to try in order. When one is overloaded (503) or rate-limited (429), Harbor
+// waits briefly, retries, then moves to the next model instead of failing.
+const GEMINI_FALLBACKS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"];
+
+async function askGemini(key: string, system: string, text: string, resume: ResumeInput | null, maxTokens: number) {
+  const models = [...new Set([Deno.env.get("GEMINI_MODEL") || GEMINI_DEFAULT_MODEL, ...GEMINI_FALLBACKS])];
+  const parts: unknown[] = [];
+  if (resume?.kind === "pdf") parts.push({ inline_data: { mime_type: "application/pdf", data: resume.data } });
+  if (resume?.kind === "image") parts.push({ inline_data: { mime_type: resume.mime, data: resume.data } });
+  parts.push({ text: withResumeText(text, resume) });
+  const payload = JSON.stringify({
+    system_instruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts }],
+    // Gemini counts its internal reasoning against this limit, so leave generous room.
+    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: Math.max(maxTokens * 4, 4096) },
+  });
+  let lastErr = "";
+  for (const model of models) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body: payload,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const cand = data.candidates?.[0];
+        const out = (cand?.content?.parts || []).filter((p: any) => !p.thought).map((p: any) => p.text || "").join("");
+        if (out) return parseJson(out);
+        lastErr = "AI returned no answer (" + (cand?.finishReason || data.promptFeedback?.blockReason || "unknown reason") + ")";
+        break; // try the next model
+      }
+      lastErr = "AI request failed (" + res.status + "): " + String(data?.error?.message || res.statusText).slice(0, 300);
+      console.error("gemini", model, res.status, String(data?.error?.message || "").slice(0, 200));
+      if (res.status === 404) break;                                  // model not available: next model
+      if (![429, 500, 503].includes(res.status)) throw new Error(lastErr); // bad key, bad request: stop
+      await sleep(attempt === 0 ? 1500 : 3000);                        // busy: wait, retry, then next model
+    }
+  }
+  throw new Error(lastErr.includes("(503)") || lastErr.includes("(429)")
+    ? "Google's AI is very busy right now. Please try again in a minute."
+    : lastErr || "AI request failed. Try again.");
+}
 
 async function askAnthropic(key: string, system: string, text: string, resume: ResumeInput | null, maxTokens: number) {
   const content: unknown[] = [];
@@ -70,8 +117,16 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
 
 async function askAI(system: string, text: string, resume: ResumeInput | null = null, maxTokens = 800) {
   const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
-  if (anthropic) return askAnthropic(anthropic, system, text, resume, maxTokens);
-  throw new Error("AI is not configured yet: add an ANTHROPIC_API_KEY secret to this Supabase project.");
+  const gemini = Deno.env.get("GEMINI_API_KEY");
+  if (!anthropic && !gemini) throw new Error("AI is not configured yet: add an ANTHROPIC_API_KEY secret to this Supabase project.");
+  if (anthropic) {
+    try { return await askAnthropic(anthropic, system, text, resume, maxTokens); }
+    catch (e) {
+      if (!gemini) throw e;
+      console.error("claude failed, using gemini", String((e as Error)?.message || e).slice(0, 200));
+    }
+  }
+  return askGemini(gemini!, system, text, resume, maxTokens);
 }
 
 // The resume on file, ready for the AI (any supported format), or a reason it can't be read.
