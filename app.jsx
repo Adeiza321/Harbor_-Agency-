@@ -40,8 +40,21 @@ const CHANNEL_NAME = { LI: "LinkedIn", FB: "Facebook", GA: "Google Ads", GJ: "Go
 const SB_URL = "https://acjmsihvvupqiikxckho.supabase.co";
 const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjam1zaWh2dnVwcWlpa3hja2hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNzM2MzQsImV4cCI6MjEwNTg0OTYzNH0.SRrACW8uKRzYTmD2JdRQ7oLaF8_Xq7aCHHjWPIhru9w";
 const uid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : "id" + Date.now() + Math.random().toString(16).slice(2));
-async function sbFetch(path, { method = "GET", body, token, prefer } = {}) {
-  const r = await fetch(SB_URL + path, { method, headers: { apikey: SB_KEY, Authorization: "Bearer " + (token || SB_KEY), "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+// Requests that stall (a dropped connection) are cut off instead of hanging forever;
+// reads are retried once automatically before giving up with a clear message.
+const SLOW_MSG = "The server didn't answer in time. Check your internet connection and try again.";
+async function sbFetch(path, { method = "GET", body, token, prefer, timeout = 20000 } = {}, attempt = 0) {
+  const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), timeout) : null;
+  let r;
+  try {
+    r = await fetch(SB_URL + path, { method, signal: ctl ? ctl.signal : undefined, headers: { apikey: SB_KEY, Authorization: "Bearer " + (token || SB_KEY), "Content-Type": "application/json", ...(prefer ? { Prefer: prefer } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch (e) {
+    if (timer) clearTimeout(timer);
+    if (method === "GET" && attempt === 0) return sbFetch(path, { method, body, token, prefer, timeout }, 1);
+    throw new Error(e && e.name === "AbortError" ? SLOW_MSG : "Couldn't reach the server. Check your internet connection and try again.");
+  }
+  if (timer) clearTimeout(timer);
   const t = await r.text(); let j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { j = { message: t }; }
   if (!r.ok) throw new Error((j && (j.message || j.msg || j.error_description || j.error)) || r.statusText);
   return j;
@@ -675,7 +688,9 @@ function GlobalStyles() {
   );
 }
 
-function Loader({ label = "Loading…" }) {
+function Loader({ label = "Loading…", onRetry }) {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => { const t = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(t); }, []);
   return (
     <div className="min-h-screen flex flex-col items-center justify-center gap-5" style={{ background: C.canvas }}>
       <GlobalStyles />
@@ -687,6 +702,8 @@ function Loader({ label = "Loading…" }) {
       <div className="flex flex-col items-center gap-1.5">
         <div style={{ ...SERIF, fontSize: 18, color: C.ink, animation: "harborPulse 1.8s ease-in-out infinite" }}>Harbor</div>
         <div className="text-xs" style={{ color: C.ink3 }}>{label}</div>
+        {slow && <div className="text-xs mt-2 text-center" style={{ color: C.ink2 }}>This is taking longer than usual. Your connection may be slow.</div>}
+        {slow && onRetry && <button type="button" onClick={onRetry} className="text-xs font-medium mt-1" style={{ color: C.em }}>Try again</button>}
       </div>
     </div>
   );
@@ -4211,12 +4228,13 @@ export default function App() {
     return <CandidatePortal data={portalData} token={portalToken} onChanged={loadPortal} onBack={() => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); }} />;
   }
 
-  if (status === "loading") return <Loader label="Loading your workspace…" />;
+  const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
+  if (status === "loading") return <Loader key={"load" + errMsg} label="Loading your workspace…" onRetry={() => window.location.reload()} />;
   if (status === "signedout") return <SignIn onSignedIn={(s) => { setSession(s); setStatus("loading"); boot(s); }} />;
   if (status === "pending") return <AwaitingAccess onSignOut={signOut} />;
   if (status === "error") return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
-      <div className="max-w-sm"><div className="text-sm mb-4" style={{ color: C.dangerFg }}>Could not load Harbor: {errMsg}</div><Btn onClick={signOut}>Sign out and try again</Btn></div>
+      <div className="max-w-sm"><div className="text-sm mb-4" style={{ color: C.dangerFg }}>Could not load Harbor: {errMsg}</div><div className="flex gap-2 justify-center flex-wrap"><Btn kind="primary" onClick={retry}>Try again</Btn><Btn onClick={signOut}>Sign out</Btn></div></div>
     </div>
   );
 
