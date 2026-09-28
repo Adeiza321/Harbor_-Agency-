@@ -401,7 +401,7 @@ function SubmissionsCard({ S, recruiterId, title = "Submissions and placements" 
         <div><div className="text-2xl font-semibold">{pNow}</div><div className="text-xs" style={{ color: C.ink2 }}>placements · <Delta now={pNow} prev={pPrev} label={RANGE_PREV[range]} /></div></div>
       </div>
       <div className="flex-1 flex flex-col justify-end">
-        <BarChart labels={buckets.map((b) => b.label)} longLabels={buckets.map((b) => b.long)} ariaLabel={"Submissions and placements by " + unit}
+        <BarChart labels={buckets.map((b) => b.label)} longLabels={buckets.map((b) => b.long)} valueLabels={buckets.length <= 31} ariaLabel={"Submissions and placements by " + unit}
           series={[{ name: "Submissions", color: SERIES_COLORS.submitted, data: countIn(subs, buckets) }, { name: "Placements", color: SERIES_COLORS.placed, data: countIn(plc, buckets) }]} />
       </div>
       <div className="mt-2"><Legend items={[["Submissions", SERIES_COLORS.submitted], ["Placements", SERIES_COLORS.placed]]} /></div>
@@ -472,11 +472,11 @@ function RecruiterPerformanceChart({ S }) {
   const people = (S.users || []).filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops" || owners.has(u.id)));
   const rows = people.map((u) => {
     const mine = allSubs.filter((x) => x.cand.recruiterId === u.id && x.at >= from && x.at < to);
-    return { name: u.name, submitted: mine.length, passed: mine.filter((x) => ["Offer", "Placed"].includes(x.stage)).length, failed: mine.filter((x) => ["Rejected", "Withdrawn"].includes(x.stage)).length, placed: mine.filter((x) => x.stage === "Placed").length };
-  }).sort((a, b) => b.placed - a.placed || b.submitted - a.submitted);
+    return { name: u.name, submitted: mine.length, passed: mine.filter((x) => x.stage === "Placed").length, failed: mine.filter((x) => ["Rejected", "Withdrawn"].includes(x.stage)).length };
+  }).sort((a, b) => b.passed - a.passed || b.submitted - a.submitted);
   const label = mode === "month" ? months.find((m) => m.v === month)?.l : year;
   const sel = { borderColor: C.line, background: "#FAF8F3" };
-  const series = [["Submitted", "submitted"], ["Passed", "passed"], ["Failed", "failed"], ["Placed", "placed"]].map(([name, k]) => ({ name, color: SERIES_COLORS[k], data: rows.map((r) => r[k]) }));
+  const series = [["Submitted", "submitted"], ["Failed", "failed"], ["Passed (placed)", "placed"]].map(([name, k]) => ({ name, color: SERIES_COLORS[k], data: rows.map((r) => r[k === "placed" ? "passed" : k]) }));
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -494,7 +494,7 @@ function RecruiterPerformanceChart({ S }) {
       {rows.length ? (
         <BarChart labels={rows.map((r) => r.name.split(" ")[0])} longLabels={rows.map((r) => r.name)} series={series} valueLabels height={240} ariaLabel={"Recruiter performance, " + label} />
       ) : <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>No recruiters yet.</div>}
-      <div className="text-xs mt-2" style={{ color: C.ink3 }}>Passed = reached Offer or Placed. Failed = rejected or withdrawn after submission.</div>
+      <div className="text-xs mt-2" style={{ color: C.ink3 }}>Passed = placed. Failed = rejected or withdrawn after submission.</div>
     </div>
   );
 }

@@ -775,3 +775,26 @@ create trigger candidate_jobs_submitted_at before insert or update of stage on p
 -- Number of openings for this role; defaults to 1 so existing jobs behave as before.
 -- =====================================================================
 alter table public.jobs add column if not exists headcount integer not null default 1;
+
+-- =====================================================================
+-- When a SUBMITTED candidate reaches an outcome with the client: Placed (passed) or
+-- Rejected/Withdrawn (failed). (Migration candidate_jobs_outcome_at, 28 Sep 2026.)
+-- =====================================================================
+alter table public.candidate_jobs add column if not exists outcome_at timestamptz;
+
+create or replace function public.stamp_outcome_at() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.submitted_at is not null and new.stage in ('Placed', 'Rejected', 'Withdrawn')
+     and (tg_op = 'INSERT' or new.stage is distinct from old.stage) then
+    new.outcome_at := now();
+  elsif new.stage not in ('Placed', 'Rejected', 'Withdrawn') then
+    new.outcome_at := null;
+  end if;
+  return new;
+end $$;
+
+-- Runs after candidate_jobs_submitted_at (triggers fire in name order), so submitted_at is set first.
+drop trigger if exists candidate_jobs_that_outcome_at on public.candidate_jobs;
+create trigger candidate_jobs_that_outcome_at before insert or update of stage on public.candidate_jobs
+  for each row execute function public.stamp_outcome_at();
