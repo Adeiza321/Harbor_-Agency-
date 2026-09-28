@@ -880,3 +880,82 @@ language sql stable security definer set search_path = public as $$
                           where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'answered'), '[]'::jsonb))
   from candidates c where c.portal_token = p_token
 $$;
+
+-- =====================================================================
+-- (Migration candidate_email_check, 28 Sep 2026)
+-- Candidate email check (no double registration, so no ownership disputes).
+-- One email = one candidate. "+tags" are ignored (jane+x@gmail.com = jane@gmail.com).
+create or replace function public.norm_email(e text) returns text
+language sql immutable set search_path = public as $$
+  select nullif(regexp_replace(lower(trim(coalesce(e, ''))), '\+[^@]*@', '@'), '')
+$$;
+
+-- Who already has this email (and people with the same name), for the Add candidate form.
+-- Recruiters can't see each other's candidates, so this runs with elevated rights and returns
+-- only what's needed to avoid a dispute: the candidate's name, the owning recruiter and the date.
+create or replace function public.check_candidate_email(p_email text, p_name text default '') returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  em text := public.norm_email(p_email);
+  nm text := lower(regexp_replace(trim(coalesce(p_name, '')), '\s+', ' ', 'g'));
+  r record;
+  res jsonb := '{}'::jsonb;
+  sim jsonb;
+begin
+  if me is null or not exists (select 1 from profiles where id = me and status = 'Active') then
+    raise exception 'Not signed in' using errcode = '42501';
+  end if;
+  if em is not null then
+    select c.id, c.name, c.recruiter_id, c.created_at, c.status, p.full_name into r
+      from candidates c left join profiles p on p.id = c.recruiter_id
+     where not c.is_draft and public.norm_email(c.email) = em
+     order by c.created_at limit 1;
+    if found then
+      res := jsonb_build_object('match', jsonb_build_object(
+        'name', r.name, 'recruiter', coalesce(nullif(r.full_name, ''), 'another recruiter'), 'since', r.created_at, 'status', r.status,
+        'mine', r.recruiter_id = me, 'candidateId', case when r.recruiter_id = me or public.is_staff() then r.id end));
+    end if;
+  end if;
+  if length(nm) >= 3 then
+    select coalesce(jsonb_agg(jsonb_build_object(
+             'name', x.name, 'recruiter', coalesce(nullif(x.full_name, ''), 'another recruiter'), 'since', x.created_at,
+             'mine', x.recruiter_id = me, 'candidateId', case when x.recruiter_id = me or public.is_staff() then x.id end)), '[]'::jsonb)
+      into sim
+      from (select c.id, c.name, c.recruiter_id, c.created_at, p.full_name
+              from candidates c left join profiles p on p.id = c.recruiter_id
+             where not c.is_draft and lower(regexp_replace(trim(c.name), '\s+', ' ', 'g')) = nm
+               and (em is null or coalesce(public.norm_email(c.email), '') <> em)
+             order by c.created_at limit 5) x;
+    res := res || jsonb_build_object('similar', sim);
+  end if;
+  return res;
+end $$;
+revoke execute on function public.check_candidate_email(text, text) from public, anon;
+grant execute on function public.check_candidate_email(text, text) to authenticated;
+
+-- Backstop for every way a candidate is created (Add candidate, Inbox, imports): a second
+-- candidate with an email that's already registered is refused with a clear message.
+create or replace function public.guard_candidate_email() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare em text := public.norm_email(new.email); r record;
+begin
+  if em is null then return new; end if;
+  if tg_op = 'UPDATE' and public.norm_email(old.email) is not distinct from em and old.is_draft = new.is_draft then return new; end if;
+  select c.created_at, p.full_name into r
+    from candidates c left join profiles p on p.id = c.recruiter_id
+   where c.id <> new.id and not c.is_draft and public.norm_email(c.email) = em
+   order by c.created_at limit 1;
+  if found then
+    raise exception 'This email is already registered in Harbor to % (since %). A candidate can only be registered once.',
+      coalesce(nullif(r.full_name, ''), 'another recruiter'), to_char(r.created_at, 'DD Mon YYYY') using errcode = '23505';
+  end if;
+  return new;
+end $$;
+revoke execute on function public.guard_candidate_email() from public, anon, authenticated;
+drop trigger if exists candidates_guard_email on public.candidates;
+create trigger candidates_guard_email before insert or update of email, is_draft on public.candidates
+  for each row execute function public.guard_candidate_email();
+create unique index if not exists candidates_email_unique on public.candidates (public.norm_email(email))
+  where not is_draft and public.norm_email(email) is not null;
+
