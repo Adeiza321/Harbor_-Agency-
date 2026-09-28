@@ -2,9 +2,13 @@
 // the company does. The AI only fills an industry when it is sure it found the right company;
 // otherwise the employer is marked "unsure" and no industry is guessed.
 //
-// Web lookup: Gemini with Google Search grounding when GEMINI_API_KEY is set, otherwise
-// Claude with the web search tool. If the lookup itself fails, every employer is kept as
-// "unsure" so nothing unverified is presented as fact.
+// Web lookup, tried in order (first configured secret that succeeds wins): Gemini with Google
+// Search grounding (GEMINI_API_KEY), then ChatGPT/OpenAI with its web search tool
+// (OPENAI_API_KEY), then Claude with the web search tool (ANTHROPIC_API_KEY). OpenAI is tried
+// ahead of Claude so agencies can point this at ChatGPT while a Claude subscription is paused —
+// set OPENAI_API_KEY and it's used automatically; Claude stays as a fallback if it's also
+// configured. If the lookup itself fails, every employer is kept as "unsure" so nothing
+// unverified is presented as fact.
 
 import type { ResumeInput } from "./resume.ts";
 
@@ -55,6 +59,35 @@ async function geminiWeb(key: string, model: string, resume: ResumeInput | null)
   return { json: parseJson(text), sources };
 }
 
+async function openaiWeb(key: string, model: string, resume: ResumeInput | null): Promise<{ json: any; sources: string[] }> {
+  const content: unknown[] = [{ type: "input_text", text: withText(resume) }];
+  if (resume?.kind === "pdf") content.push({ type: "input_file", filename: "resume.pdf", file_data: `data:application/pdf;base64,${resume.data}` });
+  if (resume?.kind === "image") content.push({ type: "input_image", image_url: `data:${resume.mime};base64,${resume.data}` });
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model,
+      input: [{ role: "user", content }],
+      tools: [{ type: "web_search_preview" }],
+      temperature: 0.1,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error("Web lookup failed (" + res.status + "): " + String(data?.error?.message || "").slice(0, 200));
+  const text = data.output_text || (Array.isArray(data.output) ? data.output
+    .filter((o: any) => o.type === "message")
+    .flatMap((o: any) => (Array.isArray(o.content) ? o.content : []))
+    .filter((c: any) => c.type === "output_text")
+    .map((c: any) => c.text || "").join("") : "");
+  const sources = Array.isArray(data.output) ? data.output
+    .filter((o: any) => o.type === "message")
+    .flatMap((o: any) => (Array.isArray(o.content) ? o.content : []))
+    .flatMap((c: any) => (Array.isArray(c.annotations) ? c.annotations : []))
+    .map((a: any) => a?.url).filter(Boolean) : [];
+  return { json: parseJson(text), sources };
+}
+
 async function claudeWeb(key: string, resume: ResumeInput | null): Promise<{ json: any; sources: string[] }> {
   const content: unknown[] = [];
   if (resume?.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: resume.data } });
@@ -95,10 +128,13 @@ const clean = (x: any, sources: string[]): IndustryItem => {
 export async function lookupIndustries(resume: ResumeInput | null): Promise<{ items: IndustryItem[]; error?: string }> {
   if (!resume) return { items: [], error: "No readable resume on file" };
   const gemini = Deno.env.get("GEMINI_API_KEY");
+  const openai = Deno.env.get("OPENAI_API_KEY");
   const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
   let lastErr = "";
   const tries: (() => Promise<{ json: any; sources: string[] }>)[] = [];
   if (gemini) for (const m of [...new Set([Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])]) tries.push(() => geminiWeb(gemini, m, resume));
+  // OpenAI is tried ahead of Claude so setting OPENAI_API_KEY hands this lookup to ChatGPT.
+  if (openai) tries.push(() => openaiWeb(openai, Deno.env.get("OPENAI_MODEL") || "gpt-4.1", resume));
   if (anthropic) tries.push(() => claudeWeb(anthropic, resume));
   for (const t of tries) {
     try {

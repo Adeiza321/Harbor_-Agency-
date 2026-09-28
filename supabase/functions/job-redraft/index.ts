@@ -31,7 +31,7 @@ const EXTRACT_SHAPE =
   `{"title": string, "client": string, "location": string, "workSetup": "Onsite" | "Hybrid" | "Remote" | "", ` +
   `"employmentType": "Full-time" | "Part-time" | "Contract" | "", ` +
   `"country": string, "currency": string, "salaryPeriod": "Yearly" | "Monthly" | "Weekly" | "Daily" | "Hourly" | "", "commissionOnly": boolean, ` +
-  `"minPay": number | null, "maxPay": number | null, ` +
+  `"minPay": number | null, "maxPay": number | null, "headcount": number | null, ` +
   `"description": string, "screeningQuestions": string[]}`;
 
 const EXTRACT_SYSTEM =
@@ -45,6 +45,7 @@ const EXTRACT_SYSTEM =
   "'commissionOnly' is true only if the document says the role is commission-only with no base salary; then leave minPay/maxPay null and salaryPeriod ''. " +
   "Otherwise 'salaryPeriod' is how the pay figures are quoted (Yearly, Monthly, Weekly, Daily or Hourly) if stated or clearly implied, otherwise 'Yearly'. " +
   "'description' is the role description rewritten as clean plain text (no markdown symbols), keeping every responsibility, requirement and detail the document gives — do not summarize away specifics. " +
+  "'headcount' is the number of openings for this exact role ONLY if the document states it (e.g. 'hiring 3', '2 openings'), otherwise null — never assume 1. " +
   "'screeningQuestions' is a short list of screening questions ONLY if the document explicitly lists questions to ask candidates, otherwise an empty array.";
 
 async function extractWithGemini(key: string, resume: ResumeInput): Promise<string> {
@@ -131,6 +132,7 @@ async function handleExtract(input: Record<string, unknown>, geminiKey?: string,
       commissionOnly,
       minPay: commissionOnly ? null : (Number.isFinite(out.minPay) ? out.minPay : null),
       maxPay: commissionOnly ? null : (Number.isFinite(out.maxPay) ? out.maxPay : null),
+      headcount: Number.isFinite(out.headcount) && out.headcount > 0 ? Math.round(out.headcount) : null,
       description: clip(out.description, 15000),
       screeningQuestions: Array.isArray(out.screeningQuestions) ? out.screeningQuestions.slice(0, 12).map((q: unknown) => clip(q, 300)).filter(Boolean) : [],
     });
@@ -156,12 +158,18 @@ Deno.serve(async (req) => {
   const description = clip(input.description, 12000).trim();
   if (!title || description.length < 40) return json({ error: "Add a job title and a job description (at least a few sentences) first." }, 400);
 
+  const commissionOnly = input.commissionOnly === true;
+  const salaryPeriod = clip(input.salaryPeriod, 20) || "Yearly";
+  const periodLabel: Record<string, string> = { Yearly: "per year", Monthly: "per month", Weekly: "per week", Daily: "per day", Hourly: "per hour" };
   const facts = [
     `Job title: ${title}`,
     `Client (never name them in the ad): ${clip(input.client, 200)}`,
     `Work location / arrangement: ${clip(input.location, 200) || "not given"}`,
+    `Work setup: ${clip(input.workSetup, 30) || "not given"}`,
+    `Employment type: ${clip(input.employmentType, 30) || "not given"}`,
     `Country we are hiring in: ${clip(input.country, 100) || "not given"}`,
-    `Salary: ${input.minPay || input.maxPay ? `${input.minPay || "?"} to ${input.maxPay || "?"} ${clip(input.currency, 3)} per year` : "not given"}`,
+    `Number of openings for this role: ${Number.isFinite(input.headcount) && (input.headcount as number) > 1 ? input.headcount : "not given / a single opening"}`,
+    `Salary: ${commissionOnly ? "commission-only, no base salary" : (input.minPay || input.maxPay ? `${input.minPay || "?"} to ${input.maxPay || "?"} ${clip(input.currency, 3)} ${periodLabel[salaryPeriod] || "per year"}` : "not given")}`,
     "",
     "Original job description:",
     description,
@@ -172,6 +180,8 @@ Deno.serve(async (req) => {
 Rules:
 - Use ONLY facts in the input. Never invent benefits, perks, company details, numbers, tools or requirements. Keep every requirement, pay figure and condition (e.g. visa sponsorship, relocation) that is given.
 - Never name the client company. Refer to it generically from what the input says (e.g. "our client, a leading fintech").
+- Work naturally into the copy (for search relevance, not as a checklist): the work setup (onsite/hybrid/remote) and employment type (full-time/part-time/contract) if given, and — only if there is more than one opening — that there are multiple openings for this role (e.g. "we're hiring 3 X's"). Never invent a headcount if it isn't given.
+- If the salary is commission-only, say so plainly rather than implying a base salary. Otherwise quote pay using the period given (yearly/monthly/weekly/daily/hourly), never assume "per year" if another period was given.
 - Title: the clearest standard job title candidates actually search for, optionally with one short qualifier (e.g. "(Remote)"). No emojis, no ALL CAPS, max 70 characters.
 - Description: plain text (no markdown symbols like # or **). Short opening paragraph that states the role, seniority, location/remote status and country naturally. Then sections with these plain headings on their own line: About the role, What you'll do, What you'll bring, Nice to have (only if given), Pay and details. Use "• " bullets. Put the most searched skills and terms naturally in the text; do not keyword-stuff.
 - Meta description: max 155 characters, for search results.

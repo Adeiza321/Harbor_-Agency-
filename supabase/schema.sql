@@ -750,3 +750,28 @@ alter table public.jobs
   add column if not exists billing_months integer,
   add column if not exists incentive_frequency text,
   add column if not exists incentive_months integer;
+
+-- When a candidate was first submitted to the client (migration candidate_jobs_submitted_at,
+-- 28 Sep 2026). Stamped automatically the first time a card's stage reaches Submitted or
+-- later, and kept if they're later rejected, so the dashboard can count submissions per
+-- day/month/year and what happened to them (passed = Offer/Placed, failed = Rejected/Withdrawn).
+-- =====================================================================
+alter table public.candidate_jobs add column if not exists submitted_at timestamptz;
+
+create or replace function public.stamp_submitted_at() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.submitted_at is null and new.stage in ('Submitted', 'Interview', 'Offer', 'Placed') then
+    new.submitted_at := now();
+  end if;
+  return new;
+end $$;
+drop trigger if exists candidate_jobs_submitted_at on public.candidate_jobs;
+create trigger candidate_jobs_submitted_at before insert or update of stage on public.candidate_jobs
+  for each row execute function public.stamp_submitted_at();
+
+-- =====================================================================
+-- Head count per job (migration job_headcount, 28 Sep 2026).
+-- Number of openings for this role; defaults to 1 so existing jobs behave as before.
+-- =====================================================================
+alter table public.jobs add column if not exists headcount integer not null default 1;

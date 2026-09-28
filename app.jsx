@@ -146,7 +146,7 @@ function mapAll(d) {
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0 })),
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
@@ -155,7 +155,7 @@ function mapAll(d) {
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
     const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
     return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", workSetup: j.work_setup || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(), screeningQuestions: j.screening_questions || [],
-      salaryPeriod: j.salary_period || "Yearly", commissionOnly: !!j.commission_only, employmentType: j.employment_type || "",
+      salaryPeriod: j.salary_period || "Yearly", commissionOnly: !!j.commission_only, employmentType: j.employment_type || "", headcount: j.headcount != null ? j.headcount : 1,
       billingFrequency: j.billing_frequency || "One-off", billingMonths: j.billing_months,
       incentiveFrequency: j.incentive_frequency || "One-off", incentiveMonths: j.incentive_months,
       billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
@@ -224,6 +224,8 @@ function namedRange(key, customFrom, customTo) {
   else if (key === "lastWeek") { const sw = startOfWeek(now); from = new Date(sw); from.setDate(from.getDate() - 7); to = sw; }
   else if (key === "thisMonth") { from = new Date(now.getFullYear(), now.getMonth(), 1); to = now; }
   else if (key === "lastMonth") { from = new Date(now.getFullYear(), now.getMonth() - 1, 1); to = new Date(now.getFullYear(), now.getMonth(), 1); }
+  else if (key === "thisYear") { from = new Date(now.getFullYear(), 0, 1); to = now; }
+  else if (key === "lastYear") { from = new Date(now.getFullYear() - 1, 0, 1); to = new Date(now.getFullYear(), 0, 1); }
   else if (key === "custom") { from = customFrom ? startOfDay(new Date(customFrom)) : startOfWeek(now); const ct = customTo ? new Date(customTo) : now; ct.setHours(23, 59, 59, 999); to = ct; }
   else { from = startOfWeek(now); to = now; }
   return { from: from.getTime(), to: Math.max(to.getTime(), from.getTime() + 1) };
@@ -246,7 +248,256 @@ function bucketSeries(cands, from, to, placements) {
   };
   return { buckets: bucketOf(cands), placedBuckets: placements ? bucketOf(placements) : null, granularity };
 }
-const RANGE_LABEL = { today: "Today", yesterday: "Yesterday", thisWeek: "This week", lastWeek: "Last week", thisMonth: "This month", lastMonth: "Last month", custom: "Custom range" };
+const RANGE_LABEL = { today: "Today", yesterday: "Yesterday", thisWeek: "This week", lastWeek: "Last week", thisMonth: "This month", lastMonth: "Last month", thisYear: "This year", lastYear: "Last year", custom: "Custom range" };
+const RANGE_PREV = { today: "this time yesterday", yesterday: "the day before", thisWeek: "this time last week", lastWeek: "the week before", thisMonth: "this time last month", lastMonth: "the month before", thisYear: "this time last year", lastYear: "the year before", custom: "the period before" };
+// The period to compare against: the same stretch of the previous day/week/month/year
+// (e.g. Monday-to-now vs last Monday-to-same-time), or the previous full period.
+function prevRange(key, from, to) {
+  const shift = (t, k) => { const d = new Date(t); if (k === "day") d.setDate(d.getDate() - 1); if (k === "week") d.setDate(d.getDate() - 7); if (k === "month") d.setMonth(d.getMonth() - 1); if (k === "year") d.setFullYear(d.getFullYear() - 1); return d.getTime(); };
+  const unit = { today: "day", yesterday: "day", thisWeek: "week", lastWeek: "week", thisMonth: "month", lastMonth: "month", thisYear: "year", lastYear: "year" }[key];
+  if (!unit) return { from: from - (to - from), to: from };
+  return { from: shift(from, unit), to: key.startsWith("this") || key === "today" ? shift(to, unit) : from };
+}
+
+/* ---- Dashboard helpers ---- */
+// Re-renders every 30s so the greeting and clock follow the user's own time.
+function useClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t); }, []);
+  return now;
+}
+const greetingFor = (d) => { const h = d.getHours(); return h >= 5 && h < 12 ? "Good morning" : h >= 12 && h < 17 ? "Good afternoon" : "Good evening"; };
+// "Good afternoon, Sanni" / "Monday 28 September 2026 · 14:05 (Lagos time)", from the device's clock and time zone.
+function GreetingHeader({ S, kicker, sub }) {
+  const now = useClock();
+  let place = "";
+  try { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; place = tz.includes("/") ? tz.split("/").pop().replace(/_/g, " ") : ""; } catch (e) { place = ""; }
+  const date = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return (
+    <div>
+      <div className="text-xs font-semibold tracking-widest mb-1" style={{ color: C.ink3 }}>{kicker}</div>
+      <div className="text-3xl md:text-5xl mb-1" style={{ ...SERIF, color: C.ink }}>{greetingFor(now)}, {S.me.first}</div>
+      <div className="text-sm" style={{ color: C.ink2 }}>{date} · {time}{place ? " (" + place + " time)" : ""}</div>
+      {sub && <div className="text-sm mt-0.5" style={{ color: C.ink3 }}>{sub}</div>}
+    </div>
+  );
+}
+// Calendar-aligned buckets for [from, to]: hours for a day, days up to a month, weeks up to
+// ~4 months, months beyond that. Each bucket carries a readable label for the x-axis.
+function timeBuckets(from, to) {
+  const span = (to - from) / 864e5;
+  const out = [];
+  const d = new Date(from);
+  if (span <= 1.5) {
+    d.setMinutes(0, 0, 0);
+    while (d.getTime() < to) { const s = d.getTime(); d.setHours(d.getHours() + 1); out.push({ from: s, to: d.getTime(), label: new Date(s).toLocaleTimeString([], { hour: "numeric" }), long: new Date(s).toLocaleString("en-GB", { weekday: "short", hour: "numeric", minute: "2-digit" }) }); }
+    return { buckets: out, unit: "hour" };
+  }
+  if (span <= 35) {
+    d.setHours(0, 0, 0, 0);
+    while (d.getTime() < to) { const s = d.getTime(); d.setDate(d.getDate() + 1); out.push({ from: s, to: d.getTime(), label: new Date(s).toLocaleDateString("en-GB", span <= 8 ? { weekday: "short", day: "numeric" } : { day: "numeric", month: "short" }), long: new Date(s).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }) }); }
+    return { buckets: out, unit: "day" };
+  }
+  if (span <= 120) {
+    d.setHours(0, 0, 0, 0); const wd = d.getDay(); d.setDate(d.getDate() + (wd === 0 ? -6 : 1 - wd));
+    while (d.getTime() < to) { const s = d.getTime(); d.setDate(d.getDate() + 7); out.push({ from: s, to: d.getTime(), label: new Date(s).toLocaleDateString("en-GB", { day: "numeric", month: "short" }), long: "Week of " + new Date(s).toLocaleDateString("en-GB", { day: "numeric", month: "long" }) }); }
+    return { buckets: out, unit: "week" };
+  }
+  d.setDate(1); d.setHours(0, 0, 0, 0);
+  while (d.getTime() < to) { const s = d.getTime(); d.setMonth(d.getMonth() + 1); out.push({ from: s, to: d.getTime(), label: new Date(s).toLocaleDateString("en-GB", { month: "short" }), long: new Date(s).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) }); }
+  return { buckets: out, unit: "month" };
+}
+const countIn = (times, buckets) => buckets.map((b) => times.filter((t) => t >= b.from && t < b.to).length);
+// Submissions = a candidate first submitted to the client on a job card (candidate_jobs.submitted_at).
+const submissionsOf = (cands, recruiterId) => cands.filter((c) => !recruiterId || c.recruiterId === recruiterId)
+  .flatMap((c) => (c.jobLinks || []).filter((l) => l.submittedAt).map((l) => ({ at: l.submittedAt, stage: l.stage, cand: c, link: l })));
+const niceMax = (v) => { if (v <= 4) return 4; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; };
+
+/* Grouped bar chart with a y-axis, x-axis labels and a hover tooltip per group. */
+function BarChart({ labels, longLabels, series, height = 220, valueLabels = false, ariaLabel }) {
+  const [hover, setHover] = useState(null);
+  const n = labels.length || 1;
+  const max = niceMax(Math.max(1, ...series.flatMap((x) => x.data)));
+  const ticks = [0, max / 4, max / 2, (3 * max) / 4, max].filter((t) => Number.isInteger(t));
+  const W = Math.max(560, n * (series.length * 14 + 14)), H = height, L = 30, R = 6, T = valueLabels ? 18 : 8, B = 24;
+  const gw = (W - L - R) / n, bw = Math.max(4, Math.min(28, (gw - 8) / series.length - 2));
+  const y = (v) => T + (H - T - B) * (1 - v / max);
+  const every = Math.ceil(n / 12);
+  const bar = (x, v) => { const top = y(v), bot = y(0), r = Math.min(4, bw / 2, bot - top); return `M${x},${bot} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${bot} Z`; };
+  return (
+    <div className="relative" onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={ariaLabel} style={{ display: "block" }}>
+        {ticks.map((t) => (
+          <g key={t}><line x1={L} x2={W - R} y1={y(t)} y2={y(t)} stroke={C.line} strokeWidth="1" /><text x={L - 6} y={y(t) + 4} textAnchor="end" fontSize="11" fill={C.ink3}>{t}</text></g>
+        ))}
+        {labels.map((lab, i) => {
+          const gx = L + i * gw, x0 = gx + (gw - series.length * (bw + 2)) / 2;
+          return (
+            <g key={i} onMouseEnter={() => setHover(i)} onFocus={() => setHover(i)} tabIndex={0}>
+              <rect x={gx} y={T} width={gw} height={H - T - B} fill={hover === i ? "rgba(20,32,27,0.05)" : "transparent"} />
+              {series.map((sr, k) => {
+                const v = sr.data[i] || 0, x = x0 + k * (bw + 2);
+                return v > 0 ? (
+                  <g key={k}><path d={bar(x, v)} fill={sr.color} />{valueLabels && <text x={x + bw / 2} y={y(v) - 4} textAnchor="middle" fontSize="11" fill={C.ink2}>{v}</text>}</g>
+                ) : null;
+              })}
+              {i % every === 0 && <text x={gx + gw / 2} y={H - 7} textAnchor="middle" fontSize="11" fill={C.ink2}>{lab}</text>}
+            </g>
+          );
+        })}
+      </svg>
+      {hover != null && (
+        <div className="absolute pointer-events-none rounded-lg border px-2.5 py-1.5 text-xs" style={{ top: 0, left: `${Math.min(78, Math.max(0, ((L + (hover + 0.5) * gw) / W) * 100 - 10))}%`, background: "#fff", borderColor: C.line, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
+          <div className="font-medium mb-0.5" style={{ color: C.ink }}>{(longLabels || labels)[hover]}</div>
+          {series.map((sr) => <div key={sr.name} className="flex items-center gap-1.5" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: sr.color }} />{sr.name}: <span className="font-medium" style={{ color: C.ink }}>{sr.data[hover] || 0}</span></div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+const SERIES_COLORS = { submitted: "#534AB7", passed: "#EDA100", failed: "#D85A30", placed: "#1D9E75" };
+const Legend = ({ items }) => (
+  <div className="flex items-center gap-4 flex-wrap">{items.map(([name, color]) => <div key={name} className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: color }} />{name}</div>)}</div>
+);
+const Delta = ({ now, prev, label }) => {
+  const d = now - prev;
+  return <span style={{ color: d > 0 ? C.em : d < 0 ? C.dangerFg : C.ink3 }}>{d > 0 ? "▲ " + d : d < 0 ? "▼ " + -d : "same as"}{d ? " vs " : " "}{label}</span>;
+};
+
+/* Submissions (first submitted to the client) and placements over a chosen range, with totals
+   and the change against the period before. recruiterId scopes it to one recruiter. */
+function SubmissionsCard({ S, recruiterId, title = "Submissions and placements" }) {
+  const [range, setRange] = useState("thisWeek");
+  const [cFrom, setCFrom] = useState("");
+  const [cTo, setCTo] = useState("");
+  const { from, to } = namedRange(range, cFrom, cTo);
+  // "This week/month/year" show the whole period on the axis (days still to come stay empty).
+  const today = new Date();
+  const axisTo = range === "thisWeek" ? from + 7 * 864e5 : range === "thisMonth" ? new Date(today.getFullYear(), today.getMonth() + 1, 1).getTime() : range === "thisYear" ? new Date(today.getFullYear() + 1, 0, 1).getTime() : to;
+  const { buckets, unit } = timeBuckets(from, axisTo);
+  const subs = submissionsOf(S.cands, recruiterId).map((x) => x.at);
+  const plc = S.placements.filter((p) => !recruiterId || p.recruiterId === recruiterId).map((p) => p.createdAt);
+  const inR = (arr, a, b) => arr.filter((t) => t >= a && t < b).length;
+  const pr = prevRange(range, from, to);
+  const sNow = inR(subs, from, to + 1), sPrev = inR(subs, pr.from, pr.to), pNow = inR(plc, from, to + 1), pPrev = inR(plc, pr.from, pr.to);
+  const sel = { borderColor: C.line, background: "#FAF8F3" };
+  return (
+    <Card className="md:col-span-2 flex flex-col">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <SectionTitle title={title} sub={"By " + unit + " · " + RANGE_LABEL[range]} />
+        <div className="flex items-center gap-2 flex-wrap">
+          <select value={range} onChange={(e) => setRange(e.target.value)} aria-label="Date range" className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={sel}>
+            {["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth", "thisYear", "lastYear", "custom"].map((k) => <option key={k} value={k}>{RANGE_LABEL[k].replace(" range", "")}</option>)}
+          </select>
+          {range === "custom" && (<>
+            <input type="date" value={cFrom} onChange={(e) => setCFrom(e.target.value)} aria-label="From" className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={sel} />
+            <input type="date" value={cTo} onChange={(e) => setCTo(e.target.value)} aria-label="To" className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={sel} />
+          </>)}
+        </div>
+      </div>
+      <div className="flex gap-8 mt-3 mb-2 flex-wrap">
+        <div><div className="text-2xl font-semibold">{sNow}</div><div className="text-xs" style={{ color: C.ink2 }}>submissions · <Delta now={sNow} prev={sPrev} label={RANGE_PREV[range]} /></div></div>
+        <div><div className="text-2xl font-semibold">{pNow}</div><div className="text-xs" style={{ color: C.ink2 }}>placements · <Delta now={pNow} prev={pPrev} label={RANGE_PREV[range]} /></div></div>
+      </div>
+      <div className="flex-1 flex flex-col justify-end">
+        <BarChart labels={buckets.map((b) => b.label)} longLabels={buckets.map((b) => b.long)} ariaLabel={"Submissions and placements by " + unit}
+          series={[{ name: "Submissions", color: SERIES_COLORS.submitted, data: countIn(subs, buckets) }, { name: "Placements", color: SERIES_COLORS.placed, data: countIn(plc, buckets) }]} />
+      </div>
+      <div className="mt-2"><Legend items={[["Submissions", SERIES_COLORS.submitted], ["Placements", SERIES_COLORS.placed]]} /></div>
+    </Card>
+  );
+}
+
+/* A "needs attention" list where each row opens the people behind it: one person goes
+   straight to their profile, several expand into a clickable list. */
+function AttentionList({ title, items, S }) {
+  const [open, setOpen] = useState(null);
+  return (
+    <Card>
+      <SectionTitle title={title} />
+      <div className="mt-3 flex flex-col">
+        {items.map((r, i) => {
+          const people = r.people || [];
+          const click = () => {
+            if (people.length === 1 && people[0].id) return S.openCandidate(people[0].id);
+            if (people.length > 1) return setOpen(open === i ? null : i);
+            if (r.go) S.go(r.go);
+          };
+          return (
+            <div key={i} style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              <button type="button" onClick={click} aria-expanded={people.length > 1 ? open === i : undefined} className="w-full flex items-center gap-3 py-3 text-left">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: TONE[r.tone].bg }}><r.icon size={17} color={TONE[r.tone].fg} /></div>
+                <div className="flex-1 min-w-0"><div className="text-sm font-medium">{r.t}</div><div className="text-xs" style={{ color: C.ink2 }}>{r.s}</div></div>
+                {people.length > 1 ? <ChevronDown size={16} color={C.ink3} className="shrink-0" style={{ transform: open === i ? "rotate(180deg)" : "none" }} /> : <ChevronRight size={16} color={C.ink3} className="shrink-0" />}
+              </button>
+              {open === i && people.length > 1 && (
+                <div className="pl-12 pb-2 flex flex-col">
+                  {people.map((p, k) => (
+                    <button key={k} type="button" onClick={() => (p.id ? S.openCandidate(p.id) : r.go && S.go(r.go))} className="flex items-center gap-2 py-1.5 text-left text-sm">
+                      <span className="flex-1 min-w-0 truncate font-medium" style={{ color: C.em }}>{p.name}</span>
+                      {p.sub && <span className="text-xs shrink-0" style={{ color: C.ink3 }}>{p.sub}</span>}
+                      <ChevronRight size={14} color={C.ink3} className="shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+const daysAgo = (t) => { const d = Math.floor((Date.now() - t) / 864e5); return d <= 0 ? "today" : d === 1 ? "1 day" : d + " days"; };
+const plural = (n, one, many) => n + " " + (n === 1 ? one : many || one + "s");
+const jobName = (S, jobId) => { const j = S.jobs.find((x) => x.id === jobId); return j ? j.client : ""; };
+const linkPeople = (S, pred) => S.cands.flatMap((c) => (c.jobLinks || []).filter((l) => pred(l, c)).map((l) => ({ id: c.id, name: c.name, sub: jobName(S, l.jobId) })));
+
+/* Recruiter performance for one month or one year: four bars per recruiter. Counts the
+   submissions made in that period and what has happened to each since. */
+function RecruiterPerformanceChart({ S }) {
+  const now = new Date();
+  const [mode, setMode] = useState("month");
+  const [month, setMonth] = useState(now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0"));
+  const [year, setYear] = useState(String(now.getFullYear()));
+  const months = Array.from({ length: 12 }, (_, i) => { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); return { v: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"), l: d.toLocaleDateString("en-GB", { month: "long", year: "numeric" }) }; });
+  const allSubs = submissionsOf(S.cands);
+  const firstYear = Math.min(now.getFullYear(), ...allSubs.map((x) => new Date(x.at).getFullYear()));
+  const years = Array.from({ length: now.getFullYear() - firstYear + 1 }, (_, i) => String(now.getFullYear() - i));
+  const [y0, m0] = month.split("-").map(Number);
+  const from = mode === "month" ? new Date(y0, m0 - 1, 1).getTime() : new Date(Number(year), 0, 1).getTime();
+  const to = mode === "month" ? new Date(y0, m0, 1).getTime() : new Date(Number(year) + 1, 0, 1).getTime();
+  const owners = new Set(S.cands.map((c) => c.recruiterId).filter(Boolean));
+  const people = (S.users || []).filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops" || owners.has(u.id)));
+  const rows = people.map((u) => {
+    const mine = allSubs.filter((x) => x.cand.recruiterId === u.id && x.at >= from && x.at < to);
+    return { name: u.name, submitted: mine.length, passed: mine.filter((x) => ["Offer", "Placed"].includes(x.stage)).length, failed: mine.filter((x) => ["Rejected", "Withdrawn"].includes(x.stage)).length, placed: mine.filter((x) => x.stage === "Placed").length };
+  }).sort((a, b) => b.placed - a.placed || b.submitted - a.submitted);
+  const label = mode === "month" ? months.find((m) => m.v === month)?.l : year;
+  const sel = { borderColor: C.line, background: "#FAF8F3" };
+  const series = [["Submitted", "submitted"], ["Passed", "passed"], ["Failed", "failed"], ["Placed", "placed"]].map(([name, k]) => ({ name, color: SERIES_COLORS[k], data: rows.map((r) => r[k]) }));
+  return (
+    <div>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <SectionTitle title="Recruiter performance" sub={"Submissions made in " + label + " and what has happened to them since"} />
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex rounded-lg border p-0.5" style={{ borderColor: C.line, background: "#fff" }}>
+            {[["month", "Month"], ["year", "Year"]].map(([k, l]) => <button key={k} type="button" onClick={() => setMode(k)} className="rounded-md px-2.5 py-1 text-xs font-medium" style={mode === k ? { background: C.ink, color: "#fff" } : { color: C.ink2 }}>{l}</button>)}
+          </div>
+          {mode === "month"
+            ? <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month" className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={sel}>{months.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}</select>
+            : <select value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year" className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={sel}>{years.map((v) => <option key={v} value={v}>{v}</option>)}</select>}
+        </div>
+      </div>
+      <div className="mt-3 mb-2"><Legend items={series.map((x) => [x.name, x.color])} /></div>
+      {rows.length ? (
+        <BarChart labels={rows.map((r) => r.name.split(" ")[0])} longLabels={rows.map((r) => r.name)} series={series} valueLabels height={240} ariaLabel={"Recruiter performance, " + label} />
+      ) : <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>No recruiters yet.</div>}
+      <div className="text-xs mt-2" style={{ color: C.ink3 }}>Passed = reached Offer or Placed. Failed = rejected or withdrawn after submission.</div>
+    </div>
+  );
+}
 
 /* Structured, non-AI pre-filter: finds candidates worth re-checking against a newly posted job.
    This is a cheap word-overlap pass over structured fields (skills, role title) so a new job
@@ -949,9 +1200,6 @@ function statsOf(S, forRecruiter) {
 
 function OverviewRecOps({ S }) {
   const [period, setPeriod] = useState("Monthly");
-  const [subRange, setSubRange] = useState("thisWeek");
-  const [customFrom, setCustomFrom] = useState("");
-  const [customTo, setCustomTo] = useState("");
   const st = statsOf(S);
   const monthLabel = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 
@@ -975,19 +1223,10 @@ function OverviewRecOps({ S }) {
   const hires = periodPlacements.length;
   const billedPeriod = sumByCurrency(periodPlacements.filter((p) => ["Ready", "Invoiced", "Paid"].includes(p.status)), "feeNum", "feeCurrency");
 
-  // "Submissions and placements" chart's own, more granular date filter — now plots both
-  // series (candidates submitted vs. placements made) instead of just submissions.
-  const { from: sFrom, to: sTo } = namedRange(subRange, customFrom, customTo);
-  const { buckets: subBuckets, placedBuckets, granularity } = bucketSeries(S.cands, sFrom, sTo, S.placements);
-
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <div>
-          <div className="text-xs font-semibold tracking-widest mb-1" style={{ color: C.ink3 }}>OVERVIEW &middot; {st.month}</div>
-          <div className="text-3xl md:text-5xl mb-1" style={{ ...SERIF, color: C.ink }}>Good morning, {S.me.first}</div>
-          <div className="text-sm" style={{ color: C.ink2 }}>Here is how the agency is performing.</div>
-        </div>
+        <GreetingHeader S={S} kicker={"OVERVIEW · " + st.month} sub="Here is how the agency is performing." />
         <div className="flex items-center gap-2.5 flex-wrap">
           <div className="flex rounded-xl border p-1" style={{ borderColor: C.line, background: "#fff" }}>
             {["Daily", "Weekly", "Monthly", "Yearly"].map((p) => (
@@ -1005,54 +1244,24 @@ function OverviewRecOps({ S }) {
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
-        <Card className="md:col-span-2 flex flex-col">
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-            <SectionTitle title="Submissions and placements" sub={"By " + granularity + " · " + RANGE_LABEL[subRange]} />
-            <div className="flex items-center gap-2 flex-wrap">
-              <select value={subRange} onChange={(e) => setSubRange(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
-                <option value="today">Today</option>
-                <option value="yesterday">Yesterday</option>
-                <option value="thisWeek">This week</option>
-                <option value="thisMonth">This month</option>
-                <option value="lastMonth">Last month</option>
-                <option value="lastWeek">Last week</option>
-                <option value="custom">Custom</option>
-              </select>
-              {subRange === "custom" && (
-                <>
-                  <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-                  <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-                </>
-              )}
-            </div>
-          </div>
-          <div className="mt-4 flex-1 flex flex-col justify-end" style={{ minHeight: 220 }}><MiniBars data={subBuckets} data2={placedBuckets} height="100%" /></div>
-          <div className="flex items-center gap-4 mt-2.5">
-            <div className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: "#D4E9DE" }} /> Submissions</div>
-            <div className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: C.ink }} /> Placements</div>
-          </div>
-        </Card>
-        <Card>
-          <SectionTitle title="Needs attention" />
-          <div className="mt-3 flex flex-col">
-            {[
-              { icon: Sparkles, t: "AI screening questions", s: countFollowups(S.cands, "draft") + " sets waiting for approval", tone: "em", go: "candidates" },
-              { icon: Clock, t: "Awaiting review", s: S.cands.filter((c) => c.status === "In review").length + " candidates in review", tone: "warn", go: "candidates" },
-              { icon: InboxIcon, t: "Unassigned applications", s: S.inbox.filter((x) => !x.assigned).length + " in the inbox", tone: "info", go: "inbox" },
-              { icon: AlertTriangle, t: "Placements in guarantee", s: S.placements.filter((p) => p.status === "Guarantee").length + " placements", tone: "danger", go: "billing" },
-            ].map((r, i) => (
-              <div key={i} className="flex items-center gap-3 py-3 cursor-pointer" onClick={() => S.go(r.go)} style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: TONE[r.tone].bg }}><r.icon size={17} color={TONE[r.tone].fg} /></div>
-                <div className="flex-1 min-w-0"><div className="text-sm font-medium">{r.t}</div><div className="text-xs" style={{ color: C.ink2 }}>{r.s}</div></div>
-                <ChevronRight size={16} color={C.ink3} className="shrink-0" />
-              </div>
-            ))}
-          </div>
-        </Card>
+        <SubmissionsCard S={S} />
+        <AttentionList title="Needs attention" S={S} items={(() => {
+          const drafts = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "draft");
+          const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
+          const unassigned = S.inbox.filter((x) => !x.assigned).map((x) => ({ id: x.candidateId || null, name: x.name, sub: x.role }));
+          const guarantee = S.placements.filter((p) => p.status === "Guarantee").map((p) => ({ id: p.candidateId || null, name: p.name, sub: p.guarantee }));
+          return [
+            { icon: Sparkles, t: "Screening questions to approve", s: plural(drafts.length, "candidate") + " waiting", tone: "em", people: drafts, go: "candidates" },
+            { icon: Clock, t: "Awaiting review", s: plural(review.length, "candidate") + " in review", tone: "warn", people: review, go: "candidates" },
+            { icon: InboxIcon, t: "Unassigned applications", s: unassigned.length + " in the inbox", tone: "info", people: unassigned, go: "inbox" },
+            { icon: AlertTriangle, t: "Placements in guarantee", s: plural(guarantee.length, "placement"), tone: "danger", people: guarantee, go: "billing" },
+          ];
+        })()} />
       </div>
       <Card>
-        <SectionTitle title="Recruiter performance" sub={monthLabel + ", ranked by placements"} />
-        <div className="mt-3">
+        <RecruiterPerformanceChart S={S} />
+        <div className="text-xs font-semibold mt-5 mb-1" style={{ color: C.ink3 }}>ALL-TIME TOTALS</div>
+        <div>
           <DataTable
             rows={S.team}
             keyField="id"
@@ -1081,11 +1290,7 @@ function OverviewRecruiter({ S }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <div>
-          <div className="text-xs font-semibold tracking-widest mb-1" style={{ color: C.ink3 }}>MY OVERVIEW &middot; {st.month}</div>
-          <div className="text-3xl md:text-5xl mb-1" style={{ ...SERIF, color: C.ink }}>Good morning, {S.me.first}</div>
-          <div className="text-sm" style={{ color: C.ink2 }}>Here is how your candidates are doing.</div>
-        </div>
+        <GreetingHeader S={S} kicker={"MY OVERVIEW · " + st.month} sub="Here is how your candidates are doing." />
         <Btn icon={Download} kind="dark" onClick={() => S.toast(downloadCSV("recruiter-performance.csv", S.team) ? "Exported recruiter-performance.csv" : "Nothing to export")}>Export</Btn>
       </div>
       <KPIGrid>
@@ -1095,26 +1300,17 @@ function OverviewRecruiter({ S }) {
         <KPI label="My billed" value={st.billed} foot="after guarantee" />
       </KPIGrid>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="md:col-span-2">
-          <SectionTitle title="My submissions and placements" sub="New candidates per week, last 12 weeks" />
-          <div className="mt-4"><MiniBars data={weekly(S.cands)} /></div>
-        </Card>
-        <Card>
-          <SectionTitle title="Your next steps" />
-          <div className="mt-3 flex flex-col">
-            {[
-              { icon: Sparkles, t: "Role matches", s: S.cands.filter((c) => c.matches.length > 0).length + " candidates match other roles", tone: "em", go: "candidates" },
-              { icon: InboxIcon, t: "Waiting on candidates", s: countFollowups(S.cands, "sent") + " awaiting screening answers", tone: "warn", go: "candidates" },
-              { icon: Mail, t: "Routed roles", s: S.cands.reduce((n, c) => n + c.jobLinks.filter((l) => l.response === "pending").length, 0) + " waiting for candidates to accept", tone: "info", go: "candidates" },
-            ].map((r, i) => (
-              <div key={i} className="flex items-center gap-3 py-3 cursor-pointer" onClick={() => S.go(r.go)} style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
-                <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: TONE[r.tone].bg }}><r.icon size={17} color={TONE[r.tone].fg} /></div>
-                <div className="flex-1 min-w-0"><div className="text-sm font-medium">{r.t}</div><div className="text-xs" style={{ color: C.ink2 }}>{r.s}</div></div>
-                <ChevronRight size={16} color={C.ink3} className="shrink-0" />
-              </div>
-            ))}
-          </div>
-        </Card>
+        <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
+        <AttentionList title="Your next steps" S={S} items={(() => {
+          const matches = S.cands.filter((c) => (c.matches || []).length > 0).map((c) => ({ id: c.id, name: c.name, sub: plural(c.matches.length, "role") }));
+          const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
+          const routed = linkPeople(S, (l) => l.response === "pending");
+          return [
+            { icon: Sparkles, t: "Role matches", s: plural(matches.length, "candidate") + " match other roles", tone: "em", people: matches, go: "candidates" },
+            { icon: InboxIcon, t: "Waiting on candidates", s: waiting.length + " awaiting screening answers", tone: "warn", people: waiting, go: "candidates" },
+            { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
+          ];
+        })()} />
       </div>
     </div>
   );
@@ -2280,6 +2476,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             {job.location && <span>{job.location}</span>}
             {job.workSetup && <span>{job.workSetup}</span>}
             {job.employmentType && <span>{job.employmentType}</span>}
+            {job.headcount > 1 && <span>{job.headcount} openings</span>}
             {job.country && <span>Hiring in {job.country}</span>}
             {job.commissionOnly ? <span>Commission-only</span> : (job.minPay || job.maxPay) && <span>{job.minPay ? money(job.minPay, job.currency) : "?"} – {job.maxPay ? money(job.maxPay, job.currency) : "?"} / {(job.salaryPeriod || "Yearly").toLowerCase()}</span>}
           </div>
@@ -2452,6 +2649,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const [location, setLocation] = useState(editJob ? (editJob.location || "Lagos, Nigeria") : (S.settings.defaultCountry === "Nigeria" ? "Lagos, Nigeria" : S.settings.defaultCountry || "Lagos, Nigeria"));
   const [workSetup, setWorkSetup] = useState(editJob ? (editJob.workSetup || "") : "");
   const [employmentType, setEmploymentType] = useState(editJob ? (editJob.employmentType || "") : "");
+  const [headcount, setHeadcount] = useState(editJob && editJob.headcount != null ? String(editJob.headcount) : "1");
   const [importBusy, setImportBusy] = useState(false);
   const [salaryPeriod, setSalaryPeriod] = useState(editJob ? (editJob.salaryPeriod || "Yearly") : "Yearly");
   const [commissionOnly, setCommissionOnly] = useState(editJob ? !!editJob.commissionOnly : false);
@@ -2484,7 +2682,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const runRedraft = async () => {
     if (!title.trim() || description.trim().length < 40) { toast("Add a job title and a few sentences of description first"); return; }
     setAiBusy(true); setDraftAi(null);
-    try { setDraftAi(await S.aiRedraft({ title, client, location, country, currency, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description })); }
+    try { setDraftAi(await S.aiRedraft({ title, client, location, country, currency, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, workSetup, employmentType, salaryPeriod, commissionOnly, headcount: num(headcount) || null })); }
     catch (e) { toast(e.message); }
     setAiBusy(false);
   };
@@ -2507,6 +2705,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
       if (r.location) setLocation(r.location);
       if (r.workSetup && ["Hybrid", "Remote", "Onsite"].includes(r.workSetup)) setWorkSetup(r.workSetup);
       if (r.employmentType && ["Full-time", "Part-time", "Contract"].includes(r.employmentType)) setEmploymentType(r.employmentType);
+      if (r.headcount) setHeadcount(String(r.headcount));
       if (r.country) setCountry(r.country);
       if (r.currency) setCurrency(r.currency);
       if (r.commissionOnly) setCommissionOnly(true);
@@ -2526,7 +2725,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     const id = uid();
     const slug = (client[0] + title.split(" ").map((w) => w[0]).join("")).toLowerCase() + "-" + String(S.jobs.length + 1).padStart(2, "0");
     const link = "harbor.link/j/" + slug;
-    S.setJobs((l) => [{ id, role: title, client, location, workSetup, employmentType,
+    S.setJobs((l) => [{ id, role: title, client, location, workSetup, employmentType, headcount: num(headcount) || 1,
       salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
       billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency, billingMonths: billingFrequency === "Monthly" ? (num(billingMonths) || null) : null,
       incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" ? (num(incentiveMonths) || null) : null,
@@ -2535,13 +2734,13 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     setDone({ link, id, status, title, client });
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
-  const reset = () => { setDone(null); setTitle(""); setClient(""); setWorkSetup(""); setEmploymentType(""); setSalaryPeriod("Yearly"); setCommissionOnly(false); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setBillingFrequency("One-off"); setBillingMonths(""); setIncentiveAmount(""); setIncentiveFrequency("One-off"); setIncentiveMonths(""); setQuestions([""]); };
+  const reset = () => { setDone(null); setTitle(""); setClient(""); setWorkSetup(""); setEmploymentType(""); setHeadcount("1"); setSalaryPeriod("Yearly"); setCommissionOnly(false); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setBillingFrequency("One-off"); setBillingMonths(""); setIncentiveAmount(""); setIncentiveFrequency("One-off"); setIncentiveMonths(""); setQuestions([""]); };
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const saveEdit = () => {
     if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
     setBusy(true);
     S.updateJob(editJob.id, {
-      role: title, client, location, workSetup, employmentType,
+      role: title, client, location, workSetup, employmentType, headcount: num(headcount) || 1,
       salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
       billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency, billingMonths: billingFrequency === "Monthly" ? (num(billingMonths) || null) : null,
       incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" ? (num(incentiveMonths) || null) : null,
@@ -2576,7 +2775,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
             </label>
           </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Job title</label><input value={title} onChange={(e) => setTitle(e.target.value)} className={inp} style={inpStyle} /></div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client</label><input value={client} onChange={(e) => setClient(e.target.value)} className={inp} style={inpStyle} /></div>
             <div>
               <label className="text-xs font-medium" style={{ color: C.ink2 }}>Employment type</label>
@@ -2596,14 +2795,20 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
                 <option value="Remote">Remote</option>
               </select>
             </div>
+            <div>
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Head count</label>
+              <input type="number" min="1" value={headcount} onChange={(e) => setHeadcount(e.target.value)} placeholder="1" className={inp} style={inpStyle} />
+            </div>
           </div>
           <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
             <SectionTitle title="Location" sub="Country, then the city or state within it." size="text-base" />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>Country</label>
-                <input list="harbor-countries" value={country} placeholder="Where are you looking for candidates?" onChange={(e) => { const v = e.target.value; setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} className={inp} style={inpStyle} />
-                <datalist id="harbor-countries">{Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c} />)}</datalist>
+                <select value={country} onChange={(e) => { const v = e.target.value; setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} className={inp} style={inpStyle}>
+                  <option value="">Select a country…</option>
+                  {Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>City / state</label>
@@ -3803,7 +4008,7 @@ export default function App() {
 
   // Local job field -> jobs table column, for the fields a person can edit after posting.
   const JOB_FIELD_MAP = { role: "role_title", client: "client", location: "location", workSetup: "work_setup", minPay: "min_pay", maxPay: "max_pay", description: "description", currency: "currency", country: "country", seo: "seo",
-    salaryPeriod: "salary_period", commissionOnly: "commission_only", employmentType: "employment_type",
+    salaryPeriod: "salary_period", commissionOnly: "commission_only", employmentType: "employment_type", headcount: "headcount",
     billingType: "billing_type", billingAmount: "billing_amount", billingCurrency: "billing_currency", billingFrequency: "billing_frequency", billingMonths: "billing_months",
     incentiveType: "incentive_type", incentiveAmount: "incentive_amount", incentiveCurrency: "incentive_currency", incentiveFrequency: "incentive_frequency", incentiveMonths: "incentive_months",
     screeningQuestions: "screening_questions", status: "status" };
@@ -3832,7 +4037,7 @@ export default function App() {
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, work_setup: j.workSetup || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
-        salary_period: j.commissionOnly ? null : (j.salaryPeriod || "Yearly"), commission_only: !!j.commissionOnly, employment_type: j.employmentType || null,
+        salary_period: j.commissionOnly ? null : (j.salaryPeriod || "Yearly"), commission_only: !!j.commissionOnly, employment_type: j.employmentType || null, headcount: j.headcount || 1,
         billing_type: j.billingType || "percent", billing_amount: j.billingAmount || null, billing_currency: j.billingCurrency || j.currency || "NGN",
         billing_frequency: j.billingFrequency || "One-off", billing_months: j.billingFrequency === "Monthly" ? (j.billingMonths || null) : null,
         incentive_type: j.incentiveType || "percent", incentive_amount: j.incentiveAmount || null, incentive_currency: j.incentiveCurrency || j.currency || "NGN",
@@ -3965,7 +4170,7 @@ export default function App() {
       catch (e) { toast(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) aiCall("screen", { linkId: row.id }).then(() => toast("AI screening ready")).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
+      if (row) aiCall("screen", { linkId: row.id }).then(() => { toast("AI screening ready"); reload(); }).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
       return row;
     },
     /* Routing: the role shows on the candidate's page; their company card appears once they accept. */
@@ -3989,7 +4194,7 @@ export default function App() {
       catch (e) { toast(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) aiCall("screen", { linkId: row.id }).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
+      if (row) aiCall("screen", { linkId: row.id }).then(() => reload()).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
       logAudit("added candidate", "candidate", candidateId, job ? job.role + " – " + job.client : "");
       return row;
     },
