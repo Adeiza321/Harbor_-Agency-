@@ -101,6 +101,32 @@ const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/re
 const CURRENCIES = ["NGN", "USD", "GBP", "EUR", "CAD", "AUD", "ZAR", "KES", "GHS", "AED", "INR"];
 /* Picking a hiring country pre-selects its usual currency (still overridable). */
 const COUNTRY_CURRENCY = { Nigeria: "NGN", "United States": "USD", "United Kingdom": "GBP", Canada: "CAD", Ghana: "GHS", Kenya: "KES", "South Africa": "ZAR", "United Arab Emirates": "AED", Germany: "EUR", Ireland: "EUR", Netherlands: "EUR", France: "EUR", India: "INR", Australia: "AUD", "Remote \u2013 worldwide": "" };
+/* City/state suggestions for the "City / state" field, keyed by hiring country. Just a
+   starting-point list for the datalist \u2014 typing anything else is still fine. */
+const CITY_STATE_OPTIONS = {
+  Nigeria: ["Lagos, Lagos State", "Abuja, FCT", "Port Harcourt, Rivers State", "Kano, Kano State", "Ibadan, Oyo State",
+    "Kaduna, Kaduna State", "Enugu, Enugu State", "Benin City, Edo State", "Abeokuta, Ogun State", "Uyo, Akwa Ibom State",
+    "Warri, Delta State", "Asaba, Delta State", "Owerri, Imo State", "Calabar, Cross River State", "Jos, Plateau State",
+    "Ilorin, Kwara State", "Akure, Ondo State", "Abakaliki, Ebonyi State", "Awka, Anambra State", "Makurdi, Benue State",
+    "Minna, Niger State", "Sokoto, Sokoto State", "Maiduguri, Borno State", "Bauchi, Bauchi State", "Gombe, Gombe State",
+    "Yola, Adamawa State", "Jalingo, Taraba State", "Lafia, Nasarawa State", "Lokoja, Kogi State", "Osogbo, Osun State",
+    "Ado Ekiti, Ekiti State", "Umuahia, Abia State", "Yenagoa, Bayelsa State", "Dutse, Jigawa State",
+    "Birnin Kebbi, Kebbi State", "Gusau, Zamfara State", "Damaturu, Yobe State", "Katsina, Katsina State"],
+  "United States": ["New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX", "San Francisco, CA", "Austin, TX",
+    "Seattle, WA", "Boston, MA", "Atlanta, GA", "Miami, FL", "Denver, CO", "Remote, US"],
+  "United Kingdom": ["London", "Manchester", "Birmingham", "Leeds", "Glasgow", "Edinburgh", "Bristol", "Liverpool", "Remote, UK"],
+  Canada: ["Toronto, ON", "Vancouver, BC", "Montreal, QC", "Calgary, AB", "Ottawa, ON", "Edmonton, AB", "Remote, Canada"],
+  Ghana: ["Accra, Greater Accra", "Kumasi, Ashanti", "Tamale, Northern", "Takoradi, Western"],
+  Kenya: ["Nairobi", "Mombasa", "Kisumu", "Nakuru"],
+  "South Africa": ["Johannesburg, Gauteng", "Cape Town, Western Cape", "Durban, KwaZulu-Natal", "Pretoria, Gauteng"],
+  "United Arab Emirates": ["Dubai", "Abu Dhabi", "Sharjah"],
+  Germany: ["Berlin", "Munich", "Frankfurt", "Hamburg", "Cologne"],
+  Ireland: ["Dublin", "Cork", "Galway"],
+  Netherlands: ["Amsterdam", "Rotterdam", "The Hague", "Utrecht"],
+  France: ["Paris", "Lyon", "Marseille", "Toulouse"],
+  India: ["Bengaluru, Karnataka", "Mumbai, Maharashtra", "Delhi", "Hyderabad, Telangana", "Pune, Maharashtra", "Chennai, Tamil Nadu"],
+  Australia: ["Sydney, NSW", "Melbourne, VIC", "Brisbane, QLD", "Perth, WA", "Remote, Australia"],
+};
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
 const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true };
 const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner });
@@ -129,6 +155,9 @@ function mapAll(d) {
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
     const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
     return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", workSetup: j.work_setup || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(), screeningQuestions: j.screening_questions || [],
+      salaryPeriod: j.salary_period || "Yearly", commissionOnly: !!j.commission_only, employmentType: j.employment_type || "",
+      billingFrequency: j.billing_frequency || "One-off", billingMonths: j.billing_months,
+      incentiveFrequency: j.incentive_frequency || "One-off", incentiveMonths: j.incentive_months,
       billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
       incentiveType: j.incentive_type || "percent", incentiveAmount: j.incentive_amount, incentiveCurrency: j.incentive_currency || j.currency || "NGN",
       recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
@@ -2246,12 +2275,13 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           <div><div className="text-xs" style={{ color: C.ink3 }}>Interview</div><div className="text-sm font-medium mt-0.5">{job.interview}</div></div>
           <div><div className="text-xs" style={{ color: C.ink3 }}>Open</div><div className="text-sm font-medium mt-0.5">{job.days}d</div></div>
         </div>
-        {(job.location || job.country || job.minPay || job.maxPay) && (
+        {(job.location || job.country || job.minPay || job.maxPay || job.commissionOnly || job.employmentType) && (
           <div className="flex flex-wrap gap-4 mb-4 text-sm" style={{ color: C.ink2 }}>
             {job.location && <span>{job.location}</span>}
             {job.workSetup && <span>{job.workSetup}</span>}
+            {job.employmentType && <span>{job.employmentType}</span>}
             {job.country && <span>Hiring in {job.country}</span>}
-            {(job.minPay || job.maxPay) && <span>{job.minPay ? money(job.minPay, job.currency) : "?"} – {job.maxPay ? money(job.maxPay, job.currency) : "?"} / year</span>}
+            {job.commissionOnly ? <span>Commission-only</span> : (job.minPay || job.maxPay) && <span>{job.minPay ? money(job.minPay, job.currency) : "?"} – {job.maxPay ? money(job.maxPay, job.currency) : "?"} / {(job.salaryPeriod || "Yearly").toLowerCase()}</span>}
           </div>
         )}
         {job.description && (
@@ -2262,8 +2292,18 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         )}
         {(job.billingAmount || job.incentiveAmount) && (
           <div className="grid grid-cols-2 gap-4 mb-4 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
-            {S.role !== "recruiter" && <div><div className="text-xs" style={{ color: C.ink3 }}>Client billing</div><div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div></div>}
-            <div><div className="text-xs" style={{ color: C.ink3 }}>{S.role === "recruiter" ? "Your incentive" : "Recruiter incentive"}</div><div className="font-medium mt-0.5">{job.incentiveAmount ? (job.incentiveType === "flat" ? money(job.incentiveAmount, job.incentiveCurrency) : job.incentiveAmount + "% of the client fee") : "Not set"}</div></div>
+            {S.role !== "recruiter" && (
+              <div>
+                <div className="text-xs" style={{ color: C.ink3 }}>Client billing</div>
+                <div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div>
+                {job.billingAmount && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{job.billingFrequency === "Monthly" ? "Monthly" + (job.billingMonths ? ", for " + job.billingMonths + " month" + (job.billingMonths === 1 ? "" : "s") : "") : "One-off, on placement"}</div>}
+              </div>
+            )}
+            <div>
+              <div className="text-xs" style={{ color: C.ink3 }}>{S.role === "recruiter" ? "Your incentive" : "Recruiter incentive"}</div>
+              <div className="font-medium mt-0.5">{job.incentiveAmount ? (job.incentiveType === "flat" ? money(job.incentiveAmount, job.incentiveCurrency) : job.incentiveAmount + "% of the client fee") : "Not set"}</div>
+              {job.incentiveAmount && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{job.incentiveFrequency === "Monthly" ? "Monthly" + (job.incentiveMonths ? ", for " + job.incentiveMonths + " month" + (job.incentiveMonths === 1 ? "" : "s") : "") : "One-off, on placement"}</div>}
+            </div>
           </div>
         )}
         <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{job.link}</span></div>
@@ -2411,7 +2451,10 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const [client, setClient] = useState(editJob ? editJob.client : "");
   const [location, setLocation] = useState(editJob ? (editJob.location || "Lagos, Nigeria") : (S.settings.defaultCountry === "Nigeria" ? "Lagos, Nigeria" : S.settings.defaultCountry || "Lagos, Nigeria"));
   const [workSetup, setWorkSetup] = useState(editJob ? (editJob.workSetup || "") : "");
+  const [employmentType, setEmploymentType] = useState(editJob ? (editJob.employmentType || "") : "");
   const [importBusy, setImportBusy] = useState(false);
+  const [salaryPeriod, setSalaryPeriod] = useState(editJob ? (editJob.salaryPeriod || "Yearly") : "Yearly");
+  const [commissionOnly, setCommissionOnly] = useState(editJob ? !!editJob.commissionOnly : false);
   const [minPay, setMinPay] = useState(editJob && editJob.minPay != null ? String(editJob.minPay) : "");
   const [maxPay, setMaxPay] = useState(editJob && editJob.maxPay != null ? String(editJob.maxPay) : "");
   const [description, setDescription] = useState(editJob ? (editJob.description || "") : "");
@@ -2426,9 +2469,13 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const [billingType, setBillingType] = useState(editJob ? (editJob.billingType || "percent") : "percent"); // "percent" of salary, or "flat" fee
   const [billingAmount, setBillingAmount] = useState(editJob && editJob.billingAmount != null ? String(editJob.billingAmount) : "");
   const [billingCurrency, setBillingCurrency] = useState(editJob ? (editJob.billingCurrency || "NGN") : (S.settings.defaultCurrency || "NGN"));
+  const [billingFrequency, setBillingFrequency] = useState(editJob ? (editJob.billingFrequency || "One-off") : "One-off"); // "One-off" on placement, or "Monthly" for a period
+  const [billingMonths, setBillingMonths] = useState(editJob && editJob.billingMonths != null ? String(editJob.billingMonths) : "");
   const [incentiveType, setIncentiveType] = useState(editJob ? (editJob.incentiveType || "percent") : "percent"); // "percent" of the client fee, or "flat" bonus
   const [incentiveAmount, setIncentiveAmount] = useState(editJob && editJob.incentiveAmount != null ? String(editJob.incentiveAmount) : "");
   const [incentiveCurrency, setIncentiveCurrency] = useState(editJob ? (editJob.incentiveCurrency || "NGN") : (S.settings.defaultCurrency || "NGN"));
+  const [incentiveFrequency, setIncentiveFrequency] = useState(editJob ? (editJob.incentiveFrequency || "One-off") : "One-off");
+  const [incentiveMonths, setIncentiveMonths] = useState(editJob && editJob.incentiveMonths != null ? String(editJob.incentiveMonths) : "");
   // Questions every applicant must be asked before their answers get recorded on their profile.
   const [questions, setQuestions] = useState(editJob && editJob.screeningQuestions && editJob.screeningQuestions.length ? editJob.screeningQuestions : [""]);
   const setQ = (i, v) => setQuestions((qs) => qs.map((q, idx) => (idx === i ? v : q)));
@@ -2459,8 +2506,11 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
       if (r.client) setClient(r.client);
       if (r.location) setLocation(r.location);
       if (r.workSetup && ["Hybrid", "Remote", "Onsite"].includes(r.workSetup)) setWorkSetup(r.workSetup);
+      if (r.employmentType && ["Full-time", "Part-time", "Contract"].includes(r.employmentType)) setEmploymentType(r.employmentType);
       if (r.country) setCountry(r.country);
       if (r.currency) setCurrency(r.currency);
+      if (r.commissionOnly) setCommissionOnly(true);
+      if (r.salaryPeriod && ["Yearly", "Monthly", "Weekly", "Daily", "Hourly"].includes(r.salaryPeriod)) setSalaryPeriod(r.salaryPeriod);
       if (r.minPay) setMinPay(String(r.minPay));
       if (r.maxPay) setMaxPay(String(r.maxPay));
       if (r.description) setDescription(r.description);
@@ -2476,23 +2526,25 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     const id = uid();
     const slug = (client[0] + title.split(" ").map((w) => w[0]).join("")).toLowerCase() + "-" + String(S.jobs.length + 1).padStart(2, "0");
     const link = "harbor.link/j/" + slug;
-    S.setJobs((l) => [{ id, role: title, client, location, workSetup, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
-      billingType, billingAmount: num(billingAmount) || null, billingCurrency,
-      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency,
+    S.setJobs((l) => [{ id, role: title, client, location, workSetup, employmentType,
+      salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
+      billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency, billingMonths: billingFrequency === "Monthly" ? (num(billingMonths) || null) : null,
+      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" ? (num(incentiveMonths) || null) : null,
       screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
       recruiters: [], submitted: 0, interview: 0, days: 0, status, link }, ...l]);
     setDone({ link, id, status, title, client });
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
-  const reset = () => { setDone(null); setTitle(""); setClient(""); setWorkSetup(""); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setIncentiveAmount(""); setQuestions([""]); };
+  const reset = () => { setDone(null); setTitle(""); setClient(""); setWorkSetup(""); setEmploymentType(""); setSalaryPeriod("Yearly"); setCommissionOnly(false); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setBillingFrequency("One-off"); setBillingMonths(""); setIncentiveAmount(""); setIncentiveFrequency("One-off"); setIncentiveMonths(""); setQuestions([""]); };
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const saveEdit = () => {
     if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
     setBusy(true);
     S.updateJob(editJob.id, {
-      role: title, client, location, workSetup, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, currency, country, seo,
-      billingType, billingAmount: num(billingAmount) || null, billingCurrency,
-      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency,
+      role: title, client, location, workSetup, employmentType,
+      salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
+      billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency, billingMonths: billingFrequency === "Monthly" ? (num(billingMonths) || null) : null,
+      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" ? (num(incentiveMonths) || null) : null,
       screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
     }).then(() => { toast("Job updated"); setPage("jobDetail"); }).catch(() => {}).finally(() => setBusy(false));
   };
@@ -2524,11 +2576,17 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
             </label>
           </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Job title</label><input value={title} onChange={(e) => setTitle(e.target.value)} className={inp} style={inpStyle} /></div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client</label><input value={client} onChange={(e) => setClient(e.target.value)} className={inp} style={inpStyle} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Location</label><input value={location} onChange={(e) => setLocation(e.target.value)} className={inp} style={inpStyle} /></div>
-          </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client</label><input value={client} onChange={(e) => setClient(e.target.value)} className={inp} style={inpStyle} /></div>
+            <div>
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Employment type</label>
+              <select value={employmentType} onChange={(e) => setEmploymentType(e.target.value)} className={inp} style={inpStyle}>
+                <option value="">Not specified</option>
+                <option value="Full-time">Full-time</option>
+                <option value="Part-time">Part-time</option>
+                <option value="Contract">Contract</option>
+              </select>
+            </div>
             <div>
               <label className="text-xs font-medium" style={{ color: C.ink2 }}>Work setup</label>
               <select value={workSetup} onChange={(e) => setWorkSetup(e.target.value)} className={inp} style={inpStyle}>
@@ -2538,16 +2596,49 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
                 <option value="Remote">Remote</option>
               </select>
             </div>
-            <div>
-              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Hiring country</label>
-              <input list="harbor-countries" value={country} placeholder="Where are you looking for candidates?" onChange={(e) => { const v = e.target.value; setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} className={inp} style={inpStyle} />
-              <datalist id="harbor-countries">{Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c} />)}</datalist>
-            </div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary currency</label><select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select></div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Minimum salary ({curSymbol(currency)})</label><input value={minPay} onChange={(e) => setMinPay(e.target.value)} className={inp} style={inpStyle} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Maximum salary ({curSymbol(currency)})</label><input value={maxPay} onChange={(e) => setMaxPay(e.target.value)} className={inp} style={inpStyle} /></div>
+          <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+            <SectionTitle title="Location" sub="Country, then the city or state within it." size="text-base" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>Country</label>
+                <input list="harbor-countries" value={country} placeholder="Where are you looking for candidates?" onChange={(e) => { const v = e.target.value; setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} className={inp} style={inpStyle} />
+                <datalist id="harbor-countries">{Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c} />)}</datalist>
+              </div>
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>City / state</label>
+                <input list="harbor-city-states" value={location} placeholder="e.g. Lagos, Lagos State" onChange={(e) => setLocation(e.target.value)} className={inp} style={inpStyle} />
+                <datalist id="harbor-city-states">{(CITY_STATE_OPTIONS[country] || []).map((c) => <option key={c} value={c} />)}</datalist>
+              </div>
+            </div>
+          </div>
+          <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+            <SectionTitle title="Salary" sub="What this role pays, and how it's quoted." size="text-base" />
+            <label className="flex items-center gap-2 mt-2 text-sm cursor-pointer" style={{ color: C.ink }}>
+              <input type="checkbox" checked={commissionOnly} onChange={(e) => setCommissionOnly(e.target.checked)} className="w-4 h-4" />
+              Commission-only role (no base salary)
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary currency</label><select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select></div>
+              {!commissionOnly && (
+                <div>
+                  <label className="text-xs font-medium" style={{ color: C.ink2 }}>Paid</label>
+                  <select value={salaryPeriod} onChange={(e) => setSalaryPeriod(e.target.value)} className={inp} style={inpStyle}>
+                    <option value="Yearly">Yearly</option>
+                    <option value="Monthly">Monthly</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Daily">Daily</option>
+                    <option value="Hourly">Hourly</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            {!commissionOnly && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Minimum ({curSymbol(currency)} {salaryPeriod.toLowerCase()})</label><input value={minPay} onChange={(e) => setMinPay(e.target.value)} className={inp} style={inpStyle} /></div>
+                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Maximum ({curSymbol(currency)} {salaryPeriod.toLowerCase()})</label><input value={maxPay} onChange={(e) => setMaxPay(e.target.value)} className={inp} style={inpStyle} /></div>
+              </div>
+            )}
           </div>
           <div>
             <div className="flex items-center justify-between gap-2">
@@ -2588,6 +2679,18 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
                 </div>
               )}
             </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>Billed</label>
+                <select value={billingFrequency} onChange={(e) => setBillingFrequency(e.target.value)} className={inp} style={inpStyle}>
+                  <option value="One-off">One-off, on placement</option>
+                  <option value="Monthly">Monthly</option>
+                </select>
+              </div>
+              {billingFrequency === "Monthly" && (
+                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months</label><input value={billingMonths} onChange={(e) => setBillingMonths(e.target.value)} placeholder="e.g. 12" className={inp} style={inpStyle} /></div>
+              )}
+            </div>
           </div>
           <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
             <SectionTitle title="Recruiter incentive" sub="What the recruiter earns for placing a candidate on this role." size="text-base" />
@@ -2608,6 +2711,18 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
                   <label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label>
                   <select value={incentiveCurrency} onChange={(e) => setIncentiveCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select>
                 </div>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
+              <div>
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>Paid</label>
+                <select value={incentiveFrequency} onChange={(e) => setIncentiveFrequency(e.target.value)} className={inp} style={inpStyle}>
+                  <option value="One-off">One-off, on placement</option>
+                  <option value="Monthly">Monthly</option>
+                </select>
+              </div>
+              {incentiveFrequency === "Monthly" && (
+                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months</label><input value={incentiveMonths} onChange={(e) => setIncentiveMonths(e.target.value)} placeholder="e.g. 12" className={inp} style={inpStyle} /></div>
               )}
             </div>
           </div>
@@ -3688,8 +3803,9 @@ export default function App() {
 
   // Local job field -> jobs table column, for the fields a person can edit after posting.
   const JOB_FIELD_MAP = { role: "role_title", client: "client", location: "location", workSetup: "work_setup", minPay: "min_pay", maxPay: "max_pay", description: "description", currency: "currency", country: "country", seo: "seo",
-    billingType: "billing_type", billingAmount: "billing_amount", billingCurrency: "billing_currency",
-    incentiveType: "incentive_type", incentiveAmount: "incentive_amount", incentiveCurrency: "incentive_currency",
+    salaryPeriod: "salary_period", commissionOnly: "commission_only", employmentType: "employment_type",
+    billingType: "billing_type", billingAmount: "billing_amount", billingCurrency: "billing_currency", billingFrequency: "billing_frequency", billingMonths: "billing_months",
+    incentiveType: "incentive_type", incentiveAmount: "incentive_amount", incentiveCurrency: "incentive_currency", incentiveFrequency: "incentive_frequency", incentiveMonths: "incentive_months",
     screeningQuestions: "screening_questions", status: "status" };
   const updateJob = (id, patch) => {
     const j = data.jobs.find((x) => x.id === id); const p = typeof patch === "function" ? patch(j) : patch;
@@ -3716,8 +3832,11 @@ export default function App() {
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, work_setup: j.workSetup || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
+        salary_period: j.commissionOnly ? null : (j.salaryPeriod || "Yearly"), commission_only: !!j.commissionOnly, employment_type: j.employmentType || null,
         billing_type: j.billingType || "percent", billing_amount: j.billingAmount || null, billing_currency: j.billingCurrency || j.currency || "NGN",
+        billing_frequency: j.billingFrequency || "One-off", billing_months: j.billingFrequency === "Monthly" ? (j.billingMonths || null) : null,
         incentive_type: j.incentiveType || "percent", incentive_amount: j.incentiveAmount || null, incentive_currency: j.incentiveCurrency || j.currency || "NGN",
+        incentive_frequency: j.incentiveFrequency || "One-off", incentive_months: j.incentiveFrequency === "Monthly" ? (j.incentiveMonths || null) : null,
         screening_questions: j.screeningQuestions || [],
         status: j.status, created_by: session.uid } }); },
     inbox: data.inbox,

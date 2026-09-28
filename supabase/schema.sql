@@ -729,3 +729,24 @@ alter table public.candidates
 -- stray value from an old client never blocks a save; the UI only offers the three.
 -- =====================================================================
 alter table public.jobs add column if not exists work_setup text;
+
+-- =====================================================================
+-- Pay basis, employment type, and billing/incentive frequency (migration
+-- job_pay_and_billing_detail, 28 Sep 2026).
+-- salary_period: how the min/max pay figures are quoted (Yearly/Monthly/Weekly/Daily/
+--   Hourly) — ignored when commission_only is set, since there's no base figure.
+-- commission_only: role pays on commission alone; min_pay/max_pay are left blank.
+-- employment_type: Full-time / Part-time / Contract.
+-- billing_frequency / incentive_frequency: whether the client fee, and the recruiter's
+--   incentive, are billed as a One-off on placement or Monthly for a period; *_months is
+--   how many months, only meaningful when its frequency is Monthly.
+-- All free text / plain integers at the DB layer — the UI is what limits the choices.
+-- =====================================================================
+alter table public.jobs
+  add column if not exists salary_period text,
+  add column if not exists commission_only boolean not null default false,
+  add column if not exists employment_type text,
+  add column if not exists billing_frequency text,
+  add column if not exists billing_months integer,
+  add column if not exists incentive_frequency text,
+  add column if not exists incentive_months integer;

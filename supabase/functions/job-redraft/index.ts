@@ -29,7 +29,9 @@ function base64ToBytes(b64: string): Uint8Array {
 
 const EXTRACT_SHAPE =
   `{"title": string, "client": string, "location": string, "workSetup": "Onsite" | "Hybrid" | "Remote" | "", ` +
-  `"country": string, "currency": string, "minPay": number | null, "maxPay": number | null, ` +
+  `"employmentType": "Full-time" | "Part-time" | "Contract" | "", ` +
+  `"country": string, "currency": string, "salaryPeriod": "Yearly" | "Monthly" | "Weekly" | "Daily" | "Hourly" | "", "commissionOnly": boolean, ` +
+  `"minPay": number | null, "maxPay": number | null, ` +
   `"description": string, "screeningQuestions": string[]}`;
 
 const EXTRACT_SYSTEM =
@@ -38,7 +40,10 @@ const EXTRACT_SYSTEM =
   "Rules: use ONLY what the document actually says — never invent a client name, pay figures, location or requirements that aren't there; leave a field '' or null if it isn't given. " +
   "'client' is the hiring company's name if named, otherwise ''. 'location' is the city/area (e.g. 'Lagos, Nigeria'), not the work setup. " +
   "'workSetup' is one of Onsite, Hybrid or Remote ONLY if the document clearly states it, otherwise ''. " +
+  "'employmentType' is one of Full-time, Part-time or Contract ONLY if the document clearly states it, otherwise ''. " +
   "'currency' is a 3-letter ISO code (e.g. NGN, USD) if a currency is given or can be inferred from the country, otherwise ''. " +
+  "'commissionOnly' is true only if the document says the role is commission-only with no base salary; then leave minPay/maxPay null and salaryPeriod ''. " +
+  "Otherwise 'salaryPeriod' is how the pay figures are quoted (Yearly, Monthly, Weekly, Daily or Hourly) if stated or clearly implied, otherwise 'Yearly'. " +
   "'description' is the role description rewritten as clean plain text (no markdown symbols), keeping every responsibility, requirement and detail the document gives — do not summarize away specifics. " +
   "'screeningQuestions' is a short list of screening questions ONLY if the document explicitly lists questions to ask candidates, otherwise an empty array.";
 
@@ -111,15 +116,21 @@ async function handleExtract(input: Record<string, unknown>, geminiKey?: string,
   try {
     const out = JSON.parse(m ? m[0] : text);
     const setup = ["Onsite", "Hybrid", "Remote"].includes(out.workSetup) ? out.workSetup : "";
+    const employmentType = ["Full-time", "Part-time", "Contract"].includes(out.employmentType) ? out.employmentType : "";
+    const commissionOnly = out.commissionOnly === true;
+    const salaryPeriod = commissionOnly ? "" : (["Yearly", "Monthly", "Weekly", "Daily", "Hourly"].includes(out.salaryPeriod) ? out.salaryPeriod : "Yearly");
     return json({
       title: clip(out.title, 120),
       client: clip(out.client, 200),
       location: clip(out.location, 200),
       workSetup: setup,
+      employmentType,
       country: clip(out.country, 100),
       currency: clip(out.currency, 3).toUpperCase(),
-      minPay: Number.isFinite(out.minPay) ? out.minPay : null,
-      maxPay: Number.isFinite(out.maxPay) ? out.maxPay : null,
+      salaryPeriod,
+      commissionOnly,
+      minPay: commissionOnly ? null : (Number.isFinite(out.minPay) ? out.minPay : null),
+      maxPay: commissionOnly ? null : (Number.isFinite(out.maxPay) ? out.maxPay : null),
       description: clip(out.description, 15000),
       screeningQuestions: Array.isArray(out.screeningQuestions) ? out.screeningQuestions.slice(0, 12).map((q: unknown) => clip(q, 300)).filter(Boolean) : [],
     });
