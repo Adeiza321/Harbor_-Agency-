@@ -422,6 +422,7 @@ function AttentionList({ title, items, S }) {
         {items.map((r, i) => {
           const people = r.people || [];
           const click = () => {
+            if (people.length === 1 && people[0].onOpen) return people[0].onOpen();
             if (people.length === 1 && people[0].id) return S.openCandidate(people[0].id);
             if (people.length > 1) return setOpen(open === i ? null : i);
             if (r.go) S.go(r.go);
@@ -436,7 +437,7 @@ function AttentionList({ title, items, S }) {
               {open === i && people.length > 1 && (
                 <div className="pl-12 pb-2 flex flex-col">
                   {people.map((p, k) => (
-                    <button key={k} type="button" onClick={() => (p.id ? S.openCandidate(p.id) : r.go && S.go(r.go))} className="flex items-center gap-2 py-1.5 text-left text-sm">
+                    <button key={k} type="button" onClick={() => (p.onOpen ? p.onOpen() : p.id ? S.openCandidate(p.id) : r.go && S.go(r.go))} className="flex items-center gap-2 py-1.5 text-left text-sm">
                       <span className="flex-1 min-w-0 truncate font-medium" style={{ color: C.em }}>{p.name}</span>
                       {p.sub && <span className="text-xs shrink-0" style={{ color: C.ink3 }}>{p.sub}</span>}
                       <ChevronRight size={14} color={C.ink3} className="shrink-0" />
@@ -1252,7 +1253,9 @@ function OverviewRecOps({ S }) {
           const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
           const unassigned = S.inbox.filter((x) => !x.assigned).map((x) => ({ id: x.candidateId || null, name: x.name, sub: x.role }));
           const guarantee = S.placements.filter((p) => p.status === "Guarantee").map((p) => ({ id: p.candidateId || null, name: p.name, sub: p.guarantee }));
+          const toBill = awaitingBilling(S).map((c) => ({ id: c.id, name: c.name, sub: c.status, onOpen: () => S.startBilling(c.id) }));
           return [
+            { icon: CreditCard, t: "Waiting to be billed", s: plural(toBill.length, "candidate") + " placed or hired, not billed yet", tone: "warn", people: toBill, go: "billing" },
             { icon: Sparkles, t: "Screening questions to approve", s: plural(drafts.length, "candidate") + " waiting", tone: "em", people: drafts, go: "candidates" },
             { icon: Clock, t: "Awaiting review", s: plural(review.length, "candidate") + " in review", tone: "warn", people: review, go: "candidates" },
             { icon: InboxIcon, t: "Unassigned applications", s: unassigned.length + " in the inbox", tone: "info", people: unassigned, go: "inbox" },
@@ -3121,7 +3124,7 @@ function CampaignsPage({ toast, S }) {
   );
 }
 
-function NewBillingModal({ open, onClose, toast, S }) {
+function NewBillingModal({ open, onClose, toast, S, presetId }) {
   const [candId, setCandId] = useState("");
   const [jobId, setJobId] = useState("");
   const [fee, setFee] = useState("");
@@ -3136,7 +3139,10 @@ function NewBillingModal({ open, onClose, toast, S }) {
   // A candidate has to still be in play to be billed — billing someone who was
   // rejected or withdrew is exactly the kind of status/billing mismatch that's
   // confusing to audit later, so they're not offered here at all.
-  const billableCands = S.cands.filter((c) => c.status !== "Rejected" && c.status !== "Withdrawn");
+  const billableCands = awaitingBilling(S);
+  // Opened from "Waiting to be billed": pick that candidate straight away.
+  const [presetDone, setPresetDone] = useState(null);
+  if (open && presetId && presetDone !== presetId && billableCands.some((c) => c.id === presetId)) { setPresetDone(presetId); setTimeout(() => pickCand(presetId), 0); }
   const pickCand = (id) => {
     setCandId(id);
     const c = S.cands.find((x) => x.id === id);
@@ -3172,7 +3178,7 @@ function NewBillingModal({ open, onClose, toast, S }) {
             <option value="">Choose a candidate…</option>
             {billableCands.map((c) => <option key={c.id} value={c.id}>{c.name} – {c.role}</option>)}
           </select>
-          <div className="text-xs mt-1" style={{ color: C.ink3 }}>Rejected and withdrawn candidates aren't listed — a billing entry marks them placed.</div>
+          <div className="text-xs mt-1" style={{ color: C.ink3 }}>{billableCands.length ? "Only candidates marked Placed or Hired who haven't been billed yet are listed." : "No one is waiting to be billed. Mark a candidate Placed or Hired first."}</div>
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Job (for billing terms)</label>
@@ -3200,6 +3206,9 @@ function NewBillingModal({ open, onClose, toast, S }) {
     </Modal>
   );
 }
+
+/* Placed or hired candidates with no billing entry yet (a fallout entry doesn't count). */
+const awaitingBilling = (S) => S.cands.filter((c) => ["Placed", "Hired"].includes(c.status) && !S.placements.some((p) => p.candidateId === c.id && p.status !== "Fallout"));
 
 /* Date helpers for billing (dates stored as YYYY-MM-DD). */
 const ymdOf = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -3410,6 +3419,11 @@ function BillingPage({ role, toast, S }) {
   const setSt = (id, st, msg) => { S.setPlacementStatus(id, st); toast(msg); };
   const count = (s) => list.filter((p) => p.status === s).length;
   const [detailId, setDetailId] = useState(null);
+  const [presetId, setPresetId] = useState(null);
+  const waiting = awaitingBilling(S);
+  // Arrived from "Waiting to be billed": open the new entry form for that candidate.
+  useEffect(() => { if (S.billFor && role !== "recruiter") { setPresetId(S.billFor); setOpen(true); S.clearBillFor(); } }, [S.billFor]); // eslint-disable-line react-hooks/exhaustive-deps
+  const startFor = (id) => { setPresetId(id); setOpen(true); };
   const openRow = (p) => setDetailId(p.id);
   const detail = detailId ? S.placements.find((p) => p.id === detailId) : null;
   const confirmDelete = () => {
@@ -3428,6 +3442,19 @@ function BillingPage({ role, toast, S }) {
         <KPI label="Paid" value={count("Paid") + count("Invoiced")} foot="Invoiced or paid" />
         <KPI label="Fallout" value={count("Fallout")} foot="Left in guarantee" />
       </KPIGrid>
+      {role !== "recruiter" && waiting.length > 0 && (
+        <Card>
+          <SectionTitle title="Waiting to be billed" sub={plural(waiting.length, "candidate") + " marked Placed or Hired without a billing entry"} size="text-xl" />
+          <div className="mt-2 flex flex-col">
+            {waiting.map((c, i) => (
+              <div key={c.id} className="flex items-center gap-3 py-2.5" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => S.openCandidate(c.id)}><div className="text-sm font-medium truncate">{c.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{c.status} · {c.role}</div></div>
+                <Btn kind="primary" onClick={() => startFor(c.id)}>Create billing entry</Btn>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
       <Card>
         <DataTable
           keyField="id"
@@ -3453,7 +3480,7 @@ function BillingPage({ role, toast, S }) {
           ]}
         />
       </Card>
-      <NewBillingModal open={open} onClose={() => setOpen(false)} toast={toast} S={S} />
+      <NewBillingModal open={open} onClose={() => { setOpen(false); setPresetId(null); }} toast={toast} S={S} presetId={presetId} />
       {detail && <BillingDetailModal key={detail.id} p={detail} role={role} onClose={() => setDetailId(null)} toast={toast} S={S} />}
       <ConfirmModal
         open={!!delTarget}
@@ -4145,6 +4172,7 @@ export default function App() {
   const [candId, setCandId] = useState(null);
   const [jobId, setJobId] = useState(null);
   const [addCandidateJobId, setAddCandidateJobId] = useState(null);
+  const [billFor, setBillFor] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [toastText, setToastText] = useState("");
   const [promote, setPromote] = useState({ open: false, job: "" });
@@ -4384,6 +4412,9 @@ export default function App() {
     updateNotificationPrefs: (prefs) => { setMe((m) => ({ ...m, notificationPrefs: prefs })); return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { notification_prefs: prefs } }).catch((e) => toast(e.message)); },
     team: buildTeam(data.users, data.cands, data.placements),
     openCandidate: (id) => setCandId(id),
+    // Opens Billing with the new billing entry form ready for this candidate.
+    startBilling: (id) => { setCandId(null); setBillFor(id); setPage("billing"); },
+    billFor, clearBillFor: () => setBillFor(null),
     insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, is_draft: !!c.isDraft } }),
     logAudit,
     setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
