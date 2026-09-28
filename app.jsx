@@ -327,6 +327,11 @@ const countIn = (times, buckets) => buckets.map((b) => times.filter((t) => t >= 
 // Submissions = a candidate first submitted to the client on a job card (candidate_jobs.submitted_at).
 const submissionsOf = (cands, recruiterId) => cands.filter((c) => !recruiterId || c.recruiterId === recruiterId)
   .flatMap((c) => (c.jobLinks || []).filter((l) => l.submittedAt).map((l) => ({ at: l.submittedAt, stage: l.stage, cand: c, link: l })));
+// Lineup = every candidate a recruiter put forward for a job (candidate_jobs row), whether or
+// not it ever reached the client. Bucketed by when the link was made, not by submittedAt, so a
+// candidate rejected internally before ever being submitted still shows up somewhere.
+const lineupOf = (cands, recruiterId) => cands.filter((c) => !recruiterId || c.recruiterId === recruiterId)
+  .flatMap((c) => (c.jobLinks || []).map((l) => ({ at: l.createdAt, submittedAt: l.submittedAt, stage: l.stage, cand: c, link: l })));
 const niceMax = (v) => { if (v <= 4) return 4; const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; return (n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; };
 
 /* Grouped bar chart with a y-axis, x-axis labels and a hover tooltip per group. */
@@ -371,7 +376,7 @@ function BarChart({ labels, longLabels, series, height = 220, valueLabels = fals
     </div>
   );
 }
-const SERIES_COLORS = { submitted: "#534AB7", passed: "#EDA100", failed: "#D85A30", placed: "#1D9E75" };
+const SERIES_COLORS = { lineup: "#3B4BB8", submitted: "#534AB7", passed: "#EDA100", failed: "#D85A30", placed: "#1D9E75" };
 const Legend = ({ items }) => (
   <div className="flex items-center gap-4 flex-wrap">{items.map(([name, color]) => <div key={name} className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ background: color }} />{name}</div>)}</div>
 );
@@ -470,16 +475,18 @@ const plural = (n, one, many) => n + " " + (n === 1 ? one : many || one + "s");
 const jobName = (S, jobId) => { const j = S.jobs.find((x) => x.id === jobId); return j ? j.client : ""; };
 const linkPeople = (S, pred) => S.cands.flatMap((c) => (c.jobLinks || []).filter((l) => pred(l, c)).map((l) => ({ id: c.id, name: c.name, sub: jobName(S, l.jobId) })));
 
-/* Recruiter performance for one month or one year: four bars per recruiter. Counts the
-   submissions made in that period and what has happened to each since. */
+/* Recruiter performance for one month or one year: four bars per recruiter, all drawn from the
+   same cohort — every candidate a recruiter lined up (linked to a job) in the period. Submitted,
+   Failed and Passed are outcomes within that cohort, tracked to wherever they stand now, so a
+   candidate rejected internally before ever reaching the client still counts as Failed. */
 function RecruiterPerformanceChart({ S }) {
   const now = new Date();
   const [mode, setMode] = useState("month");
   const [month, setMonth] = useState(now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0"));
   const [year, setYear] = useState(String(now.getFullYear()));
   const months = Array.from({ length: 12 }, (_, i) => { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); return { v: d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"), l: d.toLocaleDateString("en-GB", { month: "long", year: "numeric" }) }; });
-  const allSubs = submissionsOf(S.cands);
-  const firstYear = Math.min(now.getFullYear(), ...allSubs.map((x) => new Date(x.at).getFullYear()));
+  const allLineup = lineupOf(S.cands);
+  const firstYear = Math.min(now.getFullYear(), ...allLineup.map((x) => new Date(x.at).getFullYear()));
   const years = Array.from({ length: now.getFullYear() - firstYear + 1 }, (_, i) => String(now.getFullYear() - i));
   const [y0, m0] = month.split("-").map(Number);
   const from = mode === "month" ? new Date(y0, m0 - 1, 1).getTime() : new Date(Number(year), 0, 1).getTime();
@@ -487,16 +494,24 @@ function RecruiterPerformanceChart({ S }) {
   const owners = new Set(S.cands.map((c) => c.recruiterId).filter(Boolean));
   const people = (S.users || []).filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops" || owners.has(u.id)));
   const rows = people.map((u) => {
-    const mine = allSubs.filter((x) => x.cand.recruiterId === u.id && x.at >= from && x.at < to);
-    return { name: u.name, submitted: mine.length, passed: mine.filter((x) => x.stage === "Placed").length, failed: mine.filter((x) => ["Rejected", "Withdrawn"].includes(x.stage)).length };
-  }).sort((a, b) => b.passed - a.passed || b.submitted - a.submitted);
+    const mine = allLineup.filter((x) => x.cand.recruiterId === u.id && x.at >= from && x.at < to);
+    return {
+      name: u.name,
+      lineup: mine.length,
+      submitted: mine.filter((x) => x.submittedAt).length,
+      passed: mine.filter((x) => x.stage === "Placed").length,
+      // Failed = rejected or withdrawn, whether that happened before the candidate was ever
+      // submitted (rejected on our end, during our own screening/review) or after (client-end).
+      failed: mine.filter((x) => ["Rejected", "Withdrawn"].includes(x.stage)).length,
+    };
+  }).sort((a, b) => b.passed - a.passed || b.lineup - a.lineup);
   const label = mode === "month" ? months.find((m) => m.v === month)?.l : year;
   const sel = { borderColor: C.line, background: "#FAF8F3" };
-  const series = [["Submitted", "submitted"], ["Failed", "failed"], ["Passed (placed)", "placed"]].map(([name, k]) => ({ name, color: SERIES_COLORS[k], data: rows.map((r) => r[k === "placed" ? "passed" : k]) }));
+  const series = [["Lineup", "lineup"], ["Submitted", "submitted"], ["Failed", "failed"], ["Passed (placed)", "placed"]].map(([name, k]) => ({ name, color: SERIES_COLORS[k], data: rows.map((r) => r[k === "placed" ? "passed" : k]) }));
   return (
     <div>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <SectionTitle title="Recruiter performance" sub={"Submissions made in " + label + " and what has happened to them since"} />
+        <SectionTitle title="Recruiter performance" sub={"Candidates lined up in " + label + " and what has happened to them since"} />
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex rounded-lg border p-0.5" style={{ borderColor: C.line, background: "#fff" }}>
             {[["month", "Month"], ["year", "Year"]].map(([k, l]) => <button key={k} type="button" onClick={() => setMode(k)} className="rounded-md px-2.5 py-1 text-xs font-medium" style={mode === k ? { background: C.ink, color: "#fff" } : { color: C.ink2 }}>{l}</button>)}
@@ -510,7 +525,7 @@ function RecruiterPerformanceChart({ S }) {
       {rows.length ? (
         <BarChart labels={rows.map((r) => r.name.split(" ")[0])} longLabels={rows.map((r) => r.name)} series={series} valueLabels height={240} ariaLabel={"Recruiter performance, " + label} />
       ) : <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>No recruiters yet.</div>}
-      <div className="text-xs mt-2" style={{ color: C.ink3 }}>Passed = placed. Failed = rejected or withdrawn after submission.</div>
+      <div className="text-xs mt-2" style={{ color: C.ink3 }}>Lineup = candidates put forward for a job. Submitted = reached the client. Passed = placed. Failed = rejected or withdrawn, on our end or the client's.</div>
     </div>
   );
 }
@@ -1282,26 +1297,6 @@ function OverviewRecOps({ S }) {
       </div>
       <Card>
         <RecruiterPerformanceChart S={S} />
-        <div className="text-xs font-semibold mt-5 mb-1" style={{ color: C.ink3 }}>ALL-TIME TOTALS</div>
-        <div>
-          <DataTable
-            rows={S.team}
-            keyField="id"
-            columns={[
-              { key: "name", label: "RECRUITER", render: (r) => (
-                <div className="flex items-center gap-3">
-                  <Avatar init={r.init} tone={PEOPLE_TONE[r.init]} />
-                  <div><div className="font-medium flex items-center gap-1.5 flex-wrap">{r.name}{r.top && <Pill tone="em">Top</Pill>}</div><div className="text-xs" style={{ color: C.ink2 }}>{r.level}</div></div>
-                </div>
-              ) },
-              { key: "submissions", label: "SUBMISSIONS", render: (r) => r.submissions },
-              { key: "interviews", label: "INTERVIEWS", render: (r) => r.interviews },
-              { key: "placed", label: "PLACED", render: (r) => r.placed },
-              { key: "conv", label: "CONVERSION", render: (r) => <div className="flex items-center gap-2"><ProgressBar pct={r.conv * 8} /><span className="text-xs">{r.conv}%</span></div> },
-              { key: "billed", label: "BILLED", render: (r) => <span className="font-medium">{r.billed}</span> },
-            ]}
-          />
-        </div>
       </Card>
     </div>
   );
