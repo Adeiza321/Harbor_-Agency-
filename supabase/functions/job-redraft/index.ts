@@ -7,8 +7,8 @@ import { prepareResume, type ResumeInput } from "./resume.ts";
 //   2. Reads an uploaded job brief (PDF, Word, text, photo) and pulls the job's fields
 //      out of it, so a recruiter can drop in a brief instead of retyping it — the
 //      "Upload a job brief" file picker. mode: "extract" with a base64 `file`.
-// AI, tried in order until one answers: Gemini (GEMINI_API_KEY; model from GEMINI_MODEL),
-// then ChatGPT (OPENAI_API_KEY; model from OPENAI_MODEL), then Claude (ANTHROPIC_API_KEY;
+// AI: Gemini first (GEMINI_API_KEY; model from GEMINI_MODEL). If Gemini fails, is over quota
+// or hasn't answered within GEMINI_BUDGET_MS, Claude does it instead (ANTHROPIC_API_KEY;
 // model from ANTHROPIC_MODEL, default the low-cost claude-haiku-4-5).
 
 const cors = {
@@ -70,13 +70,17 @@ async function askClaude(key: string, body: Record<string, unknown>): Promise<st
     if (/credit balance/i.test(msg)) throw new Error("The Claude account is out of credit. Top up at console.anthropic.com, then try again.");
     throw new Error("AI request failed: " + msg);
   }
+  if (data.stop_reason === "max_tokens") throw new Error("Claude's answer was cut off before it finished");
   return (data.content || []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("");
 }
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-// Gemini, with busy-model retries and fallback models.
+const GEMINI_BUDGET_MS = 40000;
+
+// Gemini, with busy-model retries and fallback models, all within GEMINI_BUDGET_MS.
 async function askGemini(key: string, system: string, parts: unknown[], maxOut: number, temperature: number): Promise<string> {
+  const deadline = Date.now() + GEMINI_BUDGET_MS;
   const models = [...new Set([Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])];
   const payload = JSON.stringify({
     system_instruction: { parts: [{ text: system }] },
@@ -86,10 +90,13 @@ async function askGemini(key: string, system: string, parts: unknown[], maxOut: 
   let lastErr = "";
   for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
+      const left = deadline - Date.now();
+      if (left < 3000) throw new Error("Gemini didn't answer in time");
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "x-goog-api-key": key, "content-type": "application/json" },
         body: payload,
+        signal: AbortSignal.timeout(left),
       });
       const data = await r.json().catch(() => ({}));
       if (r.ok) {
@@ -100,6 +107,7 @@ async function askGemini(key: string, system: string, parts: unknown[], maxOut: 
       lastErr = "Gemini: " + String(data?.error?.message || r.statusText).slice(0, 200);
       console.error("gemini", model, r.status, lastErr);
       if (r.status === 404) break;
+      if (r.status === 429 && /quota/i.test(lastErr)) throw new Error("Gemini's free quota is used up");
       if (![429, 500, 503].includes(r.status)) throw new Error(lastErr);
       await sleep(attempt === 0 ? 1500 : 3000);
     }
@@ -107,27 +115,9 @@ async function askGemini(key: string, system: string, parts: unknown[], maxOut: 
   throw new Error(lastErr || "Gemini request failed");
 }
 
-// ChatGPT (OpenAI Responses API).
-async function askOpenAI(key: string, system: string, content: unknown[], maxOut: number): Promise<string> {
-  const r = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model: Deno.env.get("OPENAI_MODEL") || "gpt-4.1", instructions: system, input: [{ role: "user", content }], max_output_tokens: maxOut }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error("ChatGPT: " + String(data?.error?.message || r.statusText).slice(0, 200));
-  const text = data.output_text || (Array.isArray(data.output) ? data.output
-    .filter((o: any) => o.type === "message")
-    .flatMap((o: any) => (Array.isArray(o.content) ? o.content : []))
-    .filter((c: any) => c.type === "output_text")
-    .map((c: any) => c.text || "").join("") : "");
-  if (!text) throw new Error("ChatGPT returned no answer");
-  return text;
-}
+type Keys = { gemini?: string; anthropic?: string };
 
-type Keys = { gemini?: string; openai?: string; anthropic?: string };
-
-// Tries Gemini, then ChatGPT, then Claude; returns the first answer.
+// Tries Gemini, then Claude; returns the first answer.
 async function askChain(keys: Keys, system: string, resume: ResumeInput | null, text: string, maxOut: number, temperature: number): Promise<string> {
   const errors: string[] = [];
   if (keys.gemini) {
@@ -135,14 +125,13 @@ async function askChain(keys: Keys, system: string, resume: ResumeInput | null, 
     if (resume?.kind === "pdf") parts.push({ inline_data: { mime_type: "application/pdf", data: resume.data } });
     else if (resume?.kind === "image") parts.push({ inline_data: { mime_type: resume.mime, data: resume.data } });
     parts.push({ text });
-    try { return await askGemini(keys.gemini, system, parts, Math.max(maxOut * 3, 8000), temperature); } catch (e) { errors.push(String((e as Error)?.message || e)); }
-  }
-  if (keys.openai && !(resume?.kind === "image" && !["image/jpeg", "image/png", "image/webp"].includes(resume.mime))) {
-    const content: unknown[] = [];
-    if (resume?.kind === "pdf") content.push({ type: "input_file", filename: "brief.pdf", file_data: `data:application/pdf;base64,${resume.data}` });
-    else if (resume?.kind === "image") content.push({ type: "input_image", image_url: `data:${resume.mime};base64,${resume.data}` });
-    content.push({ type: "input_text", text });
-    try { return await askOpenAI(keys.openai, system, content, maxOut); } catch (e) { errors.push(String((e as Error)?.message || e)); console.error("openai", errors[errors.length - 1]); }
+    try {
+      const out = await askGemini(keys.gemini, system, parts, Math.max(maxOut * 3, 8000), temperature);
+      const m = out.match(/\{[\s\S]*\}/);
+      JSON.parse(m ? m[0] : out); // unreadable answer: let Claude redo it
+      return out;
+    }
+    catch (e) { errors.push(String((e as Error)?.message || e)); console.error("gemini failed, using claude", errors[errors.length - 1]); }
   }
   if (keys.anthropic) {
     try { return await extractOrDraftWithClaude(keys.anthropic, system, resume, text, maxOut); } catch (e) { errors.push("Claude: " + String((e as Error)?.message || e)); }
@@ -156,7 +145,7 @@ async function extractOrDraftWithClaude(key: string, system: string, resume: Res
   else if (resume?.kind === "image" && ["image/jpeg", "image/png", "image/webp"].includes(resume.mime)) content.push({ type: "image", source: { type: "base64", media_type: resume.mime, data: resume.data } });
   else if (resume?.kind === "image") throw new Error("That photo format isn't supported. Try a JPG, PNG or WEBP.");
   content.push({ type: "text", text });
-  return await askClaude(key, { max_tokens: maxOut, system, messages: [{ role: "user", content }] });
+  return await askClaude(key, { max_tokens: Math.max(maxOut * 2, 8000), system, messages: [{ role: "user", content }] });
 }
 
 async function handleExtract(input: Record<string, unknown>, keys: Keys) {
@@ -205,8 +194,8 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
 
-  const keys: Keys = { gemini: Deno.env.get("GEMINI_API_KEY"), openai: Deno.env.get("OPENAI_API_KEY"), anthropic: Deno.env.get("ANTHROPIC_API_KEY") };
-  if (!keys.gemini && !keys.openai && !keys.anthropic) return json({ error: "AI is not set up yet: add a GEMINI_API_KEY, OPENAI_API_KEY or ANTHROPIC_API_KEY secret to this Supabase project." }, 503);
+  const keys: Keys = { gemini: Deno.env.get("GEMINI_API_KEY"), anthropic: Deno.env.get("ANTHROPIC_API_KEY") };
+  if (!keys.gemini && !keys.anthropic) return json({ error: "AI is not set up yet: add a GEMINI_API_KEY or ANTHROPIC_API_KEY secret to this Supabase project." }, 503);
 
   let input: Record<string, unknown>;
   try { input = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }

@@ -75,6 +75,8 @@ async function askGemini(key: string, system: string, text: string, resume: Resu
       lastErr = "AI request failed (" + res.status + "): " + String(data?.error?.message || res.statusText).slice(0, 300);
       console.error("gemini", model, res.status, String(data?.error?.message || "").slice(0, 200));
       if (res.status === 404) break;                                  // model not available: next model
+      if (res.status === 429 && /quota/i.test(String(data?.error?.message || "")))  // quota is per account: other models won't help
+        throw new Error("Gemini's free quota is used up (turn on billing for the key in Google AI Studio)");
       if (![429, 500, 503].includes(res.status)) throw new Error(lastErr); // bad key, bad request: stop
       await sleep(attempt === 0 ? 1500 : 3000);                        // busy: wait, retry, then next model
     }
@@ -92,7 +94,8 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
     content.push({ type: "image", source: { type: "base64", media_type: resume.mime, data: resume.data } });
   }
   content.push({ type: "text", text: withResumeText(text, resume) });
-  const payload = JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system, messages: [{ role: "user", content }] });
+  // Generous output room: a full requirement checklist is long, and a cut-off reply can't be read.
+  const payload = JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: Math.max(maxTokens * 3, 8000), system, messages: [{ role: "user", content }] });
   let res: Response | null = null;
   // When Claude is busy (429 rate limit, 529 overloaded, 5xx) wait briefly and retry twice.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -112,6 +115,7 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
     throw new Error("AI request failed (" + res!.status + "): " + body);
   }
   const data = await res!.json();
+  if (data.stop_reason === "max_tokens") throw new Error("Claude's answer was cut off before it finished");
   return parseJson((data.content || []).map((b: any) => b.text || "").join(""));
 }
 
@@ -119,14 +123,20 @@ async function askAI(system: string, text: string, resume: ResumeInput | null = 
   const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
   const gemini = Deno.env.get("GEMINI_API_KEY");
   if (!anthropic && !gemini) throw new Error("AI is not configured yet: add an ANTHROPIC_API_KEY secret to this Supabase project.");
+  let claudeErr = "";
   if (anthropic) {
     try { return await askAnthropic(anthropic, system, text, resume, maxTokens); }
     catch (e) {
       if (!gemini) throw e;
-      console.error("claude failed, using gemini", String((e as Error)?.message || e).slice(0, 200));
+      claudeErr = String((e as Error)?.message || e);
+      console.error("claude failed, using gemini", claudeErr.slice(0, 200));
     }
   }
-  return askGemini(gemini!, system, text, resume, maxTokens);
+  try { return await askGemini(gemini!, system, text, resume, maxTokens); }
+  catch (e) {
+    if (!claudeErr) throw e;
+    throw new Error("Claude: " + claudeErr.slice(0, 160) + " | Gemini backup: " + String((e as Error)?.message || e).slice(0, 160));
+  }
 }
 
 // The resume on file, ready for the AI (any supported format), or a reason it can't be read.
