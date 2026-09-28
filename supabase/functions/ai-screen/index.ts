@@ -5,9 +5,8 @@ import { lookupIndustries, industryText } from "./industry.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
-// Provider: Gemini when the GEMINI_API_KEY secret is set (model from GEMINI_MODEL,
-// default gemini-3.8-flash); otherwise Anthropic via ANTHROPIC_API_KEY. To switch back
-// to Claude, delete the GEMINI_API_KEY secret — no code change needed.
+// Provider: Claude only (Anthropic API, ANTHROPIC_API_KEY secret; model from ANTHROPIC_MODEL,
+// default claude-sonnet-5).
 //
 // Resumes: PDF, Word (.docx/.doc), OpenDocument, RTF, text and images are all read
 // (see resume.ts). Screening material: every judgement uses BOTH the resume and their
@@ -22,8 +21,7 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-const ANTHROPIC_MODEL = "claude-sonnet-5";
-const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
+const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5";
 
 function parseJson(text: string) {
   const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
@@ -37,50 +35,7 @@ function parseJson(text: string) {
 const withResumeText = (text: string, resume: ResumeInput | null) =>
   resume?.kind === "text" ? `Candidate's resume (text extracted from their file):\n"""\n${resume.text}\n"""\n\n${text}` : text;
 
-// Models to try in order. When one is overloaded (503) or rate-limited (429), Harbor
-// waits briefly, retries, then moves to the next model instead of failing.
-const GEMINI_FALLBACKS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function askGemini(key: string, system: string, text: string, resume: ResumeInput | null, maxTokens: number) {
-  const models = [...new Set([Deno.env.get("GEMINI_MODEL") || GEMINI_DEFAULT_MODEL, ...GEMINI_FALLBACKS])];
-  const parts: unknown[] = [];
-  if (resume?.kind === "pdf") parts.push({ inline_data: { mime_type: "application/pdf", data: resume.data } });
-  if (resume?.kind === "image") parts.push({ inline_data: { mime_type: resume.mime, data: resume.data } });
-  parts.push({ text: withResumeText(text, resume) });
-  const payload = JSON.stringify({
-    system_instruction: { parts: [{ text: system }] },
-    contents: [{ role: "user", parts }],
-    // Gemini counts its internal reasoning against this limit, so leave generous room.
-    generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: Math.max(maxTokens * 4, 4096) },
-  });
-  let lastErr = "";
-  for (const model of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": key },
-        body: payload,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        const cand = data.candidates?.[0];
-        const out = (cand?.content?.parts || []).filter((p: any) => !p.thought).map((p: any) => p.text || "").join("");
-        if (out) return parseJson(out);
-        lastErr = "AI returned no answer (" + (cand?.finishReason || data.promptFeedback?.blockReason || "unknown reason") + ")";
-        break; // try the next model
-      }
-      lastErr = "AI request failed (" + res.status + "): " + String(data?.error?.message || res.statusText).slice(0, 300);
-      console.error("gemini", model, res.status, String(data?.error?.message || "").slice(0, 200));
-      if (res.status === 404) break;                                  // model not available: next model
-      if (![429, 500, 503].includes(res.status)) throw new Error(lastErr); // bad key, bad request: stop
-      await sleep(attempt === 0 ? 1500 : 3000);                        // busy: wait, retry, then next model
-    }
-  }
-  throw new Error(lastErr.includes("(503)") || lastErr.includes("(429)")
-    ? "Google's AI is very busy right now. Please try again in a minute."
-    : lastErr || "AI request failed. Try again.");
-}
 
 async function askAnthropic(key: string, system: string, text: string, resume: ResumeInput | null, maxTokens: number) {
   const content: unknown[] = [];
@@ -90,22 +45,33 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
     content.push({ type: "image", source: { type: "base64", media_type: resume.mime, data: resume.data } });
   }
   content.push({ type: "text", text: withResumeText(text, resume) });
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system, messages: [{ role: "user", content }] }),
-  });
-  if (!res.ok) throw new Error("AI request failed (" + res.status + "): " + (await res.text()).slice(0, 300));
-  const data = await res.json();
+  const payload = JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: maxTokens, system, messages: [{ role: "user", content }] });
+  let res: Response | null = null;
+  // When Claude is busy (429 rate limit, 529 overloaded, 5xx) wait briefly and retry twice.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: payload,
+    });
+    if (res.ok || ![429, 500, 502, 503, 529].includes(res.status)) break;
+    console.error("claude busy", res.status);
+    await sleep(attempt === 0 ? 2000 : 5000);
+  }
+  if (!res!.ok) {
+    const body = (await res!.text()).slice(0, 300);
+    if ([429, 529].includes(res!.status)) throw new Error("Claude is very busy right now. Please try again in a minute.");
+    if (/credit balance/i.test(body)) throw new Error("The Claude account is out of credit. Top up at console.anthropic.com, then try again.");
+    throw new Error("AI request failed (" + res!.status + "): " + body);
+  }
+  const data = await res!.json();
   return parseJson((data.content || []).map((b: any) => b.text || "").join(""));
 }
 
 async function askAI(system: string, text: string, resume: ResumeInput | null = null, maxTokens = 800) {
-  const gemini = Deno.env.get("GEMINI_API_KEY");
-  if (gemini) return askGemini(gemini, system, text, resume, maxTokens);
   const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
   if (anthropic) return askAnthropic(anthropic, system, text, resume, maxTokens);
-  throw new Error("AI is not configured yet: add a GEMINI_API_KEY secret to this Supabase project.");
+  throw new Error("AI is not configured yet: add an ANTHROPIC_API_KEY secret to this Supabase project.");
 }
 
 // The resume on file, ready for the AI (any supported format), or a reason it can't be read.

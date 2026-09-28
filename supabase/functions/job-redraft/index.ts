@@ -7,8 +7,8 @@ import { prepareResume, type ResumeInput } from "./resume.ts";
 //   2. Reads an uploaded job brief (PDF, Word, text, photo) and pulls the job's fields
 //      out of it, so a recruiter can drop in a brief instead of retyping it — the
 //      "Upload a job brief" file picker. mode: "extract" with a base64 `file`.
-// Uses Gemini when the GEMINI_API_KEY secret is set (model from GEMINI_MODEL, default
-// gemini-3.8-flash); otherwise Anthropic via ANTHROPIC_API_KEY.
+// AI: Claude only (Anthropic API, ANTHROPIC_API_KEY secret; model from ANTHROPIC_MODEL,
+// default claude-sonnet-5).
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -48,39 +48,28 @@ const EXTRACT_SYSTEM =
   "'headcount' is the number of openings for this exact role ONLY if the document states it (e.g. 'hiring 3', '2 openings'), otherwise null — never assume 1. " +
   "'screeningQuestions' is a short list of screening questions ONLY if the document explicitly lists questions to ask candidates, otherwise an empty array.";
 
-async function extractWithGemini(key: string, resume: ResumeInput): Promise<string> {
-  const parts: unknown[] = [];
-  if (resume.kind === "pdf") parts.push({ inline_data: { mime_type: "application/pdf", data: resume.data } });
-  else if (resume.kind === "image") parts.push({ inline_data: { mime_type: resume.mime, data: resume.data } });
-  else parts.push({ text: "Job brief document:\n\"\"\"\n" + resume.text + "\n\"\"\"" });
-
-  const models = [...new Set([Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])];
-  let lastErr = "", lastStatus = 0;
-  for (const model of models) {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "x-goog-api-key": key, "content-type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: EXTRACT_SYSTEM }] },
-          contents: [{ role: "user", parts }],
-          generationConfig: { responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 12000 },
-        }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (r.ok) {
-        const text = (data.candidates?.[0]?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || "").join("");
-        if (text) return text;
-        lastErr = "AI returned no answer"; break;
-      }
-      lastStatus = r.status; lastErr = data?.error?.message || r.statusText;
-      console.error("gemini extract", model, r.status, String(lastErr).slice(0, 200));
-      if (r.status === 404) break;
-      if (![429, 500, 503].includes(r.status)) throw new Error("AI request failed: " + lastErr);
-      await new Promise((res) => setTimeout(res, attempt === 0 ? 1500 : 3000));
-    }
+// One call to Claude; when it is busy (429 rate limit, 529 overloaded, 5xx) wait and retry twice.
+async function askClaude(key: string, body: Record<string, unknown>): Promise<string> {
+  const payload = JSON.stringify({ model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5", ...body });
+  let r: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: payload,
+    });
+    if (r.ok || ![429, 500, 502, 503, 529].includes(r.status)) break;
+    console.error("claude busy", r.status);
+    await new Promise((res) => setTimeout(res, attempt === 0 ? 2000 : 5000));
   }
-  throw new Error(lastStatus === 503 || lastStatus === 429 ? "Google's AI is very busy right now. Please try again in a minute." : "AI request failed: " + lastErr);
+  const data = await r!.json().catch(() => ({}));
+  if (!r!.ok) {
+    const msg = String(data?.error?.message || r!.statusText);
+    if ([429, 529].includes(r!.status)) throw new Error("Claude is very busy right now. Please try again in a minute.");
+    if (/credit balance/i.test(msg)) throw new Error("The Claude account is out of credit. Top up at console.anthropic.com, then try again.");
+    throw new Error("AI request failed: " + msg);
+  }
+  return (data.content || []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("");
 }
 
 async function extractWithClaude(key: string, resume: ResumeInput): Promise<string> {
@@ -90,17 +79,10 @@ async function extractWithClaude(key: string, resume: ResumeInput): Promise<stri
   else if (resume.kind === "image") throw new Error("That photo format isn't supported. Try a JPG, PNG or WEBP.");
   else content.push({ type: "text", text: "Job brief document:\n\"\"\"\n" + resume.text + "\n\"\"\"" });
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5", max_tokens: 4000, system: EXTRACT_SYSTEM, messages: [{ role: "user", content }] }),
-  });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error("AI request failed: " + (data?.error?.message || r.statusText));
-  return (data.content || []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("");
+  return await askClaude(key, { max_tokens: 4000, system: EXTRACT_SYSTEM, messages: [{ role: "user", content }] });
 }
 
-async function handleExtract(input: Record<string, unknown>, geminiKey?: string, anthropicKey?: string) {
+async function handleExtract(input: Record<string, unknown>, anthropicKey: string) {
   const file = input.file as { name?: string; data?: string } | undefined;
   if (!file?.data) return json({ error: "No file was received" }, 400);
   const bytes = base64ToBytes(file.data);
@@ -109,7 +91,7 @@ async function handleExtract(input: Record<string, unknown>, geminiKey?: string,
 
   let text = "";
   try {
-    text = geminiKey ? await extractWithGemini(geminiKey, resume) : await extractWithClaude(anthropicKey!, resume);
+    text = await extractWithClaude(anthropicKey, resume);
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 502);
   }
@@ -145,14 +127,13 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
 
-  const geminiKey = Deno.env.get("GEMINI_API_KEY");
   const key = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!geminiKey && !key) return json({ error: "AI is not set up yet: add a GEMINI_API_KEY secret to this Supabase project." }, 503);
+  if (!key) return json({ error: "AI is not set up yet: add an ANTHROPIC_API_KEY secret to this Supabase project." }, 503);
 
   let input: Record<string, unknown>;
   try { input = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }
 
-  if (input.mode === "extract") return await handleExtract(input, geminiKey, key);
+  if (input.mode === "extract") return await handleExtract(input, key);
 
   const title = clip(input.title, 200).trim();
   const description = clip(input.description, 12000).trim();
@@ -190,50 +171,10 @@ Rules:
 Reply with ONLY a JSON object, no other text: {"title": string, "description": string, "meta_description": string, "keywords": string[]}`;
 
   let text = "";
-  if (geminiKey) {
-    // Retry busy models, then fall back to the next one (same list as ai-screen).
-    const models = [...new Set([Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])];
-    const payload = JSON.stringify({
-      system_instruction: { parts: [{ text: system }] },
-      contents: [{ role: "user", parts: [{ text: facts }] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.4, maxOutputTokens: 12000 },
-    });
-    let lastErr = "", lastStatus = 0;
-    outer: for (const model of models) {
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: "POST",
-          headers: { "x-goog-api-key": geminiKey, "content-type": "application/json" },
-          body: payload,
-        });
-        const data = await r.json().catch(() => ({}));
-        if (r.ok) {
-          text = (data.candidates?.[0]?.content?.parts || []).filter((p: { thought?: boolean }) => !p.thought).map((p: { text?: string }) => p.text || "").join("");
-          if (text) break outer;
-          lastErr = "AI returned no answer"; break;
-        }
-        lastStatus = r.status; lastErr = data?.error?.message || r.statusText;
-        console.error("gemini", model, r.status, String(lastErr).slice(0, 200));
-        if (r.status === 404) break;
-        if (![429, 500, 503].includes(r.status)) return json({ error: "AI request failed: " + lastErr }, 502);
-        await new Promise((res) => setTimeout(res, attempt === 0 ? 1500 : 3000));
-      }
-    }
-    if (!text) return json({ error: lastStatus === 503 || lastStatus === 429 ? "Google's AI is very busy right now. Please try again in a minute." : "AI request failed: " + lastErr }, 502);
-  } else {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "x-api-key": key!, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({
-        model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5",
-        max_tokens: 3000,
-        system,
-        messages: [{ role: "user", content: facts }],
-      }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) return json({ error: "AI request failed: " + (data?.error?.message || r.statusText) }, 502);
-    text = (data.content || []).filter((b: { type: string }) => b.type === "text").map((b: { text: string }) => b.text).join("");
+  try {
+    text = await askClaude(key, { max_tokens: 3000, system, messages: [{ role: "user", content: facts }] });
+  } catch (e) {
+    return json({ error: String((e as Error)?.message || e) }, 502);
   }
   const m = text.match(/\{[\s\S]*\}/);
   try {

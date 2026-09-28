@@ -2,13 +2,8 @@
 // the company does. The AI only fills an industry when it is sure it found the right company;
 // otherwise the employer is marked "unsure" and no industry is guessed.
 //
-// Web lookup, tried in order (first configured secret that succeeds wins): Gemini with Google
-// Search grounding (GEMINI_API_KEY), then ChatGPT/OpenAI with its web search tool
-// (OPENAI_API_KEY), then Claude with the web search tool (ANTHROPIC_API_KEY). OpenAI is tried
-// ahead of Claude so agencies can point this at ChatGPT while a Claude subscription is paused —
-// set OPENAI_API_KEY and it's used automatically; Claude stays as a fallback if it's also
-// configured. If the lookup itself fails, every employer is kept as "unsure" so nothing
-// unverified is presented as fact.
+// Web lookup: Claude with the web search tool (ANTHROPIC_API_KEY). If the lookup itself
+// fails, every employer is kept as "unsure" so nothing unverified is presented as fact.
 
 import type { ResumeInput } from "./resume.ts";
 
@@ -41,53 +36,6 @@ function parseJson(text: string) {
 const withText = (resume: ResumeInput | null) =>
   resume?.kind === "text" ? `Candidate's CV (text):\n"""\n${resume.text}\n"""\n\n${PROMPT}` : PROMPT;
 
-async function geminiWeb(key: string, model: string, resume: ResumeInput | null): Promise<{ json: any; sources: string[] }> {
-  const parts: unknown[] = [];
-  if (resume?.kind === "pdf") parts.push({ inline_data: { mime_type: "application/pdf", data: resume.data } });
-  if (resume?.kind === "image") parts.push({ inline_data: { mime_type: resume.mime, data: resume.data } });
-  parts.push({ text: withText(resume) });
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-goog-api-key": key },
-    body: JSON.stringify({ contents: [{ role: "user", parts }], tools: [{ google_search: {} }], generationConfig: { temperature: 0.1, maxOutputTokens: 16000 } }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("Web lookup failed (" + res.status + "): " + String(data?.error?.message || "").slice(0, 200));
-  const cand = data.candidates?.[0];
-  const text = (cand?.content?.parts || []).filter((p: any) => !p.thought).map((p: any) => p.text || "").join("");
-  const sources = (cand?.groundingMetadata?.groundingChunks || []).map((c: any) => c?.web?.uri).filter(Boolean);
-  return { json: parseJson(text), sources };
-}
-
-async function openaiWeb(key: string, model: string, resume: ResumeInput | null): Promise<{ json: any; sources: string[] }> {
-  const content: unknown[] = [{ type: "input_text", text: withText(resume) }];
-  if (resume?.kind === "pdf") content.push({ type: "input_file", filename: "resume.pdf", file_data: `data:application/pdf;base64,${resume.data}` });
-  if (resume?.kind === "image") content.push({ type: "input_image", image_url: `data:${resume.mime};base64,${resume.data}` });
-  const res = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-    body: JSON.stringify({
-      model,
-      input: [{ role: "user", content }],
-      tools: [{ type: "web_search_preview" }],
-      temperature: 0.1,
-    }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("Web lookup failed (" + res.status + "): " + String(data?.error?.message || "").slice(0, 200));
-  const text = data.output_text || (Array.isArray(data.output) ? data.output
-    .filter((o: any) => o.type === "message")
-    .flatMap((o: any) => (Array.isArray(o.content) ? o.content : []))
-    .filter((c: any) => c.type === "output_text")
-    .map((c: any) => c.text || "").join("") : "");
-  const sources = Array.isArray(data.output) ? data.output
-    .filter((o: any) => o.type === "message")
-    .flatMap((o: any) => (Array.isArray(o.content) ? o.content : []))
-    .flatMap((c: any) => (Array.isArray(c.annotations) ? c.annotations : []))
-    .map((a: any) => a?.url).filter(Boolean) : [];
-  return { json: parseJson(text), sources };
-}
-
 async function claudeWeb(key: string, resume: ResumeInput | null): Promise<{ json: any; sources: string[] }> {
   const content: unknown[] = [];
   if (resume?.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: resume.data } });
@@ -96,12 +44,15 @@ async function claudeWeb(key: string, resume: ResumeInput | null): Promise<{ jso
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 6000, messages: [{ role: "user", content }], tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 12 }] }),
+    body: JSON.stringify({ model: Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-5", max_tokens: 6000, messages: [{ role: "user", content }], tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 12 }] }),
   });
   if (!res.ok) throw new Error("Web lookup failed (" + res.status + "): " + (await res.text()).slice(0, 200));
   const data = await res.json();
   const blocks: any[] = data.content || [];
-  const text = blocks.filter((b) => b.type === "text").map((b) => b.text || "").join("");
+  // Claude narrates between searches; the JSON answer is in the text after the last search.
+  const lastSearch = blocks.map((b) => b.type).lastIndexOf("web_search_tool_result");
+  const finalText = blocks.slice(lastSearch + 1).filter((b) => b.type === "text").map((b) => b.text || "").join("");
+  const text = /\{/.test(finalText) ? finalText : blocks.filter((b) => b.type === "text").map((b) => b.text || "").join("");
   const sources = blocks.filter((b) => b.type === "web_search_tool_result").flatMap((b) => (Array.isArray(b.content) ? b.content : []).map((r: any) => r?.url)).filter(Boolean);
   return { json: parseJson(text), sources };
 }
@@ -127,14 +78,9 @@ const clean = (x: any, sources: string[]): IndustryItem => {
 // the reason so the caller can tell the recruiter).
 export async function lookupIndustries(resume: ResumeInput | null): Promise<{ items: IndustryItem[]; error?: string }> {
   if (!resume) return { items: [], error: "No readable resume on file" };
-  const gemini = Deno.env.get("GEMINI_API_KEY");
-  const openai = Deno.env.get("OPENAI_API_KEY");
   const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
   let lastErr = "";
   const tries: (() => Promise<{ json: any; sources: string[] }>)[] = [];
-  if (gemini) for (const m of [...new Set([Deno.env.get("GEMINI_MODEL") || "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"])]) tries.push(() => geminiWeb(gemini, m, resume));
-  // OpenAI is tried ahead of Claude so setting OPENAI_API_KEY hands this lookup to ChatGPT.
-  if (openai) tries.push(() => openaiWeb(openai, Deno.env.get("OPENAI_MODEL") || "gpt-4.1", resume));
   if (anthropic) tries.push(() => claudeWeb(anthropic, resume));
   for (const t of tries) {
     try {

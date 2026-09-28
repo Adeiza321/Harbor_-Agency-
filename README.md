@@ -1,6 +1,6 @@
 # Harbor
 
-A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin), backed by Supabase (Postgres + Auth + Storage + Edge Functions) and an AI provider (Gemini for now, Anthropic as the fallback) for CV scoring, screening questions, fit verdicts and job-ad rewriting.
+A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin), backed by Supabase (Postgres + Auth + Storage + Edge Functions) and Claude (Anthropic) for CV scoring, screening questions, fit verdicts and job-ad rewriting.
 
 ## Structure
 
@@ -36,7 +36,7 @@ then inline the bundle into the page (escape `</script` as `<\/script`).
 
 Supabase project ref: `acjmsihvvupqiikxckho`. Secrets live only as Supabase Edge Function secrets (Edge Functions → Secrets) — never in this repo.
 
-AI provider: both AI functions use **Gemini** when `GEMINI_API_KEY` is set (model from `GEMINI_MODEL`, default `gemini-3.8-flash`), and fall back to Anthropic (`ANTHROPIC_API_KEY`) when it isn't. To switch back to Claude, delete the `GEMINI_API_KEY` secret; no code change needed. Use a Gemini key on a billed project for live candidate data: Google's free tier may use prompts (resumes) to improve its products.
+AI provider: Claude only. Both AI functions (`ai-screen`, `job-redraft`) call the Anthropic API with the `ANTHROPIC_API_KEY` secret (model from `ANTHROPIC_MODEL`, default `claude-sonnet-5`); employer industry lookups use Claude's web search tool. Gemini and OpenAI are not used, so `GEMINI_API_KEY`, `GEMINI_MODEL` and `OPENAI_API_KEY` secrets can be deleted.
 
 ## Working across two workspaces
 
