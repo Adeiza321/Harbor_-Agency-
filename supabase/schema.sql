@@ -37,7 +37,7 @@ create trigger on_auth_user_created after insert on auth.users
 
 create or replace function public.app_role() returns text
 language sql stable security definer set search_path = public as $$
-  select role from public.profiles where id = auth.uid() and status <> 'Disabled'
+  select role from public.profiles where id = auth.uid() and status = 'Active'
 $$;
 create or replace function public.is_staff() returns boolean
 language sql stable security definer set search_path = public as $$
@@ -798,3 +798,18 @@ end $$;
 drop trigger if exists candidate_jobs_that_outcome_at on public.candidate_jobs;
 create trigger candidate_jobs_that_outcome_at before insert or update of stage on public.candidate_jobs
   for each row execute function public.stamp_outcome_at();
+
+-- =====================================================================
+-- Require activation before a new account can use the app (migration
+-- require_active_status, 28 Sep 2026). New accounts (created via the
+-- create-user function) now start status = 'Invited' instead of 'Active', so an
+-- admin has to click Activate on their row in Users and permissions first.
+-- app_role() previously only blocked 'Disabled'; tightening it to require 'Active'
+-- means 'Invited' accounts can sign in but can't read/write anything RLS-gated by
+-- is_staff()/is_admin() (or app_role() directly) until activated. Existing users
+-- already sitting at status = 'Active' are unaffected.
+-- =====================================================================
+create or replace function public.app_role() returns text
+language sql stable security definer set search_path = public as $$
+  select role from public.profiles where id = auth.uid() and status = 'Active'
+$$;

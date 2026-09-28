@@ -38,8 +38,10 @@ Deno.serve(async (req: Request) => {
       if (error) return json({ error: error.message }, 400);
 
       const level = role === "admin" ? "Admin, owner" : role === "recops" ? "Rec Ops manager" : "Recruiter";
+      // New accounts start "Invited": the login exists, but app_role() only grants access
+      // once an admin activates them from Users and permissions (status -> "Active").
       const { error: pErr } = await admin.from("profiles")
-        .update({ status: "Active", role, level, full_name: full_name || "" }).eq("id", data.user.id);
+        .update({ status: "Invited", role, level, full_name: full_name || "" }).eq("id", data.user.id);
       if (pErr) return json({ error: pErr.message }, 500);
       return json({ ok: true, id: data.user.id });
     }

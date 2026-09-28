@@ -3324,7 +3324,7 @@ function UsersPage({ toast, S }) {
   const [delUser, setDelUser] = useState(null);
   const [delBusy, setDelBusy] = useState(false);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
-  const adminCount = users.filter((u) => u.roleKey === "admin" && u.status !== "Disabled").length;
+  const adminCount = users.filter((u) => u.roleKey === "admin" && u.status === "Active").length;
   const transferCandidates = users.filter((u) => !u.isOwner && u.status === "Active");
   const openEdit = (u) => { setEditUser(u); setEditName(u.name); setEditPhone(u.phone || ""); };
   const saveEdit = () => {
@@ -3350,7 +3350,7 @@ function UsersPage({ toast, S }) {
     if (users.some((u) => u.email.toLowerCase() === email.toLowerCase())) { toast("That email already has an account"); return; }
     if (pass.length < 8) { toast("Password must be at least 8 characters"); return; }
     setBusy(true);
-    try { await S.createAccount({ email, password: pass, full_name: name, role: roleKey }); setName(""); setEmail(""); setPass(""); setOpen(false); toast("Account created for " + name); }
+    try { await S.createAccount({ email, password: pass, full_name: name, role: roleKey }); setName(""); setEmail(""); setPass(""); setOpen(false); toast("Account created for " + name + " — activate it so they can sign in"); }
     catch (e) { toast(e.message || "Could not create account"); }
     setBusy(false);
   };
@@ -3394,13 +3394,13 @@ function UsersPage({ toast, S }) {
             { key: "status", label: "STATUS", render: (u) => <StatusPill status={u.status} /> },
             { key: "act", label: "", render: (u) => {
               if (u.isOwner) return <button onClick={() => openEdit(u)} className="text-xs" style={{ color: C.em }}>Edit</button>;
-              const lastAdmin = u.roleKey === "admin" && u.status !== "Disabled" && adminCount <= 1;
+              const lastAdmin = u.roleKey === "admin" && u.status === "Active" && adminCount <= 1;
               return (
                 <div className="flex items-center gap-2.5 flex-wrap justify-end">
                   <button onClick={() => openEdit(u)} className="text-xs" style={{ color: C.em }}>Edit</button>
                   <button onClick={() => { setPwUser(u); setPwValue(""); }} className="text-xs" style={{ color: C.em }}>Set password</button>
-                  {u.status === "Disabled"
-                    ? <button onClick={() => S.enableUser(u.id).then(() => toast("Account re-enabled"))} className="text-xs" style={{ color: C.em }}>Enable</button>
+                  {u.status === "Disabled" || u.status === "Invited"
+                    ? <button onClick={() => S.enableUser(u.id).then(() => toast(u.status === "Invited" ? "Account activated" : "Account re-enabled"))} className="text-xs" style={{ color: C.em }}>{u.status === "Invited" ? "Activate" : "Enable"}</button>
                     : !lastAdmin && u.roleKey !== "admin" && <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button>}
                   {!lastAdmin && <button onClick={() => setDelUser(u)} className="text-xs" style={{ color: C.dangerFg }}>Delete</button>}
                 </div>
@@ -3444,7 +3444,7 @@ function UsersPage({ toast, S }) {
           ))}
         </div>
         <Btn kind="primary" full onClick={invite}>{busy ? "Creating\u2026" : "Create account"}</Btn>
-        <div className="text-xs mt-2" style={{ color: C.ink3 }}>Share this email and password with them directly. They can change the password after signing in.</div>
+        <div className="text-xs mt-2" style={{ color: C.ink3 }}>Share this email and password with them directly. The account starts as "Invited" — use Activate on their row here before they can sign in and use their profile.</div>
       </Modal>
       <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="Transfer ownership">
         <div className="text-sm mb-3" style={{ color: C.ink2 }}>The new owner becomes an admin who can't be demoted or disabled by anyone but themselves. You'll lose that protection.</div>
