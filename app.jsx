@@ -1478,7 +1478,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
     (roleF === "All" || c.role === roleF) && (sourceF === "All" || c.source === sourceF) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
   const activeFilterCount = [recF !== "All", minAi > 0, roleF !== "All", sourceF !== "All", !!dateFrom, !!dateTo].filter(Boolean).length;
-  const tabs = ["All", "In review", "With client", "Interview", "Active file", "Hired", "Placed", "Rejected"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
+  const tabs = ["All", "In review", "With client", "Interview", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -1675,13 +1675,27 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     setEditForm(null); toast("Candidate details updated");
   };
 
+  // Rejected by the client (they were already forwarded) is tracked separately from an
+  // ordinary reject (never made it that far) in the timeline/history, but both outcomes send
+  // the candidate straight back to Active file rather than a dead-end "Rejected" status --
+  // they stay searchable for other roles instead of falling out of the pipeline.
+  const reject = (clientReject) => {
+    patch((c) => ({
+      status: "Active file",
+      timeline: [...c.timeline, { t: (clientReject ? "Rejected by the client" : "Rejected") + " — moved to Active file", d: todayStr(), done: true }],
+    }));
+    setReassign("searching");
+    toast(clientReject ? "Marked rejected by the client. Moved to Active file." : "Candidate rejected. Moved to Active file.");
+    setTimeout(() => setReassign("found"), 1200);
+  };
   const doStatus = (opt) => {
     setMenuOpen(false);
     if (opt === "Not a fit for this role") {
       setStatus("Active file"); setReassign("searching"); toast("Moved to Active file");
       setTimeout(() => setReassign("found"), 1200);
     } else if (opt === "Approve, forward to client") { setStatus("With client"); toast("Forwarded to client"); }
-    else if (opt === "Reject") { setStatus("Rejected"); toast("Candidate rejected"); }
+    else if (opt === "Reject") { reject(false); }
+    else if (opt === "Client reject") { reject(true); }
     else if (opt === "Mark placed") { openPlaced(); }
     // A recruiter's only status action: flags the candidate for Rec Ops/Admin to confirm.
     // Doesn't create a placement or billing entry — that still only happens via Mark placed.
@@ -1810,8 +1824,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 <Btn kind="primary" className="w-full justify-center" onClick={() => setMenuOpen((m) => !m)}>Update status</Btn>
                 {menuOpen && (
                   <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-56 py-1" style={{ background: "#fff", borderColor: C.line }}>
-                    {["Hold", "Approve, forward to client", "Not a fit for this role", "Mark placed", "Reject"].map((o) => (
-                      <button key={o} onClick={() => doStatus(o)} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: o === "Reject" ? C.dangerFg : C.ink }}>{o}</button>
+                    {["Hold", "Approve, forward to client", "Not a fit for this role", "Mark placed", status === "With client" ? "Client reject" : "Reject"].map((o) => (
+                      <button key={o} onClick={() => doStatus(o)} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: o === "Reject" || o === "Client reject" ? C.dangerFg : C.ink }}>{o}</button>
                     ))}
                   </div>
                 )}
@@ -2044,8 +2058,13 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const editing = staff && ((f && f.state === "draft") || (!f && drafts !== null));
   const setQ = (i, v) => setDrafts(qList.map((q, k) => (k === i ? v : q)));
   const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { toast(err.message); } setBusy(""); };
-  const screen = () => run("screen", async () => { await S.aiScreen("screen", { linkId: link.id }); toast("Screened for " + job.client); });
-  const draftQs = () => run("draft", async () => { await S.aiScreen("draft_followups", { linkId: link.id }); toast("Screening questions drafted for " + first); });
+  const screen = () => run("screen", async () => {
+    await S.aiScreen("screen", { linkId: link.id });
+    // Draft follow-up questions right away, with no separate manual step -- best-effort, since
+    // it's a normal outcome for this to be a no-op (e.g. questions already sent).
+    await S.aiScreen("draft_followups", { linkId: link.id }).catch(() => {});
+    toast("Screened for " + job.client);
+  });
   const approve = () => run("approve", async () => {
     const qs = qList.map((q) => q.trim()).filter(Boolean);
     if (!qs.length) throw new Error("Add at least one question");
@@ -2147,7 +2166,6 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               {ai.verdict === "Possible reject" && (
                 <div className="rounded-lg border px-3 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ borderColor: C.line }}>
                   <span><span className="font-medium">Not a final rejection.</span> <span style={{ color: C.ink2 }}>{first} hasn't answered any screening questions for this job yet. Screen them with the AI follow-up questions {f ? "below" : ""} before deciding.</span></span>
-                  {!f && <Btn onClick={draftQs} disabled={!!busy} className="shrink-0 text-xs px-3 py-1.5">{busy === "draft" ? <>Drafting <InlineDots /></> : "Draft screening questions"}</Btn>}
                 </div>
               )}
               {reqGroups.length > 0 && (
@@ -4663,7 +4681,10 @@ function DataPrivacyTab({ toast, S }) {
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [purgeBusy, setPurgeBusy] = useState(false);
   const days = num(retention);
-  const eligible = days ? S.cands.filter((c) => c.status === "Rejected" && c.updatedAt < Date.now() - days * 864e5) : [];
+  // Rejects (client or otherwise) and "not a fit" candidates all land on Active file now
+  // rather than a dead-end "Rejected" status, so staleness here means sitting untouched on
+  // Active file, not a status that nothing sets anymore.
+  const eligible = days ? S.cands.filter((c) => c.status === "Active file" && c.updatedAt < Date.now() - days * 864e5) : [];
   const saveRetention = () => {
     setBusy(true);
     S.saveSettings({ ...S.settings, retentionDays: days || null }).then(() => toast("Retention setting saved")).catch(() => {}).finally(() => setBusy(false));
@@ -4685,19 +4706,19 @@ function DataPrivacyTab({ toast, S }) {
         <div className="flex flex-wrap gap-2 mt-4"><Btn icon={Download} onClick={exportCandidates}>Export candidates</Btn><Btn icon={Download} onClick={exportPlacements}>Export placements</Btn></div>
       </Card>
       <Card>
-        <SectionTitle title="Data retention" sub="Automatically clean up candidates who've been rejected for a while." size="text-lg" />
+        <SectionTitle title="Data retention" sub="Automatically clean up candidates on Active file who've sat untouched for a while." size="text-lg" />
         <div className="flex flex-col gap-3 mt-4 md:max-w-sm">
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete rejected candidates after (days)</label><input value={retention} onChange={(e) => setRetention(e.target.value)} placeholder="Never" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete inactive Active-file candidates after (days)</label><input value={retention} onChange={(e) => setRetention(e.target.value)} placeholder="Never" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
           <Btn kind="primary" disabled={busy} onClick={saveRetention}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
         </div>
         {days > 0 && (
           <div className="mt-4 pt-4 flex flex-wrap items-center justify-between gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
-            <div className="text-sm" style={{ color: C.ink2 }}>{eligible.length} rejected candidate{eligible.length === 1 ? "" : "s"} past {days} days right now.</div>
+            <div className="text-sm" style={{ color: C.ink2 }}>{eligible.length} inactive Active-file candidate{eligible.length === 1 ? "" : "s"} past {days} days right now.</div>
             <Btn kind="danger" disabled={!eligible.length} onClick={() => setPurgeOpen(true)}>Purge now</Btn>
           </div>
         )}
       </Card>
-      <ConfirmModal open={purgeOpen} onClose={() => setPurgeOpen(false)} title="Delete these candidates?" body={"This permanently deletes " + eligible.length + " rejected candidate(s) past your retention window. This can't be undone."} onConfirm={confirmPurge} busy={purgeBusy} />
+      <ConfirmModal open={purgeOpen} onClose={() => setPurgeOpen(false)} title="Delete these candidates?" body={"This permanently deletes " + eligible.length + " inactive Active-file candidate(s) past your retention window. This can't be undone."} onConfirm={confirmPurge} busy={purgeBusy} />
     </div>
   );
 }
