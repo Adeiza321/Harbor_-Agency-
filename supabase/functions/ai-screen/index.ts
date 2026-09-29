@@ -6,10 +6,13 @@ import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
 
 // AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
 //
-// Provider: Claude first (ANTHROPIC_API_KEY; model from ANTHROPIC_MODEL, default the
-// low-cost claude-haiku-4-5). If Claude fails (busy, out of credit, down), the same request
-// goes to Gemini (GEMINI_API_KEY; model from GEMINI_MODEL) so screening keeps working.
-// The checklist guard (enforceChecklist) applies to whichever model answered.
+// Provider: Claude ONLY (ANTHROPIC_API_KEY; model from ANTHROPIC_MODEL, default the
+// low-cost claude-haiku-4-5) — deliberately no Gemini fallback here. Two different models
+// judging the same rubric can land on different verdicts for the same candidate, which reads
+// as "the ranking keeps changing"; one model keeps every rescreen comparable. Temperature is
+// pinned to 0 for the same reason: this is a rubric checklist, not creative writing, so the
+// answer should be as repeatable as the inputs allow. The checklist guard (enforceChecklist)
+// still applies on top.
 //
 // Resumes: PDF, Word (.docx/.doc), OpenDocument, RTF, text and images are all read
 // (see resume.ts). Screening material: every judgement uses BOTH the resume and their
@@ -96,7 +99,7 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
   }
   content.push({ type: "text", text: withResumeText(text, resume) });
   // Generous output room: a full requirement checklist is long, and a cut-off reply can't be read.
-  const payload = JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: Math.max(maxTokens * 3, 8000), system, messages: [{ role: "user", content }] });
+  const payload = JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: Math.max(maxTokens * 3, 8000), temperature: 0, system, messages: [{ role: "user", content }] });
   let res: Response | null = null;
   // When Claude is busy (429 rate limit, 529 overloaded, 5xx) wait briefly and retry twice.
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -122,22 +125,10 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
 
 async function askAI(system: string, text: string, resume: ResumeInput | null = null, maxTokens = 800) {
   const anthropic = Deno.env.get("ANTHROPIC_API_KEY");
-  const gemini = Deno.env.get("GEMINI_API_KEY");
-  if (!anthropic && !gemini) throw new Error("AI is not configured yet: add an ANTHROPIC_API_KEY secret to this Supabase project.");
-  let claudeErr = "";
-  if (anthropic) {
-    try { return await askAnthropic(anthropic, system, text, resume, maxTokens); }
-    catch (e) {
-      if (!gemini) throw e;
-      claudeErr = String((e as Error)?.message || e);
-      console.error("claude failed, using gemini", claudeErr.slice(0, 200));
-    }
-  }
-  try { return await askGemini(gemini!, system, text, resume, maxTokens); }
-  catch (e) {
-    if (!claudeErr) throw e;
-    throw new Error("Claude: " + claudeErr.slice(0, 160) + " | Gemini backup: " + String((e as Error)?.message || e).slice(0, 160));
-  }
+  if (!anthropic) throw new Error("AI is not configured yet: add an ANTHROPIC_API_KEY secret to this Supabase project.");
+  // Claude only — see the note above. askAnthropic already retries on 429/5xx, so a
+  // transient failure is handled without switching models.
+  return await askAnthropic(anthropic, system, text, resume, maxTokens);
 }
 
 // The resume on file, ready for the AI (any supported format), or a reason it can't be read.

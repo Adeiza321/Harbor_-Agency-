@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, Inbox as InboxIcon, Briefcase, TrendingUp, Send,
   CreditCard, Megaphone, Search, Bell, ChevronDown, ChevronRight, ChevronLeft,
-  Plus, Download, Filter, Upload, Check, X, Lock, Copy, MessageSquare,
+  Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info,
 } from "lucide-react";
@@ -1542,22 +1542,34 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
 /* Shared chat thread: message history + composer. Used by the candidate detail page and the
    Messages page (recruiter side) alike — both just hand it a list of {sender,body,at} and a
    send callback. sender is "recruiter" or "candidate"; recruiter's own messages sit on the
-   right, the candidate's on the left. */
-function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSender = "recruiter" }) {
+   right, the candidate's on the left.
+   Delivery/read ticks (WhatsApp-style, on "mine" bubbles only): a message that exists here has
+   been delivered (there's no offline queue in this app, so sent === delivered), shown as a dim
+   double check; once the other side's read timestamp is set, the ticks turn blue. Messages
+   without recruiterReadAt/candidateReadAt on them (e.g. an older shape) just render as delivered. */
+function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSender = "recruiter", scrollClass = "max-h-72" }) {
   const [text, setText] = useState("");
   const send = () => { const t = text.trim(); if (!t) return; onSend(t); setText(""); };
+  const readAtFor = (m) => (mineSender === "recruiter" ? m.candidateReadAt : m.recruiterReadAt);
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+      <div className={"flex flex-col gap-2 overflow-y-auto pr-1 " + scrollClass}>
         {messages.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{emptyText || "No messages yet."}</div>}
-        {messages.map((m, i) => (
-          <div key={m.id || i} className="flex" style={{ justifyContent: m.sender === mineSender ? "flex-end" : "flex-start" }}>
-            <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm" style={{ background: m.sender === mineSender ? C.side : C.canvas, color: m.sender === mineSender ? "#fff" : C.ink, border: m.sender === mineSender ? "none" : `1px solid ${C.line}` }}>
-              <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
-              <div className="text-[10px] mt-1" style={{ opacity: 0.65 }}>{ago(m.at)}</div>
+        {messages.map((m, i) => {
+          const mine = m.sender === mineSender;
+          const read = mine && !!readAtFor(m);
+          return (
+            <div key={m.id || i} className="flex" style={{ justifyContent: mine ? "flex-end" : "flex-start" }}>
+              <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm" style={{ background: mine ? C.side : C.canvas, color: mine ? "#fff" : C.ink, border: mine ? "none" : `1px solid ${C.line}` }}>
+                <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
+                <div className="text-[10px] mt-1 flex items-center justify-end gap-1">
+                  <span style={{ opacity: 0.65 }}>{ago(m.at)}</span>
+                  {mine && <CheckCheck size={13} color={read ? "#53BDEB" : "rgba(255,255,255,0.65)"} title={read ? "Read" : "Delivered"} />}
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
       <div className="flex gap-2 items-end">
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder={placeholder || "Write your message"}
@@ -2741,11 +2753,14 @@ function MessagesPage({ toast, S }) {
     .sort((a, b) => a.cand.name.localeCompare(b.cand.name));
   const startNew = (t) => { setOpenId(t.link.id); setComposeOpen(false); setComposeSearch(""); };
 
+  // WhatsApp-style on mobile: the list and the open chat are two separate screens, not stacked
+  // panes -- picking a conversation swaps the list out for a full-width chat with a back arrow.
+  // From md up there's room for both side by side, like before.
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Conversations you've actually started, by role." />
       <div className="flex flex-col md:flex-row gap-5 md:gap-6">
-        <Card className="md:w-80 shrink-0 !p-0 overflow-hidden">
+        <Card className={(openId ? "hidden md:block " : "") + "md:w-80 shrink-0 !p-0 overflow-hidden"}>
           <div className="p-3.5 flex flex-col gap-2.5" style={{ borderBottom: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-2">
               <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
@@ -2756,7 +2771,7 @@ function MessagesPage({ toast, S }) {
               {S.jobs.map((j) => <option key={j.id} value={j.id}>{j.role} · {j.client}</option>)}
             </select>
           </div>
-          <div className="max-h-[28rem] overflow-y-auto">
+          <div className="max-h-[70vh] md:max-h-[28rem] overflow-y-auto">
             {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
             {threads.map((t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
@@ -2768,22 +2783,29 @@ function MessagesPage({ toast, S }) {
                     {t.unread > 0 && <span className="text-[10px] rounded-full px-1.5 py-0.5 shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}>{t.unread}</span>}
                   </div>
                   <div className="text-xs truncate" style={{ color: C.ink2 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
-                  <div className="text-xs truncate mt-0.5" style={{ color: C.ink3 }}>{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + t.last.body : "No messages yet"}</div>
+                  <div className="text-xs truncate mt-0.5 flex items-center gap-1" style={{ color: C.ink3 }}>
+                    {t.last && t.last.sender === "recruiter" && <CheckCheck size={12} color={t.last.candidateReadAt ? "#2FA6D6" : C.ink3} className="shrink-0" />}
+                    <span className="truncate">{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + t.last.body : "No messages yet"}</span>
+                  </div>
                 </div>
               </button>
             ))}
           </div>
         </Card>
-        <Card className="flex-1">
+        <Card className={(openId ? "" : "hidden md:block ") + "flex-1"}>
           {!openThread ? (
             <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left, or tap + to start one.</div>
           ) : (
             <div className="flex flex-col gap-3">
-              <div>
-                <div className="text-base font-semibold">{openThread.cand.name}</div>
-                <div className="text-xs" style={{ color: C.ink2 }}>{openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}</div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setOpenId(null)} className="md:hidden w-8 h-8 -ml-1 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2 }}><ChevronLeft size={18} /></button>
+                <Avatar init={initialsOf(openThread.cand.name)} tone="em" size={34} />
+                <div className="min-w-0">
+                  <div className="text-base font-semibold truncate">{openThread.cand.name}</div>
+                  <div className="text-xs truncate" style={{ color: C.ink2 }}>{openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}</div>
+                </div>
               </div>
-              <MessageThread messages={openThread.link.messages || []} busy={busy} onSend={send} placeholder={"Message " + openThread.cand.name.split(" ")[0] + "…"} />
+              <MessageThread messages={openThread.link.messages || []} busy={busy} onSend={send} placeholder={"Message " + openThread.cand.name.split(" ")[0] + "…"} scrollClass="max-h-[55vh] md:max-h-72" />
             </div>
           )}
         </Card>
