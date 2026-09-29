@@ -2119,7 +2119,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: C.ink2 }}>
                 <Sparkles size={14} color={C.em} className="shrink-0" />
                 <span>{ai.stage === "final" ? "Final screening" : "First screening"} · {ai.usedResume ? "resume + " : "no resume · "}{ai.answersUsed || 0} {ai.answersUsed === 1 ? "answer" : "answers"} · updated {ai.updatedAt ? fdate(ai.updatedAt) : "–"}</span>
-                {!candidate.ai_locked && <button type="button" onClick={screen} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>{busy === "screen" ? "Screening…" : "Rescreen"}</button>}
+                {!candidate.ai_locked && S.role !== "recruiter" && <button type="button" onClick={screen} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>{busy === "screen" ? "Screening…" : "Rescreen"}</button>}
               </div>
               {ai.summary && <div className="text-sm leading-relaxed">{ai.summary}</div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2284,7 +2284,7 @@ function IndustryExperience({ candidate, S, toast }) {
     <div className="mb-4">
       <div className="flex items-center gap-2 mb-1.5">
         <div className="text-xs" style={{ color: C.ink3 }}>INDUSTRY EXPERIENCE</div>
-        {candidate.cv && (
+        {candidate.cv && (S.role !== "recruiter" || !items.length) && (
           <button type="button" onClick={run} disabled={busy} className="ml-auto text-xs font-medium" style={{ color: C.em }}>
             {busy ? <span className="inline-flex items-center gap-1.5">Looking up companies <InlineDots /></span> : items.length ? "Refresh" : "Look up companies"}
           </button>
@@ -2507,7 +2507,7 @@ function MatchesCard({ candidate, S, toast }) {
     <div className="mt-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-medium" style={{ color: C.ink2 }}>PARALLEL TITLES · roles they could be hired into now</div>
-        <button onClick={refreshTitles} disabled={titlesBusy} className="text-xs underline shrink-0" style={{ color: C.ink2 }}>{titlesBusy ? "Updating…" : candidate.parallelTitles.length ? "Refresh" : "Work out titles"}</button>
+        {(S.role !== "recruiter" || !candidate.parallelTitles.length) && <button onClick={refreshTitles} disabled={titlesBusy} className="text-xs underline shrink-0" style={{ color: C.ink2 }}>{titlesBusy ? "Updating…" : candidate.parallelTitles.length ? "Refresh" : "Work out titles"}</button>}
       </div>
       <div className="flex flex-wrap gap-1.5 mt-1.5">
         {candidate.parallelTitles.length
@@ -4879,6 +4879,14 @@ export default function App() {
       const profile = (await sbFetch("/rest/v1/profiles?select=*&id=eq." + sess.uid, { token: sess.token }))[0];
       if (!profile || profile.status !== "Active") { setSession(sess); setMe(profile ? mapUser(profile) : null); setStatus("pending"); return; }
       setSession(sess); setMe(mapUser(profile));
+      // Records this device's IP/location on the profile and logs a "login" activity entry --
+      // once per browser tab session, so refreshing the page doesn't spam the activity log.
+      try {
+        if (!sessionStorage.getItem("harbor.recordedLogin")) {
+          sessionStorage.setItem("harbor.recordedLogin", "1");
+          fetch(SB_URL + "/functions/v1/record-login", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + sess.token, "Content-Type": "application/json" } }).catch(() => {});
+        }
+      } catch (e) {}
       const d = await loadAll(sess.token);
       setData(d); setStatus("ready");
     } catch (e) { setErrMsg(e.message); setStatus("error"); }
@@ -4916,7 +4924,7 @@ export default function App() {
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
   if (status === "loading") return <Loader key={"load" + errMsg} label="Loading your workspace…" onRetry={() => window.location.reload()} />;
-  if (status === "signedout") return <SignIn onSignedIn={(s) => { setSession(s); setStatus("loading"); boot(s); fetch(SB_URL + "/functions/v1/record-login", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + s.token, "Content-Type": "application/json" } }).catch(() => {}); }} />;
+  if (status === "signedout") return <SignIn onSignedIn={(s) => { setSession(s); setStatus("loading"); boot(s); }} />;
   if (status === "pending") return <AwaitingAccess onSignOut={signOut} />;
   if (status === "error") return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
