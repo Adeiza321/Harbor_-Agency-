@@ -161,7 +161,9 @@ function mapAll(d) {
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", profileReadAt: c.profile_read_at || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null })),
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
+      // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
+      messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at })) })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
@@ -169,6 +171,12 @@ function mapAll(d) {
   const ends = d.candidates.flatMap((c) => c.candidate_endorsements || []);
   const jobs = d.jobs.map((j) => { const en = ends.filter((e) => e.company === j.client && e.role_title === j.role_title); const links = j.candidate_jobs || [];
     const active = links.filter((l) => l.stage !== "Rejected" && l.stage !== "Withdrawn");
+    // "Submitted" means actually submitted to the client (candidate_jobs.submitted_at set,
+    // i.e. stage has reached Submitted/Interview/Offer/Placed) — NOT every candidate still
+    // sitting earlier in the pipeline (Sourced/In review/Screening), which `active` also
+    // includes. Using `active` here made this number match "lineup", not the Overview
+    // dashboard's own submissions count.
+    const submittedLinks = links.filter((l) => l.submitted_at);
     return { id: j.id, role: j.role_title, client: j.client, description: j.description || "", location: j.location || "", workSetup: j.work_setup || "", minPay: j.min_pay, maxPay: j.max_pay, currency: j.currency || "NGN", country: j.country || "", seo: j.seo || null, createdAt: j.created_at ? new Date(j.created_at).getTime() : Date.now(), screeningQuestions: j.screening_questions || [],
       salaryPeriod: j.salary_period || "Yearly", commissionOnly: !!j.commission_only, employmentType: j.employment_type || "", headcount: j.headcount != null ? j.headcount : 1,
       billingFrequency: j.billing_frequency || "One-off", billingMonths: j.billing_months,
@@ -176,7 +184,7 @@ function mapAll(d) {
       billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
       incentiveType: j.incentive_type || "percent", incentiveAmount: j.incentive_amount, incentiveCurrency: j.incentive_currency || j.currency || "NGN",
       recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
-      submitted: new Set([...en.map((e) => e.candidate_id), ...active.map((l) => l.candidate_id)]).size,
+      submitted: new Set([...en.map((e) => e.candidate_id), ...submittedLinks.map((l) => l.candidate_id)]).size,
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, candidateId: a.candidate_id }));
   const today = new Date();
@@ -203,8 +211,12 @@ function mapAll(d) {
 function buildTeam(users, cands, placements) {
   return users.filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops")).map((u) => {
     const mine = cands.filter((c) => c.recruiterId === u.id); const placed = mine.filter((c) => c.status === "Placed").length;
+    // "submissions" = candidates actually submitted to a client (a job link that reached
+    // submitted_at), not just every candidate on this recruiter's bench (mine.length) —
+    // matches the definition the Overview dashboard's own Submissions chart uses.
+    const submitted = mine.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.submittedAt).length, 0);
     const billedPlacements = placements.filter((p) => p.recruiterId === u.id && ["Ready", "Invoiced", "Paid"].includes(p.status));
-    return { id: u.id, init: initialsOf(u.name), name: u.name, level: u.role, submissions: mine.length, interviews: mine.filter((c) => c.status === "Interview").length, placed, conv: mine.length ? Math.round((placed / mine.length) * 100) : 0, billed: sumByCurrency(billedPlacements, "feeNum", "feeCurrency") };
+    return { id: u.id, init: initialsOf(u.name), name: u.name, level: u.role, submissions: submitted, interviews: mine.filter((c) => c.status === "Interview").length, placed, conv: mine.length ? Math.round((placed / mine.length) * 100) : 0, billed: sumByCurrency(billedPlacements, "feeNum", "feeCurrency") };
   }).sort((a, b) => b.placed - a.placed).map((r, i) => ({ ...r, top: i === 0 && r.placed > 0 }));
 }
 const weekly = (cands) => { const b = Array(12).fill(0); cands.forEach((c) => { const w = Math.floor((Date.now() - c.createdAt) / 6048e5); if (w >= 0 && w < 12) b[11 - w]++; }); return b; };
@@ -917,6 +929,7 @@ const NAV_RECOPS = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "candidates", label: "Candidates", icon: Users },
   { key: "inbox", label: "Inbox", icon: InboxIcon },
+  { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "jobs", label: "Jobs", icon: Briefcase },
   { key: "campaigns", label: "Campaigns", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
@@ -929,6 +942,7 @@ const NAV_ADMIN_EXTRA = [
 const NAV_RECRUITER = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "candidates", label: "My candidates", icon: Users },
+  { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "jobs", label: "Jobs", icon: Briefcase },
   { key: "campaigns", label: "Campaigns", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
@@ -1525,6 +1539,36 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
 }
 
 /* Candidate detail */
+/* Shared chat thread: message history + composer. Used by the candidate detail page and the
+   Messages page (recruiter side) alike — both just hand it a list of {sender,body,at} and a
+   send callback. sender is "recruiter" or "candidate"; recruiter's own messages sit on the
+   right, the candidate's on the left. */
+function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSender = "recruiter" }) {
+  const [text, setText] = useState("");
+  const send = () => { const t = text.trim(); if (!t) return; onSend(t); setText(""); };
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+        {messages.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{emptyText || "No messages yet."}</div>}
+        {messages.map((m, i) => (
+          <div key={m.id || i} className="flex" style={{ justifyContent: m.sender === mineSender ? "flex-end" : "flex-start" }}>
+            <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm" style={{ background: m.sender === mineSender ? C.side : C.canvas, color: m.sender === mineSender ? "#fff" : C.ink, border: m.sender === mineSender ? "none" : `1px solid ${C.line}` }}>
+              <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
+              <div className="text-[10px] mt-1" style={{ opacity: 0.65 }}>{ago(m.at)}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2 items-end">
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder={placeholder || "Write your message"}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+          className="flex-1 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <Btn kind="primary" disabled={!!busy || !text.trim()} onClick={send}>{busy ? <InlineDots /> : "Send"}</Btn>
+      </div>
+    </div>
+  );
+}
+
 function CandidateDetail({ candidate, onBack, toast, S }) {
   const [tab, setTab] = useState("companies");
   const status = candidate.status;
@@ -1537,7 +1581,17 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     setDelBusy(true);
     S.deleteCandidate(candidate.id).then(() => { toast("Candidate deleted"); onBack(); }).catch(() => {}).finally(() => setDelBusy(false));
   };
-  const [msg, setMsg] = useState("");
+  // Which job the "Message" modal is talking about (a candidate can have more than one live
+  // link); defaults to the most recently created one that isn't declined.
+  const liveLinks = candidate.jobLinks.filter((l) => l.response !== "declined").sort((a, b) => b.createdAt - a.createdAt);
+  const [msgLinkId, setMsgLinkId] = useState(null);
+  const [msgBusy, setMsgBusy] = useState(false);
+  const msgLink = candidate.jobLinks.find((l) => l.id === (msgLinkId || (liveLinks[0] && liveLinks[0].id))) || null;
+  const sendMsg = (text) => {
+    if (!msgLink) { toast("Attach this candidate to a job before messaging them"); return; }
+    setMsgBusy(true);
+    S.sendMessage(msgLink.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => toast(e.message)).finally(() => setMsgBusy(false));
+  };
   const [reply, setReply] = useState("");
   const placementJobs = S.jobs.filter((j) => candidate.jobLinks.some((l) => l.jobId === j.id) || candidate.endorsed.some((e) => e.role === j.role && e.company === j.client));
   const [placeJobId, setPlaceJobId] = useState("");
@@ -1644,8 +1698,18 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     <div className="flex flex-col gap-5 md:gap-6">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Candidates</button>
       <Modal open={panel === "msg"} onClose={() => setPanel(null)} title={"Message " + candidate.name.split(" ")[0]}>
-        <textarea value={msg} onChange={(e) => setMsg(e.target.value)} rows={4} placeholder="Write your message" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none mb-4" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        <Btn kind="primary" full onClick={() => { if (!msg.trim()) { toast("Write a message first"); return; } patch((c) => ({ timeline: [...c.timeline, { t: "Message sent: " + msg.slice(0, 60), d: todayStr(), done: true }] })); setMsg(""); setPanel(null); toast("Message logged. Email delivery needs your backend."); }}>Send message</Btn>
+        {liveLinks.length === 0 ? (
+          <div className="text-sm" style={{ color: C.ink3 }}>Attach {candidate.name.split(" ")[0]} to a job first — messages are tied to a specific role.</div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {liveLinks.length > 1 && (
+              <select value={msgLink ? msgLink.id : ""} onChange={(e) => setMsgLinkId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+                {liveLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
+              </select>
+            )}
+            <MessageThread messages={msgLink ? msgLink.messages || [] : []} busy={msgBusy} onSend={sendMsg} placeholder={"Message " + candidate.name.split(" ")[0] + "…"} />
+          </div>
+        )}
       </Modal>
       <Modal open={!!editForm} onClose={() => setEditForm(null)} title="Edit candidate details">
         {editForm && (
@@ -2627,6 +2691,73 @@ function InboxPage({ toast, S }) {
           ]}
         />
       </Card>
+    </div>
+  );
+}
+
+/* Every job-linked candidate is a possible thread, whether or not anyone has said anything
+   yet — that's what lets a recruiter start a conversation, not just answer one. */
+function MessagesPage({ toast, S }) {
+  const [jobFilter, setJobFilter] = useState("");
+  const [openId, setOpenId] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const threads = S.cands.flatMap((c) => c.jobLinks.filter((l) => l.response !== "declined").map((l) => {
+    const j = S.jobs.find((x) => x.id === l.jobId);
+    const msgs = l.messages || [];
+    const last = msgs[msgs.length - 1] || null;
+    const unread = msgs.filter((m) => m.sender === "candidate" && !m.recruiterReadAt).length;
+    return { cand: c, link: l, job: j, last, unread, at: last ? last.at : l.createdAt };
+  })).filter((t) => !jobFilter || (t.job && t.job.id === jobFilter)).sort((a, b) => b.unread - a.unread || b.at - a.at);
+  const openThread = threads.find((t) => t.link.id === openId) || null;
+  const open = (t) => { setOpenId(t.link.id); if (t.unread) S.markThreadRead(t.link.id).catch(() => {}); };
+  const send = (text) => {
+    if (!openThread) return;
+    setBusy(true);
+    S.sendMessage(openThread.link.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => toast(e.message)).finally(() => setBusy(false));
+  };
+  return (
+    <div className="flex flex-col gap-5 md:gap-6">
+      <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Every candidate you're talking to, by role." />
+      <div className="flex flex-col md:flex-row gap-5 md:gap-6">
+        <Card className="md:w-80 shrink-0 !p-0 overflow-hidden">
+          <div className="p-3.5" style={{ borderBottom: `1px solid ${C.line}` }}>
+            <select value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+              <option value="">All jobs</option>
+              {S.jobs.map((j) => <option key={j.id} value={j.id}>{j.role} · {j.client}</option>)}
+            </select>
+          </div>
+          <div className="max-h-[28rem] overflow-y-auto">
+            {threads.length === 0 && <div className="text-sm text-center py-8" style={{ color: C.ink3 }}>No conversations yet.</div>}
+            {threads.map((t) => (
+              <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
+                style={{ borderBottom: `1px solid ${C.line}`, background: openId === t.link.id ? C.canvas : "transparent" }}>
+                <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium truncate">{t.cand.name}</span>
+                    {t.unread > 0 && <span className="text-[10px] rounded-full px-1.5 py-0.5 shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}>{t.unread}</span>}
+                  </div>
+                  <div className="text-xs truncate" style={{ color: C.ink2 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
+                  <div className="text-xs truncate mt-0.5" style={{ color: C.ink3 }}>{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + t.last.body : "No messages yet"}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </Card>
+        <Card className="flex-1">
+          {!openThread ? (
+            <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left.</div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div>
+                <div className="text-base font-semibold">{openThread.cand.name}</div>
+                <div className="text-xs" style={{ color: C.ink2 }}>{openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}</div>
+              </div>
+              <MessageThread messages={openThread.link.messages || []} busy={busy} onSend={send} placeholder={"Message " + openThread.cand.name.split(" ")[0] + "…"} />
+            </div>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -4319,7 +4450,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
    approved follow-up questions to answer, their applications and roles that fit them.
    Accepting and answering go straight to the ai-screen function, which rescreens them. */
 function CandidatePortal({ onBack, data, token, onChanged }) {
-  const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], ...(data || {}) };
+  const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], threads: [], ...(data || {}) };
   const [answers, setAnswers] = useState({});
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
@@ -4336,6 +4467,17 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
   };
   const setA = (linkId, i, v) => setAnswers((m) => { const arr = (m[linkId] || []).slice(); arr[i] = v; return { ...m, [linkId]: arr }; });
   const inputStyle = { borderColor: C.line, background: "#FAF8F3" };
+  const [msgBusy, setMsgBusy] = useState(null);
+  const sendThreadMsg = async (linkId, text) => {
+    setMsgBusy(linkId);
+    try {
+      const r = await sbFetch("/rest/v1/rpc/candidate_send_message", { method: "POST", body: { p_token: token, p_link_id: linkId, p_body: text } });
+      if (r && r.error) throw new Error(r.error);
+      if (onChanged) await onChanged();
+    } catch (e) { setErr(e.message || "Could not send. Please try again."); }
+    setMsgBusy(null);
+  };
+  const openThread = (linkId) => sbFetch("/rest/v1/rpc/candidate_mark_read", { method: "POST", body: { p_token: token, p_link_id: linkId } }).then(() => onChanged && onChanged()).catch(() => {});
   return (
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
@@ -4379,6 +4521,29 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
             </Card>
           );
         })}
+
+        {(c.threads || []).length > 0 && (
+          <Card>
+            <SectionTitle title="Messages" sub="One thread per role — your recruiter sees these right away." size="text-xl" />
+            <div className="flex flex-col gap-3 mt-1">
+              {c.threads.map((t) => (
+                <details key={t.linkId} className="rounded-xl border" style={{ borderColor: C.line }} onToggle={(e) => { if (e.target.open && t.unread) openThread(t.linkId); }}>
+                  <summary className="flex items-center justify-between gap-2 px-3.5 py-3 cursor-pointer select-none">
+                    <div>
+                      <div className="text-sm font-medium">{t.role}</div>
+                      <div className="text-xs" style={{ color: C.ink2 }}>{t.company}</div>
+                    </div>
+                    {t.unread > 0 && <span className="text-[10px] rounded-full px-1.5 py-0.5 shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}>{t.unread} new</span>}
+                  </summary>
+                  <div className="px-3.5 pb-3.5">
+                    <MessageThread mineSender="candidate" busy={msgBusy === t.linkId} onSend={(text) => sendThreadMsg(t.linkId, text)} placeholder="Message your recruiter…" emptyText="No messages yet. Say hello!"
+                      messages={(t.messages || []).map((m) => ({ sender: m.sender, body: m.body, at: new Date(m.createdAt).getTime() }))} />
+                  </div>
+                </details>
+              ))}
+            </div>
+          </Card>
+        )}
 
         <Card>
           <SectionTitle title="Your applications" size="text-xl" />
@@ -4454,7 +4619,7 @@ function AwaitingAccess({ onSignOut }) {
   );
 }
 
-const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*)&order=created_at.desc";
+const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*,candidate_job_messages(*))&order=created_at.desc";
 async function loadAll(token) {
   const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
@@ -4541,6 +4706,14 @@ export default function App() {
   const aiCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
+  };
+  // Recruiter -> candidate messaging (candidate_job_messages, one thread per candidate_jobs
+  // link). Sending goes through the send-message edge function rather than a plain insert
+  // because it also emails the candidate; reading is just the messages already embedded on
+  // each jobLink, and marking a thread read is a plain PATCH (RLS-scoped, no edge function).
+  const msgCall = async (action, payload) => {
+    const r = await fetch(SB_URL + "/functions/v1/send-message", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Could not send"); reload(); return j;
   };
   // Fire-and-forget entry in the admin-only audit log. Never blocks or fails the action it's logging.
   const logAudit = (action, entityType, entityId, detail) => {
@@ -4745,11 +4918,19 @@ export default function App() {
       catch (e) { toast(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) aiCall("screen", { linkId: row.id }).then(() => { toast("AI screening ready"); reload(); }).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
+      if (row) { aiCall("screen", { linkId: row.id }).then(() => { toast("AI screening ready"); reload(); }).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
       return row;
     },
     /* Routing: the role shows on the candidate's page; their company card appears once they accept. */
-    routeToJob: (candidateId, jobId) => call("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", prefer: "resolution=ignore-duplicates", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending" } }),
+    routeToJob: async (candidateId, jobId) => {
+      let rows;
+      try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending" } }); }
+      catch (e) { toast(e.message); throw e; }
+      reload();
+      const row = rows && rows[0];
+      if (row) msgCall("invite", { linkId: row.id }).catch(() => {});
+      return row;
+    },
     /* "Add candidate" flow — quick, resume-only fit check on a draft candidate that stays
        invisible to everyone but its creator (enforced by RLS on is_draft) until Submit.
        Still persisted on the backend and logged to the audit log, per the AI's own result. */
@@ -4769,7 +4950,7 @@ export default function App() {
       catch (e) { toast(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) aiCall("screen", { linkId: row.id }).then(() => reload()).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message));
+      if (row) { aiCall("screen", { linkId: row.id }).then(() => reload()).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
       logAudit("added candidate", "candidate", candidateId, job ? job.role + " – " + job.client : "");
       return row;
     },
@@ -4817,6 +4998,10 @@ export default function App() {
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "Couldn't read that file"); return j;
     },
     aiScreen: aiCall,
+    // Recruiter's side of candidate messaging (see msgCall above).
+    sendMessage: (linkId, body) => msgCall("reply", { linkId, body }),
+    inviteToMessage: (linkId) => msgCall("invite", { linkId }).catch(() => {}), // best-effort, never blocks the action that triggered it
+    markThreadRead: (linkId) => call("/rest/v1/candidate_job_messages?link_id=eq." + linkId + "&sender=eq.candidate&recruiter_read_at=is.null", { method: "PATCH", body: { recruiter_read_at: new Date().toISOString() } }),
     /* Your own account: name/phone update straight to your profiles row, avatar via the public `avatars` bucket. */
     updateMyProfile: (patch) => {
       const body = {}; if ("name" in patch) body.full_name = patch.name; if ("phone" in patch) body.phone = patch.phone;
@@ -4851,6 +5036,7 @@ export default function App() {
   else if (page === "candidates") content = <CandidatesList scope={scope} data={candData} openCandidate={(c) => setCandId(c.id)} setPage={setPage} onAddCandidate={() => { setAddCandidateJobId(null); setPage("uploadCandidates"); }} S={S} toast={toast} />;
   else if (page === "uploadCandidates") content = <AddCandidate setPage={setPage} toast={toast} S={S} initialJobId={addCandidateJobId} />;
   else if (page === "inbox") content = <InboxPage toast={toast} S={S} />;
+  else if (page === "messages") content = <MessagesPage toast={toast} S={S} />;
   else if (page === "jobs") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "postJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "editJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} editJob={data.jobs.find((j) => j.id === jobId)} />;
