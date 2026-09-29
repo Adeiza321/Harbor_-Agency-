@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
-import { screenLink, reviewMatch, benchFits, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
+import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
 
@@ -283,7 +283,9 @@ Deno.serve(async (req: Request) => {
     if (opsKey) {
       const { data: tok } = await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
-      if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate runs with an ops token" }, 400);
+      // The sourcing function's scheduled runs check the bench for newly live jobs.
+      if (body.action === "bench_fits" && body.jobId) return json({ ok: true, ...(await benchFits(admin, body.jobId, askAI, loadResume)) });
+      if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate or bench_fits run with an ops token" }, 400);
       const { data: cand } = await admin.from("candidates").select("*").eq("id", body.candidateId).maybeSingle();
       if (!cand) return json({ error: "Candidate not found" }, 404);
       const r = await refreshCandidate(admin, cand, String(body.step || ""), !!body.force);
@@ -372,6 +374,14 @@ Deno.serve(async (req: Request) => {
       await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
       await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening questions sent by " + (me.full_name || "Rec Ops"), done: true });
       return json({ ok: true, ai });
+    }
+
+    // Regenerate a job's parallel titles (other titles the same role is advertised under).
+    if (action === "job_titles") {
+      if (!isStaff) return json({ error: "Only Rec Ops or Admins can change a job's titles" }, 403);
+      const { data: j } = await admin.from("jobs").select("*").eq("id", body.jobId).maybeSingle();
+      if (!j) return json({ error: "Job not found" }, 404);
+      return json({ ok: true, titles: await jobParallelTitles(admin, j, askAI, true) });
     }
 
     // Bench check (Rec Ops/Admin): review the closest non-busy people in Harbor against a job.

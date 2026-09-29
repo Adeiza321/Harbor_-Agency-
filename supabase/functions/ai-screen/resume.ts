@@ -273,7 +273,7 @@ export async function prepareResume(bytes: Uint8Array, name: string): Promise<{ 
     else if (fmt === "rtf") text = rtfText(new TextDecoder("latin1").decode(bytes));
     else if (fmt === "doc") text = docText(bytes);
     else if (fmt === "txt" || fmt === "md" || fmt === "text") text = tidy(new TextDecoder().decode(bytes));
-    else return { why: `AI can't read .${fmt} resumes yet. Upload a PDF, Word, text or image version.` };
+    else return { why: "Couldn't open this resume file. Try saving it as PDF or DOCX and uploading again." };
   } catch {
     return { why: "Couldn't open this resume file. Try saving it as PDF or DOCX and uploading again." };
   }

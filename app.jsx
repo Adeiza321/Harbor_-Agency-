@@ -934,7 +934,7 @@ const NAV_RECOPS = [
   { key: "inbox", label: "Inbox", icon: InboxIcon },
   { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "jobs", label: "Jobs", icon: Briefcase },
-  { key: "campaigns", label: "Campaigns", icon: Send },
+  { key: "campaigns", label: "Outreach", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
   { key: "ads", label: "Ads", icon: Megaphone },
 ];
@@ -947,7 +947,7 @@ const NAV_RECRUITER = [
   { key: "candidates", label: "My candidates", icon: Users },
   { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "jobs", label: "Jobs", icon: Briefcase },
-  { key: "campaigns", label: "Campaigns", icon: Send },
+  { key: "campaigns", label: "Outreach", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
 ];
 const byKey = (list, key) => list.find((x) => x.key === key);
@@ -3024,6 +3024,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           </div>
         </Card>
       )}
+      {S.role !== "recruiter" && <JobSourcingCard job={job} S={S} toast={toast} />}
       <Card>
         <SectionTitle title="Candidates on this role" sub={activeCount + " active \u00b7 " + candidates.length + " total"} size="text-xl" />
         <div className="mt-3">
@@ -3535,58 +3536,443 @@ function PromoteModal({ open, onClose, jobTitle, toast, S }) {
    AddCandidate, CandidatePortal and the App root (default export).
    ====================================================================== */
 
-function CampaignsPage({ toast, S }) {
+/* ----------------------------------------------------------------------
+   Outreach: sourcing outside Harbor (candidates) and the daily client-lead feed.
+   Server side lives in the `sourcing` and `outreach-public` Edge Functions; nothing is
+   sent until an email sender, a sender name and a postal address are set (Setup tab).
+   ---------------------------------------------------------------------- */
+const PROSPECT_TONE = { found: "info", approved: "warn", queued: "warn", contacted: "neutral", interested: "em", not_interested: "neutral", unsubscribed: "danger", bounced: "danger", rejected: "neutral", converted: "em" };
+const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted" };
+const LEAD_TONE = { new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
+const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send", contacted: "Contacted", replied: "Replied", meeting: "Meeting booked", won: "Won", lost: "Lost", ignored: "Not a fit", unsubscribed: "Unsubscribed" };
+const REGION_OPTIONS = [["US", "United States"], ["EU", "Europe (EU, UK, EEA, Switzerland)"], ["MY", "Malaysia"]];
+const approvedMsg = (n) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected.";
+const copyText = (t, toast, label) => { try { navigator.clipboard.writeText(t); toast(label || "Copied"); } catch (e) { toast("Copy failed. Select and copy it manually."); } };
+
+function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit }) {
   const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [aud, setAud] = useState("");
-  const [delTarget, setDelTarget] = useState(null);
-  const [delBusy, setDelBusy] = useState(false);
-  const create = () => {
-    if (!name.trim()) { toast("Name the campaign"); return; }
-    S.setCampaigns((l) => [{ id: uid(), name, meta: S.me.first + " \u00b7 Not scheduled", audience: aud || "-", delivered: "-", opened: 0, status: "Draft" }, ...l]);
-    setName(""); setAud(""); setOpen(false); toast("Draft created");
+  const [subject, setSubject] = useState(p.subject || "");
+  const [body, setBody] = useState(p.body || "");
+  const dirty = subject !== (p.subject || "") || body !== (p.body || "");
+  const editable = canEdit && ["found", "approved"].includes(p.status);
+  const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown";
+  return (
+    <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
+      <div className="flex items-start gap-3">
+        {editable && <input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} className="mt-1.5 shrink-0" />}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="min-w-0"><div className="font-medium text-sm truncate">{name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[p.title, p.company, p.location].filter(Boolean).join(" · ")}</div></div>
+            <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{PROSPECT_LABEL[p.status] || p.status}</Pill></div>
+          </div>
+          {jobLabel && <div className="text-xs mt-1" style={{ color: C.ink3 }}>For {jobLabel}</div>}
+          {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
+          <div className="flex gap-3 mt-2 text-xs flex-wrap">
+            <button onClick={() => setOpen((o) => !o)} style={{ color: C.em }}>{open ? "Hide email" : editable ? "Review email" : "View email"}</button>
+            {p.linkedin_url && <a href={p.linkedin_url} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn profile</a>}
+            {p.email && <span style={{ color: C.ink3 }}>{p.email}</span>}
+            {p.contacted_at && <span style={{ color: C.ink3 }}>Emailed {fdate(p.contacted_at)}</span>}
+          </div>
+          {open && (
+            <div className="mt-2 flex flex-col gap-2">
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={!editable} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <textarea value={body} onChange={(e) => setBody(e.target.value)} disabled={!editable} rows={9} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <div className="text-xs" style={{ color: C.ink3 }}>{"{{INTERESTED_LINK}}"} becomes a one-click "I'm interested" link. The sender details, unsubscribe link and (outside the US) the privacy notice are added at the bottom when it's sent.</div>
+              {editable && <div className="flex gap-2 justify-end">{dirty && <Btn onClick={() => { setSubject(p.subject || ""); setBody(p.body || ""); }}>Undo</Btn>}<Btn kind="primary" disabled={!dirty} onClick={() => onSave({ subject, body })}>Save email</Btn></div>}
+            </div>
+          )}
+          {canEdit && (
+            <div className="flex gap-2 mt-2 justify-end flex-wrap">
+              {p.status === "found" && <Btn onClick={() => onStatus("rejected")}>Skip</Btn>}
+              {["contacted", "queued"].includes(p.status) && <Btn onClick={() => onStatus("not_interested")}>Not interested</Btn>}
+              {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Job page: parallel titles, the bench result, and outside candidates found for this job.
+function JobSourcingCard({ job, S, toast }) {
+  const [row, setRow] = useState(null);
+  const [prospects, setProspects] = useState([]);
+  const [busy, setBusy] = useState("");
+  const [sel, setSel] = useState({});
+  const canRun = S.role === "admin" || S.role === "recops";
+  const load = () => Promise.all([
+    S.sb("/rest/v1/jobs?id=eq." + job.id + "&select=parallel_titles,parallel_titles_at,sourcing").then((r) => setRow((r || [])[0] || {})),
+    canRun ? S.sb("/rest/v1/prospects?job_id=eq." + job.id + "&select=*&order=fit.desc.nullslast&limit=200").then((r) => setProspects(r || [])) : Promise.resolve(),
+  ]).catch(() => {});
+  React.useEffect(() => { load(); }, [job.id]); // eslint-disable-line
+  if (!row) return null;
+  const titles = Array.isArray(row.parallel_titles) ? row.parallel_titles : [];
+  const src = row.sourcing || {};
+  const internal = src.internal || null, external = src.external || null;
+  const run = (key, fn) => { setBusy(key); return fn().catch((e) => toast(e.message)).finally(() => { setBusy(""); load(); }); };
+  const regen = () => run("titles", () => S.aiScreen("job_titles", { jobId: job.id }).then(() => toast("Parallel titles updated")));
+  const outside = (force) => run("outside", async () => {
+    if (!internal) await S.aiScreen("bench_fits", { jobId: job.id });
+    const r = await S.sourcing("search_external", { jobId: job.id, force });
+    toast(r.message || (r.found != null ? r.found + " people found outside Harbor" : "Done"));
+  });
+  const ids = Object.keys(sel).filter((k) => sel[k]);
+  const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }));
+  const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => toast(e.message));
+  const waiting = prospects.filter((p) => p.status === "found");
+  const state = src.state;
+  return (
+    <Card>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <SectionTitle title="Sourcing" sub="Harbor checks your own candidates first, using the job's parallel titles. Only when there aren't enough strong fits does it look outside Harbor for people with verified emails." size="text-xl" />
+        {canRun && <div className="flex gap-2 shrink-0 flex-wrap">
+          <Btn kind="primary" icon={Search} onClick={() => outside(!!external)} disabled={!!busy}>{busy === "outside" ? "Searching…" : external ? "Search outside again" : "Search outside Harbor"}</Btn>
+        </div>}
+      </div>
+      <div className="mt-3">
+        <div className="flex items-center justify-between gap-2"><div className="text-xs" style={{ color: C.ink3 }}>Parallel titles for this job</div>{canRun && <button onClick={regen} disabled={!!busy} className="text-xs" style={{ color: C.em }}>{busy === "titles" ? "Updating…" : titles.length ? "Regenerate" : "Generate"}</button>}</div>
+        <div className="flex flex-wrap gap-1.5 mt-1.5">{titles.length ? titles.map((t) => <Pill key={t} tone="neutral">{t}</Pill>) : <span className="text-sm" style={{ color: C.ink2 }}>Not generated yet. They're created the first time the bench is checked.</span>}</div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+        <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
+          <div className="text-xs" style={{ color: C.ink3 }}>In Harbor</div>
+          <div className="text-sm mt-0.5">{internal ? <>{plural(internal.goodFits || 0, "strong fit")}{internal.onRole ? " (" + internal.onRole + " already on this role)" : ""} · {internal.considered || 0} more on the bench with a matching title · checked {fdate(internal.at)}</> : state === "pending" ? "Queued. The bench is checked automatically within about 10 minutes." : "Not checked yet"}</div>
+        </div>
+        <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
+          <div className="text-xs" style={{ color: C.ink3 }}>Outside Harbor</div>
+          <div className="text-sm mt-0.5">{external ? (external.skipped || external.error || (plural(external.found || 0, "person", "people") + " found · " + fdate(external.at))) : "Not searched yet"}</div>
+        </div>
+      </div>
+      {canRun && prospects.length > 0 && (
+        <div className="mt-4">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="text-sm font-medium">People found outside Harbor <span style={{ color: C.ink3 }}>· {waiting.length} waiting for approval</span></div>
+            {waiting.length > 0 && <div className="flex gap-2">
+              <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all"}</Btn>
+              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={approve}>{busy === "approve" ? "Approving…" : "Approve " + (ids.length || "") + " email" + (ids.length === 1 ? "" : "s")}</Btn>
+            </div>}
+          </div>
+          <div className="flex flex-col gap-2">
+            {prospects.map((p) => <ProspectCard key={p.id} p={p} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
+              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} />)}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ pitch_subject: l.pitch_subject || "", pitch_body: l.pitch_body || "", linkedin_message: l.linkedin_message || "", notes: l.notes || "" });
+  const dirty = ["pitch_subject", "pitch_body", "linkedin_message", "notes"].some((k) => f[k] !== (l[k] || ""));
+  const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => toast(e.message));
+  const matches = Array.isArray(l.matches) ? l.matches : [];
+  const emailable = l.channel === "email" && ["new", "approved"].includes(l.status);
+  const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const convert = () => S.sourcing("convert_lead", { leadId: l.id }).then(() => { toast("Draft job created. Find it under Jobs."); onChanged(); S.reload && S.reload(); }).catch((e) => toast(e.message));
+  return (
+    <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
+      <div className="flex items-start gap-3">
+        {emailable && <input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} className="mt-1.5 shrink-0" />}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2 flex-wrap">
+            <div className="min-w-0">
+              <div className="font-medium text-sm">{l.job_title}</div>
+              <div className="text-xs" style={{ color: C.ink2 }}>{[l.company, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Pill tone={l.channel === "email" ? "em" : l.channel === "linkedin" ? "info" : "neutral"}>{l.channel === "email" ? "Email" : l.channel === "linkedin" ? "LinkedIn" : "No contact"}</Pill>
+              <select value={l.status} onChange={(e) => patch({ status: e.target.value, ...(e.target.value === "contacted" && !l.contacted_at ? { contacted_at: new Date().toISOString() } : {}) }, "Moved to " + (LEAD_LABEL[e.target.value] || e.target.value))} className="text-xs rounded-lg border px-2 py-1 bg-white" style={{ borderColor: C.line }}>
+                {Object.keys(LEAD_LABEL).map((k) => <option key={k} value={k}>{LEAD_LABEL[k]}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>
+            {l.contact_name ? <>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name}</span>{l.contact_role ? ", " + l.contact_role : ""}{l.contact_email ? " · " + l.contact_email : ""}</> : "No hiring contact listed on the posting."}
+          </div>
+          {matches.length > 0 && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              {matches.map((m, i) => { const c = S.cands.find((x) => x.id === m.candidate_id); return (
+                <div key={i} className="rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas }}>
+                  <div className="flex items-center justify-between gap-2"><button className="font-medium truncate text-left" onClick={() => c && S.openCandidate(c.id)} style={{ color: c ? C.em : C.ink }}>{c ? c.name : "Candidate"}</button><span className="shrink-0">{m.fit}% · {m.verdict}</span></div>
+                  {(m.bullets || []).length > 0 && <div className="mt-1" style={{ color: C.ink2 }}>{m.bullets.join(" · ")}</div>}
+                </div>
+              ); })}
+            </div>
+          )}
+          {l.status === "ignored" && l.notes && <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>{l.notes}</div>}
+          <div className="flex gap-3 mt-2 text-xs flex-wrap">
+            <button onClick={() => setOpen((o) => !o)} style={{ color: C.em }}>{open ? "Hide messages" : "Messages and notes"}</button>
+            {l.url && <a href={l.url} target="_blank" rel="noreferrer" style={{ color: C.em }}>Job posting</a>}
+            {l.contact_linkedin && <a href={l.contact_linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>Contact's LinkedIn</a>}
+            {l.contacted_at && <span style={{ color: C.ink3 }}>Contacted {fdate(l.contacted_at)}</span>}
+          </div>
+          {open && (
+            <div className="mt-2 flex flex-col gap-2">
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email subject</label>
+              <input value={f.pitch_subject} onChange={(e) => setF({ ...f, pitch_subject: e.target.value })} className={inp} style={inpS} />
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
+              <textarea rows={8} value={f.pitch_body} onChange={(e) => setF({ ...f, pitch_body: e.target.value })} className={inp} style={inpS} />
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>LinkedIn message <span style={{ color: C.ink3 }}>({f.linkedin_message.length}/300, you send this yourself)</span></label>
+              <textarea rows={3} value={f.linkedin_message} onChange={(e) => setF({ ...f, linkedin_message: e.target.value })} className={inp} style={inpS} />
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Notes</label>
+              <textarea rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} className={inp} style={inpS} />
+              {dirty && <div className="flex justify-end"><Btn kind="primary" onClick={() => patch(f, "Saved")}>Save</Btn></div>}
+            </div>
+          )}
+          <div className="flex gap-2 mt-2 justify-end flex-wrap">
+            {l.channel === "linkedin" && ["new", "approved"].includes(l.status) && <>
+              <Btn icon={Copy} onClick={() => { copyText(f.linkedin_message, toast, "Message copied. Paste it on LinkedIn."); if (l.contact_linkedin) window.open(l.contact_linkedin, "_blank"); }}>Copy and open LinkedIn</Btn>
+              <Btn kind="primary" onClick={() => patch({ status: "contacted", contacted_at: new Date().toISOString() }, "Marked as sent on LinkedIn")}>I sent it</Btn>
+            </>}
+            {["replied", "meeting", "won"].includes(l.status) && !l.converted_job_id && <Btn kind="primary" icon={Briefcase} onClick={convert}>Create job from this</Btn>}
+            {l.converted_job_id && <Pill tone="em">Job created</Pill>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function OutreachSetup({ S, toast, status, onSaved }) {
+  const s0 = (status && status.settings) || {};
+  const [f, setF] = useState(() => ({ ...s0, leads: { ...(s0.leads || {}) } }));
+  const [busy, setBusy] = useState(false);
+  const isAdmin = S.role === "admin";
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const setL = (k, v) => setF((x) => ({ ...x, leads: { ...x.leads, [k]: v } }));
+  const inp = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const save = () => {
+    setBusy(true);
+    const regions = (f.regions || []).filter(Boolean);
+    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1 } } };
+    S.sb("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body }).then(() => { toast("Outreach settings saved"); onSaved(); }).catch((e) => toast(e.message)).finally(() => setBusy(false));
   };
-  /* DEMO: in production this hands the send to your email provider */
-  const send = (n) => { S.setCampaigns((l) => l.map((c) => (c.name === n ? { ...c, status: "Sent", delivered: c.audience, meta: c.meta.split(" \u00b7 ")[0] + " \u00b7 " + todayStr() } : c))); toast("Campaign sent"); };
-  const confirmDelete = () => {
-    setDelBusy(true);
-    S.deleteCampaign(delTarget.id).then(() => { toast("Campaign deleted"); setDelTarget(null); }).catch(() => {}).finally(() => setDelBusy(false));
+  const conn = (status && status.connections) || {};
+  const q = (status && status.queue) || {};
+  const Row = ({ ok, label, hint }) => (
+    <div className="flex items-start gap-2.5 py-2">
+      {ok ? <CheckCircle2 size={16} color={C.em} className="shrink-0 mt-0.5" /> : <AlertTriangle size={16} color={C.warnFg} className="shrink-0 mt-0.5" />}
+      <div><div className="text-sm font-medium">{label}</div><div className="text-xs" style={{ color: C.ink2 }}>{hint}</div></div>
+    </div>
+  );
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <SectionTitle title="Connections" sub="Keys are stored as Supabase secrets, never in the app. See supabase/SOURCING_SETUP.md." size="text-xl" />
+        <div className="mt-2">
+          <Row ok={conn.anthropic} label="AI (Claude)" hint={conn.anthropic ? "Connected" : "Add ANTHROPIC_API_KEY"} />
+          <Row ok={conn.apollo} label="Apollo: finds candidates outside Harbor and hiring managers' emails" hint={conn.apollo ? "Connected" : "Add APOLLO_API_KEY. Until then, jobs only check your own bench."} />
+          <Row ok={conn.theirstack} label="TheirStack: daily feed of new job postings" hint={conn.theirstack ? "Connected" : "Add THEIRSTACK_API_KEY. Until then, no client leads are fetched."} />
+          <Row ok={conn.sender && conn.sender !== "none"} label="Email sender" hint={conn.sender === "instantly" ? "Instantly" : conn.sender === "gmail" ? "Gmail (Google Workspace)" : "Not connected. Needs a separate outreach domain and mailboxes, then Instantly or Gmail keys. Approved emails wait in the queue until then."} />
+          <Row ok={!(status && status.blockers && status.blockers.length)} label="Sender details" hint={status && status.blockers && status.blockers.length ? "Missing: " + status.blockers.join(", ") + ". Required by anti-spam law in every email." : "Set"} />
+        </div>
+        <div className="flex items-center justify-between gap-3 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${C.line}` }}>
+          <div className="text-sm" style={{ color: C.ink2 }}>{q.queued || 0} queued · {q.sentToday || 0} sent today · {q.failed || 0} failed</div>
+          <div className="flex gap-2">
+            {(q.failed || 0) > 0 && <Btn onClick={() => S.sourcing("retry_failed", {}).then((r) => { toast(r.message || "Retried"); onSaved(); }).catch((e) => toast(e.message))}>Retry failed</Btn>}
+            <Btn kind="primary" icon={Send} disabled={!(q.queued > 0)} onClick={() => S.sourcing("send_now", {}).then((r) => { toast(r.message || (r.sent || 0) + " sent"); onSaved(); }).catch((e) => toast(e.message))}>Send queued now</Btn>
+          </div>
+        </div>
+      </Card>
+      <Card>
+        <SectionTitle title="Outreach settings" sub={isAdmin ? "Applies to both candidate outreach and client leads." : "Only an Admin can change these."} size="text-xl" />
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sender name</label><input value={f.senderName || ""} onChange={(e) => set("senderName", e.target.value)} placeholder="e.g. Ahmed Sanni" className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sender title</label><input value={f.senderTitle || ""} onChange={(e) => set("senderTitle", e.target.value)} placeholder="e.g. Senior Recruiter" className={inp} style={inpS} /></div>
+          <div className="md:col-span-2"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Business postal address (shown in every email)</label><input value={f.businessAddress || ""} onChange={(e) => set("businessAddress", e.target.value)} className={inp} style={inpS} /></div>
+          <div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Sending</label>
+            <select value={f.approval || "manual"} onChange={(e) => set("approval", e.target.value)} className={inp} style={inpS}>
+              <option value="manual">A person approves every email first</option>
+              <option value="auto">Send automatically once drafted</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Target regions</label>
+            <div className="flex flex-col gap-1.5 mt-2">{REGION_OPTIONS.map(([k, label]) => (
+              <label key={k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={(f.regions || []).includes(k)} onChange={(e) => set("regions", e.target.checked ? [...new Set([...(f.regions || []), k])] : (f.regions || []).filter((x) => x !== k))} />{label}</label>
+            ))}</div>
+          </div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside Harbor when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outreach emails per day</label><input type="number" min="1" value={f.dailyCap ?? 40} onChange={(e) => set("dailyCap", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete outside contacts who never engaged after (days)</label><input type="number" min="14" value={f.retentionDays ?? 90} onChange={(e) => set("retentionDays", e.target.value)} className={inp} style={inpS} /></div>
+          <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={f.includePay !== false} onChange={(e) => set("includePay", e.target.checked)} />Mention the job's pay range in candidate emails</label>
+          <div className="md:col-span-2 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+            <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!f.leads.enabled} onChange={(e) => setL("enabled", e.target.checked)} />Fetch new job postings every morning (client leads)</label>
+            <div className="text-xs mt-1" style={{ color: C.ink2 }}>Postings are matched to candidates who agreed to be presented anonymously (they opt in on their candidate page).</div>
+          </div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Postings per day (each costs a TheirStack credit)</label><input type="number" min="1" value={f.leads.postingsPerDay ?? 25} onChange={(e) => setL("postingsPerDay", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only postings from the last (days)</label><input type="number" min="1" max="14" value={f.leads.maxAgeDays ?? 1} onChange={(e) => setL("maxAgeDays", e.target.value)} className={inp} style={inpS} /></div>
+        </fieldset>
+        {isAdmin && <div className="flex justify-end mt-4"><Btn kind="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</Btn></div>}
+      </Card>
+    </div>
+  );
+}
+
+function CampaignsPage({ toast, S }) {
+  const [tab, setTab] = useState("candidates");
+  const [status, setStatus] = useState(null);
+  const [prospects, setProspects] = useState(null);
+  const [leads, setLeads] = useState(null);
+  const [pendingLeads, setPendingLeads] = useState(0);
+  const [pf, setPf] = useState("found");
+  const [lf, setLf] = useState("new");
+  const [sel, setSel] = useState({});
+  const [busy, setBusy] = useState("");
+  const canRun = S.role === "admin" || S.role === "recops";
+  const load = () => {
+    S.sourcing("status", {}).then(setStatus).catch(() => setStatus({ error: true }));
+    S.sb("/rest/v1/prospects?select=*&order=created_at.desc&limit=500").then(setProspects).catch(() => setProspects([]));
+    S.sb("/rest/v1/leads?select=*&status=neq.pending&order=created_at.desc&limit=500").then(setLeads).catch(() => setLeads([]));
+    S.sb("/rest/v1/leads?select=id&status=eq.pending").then((r) => setPendingLeads((r || []).length)).catch(() => {});
   };
+  React.useEffect(() => { if (canRun) load(); }, []); // eslint-disable-line
+  if (!canRun) return (
+    <div className="flex flex-col gap-5">
+      <SectionTitle size="text-3xl md:text-4xl" title="Outreach" sub="Rec Ops and Admins run candidate outreach and client leads." />
+      <Card><div className="text-sm" style={{ color: C.ink2 }}>Ask your Rec Ops manager if you'd like a role sourced outside Harbor.</div></Card>
+    </div>
+  );
+  const jobLabel = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? j.role + ", " + j.client : ""; };
+  const ids = Object.keys(sel).filter((k) => sel[k]);
+  const run = (key, fn) => { setBusy(key); return fn().catch((e) => toast(e.message)).finally(() => { setBusy(""); load(); }); };
+  const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced", "rejected"] };
+  const lGroups = { new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
+  const pList = (prospects || []).filter((p) => pGroups[pf].includes(p.status));
+  const lList = (leads || []).filter((l) => lGroups[lf].includes(l.status));
+  const cnt = (list, g) => (list || []).filter((x) => g.includes(x.status)).length;
+  const conn = (status && status.connections) || {};
+  const notice = status && !status.error && ((status.blockers || []).length || conn.sender === "none");
+  const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => toast(e.message));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Email campaigns" sub="Reach past candidates about new roles." />
-        <Btn kind="primary" icon={Plus} onClick={() => setOpen(true)}>New campaign</Btn>
+        <SectionTitle size="text-3xl md:text-4xl" title="Outreach" sub="Candidates found outside Harbor for your live jobs, and hiring managers whose new postings fit your candidates." />
       </div>
-      <Card>
-        <DataTable
-          keyField="name"
-          rows={S.campaigns}
-          columns={[
-            { key: "name", label: "CAMPAIGN", render: (c) => <div><div className="font-medium">{c.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{c.meta}</div></div> },
-            { key: "audience", label: "AUDIENCE", render: (c) => c.audience },
-            { key: "delivered", label: "DELIVERED", render: (c) => c.delivered },
-            { key: "opened", label: "OPENED", render: (c) => c.opened ? <div className="flex items-center gap-2"><ProgressBar pct={c.opened} /><span className="text-xs">{c.opened}%</span></div> : "-" },
-            { key: "status", label: "STATUS", render: (c) => <div className="flex items-center gap-2"><StatusPill status={c.status} />{c.status !== "Sent" && <button onClick={() => send(c.name)} className="text-xs" style={{ color: C.em }}>Send now</button>}</div> },
-            { key: "act", label: "", render: (c) => S.role === "admin" ? <button title="Delete campaign" onClick={(e) => { e.stopPropagation(); setDelTarget(c); }} className="p-1" style={{ color: C.ink3 }}><X size={15} /></button> : null },
-          ]}
-        />
-      </Card>
-      <Modal open={open} onClose={() => setOpen(false)} title="New campaign">
-        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Campaign name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Audience size</label>
-        <input value={aud} onChange={(e) => setAud(e.target.value)} placeholder="e.g. 1,200" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        <Btn kind="primary" full onClick={create}>Create draft</Btn>
-      </Modal>
-      <ConfirmModal
-        open={!!delTarget}
-        onClose={() => setDelTarget(null)}
-        title="Delete this campaign?"
-        body={delTarget ? "This permanently removes \"" + delTarget.name + "\". This can't be undone." : ""}
-        onConfirm={confirmDelete}
-        busy={delBusy}
-      />
+      {notice ? (
+        <div className="rounded-xl px-4 py-3 text-sm flex items-start gap-2.5" style={{ background: C.warnBg, color: C.warnFg }}>
+          <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+          <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
+        </div>
+      ) : null}
+      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "leads", label: "Client leads" }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); }} />
+
+      {tab === "candidates" && (
+        <Card>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(prospects, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />
+            {pf === "found" && pList.length > 0 && <div className="flex gap-2 shrink-0">
+              <Btn onClick={() => setSel(ids.length === pList.length ? {} : Object.fromEntries(pList.map((p) => [p.id, true])))}>{ids.length === pList.length ? "Clear" : "Select all"}</Btn>
+              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
+            </div>}
+          </div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, Harbor checks your bench first. If there are fewer strong fits than your setting, it searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>
+          <div className="flex flex-col gap-2 mt-3">
+            {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pList.map((p) => (
+              <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
+                onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} />
+            )) : <div className="text-sm" style={{ color: C.ink2 }}>{pf === "found" ? "No one waiting for approval." : "Nothing here yet."}</div>}
+          </div>
+        </Card>
+      )}
+
+      {tab === "leads" && (
+        <Card>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <Tabs tabs={[["new", "New"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(leads, lGroups[k]) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
+            <div className="flex gap-2 shrink-0 flex-wrap">
+              {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
+              {pendingLeads > 0 && <Btn disabled={!!busy} onClick={() => run("process", () => S.sourcing("process_leads", {}).then((r) => toast("Checked " + (r.processed || 0) + ", kept " + (r.kept || 0))))}>{busy === "process" ? "Checking…" : "Check " + pendingLeads + " waiting"}</Btn>}
+              <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => S.sourcing("fetch_leads", {}).then((r) => toast(r.message || "Fetched")))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
+            </div>
+          </div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning Harbor pulls new postings in your target regions for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
+          <div className="flex flex-col gap-2 mt-3">
+            {leads == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : lList.length ? lList.map((l) => (
+              <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
+            )) : <div className="text-sm" style={{ color: C.ink2 }}>Nothing here yet.</div>}
+          </div>
+        </Card>
+      )}
+
+      {tab === "setup" && (status ? (status.error ? <Card><div className="text-sm" style={{ color: C.dangerFg }}>Couldn't load outreach status. Try again in a moment.</div></Card> : <OutreachSetup key={JSON.stringify(status.settings)} S={S} toast={toast} status={status} onSaved={load} />) : <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>)}
+    </div>
+  );
+}
+
+// Candidate page: permission to be presented anonymously to employers.
+function PitchConsentCard({ token, on, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const toggle = async () => {
+    setBusy(true); setErr("");
+    try { await sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: !on } }); if (onChanged) await onChanged(); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  return (
+    <Card>
+      <SectionTitle title="Let us pitch you to employers" sub="When a company posts a role you fit, we can describe you to them without your name or current employer. We only share your details after you say yes to a specific role." size="text-xl" />
+      <label className="flex items-center gap-2.5 mt-3 text-sm cursor-pointer">
+        <input type="checkbox" checked={!!on} disabled={busy} onChange={toggle} />
+        {on ? "Yes, you can present me anonymously" : "No, don't present me to employers"}
+      </label>
+      {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
+    </Card>
+  );
+}
+
+// Public page behind the links in outreach emails: /?u=<token>&k=p|l&a=interested|unsubscribe|delete
+function OutreachLinkPage({ token, kind, action }) {
+  const [info, setInfo] = useState(null);
+  const [done, setDone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const call = async (a) => {
+    const r = await fetch(SB_URL + "/functions/v1/outreach-public", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, kind, action: a }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Something went wrong. Please try again."); return j;
+  };
+  React.useEffect(() => { call("info").then(setInfo).catch((e) => setErr(e.message)); }, []); // eslint-disable-line
+  const go = (a) => { setBusy(true); setErr(""); call(a).then((j) => setDone(j.done || a)).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  const role = info && info.role;
+  const what = kind === "l" ? "about candidates for your " + (role || "open role") + (info && info.company ? " at " + info.company : "") : "about the " + (role || "role") + (info && info.location ? " in " + info.location : "");
+  let bodyEl;
+  if (err && !info) bodyEl = <div className="text-sm" style={{ color: C.dangerFg }}>{err}</div>;
+  else if (!info) bodyEl = <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div>;
+  else if (info.gone) bodyEl = <div className="text-sm" style={{ color: C.ink2 }}>We no longer hold any details for this link. You won't hear from us again.</div>;
+  else if (done === "interested") bodyEl = <div className="text-sm">Thanks{info.firstName ? ", " + info.firstName : ""}. {kind === "l" ? "We'll be in touch shortly with an anonymised profile." : "A recruiter will be in touch shortly about the " + (role || "role") + "."}</div>;
+  else if (done === "closed") bodyEl = <div className="text-sm">Sorry, this role has just been filled. We'll keep you in mind for similar ones.</div>;
+  else if (done === "unsubscribed") bodyEl = <div className="text-sm">You're unsubscribed. We won't email you again.</div>;
+  else if (done === "deleted") bodyEl = <div className="text-sm">Done. We've deleted your details and won't contact you again.</div>;
+  else {
+    const labels = { interested: "Yes, I'm interested", unsubscribe: "Unsubscribe", delete: "Delete my details" };
+    const main = labels[action] ? action : "interested";
+    bodyEl = (
+      <>
+        <div className="text-sm mb-4" style={{ color: C.ink2 }}>{info.firstName ? "Hi " + info.firstName + ". " : ""}This is about our email {what}.</div>
+        {main === "delete" && <div className="text-sm mb-4" style={{ color: C.ink2 }}>We found your professional contact details through Apollo, a business contact database. Deleting them removes everything we hold about you and stops all further emails.</div>}
+        <div className="flex flex-col gap-2">
+          <Btn kind={main === "interested" ? "primary" : "danger"} full disabled={busy} onClick={() => go(main)}>{busy ? "One moment…" : labels[main]}</Btn>
+          {main !== "unsubscribe" && <Btn full disabled={busy} onClick={() => go("unsubscribe")}>Unsubscribe instead</Btn>}
+          {main !== "delete" && <button className="text-xs mt-1" style={{ color: C.ink3 }} disabled={busy} onClick={() => go("delete")}>Delete my details</button>}
+        </div>
+        {err && <div className="text-xs mt-3" style={{ color: C.dangerFg }}>{err}</div>}
+      </>
+    );
+  }
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
+      <div className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+        <div className="text-2xl mb-3" style={{ ...SERIF }}>Harbor</div>
+        {bodyEl}
+      </div>
     </div>
   );
 }
@@ -4682,6 +5068,7 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
             </div>
           ))}
         </Card>
+        {token && <PitchConsentCard token={token} on={c.pitchConsent} onChanged={onChanged} />}
         {c.matches.length > 0 && (
           <Card>
             <SectionTitle title="Roles that fit you" sub="Shown at 70% match or higher." size="text-xl" />
@@ -4864,6 +5251,7 @@ export default function App() {
   const [promote, setPromote] = useState({ open: false, job: "" });
   const [portal, setPortal] = useState(false);
   const [portalToken] = useState(() => new URLSearchParams(window.location.search).get("c"));
+  const [outreachLink] = useState(() => { const q = new URLSearchParams(window.location.search); return q.get("u") ? { token: q.get("u"), kind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" } : null; });
   const [portalData, setPortalData] = useState(null);
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
@@ -4916,6 +5304,7 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  if (outreachLink) return <OutreachLinkPage {...outreachLink} />;
   if (portalToken) {
     if (!portalData) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>Loading&hellip;</div></div>;
     if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
@@ -4941,6 +5330,11 @@ export default function App() {
   const aiCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
+  };
+  // Sourcing and outreach (sourcing Edge Function). Pages refresh their own lists, so no reload here.
+  const srcCall = async (action, payload) => {
+    const r = await fetch(SB_URL + "/functions/v1/sourcing", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Request failed"); return j;
   };
   // Recruiter -> candidate messaging (candidate_job_messages, one thread per candidate_jobs
   // link). Sending goes through the send-message edge function rather than a plain insert
@@ -5233,6 +5627,9 @@ export default function App() {
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "Couldn't read that file"); return j;
     },
     aiScreen: aiCall,
+    sourcing: srcCall,
+    sb: (path, opts) => sbFetch(path, { ...(opts || {}), token: session.token }),
+    reload,
     // Recruiter's side of candidate messaging (see msgCall above).
     sendMessage: (linkId, body) => msgCall("reply", { linkId, body }),
     inviteToMessage: (linkId) => msgCall("invite", { linkId }).catch(() => {}), // best-effort, never blocks the action that triggered it

@@ -418,12 +418,32 @@ async function fillMissingTitles(admin: any, cands: any[], askAI: Ask) {
   return n;
 }
 
+// The job's own parallel titles: other standard titles the same role is advertised under.
+// Saved on the job so the bench (and outside searches) match on all of them, not one title.
+export async function jobParallelTitles(admin: any, job: any, askAI: Ask, force = false): Promise<string[]> {
+  const have = Array.isArray(job.parallel_titles) ? job.parallel_titles : [];
+  if (have.length && !force) return have;
+  const system = "You are a recruitment analyst. Reply with STRICT JSON only: {\"parallel_titles\": string[]}. " +
+    "'parallel_titles': 4 to 8 standard job titles (the way employers post them) that the SAME role is commonly advertised under: same function, same seniority, " +
+    "judged from the description (e.g. 'Technical Accounting Senior Manager' -> 'Senior Manager, Technical Accounting', 'Accounting Policy Senior Manager', 'SEC Reporting Senior Manager'). Include the job's own title. Never widen to a different function or level.";
+  const out = await askAI(system, jobText(job), null, 600);
+  const titles = cleanTitles([job.role_title, ...(Array.isArray(out?.parallel_titles) ? out.parallel_titles : [])]);
+  await admin.from("jobs").update({ parallel_titles: titles, parallel_titles_at: new Date().toISOString() }).eq("id", job.id);
+  job.parallel_titles = titles;
+  return titles;
+}
+
 export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResume: Load, max = 5) {
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("This job no longer exists");
+  let jobTitles: string[] = [job.role_title];
+  try { jobTitles = await jobParallelTitles(admin, job, askAI); } catch (e) { console.error("job titles", String((e as Error)?.message || e)); }
   const { data: cands } = await admin.from("candidates")
-    .select("id,name,role_title,current_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,candidate_jobs(job_id,stage,candidate_response)")
+    .select("id,name,role_title,current_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,candidate_jobs(job_id,stage,candidate_response,fit)")
     .eq("is_draft", false);
+  // People already put forward for this job who are still in play and scored 60%+.
+  const onRole = (cands || []).filter((c: any) => (c.candidate_jobs || []).some((l: any) =>
+    l.job_id === jobId && l.candidate_response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage) && (l.fit || 0) >= 60)).length;
   let busy = 0;
   const free = (cands || []).filter((c: any) => {
     const links = c.candidate_jobs || [];
@@ -435,8 +455,14 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
   try { titled = await fillMissingTitles(admin, free, askAI); } catch (e) { console.error("parallel titles", String((e as Error)?.message || e)); }
   // Only people whose parallel titles (or their own current title) match this job's title.
   // role_title is the job they were added for, not their own title, so it isn't used.
-  const pool = free.map((c: any) => ({ c, score: titleScore(job.role_title, [c.current_title, ...(Array.isArray(c.parallel_titles) ? c.parallel_titles : [])].filter(Boolean)) }))
-    .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score);
+  // Both ways: any of the job's titles against any of the person's titles.
+  const pool = free.map((c: any) => {
+    const theirs = [c.current_title, ...(Array.isArray(c.parallel_titles) ? c.parallel_titles : [])].filter(Boolean);
+    let score = 0;
+    for (const jt of jobTitles) score = Math.max(score, titleScore(jt, theirs));
+    for (const t of theirs) score = Math.max(score, titleScore(t, jobTitles));
+    return { c, score };
+  }).filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score);
 
   // Reuse a review of this job from the last 14 days; review the closest others.
   const fresh = (c: any) => (Array.isArray(c.matches) ? c.matches : []).some((m: any) => m?.job_id === jobId && m.reviewedAt && Date.now() - new Date(m.reviewedAt).getTime() < 14 * 864e5);
@@ -450,7 +476,13 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
       catch (e) { errors.push(c.name + ": " + String((e as Error)?.message || e).slice(0, 120)); }
     }));
   }
-  return { reviewed, reused: pool.filter((x: any) => fresh(x.c)).length, considered: pool.length, free: free.length, busy, titled, errors };
+  // How many strong fits the bench now has for this job (decides whether to search outside Harbor).
+  const { data: after } = await admin.from("candidates").select("id,matches").in("id", pool.map((x: any) => x.c.id).concat(["00000000-0000-0000-0000-000000000000"]));
+  const goodFits = (after || []).filter((c: any) => (Array.isArray(c.matches) ? c.matches : []).some((m: any) =>
+    m?.job_id === jobId && ["Perfect fit", "Good fit"].includes(m.verdict) && (m.fit || 0) >= 60)).length + onRole;
+  const internal = { at: new Date().toISOString(), considered: pool.length, reviewed, goodFits, onRole, titles: jobTitles };
+  await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), internal } }).eq("id", jobId);
+  return { reviewed, reused: pool.filter((x: any) => fresh(x.c)).length, considered: pool.length, free: free.length, busy, titled, errors, goodFits, onRole, jobTitles };
 }
 
 // Parallel titles for one candidate from their full CV (allowed on locked candidates: it's

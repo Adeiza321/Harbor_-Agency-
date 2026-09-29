@@ -1099,3 +1099,229 @@ create table if not exists public.ops_tokens (
 );
 alter table public.ops_tokens enable row level security;
 revoke all on public.ops_tokens from anon, authenticated;
+
+-- migration: sourcing_and_client_machine
+-- migration: sourcing_and_client_machine
+-- Candidate sourcing (our database first, then Apollo), outreach to prospects, and the
+-- "client machine": daily job feed -> match our bench -> pitch the hiring contact.
+-- Everything here is inert until the matching API keys exist (see supabase/SOURCING_SETUP.md).
+
+-- Jobs get their own parallel titles (other titles the same role is posted as), so the bench
+-- is searched both ways, plus a small status record of the last sourcing run.
+alter table public.jobs add column if not exists parallel_titles jsonb not null default '[]'::jsonb;
+alter table public.jobs add column if not exists parallel_titles_at timestamptz;
+alter table public.jobs add column if not exists sourcing jsonb not null default '{}'::jsonb;
+
+-- Candidates choose whether we may present their profile anonymously to other employers.
+alter table public.candidates add column if not exists pitch_consent boolean not null default false;
+alter table public.candidates add column if not exists pitch_consent_at timestamptz;
+
+-- Outreach settings (sender name, business address, approval mode, caps, target countries).
+alter table public.agency_settings add column if not exists outreach jsonb not null default '{}'::jsonb;
+
+-- Anyone who unsubscribed or asked us to delete their data: never contacted again.
+create table if not exists public.outreach_suppressions (
+  email_norm text primary key,
+  reason text not null default 'unsubscribed',
+  created_at timestamptz not null default now()
+);
+
+-- People found outside Harbor for a specific job (Apollo). Not candidates until they say yes.
+create table if not exists public.prospects (
+  id uuid primary key default gen_random_uuid(),
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  source text not null default 'apollo',
+  external_id text,
+  first_name text, last_name text, full_name text,
+  title text, company text, location text, country text, region text,
+  linkedin_url text,
+  email text, email_status text,
+  fit integer, verdict text, fit_reason text,
+  subject text, body text,
+  status text not null default 'found'
+    check (status in ('found','approved','queued','contacted','interested','not_interested','unsubscribed','bounced','rejected','converted')),
+  unsub_token text not null unique default encode(gen_random_bytes(16), 'hex'),
+  candidate_id uuid references public.candidates(id) on delete set null,
+  data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  contacted_at timestamptz,
+  updated_at timestamptz not null default now(),
+  unique (job_id, external_id)
+);
+create index if not exists prospects_job_idx on public.prospects(job_id);
+create index if not exists prospects_email_idx on public.prospects(lower(email));
+
+-- Client machine: new job postings elsewhere that our bench fits, and who posted them.
+create table if not exists public.leads (
+  id uuid primary key default gen_random_uuid(),
+  source text not null default 'theirstack',
+  external_id text unique,
+  company text, company_domain text,
+  job_title text, location text, country text, region text,
+  url text, posted_at timestamptz, description text, salary text,
+  matches jsonb not null default '[]'::jsonb,         -- [{candidate_id, verdict, fit, reason}]
+  contact_name text, contact_first_name text, contact_role text,
+  contact_linkedin text, contact_email text, contact_email_status text,
+  channel text not null default 'none' check (channel in ('email','linkedin','none')),
+  status text not null default 'new'
+    check (status in ('new','approved','queued','contacted','replied','meeting','won','lost','ignored','unsubscribed')),
+  pitch_subject text, pitch_body text, linkedin_message text,
+  unsub_token text not null unique default encode(gen_random_bytes(16), 'hex'),
+  converted_job_id uuid references public.jobs(id) on delete set null,
+  assigned_to uuid references public.profiles(id) on delete set null,
+  notes text,
+  created_at timestamptz not null default now(),
+  contacted_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+create index if not exists leads_status_idx on public.leads(status, created_at desc);
+
+-- Every outreach email: the send queue and the log.
+create table if not exists public.outreach_messages (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('candidate','client')),
+  prospect_id uuid references public.prospects(id) on delete cascade,
+  lead_id uuid references public.leads(id) on delete cascade,
+  to_email text not null, to_name text,
+  subject text not null, body text not null,
+  status text not null default 'queued' check (status in ('queued','sent','failed','skipped')),
+  provider text, provider_ref text, error text,
+  approved_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  sent_at timestamptz
+);
+create index if not exists outreach_messages_queue_idx on public.outreach_messages(status, created_at);
+
+-- Staff only (Rec Ops and Admin). The edge functions use the service role.
+alter table public.outreach_suppressions enable row level security;
+alter table public.prospects enable row level security;
+alter table public.leads enable row level security;
+alter table public.outreach_messages enable row level security;
+drop policy if exists suppressions_staff_read on public.outreach_suppressions;
+create policy suppressions_staff_read on public.outreach_suppressions for select using (is_staff());
+drop policy if exists prospects_staff on public.prospects;
+create policy prospects_staff on public.prospects for all using (is_staff()) with check (is_staff());
+drop policy if exists leads_staff on public.leads;
+create policy leads_staff on public.leads for all using (is_staff()) with check (is_staff());
+drop policy if exists outreach_messages_staff_read on public.outreach_messages;
+create policy outreach_messages_staff_read on public.outreach_messages for select using (is_staff());
+
+drop trigger if exists prospects_touch on public.prospects;
+create trigger prospects_touch before update on public.prospects for each row execute function touch_updated_at();
+drop trigger if exists leads_touch on public.leads;
+create trigger leads_touch before update on public.leads for each row execute function touch_updated_at();
+
+-- Candidate page: turn anonymous presentation to other employers on or off.
+create or replace function public.candidate_set_pitch_consent(p_token text, p_consent boolean)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare cand_id uuid;
+begin
+  if length(coalesce(p_token, '')) < 16 then raise exception 'Invalid link'; end if;
+  update candidates set pitch_consent = coalesce(p_consent, false), pitch_consent_at = now()
+    where portal_token = p_token returning id into cand_id;
+  if cand_id is null then raise exception 'Invalid link'; end if;
+  insert into candidate_timeline (candidate_id, title, done)
+    values (cand_id, case when p_consent then 'Agreed to be presented anonymously to other employers' else 'Turned off anonymous presentation to other employers' end, true);
+  return jsonb_build_object('ok', true, 'pitchConsent', coalesce(p_consent, false));
+end $$;
+grant execute on function public.candidate_set_pitch_consent(text, boolean) to anon, authenticated;
+
+-- Candidate page data: now also returns the consent setting, and lists Good fit matches too.
+CREATE OR REPLACE FUNCTION public.candidate_portal(p_token text)
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select jsonb_build_object(
+    'name', c.name,
+    'pitchConsent', c.pitch_consent,
+    'endorsements', coalesce((select jsonb_agg(jsonb_build_object('company', e.company, 'role', e.role_title, 'status', e.status))
+                              from candidate_endorsements e where e.candidate_id = c.id), '[]'::jsonb),
+    'matches', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client, 'fit', (m->>'fit')::int))
+                         from jsonb_array_elements(c.matches) m
+                         join jobs j on j.id::text = m->>'job_id'
+                         where (m->>'fit')::int >= 60 and m ? 'reviewedAt' and coalesce(m->>'verdict', '') in ('Perfect fit', 'Good fit', 'Possible fit')
+                           and coalesce(j.status, '') <> 'Closed'
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id and l.job_id = j.id)
+                           and c.status not in ('Interview', 'Placed', 'Hired')
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id
+                                             and l.candidate_response <> 'declined' and l.stage in ('Interview', 'Offer', 'Placed'))), '[]'::jsonb),
+    'routed', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client, 'location', j.location) order by l.created_at)
+                        from candidate_jobs l join jobs j on j.id = l.job_id
+                        where l.candidate_id = c.id and l.candidate_response = 'pending'), '[]'::jsonb),
+    'questions', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client,
+                             'questions', (select coalesce(jsonb_agg(x->>'q'), '[]'::jsonb) from jsonb_array_elements(l.ai->'followups'->'questions') x)) order by l.created_at)
+                           from candidate_jobs l join jobs j on j.id = l.job_id
+                           where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'sent'), '[]'::jsonb),
+    'answered', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client))
+                          from candidate_jobs l join jobs j on j.id = l.job_id
+                          where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'answered'), '[]'::jsonb),
+    -- One thread per job the candidate is (still) linked to, newest first, with the full
+    -- message history and how many recruiter messages they haven't read yet.
+    'threads', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'linkId', l.id, 'role', j.role_title, 'company', j.client,
+        'messages', coalesce((select jsonb_agg(jsonb_build_object('sender', m.sender, 'body', m.body, 'createdAt', m.created_at) order by m.created_at)
+                               from candidate_job_messages m where m.link_id = l.id), '[]'::jsonb),
+        'unread', (select count(*) from candidate_job_messages m where m.link_id = l.id and m.sender = 'recruiter' and m.candidate_read_at is null)
+      ) order by l.created_at desc)
+      from candidate_jobs l join jobs j on j.id = l.job_id
+      where l.candidate_id = c.id and l.candidate_response <> 'declined'
+    ), '[]'::jsonb))
+  from candidates c where c.portal_token = p_token
+$function$;
+
+-- migration: sourcing_schedule
+-- Sourcing, part 2: lead staging, "job goes live" trigger, and the schedules that run the
+-- sourcing function. Safe to re-run.
+
+alter table public.leads add column if not exists data jsonb not null default '{}';
+alter table public.leads drop constraint if exists leads_status_check;
+alter table public.leads add constraint leads_status_check check (status in
+  ('pending','new','approved','queued','contacted','replied','meeting','won','lost','ignored','unsubscribed'));
+
+-- When a job goes live (Open), queue it for sourcing: bench check first, then outside search.
+create or replace function public.queue_job_sourcing() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.status = 'Open' and (tg_op = 'INSERT' or old.status is distinct from 'Open') then
+    new.sourcing := coalesce(new.sourcing, '{}'::jsonb) || jsonb_build_object('state', 'pending', 'queuedAt', now());
+  end if;
+  return new;
+end $$;
+drop trigger if exists jobs_queue_sourcing on public.jobs;
+create trigger jobs_queue_sourcing before insert or update of status on public.jobs
+  for each row execute function public.queue_job_sourcing();
+
+-- Scheduler: a long-lived ops token kept in the vault, used by pg_cron to call the function.
+create extension if not exists pg_cron;
+
+do $$
+declare tok text;
+begin
+  if not exists (select 1 from vault.secrets where name = 'harbor_ops_token') then
+    tok := encode(extensions.gen_random_bytes(32), 'hex');
+    insert into public.ops_tokens(token, purpose, expires_at) values (tok, 'cron', now() + interval '10 years');
+    perform vault.create_secret(tok, 'harbor_ops_token', 'Ops token used by pg_cron to call the sourcing function');
+  end if;
+end $$;
+
+create or replace function public.call_sourcing(p_action text) returns bigint
+language sql security definer set search_path = public, extensions as $$
+  select net.http_post(
+    url := 'https://acjmsihvvupqiikxckho.supabase.co/functions/v1/sourcing',
+    body := jsonb_build_object('action', p_action),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjam1zaWh2dnVwcWlpa3hja2hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNzM2MzQsImV4cCI6MjEwNTg0OTYzNH0.SRrACW8uKRzYTmD2JdRQ7oLaF8_Xq7aCHHjWPIhru9w',
+      'apikey', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjam1zaWh2dnVwcWlpa3hja2hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNzM2MzQsImV4cCI6MjEwNTg0OTYzNH0.SRrACW8uKRzYTmD2JdRQ7oLaF8_Xq7aCHHjWPIhru9w',
+      'x-harbor-ops', (select decrypted_secret from vault.decrypted_secrets where name = 'harbor_ops_token' limit 1)),
+    timeout_milliseconds := 300000);
+$$;
+revoke all on function public.call_sourcing(text) from public, anon, authenticated;
+
+-- Every 10 minutes: next sourcing step, lead checks, sending, clean-up.
+select cron.schedule('harbor-sourcing-tick', '*/10 * * * *', $$select public.call_sourcing('tick')$$);
+-- Daily 06:00 UTC: pull yesterday's job postings (only runs if client leads are switched on).
+select cron.schedule('harbor-leads-daily', '0 6 * * *', $$select public.call_sourcing('leads_daily')$$);
