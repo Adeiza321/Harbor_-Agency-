@@ -203,7 +203,10 @@ function mapAll(d) {
     when: fdate(a.created_at) + " " + new Date(a.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
     createdAt: new Date(a.created_at).getTime(),
   })).sort((a, b) => b.createdAt - a.createdAt);
-  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users: d.profiles.map(mapUser),
+  const secByUser = {};
+  (d.profileSecurity || []).forEach((s) => { secByUser[s.user_id] = { lastIp: s.last_ip || "", lastLocation: s.last_location || "", lastLoginAt: s.last_login_at ? new Date(s.last_login_at).getTime() : null }; });
+  const users = d.profiles.map(mapUser).map((u) => ({ ...u, security: secByUser[u.id] || { lastIp: "", lastLocation: "", lastLoginAt: null } }));
+  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users,
     settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
       integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV" } };
@@ -1571,7 +1574,7 @@ function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSen
           );
         })}
       </div>
-      <div className="flex gap-2 items-end shrink-0">
+      <div className="flex gap-2 items-end shrink-0 sticky bottom-0 pt-2" style={{ background: "#fff" }}>
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder={placeholder || "Write your message"}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           className="flex-1 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
@@ -2764,7 +2767,7 @@ function MessagesPage({ toast, S }) {
     <div className="flex flex-col gap-5 md:gap-6">
       {!openId && <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Conversations you've actually started, by role." />}
       <div className="flex flex-col md:flex-row gap-5 md:gap-6">
-        <Card className={(openId ? "hidden md:flex md:flex-col " : "") + "md:w-80 shrink-0 !p-0 overflow-hidden"} style={openId ? fullHeightStyle : {}}>
+        <Card className={(openId ? "hidden md:flex md:flex-col md:-mb-24 " : "") + "md:w-80 shrink-0 !p-0 overflow-hidden"} style={openId ? fullHeightStyle : {}}>
           <div className="p-3.5 flex flex-col gap-2.5 shrink-0" style={{ borderBottom: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-2">
               <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
@@ -2796,7 +2799,7 @@ function MessagesPage({ toast, S }) {
             ))}
           </div>
         </Card>
-        <Card className={(openId ? "flex flex-col " : "hidden md:block ") + "flex-1"} style={openId ? fullHeightStyle : {}}>
+        <Card className={(openId ? "flex flex-col md:-mb-24 " : "hidden md:block ") + "flex-1"} style={openId ? fullHeightStyle : {}}>
           {!openThread ? (
             <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left, or tap + to start one.</div>
           ) : (
@@ -4027,6 +4030,7 @@ function UsersPage({ toast, S }) {
   const [pwBusy, setPwBusy] = useState(false);
   const [delUser, setDelUser] = useState(null);
   const [delBusy, setDelBusy] = useState(false);
+  const [viewUser, setViewUser] = useState(null);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
   const adminCount = users.filter((u) => u.roleKey === "admin" && u.status === "Active").length;
   const transferCandidates = users.filter((u) => !u.isOwner && u.status === "Active");
@@ -4084,7 +4088,7 @@ function UsersPage({ toast, S }) {
           keyField="email"
           rows={users}
           columns={[
-            { key: "name", label: "USER", render: (u) => <div><div className="font-medium flex items-center gap-1.5">{u.name}{u.isOwner && <Pill tone="em">Owner</Pill>}</div><div className="text-xs" style={{ color: C.ink2 }}>{u.email}</div></div> },
+            { key: "name", label: "USER", render: (u) => <button onClick={() => setViewUser(u)} className="text-left"><div className="font-medium flex items-center gap-1.5" style={{ color: C.ink }}>{u.name}{u.isOwner && <Pill tone="em">Owner</Pill>}</div><div className="text-xs" style={{ color: C.ink2 }}>{u.email}</div></button> },
             { key: "role", label: "ROLE", render: (u) => {
               const editable = !u.isOwner || u.id === S.me.id;
               if (!editable) return <span className="text-sm" style={{ color: C.ink2 }}>{u.role}</span>;
@@ -4163,7 +4167,56 @@ function UsersPage({ toast, S }) {
         </div>
         <Btn kind="danger" full disabled={!transferTarget || transferBusy} onClick={confirmTransfer}>{transferBusy ? "Transferring\u2026" : "Transfer ownership"}</Btn>
       </Modal>
+      <UserDetailModal user={viewUser} onClose={() => setViewUser(null)} S={S} />
     </div>
+  );
+}
+
+function UserDetailModal({ user, onClose, S }) {
+  if (!user) return null;
+  const sec = user.security || {};
+  const activity = (S.auditLog || []).filter((a) => a.actorId === user.id).slice(0, 40);
+  const row = (label, value) => (
+    <div className="flex items-start justify-between gap-3 py-2" style={{ borderTop: `1px solid ${C.line}` }}>
+      <span className="text-xs" style={{ color: C.ink2 }}>{label}</span>
+      <span className="text-sm text-right" style={{ color: C.ink }}>{value || <span style={{ color: C.ink3 }}>&mdash;</span>}</span>
+    </div>
+  );
+  return (
+    <Modal open={!!user} onClose={onClose} title={user.name}>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-11 h-11 rounded-full flex items-center justify-center text-sm font-medium shrink-0" style={{ background: C.emTint, color: C.em }}>{initialsOf(user.name)}</div>
+        <div>
+          <div className="font-medium flex items-center gap-1.5">{user.name}{user.isOwner && <Pill tone="em">Owner</Pill>}</div>
+          <div className="text-xs" style={{ color: C.ink2 }}>{user.email}</div>
+        </div>
+      </div>
+      <div className="mb-5">
+        {row("Role", user.role)}
+        {row("Status", <StatusPill status={user.status} />)}
+        {row("Phone", user.phone)}
+        {row("Last IP address", sec.lastIp)}
+        {row("Last known location", sec.lastLocation)}
+        {row("Last sign-in", sec.lastLoginAt ? ago(sec.lastLoginAt) : "")}
+      </div>
+      <div className="text-xs mb-3" style={{ color: C.ink3 }}>IP address and location are captured automatically at sign-in and are only visible to admins.</div>
+      <SectionTitle title="Activity" sub="Recent actions on this account." size="text-lg" />
+      <div className="mt-2">
+        {activity.length === 0 ? <div className="text-sm" style={{ color: C.ink3 }}>No activity recorded yet.</div> : (
+          <div className="flex flex-col max-h-72 overflow-y-auto">
+            {activity.map((a) => (
+              <div key={a.id} className="py-2 flex items-start justify-between gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
+                <div>
+                  <div className="text-sm">{a.action}{a.entityType ? <span style={{ color: C.ink2 }}> &middot; {a.entityType}</span> : null}</div>
+                  {a.detail && <div className="text-xs" style={{ color: C.ink3 }}>{a.detail}</div>}
+                </div>
+                <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }}>{a.when}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -4648,11 +4701,90 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
 /* ---------------------------------------------------------------------- */
 /* App root                                                                 */
 /* ---------------------------------------------------------------------- */
+function ForgotPassword({ onDone, initialEmail }) {
+  const [step, setStep] = useState("request"); // request | verify | done
+  const [email, setEmail] = useState(initialEmail || "");
+  const [otp, setOtp] = useState("");
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const call = async (body) => {
+    const r = await fetch(SB_URL + "/functions/v1/forgot-password", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) throw new Error(j.error || "Something went wrong");
+    return j;
+  };
+
+  const requestCode = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
+    if (!email || !email.includes("@")) { setErr("Enter your email"); return; }
+    setBusy(true); setErr("");
+    try { const j = await call({ action: "request", email }); setMsg(j.message || "If that email has a Harbor account, a code has been sent to it."); setStep("verify"); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const verifyCode = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
+    if (!otp.trim()) { setErr("Enter the code from your email"); return; }
+    if (password.length < 8) { setErr("Password must be at least 8 characters"); return; }
+    if (password !== password2) { setErr("Passwords don't match"); return; }
+    setBusy(true); setErr("");
+    try { await call({ action: "verify", email, otp: otp.trim(), newPassword: password }); setStep("done"); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
+      <form onSubmit={step === "request" ? requestCode : verifyCode} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+        <div className="flex items-center gap-2.5 mb-6">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: C.side }}><span style={{ ...SERIF, color: C.lime, fontSize: 18 }}>H</span></div>
+          <span className="text-2xl" style={{ ...SERIF }}>Harbor</span>
+        </div>
+        {step === "request" && (<>
+          <div className="text-sm font-medium mb-1">Forgot your password?</div>
+          <div className="text-xs mb-4" style={{ color: C.ink2 }}>Enter your Harbor email and we'll send you a one-time code to reset it. Your admin is notified too, for visibility.</div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
+          <Btn type="submit" kind="primary" full className="mt-1" onClick={requestCode}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send code"}</Btn>
+        </>)}
+        {step === "verify" && (<>
+          <div className="text-sm font-medium mb-1">Check your email</div>
+          <div className="text-xs mb-4" style={{ color: C.ink2 }}>{msg}</div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>6-digit code</label>
+          <input inputMode="numeric" value={otp} onChange={(e) => setOtp(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none tracking-[0.3em]" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>New password</label>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Confirm new password</label>
+          <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
+          <Btn type="submit" kind="primary" full className="mt-1" onClick={verifyCode}>{busy ? <>Resetting <InlineDots color="#fff" /></> : "Reset password"}</Btn>
+          <button type="button" onClick={() => { setStep("request"); setErr(""); }} className="w-full text-xs mt-3 text-center" style={{ color: C.ink3 }}>Didn't get a code? Try again</button>
+        </>)}
+        {step === "done" && (<>
+          <div className="text-sm font-medium mb-1">Password reset</div>
+          <div className="text-xs mb-4" style={{ color: C.ink2 }}>You can now sign in with your new password.</div>
+          <Btn kind="primary" full onClick={onDone}>Back to sign in</Btn>
+        </>)}
+        {step !== "done" && <button type="button" onClick={onDone} className="w-full text-xs mt-4 text-center" style={{ color: C.ink3 }}>Back to sign in</button>}
+      </form>
+    </div>
+  );
+}
+
 function SignIn({ onSignedIn }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forgot, setForgot] = useState(false);
   const submit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
     if (busy) return;
@@ -4662,6 +4794,7 @@ function SignIn({ onSignedIn }) {
     catch (e) { setErr(e.message === "Invalid login credentials" ? "Wrong email or password" : e.message); }
     setBusy(false);
   };
+  if (forgot) return <ForgotPassword initialEmail={email} onDone={() => setForgot(false)} />;
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
       <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
@@ -4671,7 +4804,10 @@ function SignIn({ onSignedIn }) {
         </div>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Password</label>
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Password</label>
+          <button type="button" onClick={() => setForgot(true)} className="text-xs" style={{ color: C.ink2, textDecoration: "underline" }}>Forgot password?</button>
+        </div>
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
         <Btn type="submit" kind="primary" full className="mt-3" onClick={submit}>{busy ? <>Signing in <InlineDots color="#fff" /></> : "Sign in"}</Btn>
@@ -4680,7 +4816,6 @@ function SignIn({ onSignedIn }) {
     </div>
   );
 }
-
 function AwaitingAccess({ onSignOut }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
@@ -4695,7 +4830,7 @@ function AwaitingAccess({ onSignOut }) {
 
 const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*,candidate_job_messages(*))&order=created_at.desc";
 async function loadAll(token) {
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -4706,8 +4841,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/agency_settings?select=*", { token }),
     sbFetch("/rest/v1/job_engagements?select=*&order=engaged_at.desc", { token }),
     sbFetch("/rest/v1/audit_log?select=*&order=created_at.desc&limit=200", { token }).catch(() => []), // empty for non-admins (RLS), never fatal
+    sbFetch("/rest/v1/profile_security?select=*", { token }).catch(() => []), // admin-or-self only (RLS); IP/location per user
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog });
+  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity });
 }
 
 export default function App() {
@@ -4717,7 +4853,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
   const [errMsg, setErrMsg] = useState("");
-  const [page, setPageRaw] = useState("overview");
+  const [page, setPageRaw] = useState(() => new URLSearchParams(window.location.search).get("page") || "overview");
   const [query, setQueryRaw] = useState("");
   const [candId, setCandId] = useState(null);
   const [jobId, setJobId] = useState(null);
@@ -4755,6 +4891,23 @@ export default function App() {
     window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f);
   }, []);
 
+  // Keep the URL's ?page= in sync with in-app navigation, so the browser back/forward
+  // buttons move between Harbor's own pages instead of leaving the app, and refreshing
+  // reloads the page the person was on instead of bouncing to Overview.
+  const routeSkipPush = React.useRef(true); // true on first run: URL already matches, don't push a duplicate entry
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("page") === page) return;
+    url.searchParams.set("page", page);
+    if (routeSkipPush.current) { routeSkipPush.current = false; window.history.replaceState({ page }, "", url); }
+    else window.history.pushState({ page }, "", url);
+  }, [page]);
+  React.useEffect(() => {
+    const onPop = () => setPageRaw(new URLSearchParams(window.location.search).get("page") || "overview");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   if (portalToken) {
     if (!portalData) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>Loading&hellip;</div></div>;
     if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
@@ -4763,7 +4916,7 @@ export default function App() {
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
   if (status === "loading") return <Loader key={"load" + errMsg} label="Loading your workspace…" onRetry={() => window.location.reload()} />;
-  if (status === "signedout") return <SignIn onSignedIn={(s) => { setSession(s); setStatus("loading"); boot(s); }} />;
+  if (status === "signedout") return <SignIn onSignedIn={(s) => { setSession(s); setStatus("loading"); boot(s); fetch(SB_URL + "/functions/v1/record-login", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + s.token, "Content-Type": "application/json" } }).catch(() => {}); }} />;
   if (status === "pending") return <AwaitingAccess onSignOut={signOut} />;
   if (status === "error") return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
