@@ -1928,9 +1928,12 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
 /* AI screening: one collapsible card per company the candidate is on.       */
 /* ------------------------------------------------------------------------- */
 const VERDICT_TONE = { "Perfect fit": "em", "Good fit": "em", "Possible fit": "warn", "Possible reject": "danger", Reject: "danger" };
-// Once a Possible fit is sent to the client, the card reads Good fit: we've decided to put them forward.
+// Once a candidate is sent to the client, the card always reads Good fit — regardless of
+// what the AI verdict actually was. Being put forward is a human decision that overrides
+// the AI's own read; the raw ai.verdict is kept underneath for the "why" text, the gaps/
+// strengths and follow-up-question logic, none of which this display override touches.
 const SENT_STAGES = ["Submitted", "Interview", "Offer", "Placed"];
-const shownVerdict = (verdict, sent) => (sent && verdict === "Possible fit" ? "Good fit" : verdict);
+const shownVerdict = (verdict, sent) => (sent && verdict ? "Good fit" : verdict);
 const FOLLOW_PILL = { draft: ["Waiting for approval", "warn"], sent: ["Sent · waiting for answers", "info"], answered: ["Answered", "em"] };
 const NICE_RE = /\s*\((nice to have|preferred)\)\s*$/i;
 // Why the card has its verdict: the stored reason, or one built from the must-have checklist.
@@ -2009,7 +2012,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const first = candidate.name.split(" ")[0];
   const e = endorsed.find((x) => x.role === job.role) || null;
   const status = e ? e.status : link.stage;
-  // A Possible fit we've put forward to the client reads Good fit.
+  // Once put forward to the client, this always reads Good fit, whatever the AI verdict was.
   const sent = !!e || SENT_STAGES.includes(link.stage);
   const verdict = shownVerdict(ai.verdict, sent);
   const upgraded = !!ai.verdict && verdict !== ai.verdict;
@@ -2123,7 +2126,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               {(why || upgraded) && verdict && (
                 <div className="rounded-lg px-3 py-2.5 text-sm leading-relaxed" style={{ background: (TONE[VERDICT_TONE[verdict]] || TONE.neutral).bg }}>
                   <span className="font-semibold" style={{ color: (TONE[VERDICT_TONE[verdict]] || TONE.neutral).fg }}>Why {verdict === "Reject" ? "rejected" : verdict.toLowerCase()}: </span>
-                  {upgraded ? <>Sent to {job.client}{e && e.by ? " " + e.by : ""}. The AI rated them a possible fit{why ? ": " + why : "."}</> : why}
+                  {upgraded ? <>Sent to {job.client}{e && e.by ? " " + e.by : ""}. The AI rated them {String(ai.verdict || "").toLowerCase() || "unscreened"}{why ? ": " + why : "."}</> : why}
                 </div>
               )}
               {ai.verdict === "Possible reject" && (
@@ -2701,33 +2704,60 @@ function MessagesPage({ toast, S }) {
   const [jobFilter, setJobFilter] = useState("");
   const [openId, setOpenId] = useState(null);
   const [busy, setBusy] = useState(false);
-  const threads = S.cands.flatMap((c) => c.jobLinks.filter((l) => l.response !== "declined").map((l) => {
+  const [search, setSearch] = useState("");
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [composeSearch, setComposeSearch] = useState("");
+
+  const allThreads = S.cands.flatMap((c) => c.jobLinks.filter((l) => l.response !== "declined").map((l) => {
     const j = S.jobs.find((x) => x.id === l.jobId);
     const msgs = l.messages || [];
     const last = msgs[msgs.length - 1] || null;
     const unread = msgs.filter((m) => m.sender === "candidate" && !m.recruiterReadAt).length;
-    return { cand: c, link: l, job: j, last, unread, at: last ? last.at : l.createdAt };
-  })).filter((t) => !jobFilter || (t.job && t.job.id === jobFilter)).sort((a, b) => b.unread - a.unread || b.at - a.at);
-  const openThread = threads.find((t) => t.link.id === openId) || null;
+    return { cand: c, link: l, job: j, last, unread, at: last ? last.at : l.createdAt, hasMsgs: msgs.length > 0 };
+  }));
+
+  const q = search.trim().toLowerCase();
+  const matches = (t) => !q || t.cand.name.toLowerCase().includes(q)
+    || (t.job && (t.job.role.toLowerCase().includes(q) || t.job.client.toLowerCase().includes(q)))
+    || (t.last && t.last.body.toLowerCase().includes(q));
+  const threads = allThreads
+    .filter((t) => t.hasMsgs)
+    .filter((t) => !jobFilter || (t.job && t.job.id === jobFilter))
+    .filter(matches)
+    .sort((a, b) => b.unread - a.unread || b.at - a.at);
+
+  const openThread = allThreads.find((t) => t.link.id === openId) || null;
   const open = (t) => { setOpenId(t.link.id); if (t.unread) S.markThreadRead(t.link.id).catch(() => {}); };
   const send = (text) => {
     if (!openThread) return;
     setBusy(true);
     S.sendMessage(openThread.link.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => toast(e.message)).finally(() => setBusy(false));
   };
+
+  const cq = composeSearch.trim().toLowerCase();
+  const composeList = allThreads
+    .filter((t) => !t.hasMsgs)
+    .filter((t) => !cq || t.cand.name.toLowerCase().includes(cq) || (t.job && (t.job.role.toLowerCase().includes(cq) || t.job.client.toLowerCase().includes(cq))))
+    .sort((a, b) => a.cand.name.localeCompare(b.cand.name));
+  const startNew = (t) => { setOpenId(t.link.id); setComposeOpen(false); setComposeSearch(""); };
+
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Every candidate you're talking to, by role." />
+      <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Conversations you've actually started, by role." />
       <div className="flex flex-col md:flex-row gap-5 md:gap-6">
         <Card className="md:w-80 shrink-0 !p-0 overflow-hidden">
-          <div className="p-3.5" style={{ borderBottom: `1px solid ${C.line}` }}>
+          <div className="p-3.5 flex flex-col gap-2.5" style={{ borderBottom: `1px solid ${C.line}` }}>
+            <div className="flex items-center gap-2">
+              <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
+              <button onClick={() => setComposeOpen(true)} title="New message" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.side, color: "#fff" }}><Plus size={16} /></button>
+            </div>
             <select value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
               <option value="">All jobs</option>
               {S.jobs.map((j) => <option key={j.id} value={j.id}>{j.role} · {j.client}</option>)}
             </select>
           </div>
           <div className="max-h-[28rem] overflow-y-auto">
-            {threads.length === 0 && <div className="text-sm text-center py-8" style={{ color: C.ink3 }}>No conversations yet.</div>}
+            {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
             {threads.map((t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
                 style={{ borderBottom: `1px solid ${C.line}`, background: openId === t.link.id ? C.canvas : "transparent" }}>
@@ -2746,7 +2776,7 @@ function MessagesPage({ toast, S }) {
         </Card>
         <Card className="flex-1">
           {!openThread ? (
-            <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left.</div>
+            <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left, or tap + to start one.</div>
           ) : (
             <div className="flex flex-col gap-3">
               <div>
@@ -2758,6 +2788,24 @@ function MessagesPage({ toast, S }) {
           )}
         </Card>
       </div>
+      <Modal open={composeOpen} onClose={() => { setComposeOpen(false); setComposeSearch(""); }} title="New message">
+        <div className="flex flex-col gap-3">
+          <SearchInput value={composeSearch} onChange={setComposeSearch} placeholder="Search candidates by name, role or client" />
+          <div className="max-h-96 overflow-y-auto flex flex-col gap-1">
+            {composeList.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{allThreads.filter((t) => !t.hasMsgs).length === 0 ? "Every job-linked candidate already has a conversation." : "No candidates found."}</div>}
+            {composeList.map((t) => (
+              <button key={t.link.id} onClick={() => startNew(t)} className="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-2.5" style={{ background: "transparent" }}
+                onMouseEnter={(e) => e.currentTarget.style.background = C.canvas} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
+                <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{t.cand.name}</div>
+                  <div className="text-xs truncate" style={{ color: C.ink3 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
