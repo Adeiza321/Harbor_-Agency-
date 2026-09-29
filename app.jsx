@@ -1547,13 +1547,13 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
    been delivered (there's no offline queue in this app, so sent === delivered), shown as a dim
    double check; once the other side's read timestamp is set, the ticks turn blue. Messages
    without recruiterReadAt/candidateReadAt on them (e.g. an older shape) just render as delivered. */
-function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSender = "recruiter", scrollClass = "max-h-72" }) {
+function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSender = "recruiter", scrollClass = "max-h-72", fill = false }) {
   const [text, setText] = useState("");
   const send = () => { const t = text.trim(); if (!t) return; onSend(t); setText(""); };
   const readAtFor = (m) => (mineSender === "recruiter" ? m.candidateReadAt : m.recruiterReadAt);
   return (
-    <div className="flex flex-col gap-3">
-      <div className={"flex flex-col gap-2 overflow-y-auto pr-1 " + scrollClass}>
+    <div className={"flex flex-col gap-3" + (fill ? " h-full min-h-0" : "")}>
+      <div className={"flex flex-col gap-2 overflow-y-auto pr-1 " + (fill ? "flex-1 min-h-0" : scrollClass)}>
         {messages.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{emptyText || "No messages yet."}</div>}
         {messages.map((m, i) => {
           const mine = m.sender === mineSender;
@@ -1571,7 +1571,7 @@ function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSen
           );
         })}
       </div>
-      <div className="flex gap-2 items-end">
+      <div className="flex gap-2 items-end shrink-0">
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder={placeholder || "Write your message"}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
           className="flex-1 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
@@ -2753,15 +2753,19 @@ function MessagesPage({ toast, S }) {
     .sort((a, b) => a.cand.name.localeCompare(b.cand.name));
   const startNew = (t) => { setOpenId(t.link.id); setComposeOpen(false); setComposeSearch(""); };
 
-  // WhatsApp-style on mobile: the list and the open chat are two separate screens, not stacked
-  // panes -- picking a conversation swaps the list out for a full-width chat with a back arrow.
-  // From md up there's room for both side by side, like before.
+  // WhatsApp-style: the list and the open chat are two separate screens on mobile -- picking a
+  // conversation swaps the list out for a full-width chat with a back arrow. From md up there's
+  // room for both side by side. Once a conversation is open (either breakpoint), the page title
+  // steps aside and both panels stretch to fill the viewport under the top bar, so the chat reads
+  // as a full page rather than a small box -- the panel's own header (avatar + name + back arrow)
+  // stands in for the page title, the way a messaging app's chat screen does.
+  const fullHeightStyle = { height: "calc(100vh - 190px)", minHeight: 420 };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Conversations you've actually started, by role." />
+      {!openId && <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Conversations you've actually started, by role." />}
       <div className="flex flex-col md:flex-row gap-5 md:gap-6">
-        <Card className={(openId ? "hidden md:block " : "") + "md:w-80 shrink-0 !p-0 overflow-hidden"}>
-          <div className="p-3.5 flex flex-col gap-2.5" style={{ borderBottom: `1px solid ${C.line}` }}>
+        <Card className={(openId ? "hidden md:flex md:flex-col " : "") + "md:w-80 shrink-0 !p-0 overflow-hidden"} style={openId ? fullHeightStyle : {}}>
+          <div className="p-3.5 flex flex-col gap-2.5 shrink-0" style={{ borderBottom: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-2">
               <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
               <button onClick={() => setComposeOpen(true)} title="New message" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.side, color: "#fff" }}><Plus size={16} /></button>
@@ -2771,7 +2775,7 @@ function MessagesPage({ toast, S }) {
               {S.jobs.map((j) => <option key={j.id} value={j.id}>{j.role} · {j.client}</option>)}
             </select>
           </div>
-          <div className="max-h-[70vh] md:max-h-[28rem] overflow-y-auto">
+          <div className={"overflow-y-auto " + (openId ? "flex-1 min-h-0" : "max-h-[70vh] md:max-h-[28rem]")}>
             {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
             {threads.map((t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
@@ -2792,12 +2796,12 @@ function MessagesPage({ toast, S }) {
             ))}
           </div>
         </Card>
-        <Card className={(openId ? "" : "hidden md:block ") + "flex-1"}>
+        <Card className={(openId ? "flex flex-col " : "hidden md:block ") + "flex-1"} style={openId ? fullHeightStyle : {}}>
           {!openThread ? (
             <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left, or tap + to start one.</div>
           ) : (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-3 h-full min-h-0">
+              <div className="flex items-center gap-2 shrink-0">
                 <button onClick={() => setOpenId(null)} className="md:hidden w-8 h-8 -ml-1 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2 }}><ChevronLeft size={18} /></button>
                 <Avatar init={initialsOf(openThread.cand.name)} tone="em" size={34} />
                 <div className="min-w-0">
@@ -2805,7 +2809,7 @@ function MessagesPage({ toast, S }) {
                   <div className="text-xs truncate" style={{ color: C.ink2 }}>{openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}</div>
                 </div>
               </div>
-              <MessageThread messages={openThread.link.messages || []} busy={busy} onSend={send} placeholder={"Message " + openThread.cand.name.split(" ")[0] + "…"} scrollClass="max-h-[55vh] md:max-h-72" />
+              <MessageThread messages={openThread.link.messages || []} busy={busy} onSend={send} placeholder={"Message " + openThread.cand.name.split(" ")[0] + "…"} fill />
             </div>
           )}
         </Card>
