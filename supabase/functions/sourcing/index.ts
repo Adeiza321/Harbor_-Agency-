@@ -3,7 +3,7 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { COUNTRY_NAMES, targetCodes } from "./regions.ts";
 import { fetchLeads, processLead } from "./leads.ts";
-import { processQueue, queueLeads, queueProspects } from "./queue.ts";
+import { manualCompose, markManualSent, processQueue, queueLeads, queueProspects } from "./queue.ts";
 import { apolloKey } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
@@ -234,6 +234,12 @@ Deno.serve(async (req: Request) => {
     if (action === "approve_prospects") return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName) });
     if (action === "approve_leads") return json({ ok: true, queued: await queueLeads(admin, ids, me.id, s, agencyName) });
     if (action === "send_now") return json({ ok: true, ...(await processQueue(admin, s, 20)) });
+    if (action === "manual_compose" || action === "manual_sent") {
+      const kind = body.kind === "l" ? "l" : "p", id = String(body.id || "");
+      if (!id) return json({ error: "id is required" }, 400);
+      if (action === "manual_compose") return json({ ok: true, ...(await manualCompose(admin, kind, id, s, agencyName)) });
+      return json(await markManualSent(admin, kind, id));
+    }
     if (action === "retry_failed") {
       await admin.from("outreach_messages").update({ status: "queued", error: null }).eq("status", "failed");
       return json({ ok: true, ...(await processQueue(admin, s, 20)) });

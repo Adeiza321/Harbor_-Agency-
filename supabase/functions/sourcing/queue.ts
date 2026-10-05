@@ -9,7 +9,7 @@ export const portalBase = () => (Deno.env.get("PORTAL_BASE_URL") || "https://har
 export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "unsubscribe" | "delete" | "job") =>
   `${portalBase()}/?u=${token}&k=${kind}&a=${action}`;
 
-function finalBody(body: string, token: string, kind: "p" | "l", region: Region, s: Settings, agencyName: string, who: "candidate" | "client") {
+export function finalBody(body: string, token: string, kind: "p" | "l", region: Region, s: Settings, agencyName: string, who: "candidate" | "client") {
   const text = String(body || "").replace(/\{\{INTERESTED_LINK\}\}/g, linkFor(token, kind, "interested"))
     .replace(/\{\{JOB_LINK\}\}/g, linkFor(token, kind, "job")).trim();
   const sender = [s.senderName, s.senderTitle].filter(Boolean).join(", ");
@@ -96,4 +96,43 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
     }
   }
   return { sent, failed, message: `Sent ${sent}${failed ? `, ${failed} failed` : ""}.` };
+}
+
+// "Send it myself": until an outreach sender (Instantly/Gmail) is connected, a recruiter can send
+// an approved email by hand from their own mailbox. Harbor gives them the finished email (links,
+// sender details, unsubscribe and privacy notice included), then records it as sent when they say so.
+export async function manualCompose(admin: any, kind: "p" | "l", id: string, s: Settings, agencyName: string) {
+  const missing = sendBlockers(s);
+  if (missing.length) throw new Error("Before emailing anyone, add your " + missing.join(" and ") + " in Outreach > Setup (required by anti-spam law).");
+  if (kind === "p") {
+    const { data: p } = await admin.from("prospects").select("*").eq("id", id).maybeSingle();
+    if (!p) throw new Error("Not found");
+    if (!p.email) throw new Error("No email address for this person");
+    if (["unsubscribed", "rejected", "not_interested", "bounced"].includes(p.status)) throw new Error("This person shouldn't be emailed");
+    const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
+    if (sup) { await admin.from("prospects").update({ status: "unsubscribed" }).eq("id", p.id); throw new Error("They've unsubscribed, so they can't be emailed"); }
+    const { data: q } = await admin.from("outreach_messages").select("subject,body").eq("prospect_id", id).eq("status", "queued").limit(1).maybeSingle();
+    const region = (p.region as Region) || regionOf(countryCode(p.country));
+    return { to: p.email, toName: p.full_name || "", subject: q?.subject || p.subject || "A role that fits your background",
+      body: q?.body || finalBody(p.body, p.unsub_token, "p", region, s, agencyName, "candidate") };
+  }
+  const { data: l } = await admin.from("leads").select("*").eq("id", id).maybeSingle();
+  if (!l) throw new Error("Not found");
+  if (!l.contact_email) throw new Error("No email address for this contact");
+  if (["unsubscribed", "lost", "ignored"].includes(l.status)) throw new Error("This contact shouldn't be emailed");
+  const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(l.contact_email)).maybeSingle();
+  if (sup) { await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id); throw new Error("They've unsubscribed, so they can't be emailed"); }
+  const { data: q } = await admin.from("outreach_messages").select("subject,body").eq("lead_id", id).eq("status", "queued").limit(1).maybeSingle();
+  const region = (l.region as Region) || regionOf(countryCode(l.country));
+  return { to: l.contact_email, toName: l.contact_name || "", subject: q?.subject || l.pitch_subject || `Candidate for your ${l.job_title} role`,
+    body: q?.body || finalBody(l.pitch_body, l.unsub_token, "l", region, s, agencyName, "client") };
+}
+
+export async function markManualSent(admin: any, kind: "p" | "l", id: string) {
+  const now = new Date().toISOString();
+  const col = kind === "p" ? "prospect_id" : "lead_id";
+  // Anything still waiting in the queue for them is marked sent by hand, so it never goes twice.
+  await admin.from("outreach_messages").update({ status: "sent", sent_at: now, provider: "manual" }).eq(col, id).eq("status", "queued");
+  await admin.from(kind === "p" ? "prospects" : "leads").update({ status: "contacted", contacted_at: now }).eq("id", id);
+  return { ok: true };
 }

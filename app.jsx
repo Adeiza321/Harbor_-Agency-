@@ -4513,7 +4513,43 @@ function ApprovalsPanel({ S, toast, onChanged }) {
   );
 }
 
-function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit }) {
+// "Send it myself": until an outreach sender is connected, open the finished email (links, sender
+// details and unsubscribe included) in the recruiter's own mailbox, then record it as sent.
+function ManualSend({ kind, id, S, toast, onDone, label }) {
+  const [mail, setMail] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const open = () => { setBusy(true); S.sourcing("manual_compose", { kind, id }).then(setMail).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  const done = () => { setBusy(true); S.sourcing("manual_sent", { kind, id }).then(() => { setMail(null); toast("Marked as sent"); onDone && onDone(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  const enc = encodeURIComponent;
+  const gmail = mail ? "https://mail.google.com/mail/?view=cm&fs=1&to=" + enc(mail.to) + "&su=" + enc(mail.subject) + "&body=" + enc(mail.body) : "";
+  const outlook = mail ? "https://outlook.office.com/mail/deeplink/compose?to=" + enc(mail.to) + "&subject=" + enc(mail.subject) + "&body=" + enc(mail.body) : "";
+  const mailto = mail ? "mailto:" + enc(mail.to) + "?subject=" + enc(mail.subject) + "&body=" + enc(mail.body) : "";
+  return (
+    <>
+      <Btn icon={Send} onClick={open} disabled={busy}>{busy && !mail ? "Preparing…" : label || "Send it myself"}</Btn>
+      <Modal open={!!mail} onClose={() => setMail(null)} title="Send it from your own email">
+        {mail && (
+          <div className="flex flex-col gap-3">
+            <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so Harbor records it. The "I'm interested" and unsubscribe links still work.</div>
+            <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.to, toast, "Address copied")}>Copy</button></div>
+            <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.subject, toast, "Subject copied")}>Copy</button></div>
+            <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+            <div className="flex flex-wrap gap-2">
+              <a href={gmail} target="_blank" rel="noreferrer"><Btn kind="primary">Open in Gmail</Btn></a>
+              <a href={outlook} target="_blank" rel="noreferrer"><Btn>Open in Outlook</Btn></a>
+              <a href={mailto}><Btn>Mail app</Btn></a>
+              <Btn onClick={() => copyText(mail.body, toast, "Email copied")}>Copy email</Btn>
+            </div>
+            {mail.body.length > 6000 && <div className="text-xs" style={{ color: C.warnFg }}>This email is long, so some mail apps may cut it short when opening. If that happens, use Copy email and paste it in.</div>}
+            <div className="pt-3 flex justify-end" style={{ borderTop: `1px solid ${C.line}` }}><Btn kind="primary" onClick={done} disabled={busy}>{busy ? "Saving…" : "I've sent it"}</Btn></div>
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged }) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(p.subject || "");
   const [body, setBody] = useState(p.body || "");
@@ -4548,6 +4584,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {canEdit && (
             <div className="flex gap-2 mt-2 justify-end flex-wrap">
               {p.status === "found" && <Btn onClick={() => onStatus("rejected")}>Skip</Btn>}
+              {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} />}
               {["contacted", "queued"].includes(p.status) && <Btn onClick={() => onStatus("not_interested")}>Not interested</Btn>}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
             </div>
@@ -4640,7 +4677,7 @@ function JobSourcingCard({ job, S, toast }) {
           </div>
           <div className="flex flex-col gap-2">
             {prospects.map((p) => <ProspectCard key={p.id} p={p} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
-              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} />)}
+              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />)}
           </div>
         </div>
       )}
@@ -4710,6 +4747,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             </div>
           )}
           <div className="flex gap-2 mt-2 justify-end flex-wrap">
+            {l.channel === "email" && l.contact_email && ["new", "approved", "queued"].includes(l.status) && <ManualSend kind="l" id={l.id} S={S} toast={toast} onDone={onChanged} />}
             {l.channel === "linkedin" && ["new", "approved"].includes(l.status) && <>
               <Btn icon={Copy} onClick={() => { copyText(f.linkedin_message, toast, "Message copied. Paste it on LinkedIn."); if (l.contact_linkedin) window.open(l.contact_linkedin, "_blank"); }}>Copy and open LinkedIn</Btn>
               <Btn kind="primary" onClick={() => patch({ status: "contacted", contacted_at: new Date().toISOString() }, "Marked as sent on LinkedIn")}>I sent it</Btn>
@@ -4847,7 +4885,7 @@ function CampaignsPage({ toast, S }) {
       {notice ? (
         <div className="rounded-xl px-4 py-3 text-sm flex items-start gap-2.5" style={{ background: C.warnBg, color: C.warnFg }}>
           <AlertTriangle size={16} className="shrink-0 mt-0.5" />
-          <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
+          <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue{conn.sender === "none" && !(status.blockers || []).length ? ", or use Send it myself on any email to send it from your own mailbox" : ""}. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
         </div>
       ) : null}
       <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); }} />
@@ -4865,7 +4903,7 @@ function CampaignsPage({ toast, S }) {
           <div className="flex flex-col gap-2 mt-3">
             {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pList.map((p) => (
               <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
-                onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} />
+                onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />
             )) : <div className="text-sm" style={{ color: C.ink2 }}>{pf === "found" ? "No one waiting for approval." : "Nothing here yet."}</div>}
           </div>
         </Card>
