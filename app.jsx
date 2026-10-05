@@ -181,7 +181,7 @@ function mapAll(d) {
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
-    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", profileReadAt: c.profile_read_at || null,
+    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, profileReadAt: c.profile_read_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at })) })),
@@ -1928,6 +1928,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <StatusPill status={status} />
               <Pill tone="em">Verified, opened {candidate.opens}x</Pill>
               {candidate.recruiter && <Pill tone="neutral">Sourced by {candidate.recruiter}</Pill>}
+              <span title="Whether they agreed, on their candidate page, to be presented anonymously to other employers"><Pill tone={candidate.pitchConsent ? "em" : "neutral"}>{candidate.pitchConsent ? "Open to anonymous pitches" : candidate.pitchAnswered ? "Declined pitches" : "Not asked about pitches yet"}</Pill></span>
             </div>
             {reassign && (
               <div className="rounded-xl p-4 mb-4" style={{ background: C.emTint }}>
@@ -4838,25 +4839,47 @@ function CampaignsPage({ toast, S }) {
   );
 }
 
-// Candidate page: permission to be presented anonymously to employers.
+// Candidate page: permission to be presented anonymously to employers. The first email links
+// here with &pitch=1, which brings this card to the top of their attention with a clear Yes/No.
 function PitchConsentCard({ token, on, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const toggle = async () => {
+  const [asked] = useState(() => new URLSearchParams(window.location.search).get("pitch") === "1");
+  const [answered, setAnswered] = useState(null);
+  const ref = React.useRef(null);
+  useEffect(() => { if (asked && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "center" }); }, [asked]);
+  const set = async (v) => {
     setBusy(true); setErr("");
-    try { await sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: !on } }); if (onChanged) await onChanged(); }
+    try { await sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: v } }); setAnswered(v); if (onChanged) await onChanged(); }
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
+  const toggle = () => set(!on);
+  const sub = "When a company posts a role you fit, we can describe your experience to them without your name or current employer. We only share your details after you say yes to a specific role, and you can change this any time.";
+  if (asked && answered === null) return (
+    <div ref={ref}>
+      <Card className="border-2" style={{ borderColor: C.em }}>
+        <SectionTitle title="Can we pitch you for other roles?" sub={sub} size="text-xl" />
+        <div className="flex flex-wrap gap-2 mt-4">
+          <Btn kind="primary" onClick={() => set(true)} disabled={busy}>Yes, pitch me anonymously</Btn>
+          <Btn onClick={() => set(false)} disabled={busy}>No thanks</Btn>
+        </div>
+        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
+      </Card>
+    </div>
+  );
   return (
-    <Card>
-      <SectionTitle title="Let us pitch you to employers" sub="When a company posts a role you fit, we can describe you to them without your name or current employer. We only share your details after you say yes to a specific role." size="text-xl" />
-      <label className="flex items-center gap-2.5 mt-3 text-sm cursor-pointer">
-        <input type="checkbox" checked={!!on} disabled={busy} onChange={toggle} />
-        {on ? "Yes, you can present me anonymously" : "No, don't present me to employers"}
-      </label>
-      {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
-    </Card>
+    <div ref={ref}>
+      <Card>
+        <SectionTitle title="Let us pitch you to employers" sub={sub} size="text-xl" />
+        {answered !== null && <div className="text-sm mt-3 font-medium" style={{ color: C.em }}>{answered ? "Thanks. We'll only share your details once you say yes to a specific role." : "No problem. We won't present you to other employers."}</div>}
+        <label className="flex items-center gap-2.5 mt-3 text-sm cursor-pointer">
+          <input type="checkbox" checked={!!on} disabled={busy} onChange={toggle} />
+          {on ? "Yes, you can present me anonymously" : "No, don't present me to employers"}
+        </label>
+        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
+      </Card>
+    </div>
   );
 }
 

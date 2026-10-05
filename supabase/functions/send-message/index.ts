@@ -101,7 +101,7 @@ Deno.serve(async (req: Request) => {
     } else if (action === "invite" || action === "reply") return json({ error: "linkId is required" }, 400);
     const candidateId = link ? link.candidate_id : String(body.candidateId || "");
     if (!candidateId) return json({ error: "candidateId is required" }, 400);
-    const { data: cand } = await admin.from("candidates").select("id,name,email,recruiter_id,portal_token,status").eq("id", candidateId).single();
+    const { data: cand } = await admin.from("candidates").select("id,name,email,recruiter_id,portal_token,status,pitch_consent,pitch_consent_at").eq("id", candidateId).single();
     if (!cand) return json({ error: "Candidate not found" }, 404);
     const { data: job } = link ? await admin.from("jobs").select("role_title,client").eq("id", link.job_id).maybeSingle() : { data: null };
     if (!isStaff && cand.recruiter_id !== me.id) {
@@ -113,12 +113,23 @@ Deno.serve(async (req: Request) => {
     const recruiterName = me.full_name || "your recruiter";
     const firstName = esc(String(cand.name || "there").split(" ")[0]);
 
+    // First email: also ask whether we may present them anonymously to other employers. Asked
+    // until they answer on their candidate page (the link opens the question there; nothing is
+    // recorded from the email itself, so a mail scanner opening links can't opt anyone in).
+    const pitchAsk = (b: typeof brand, href: string) =>
+      `<div style="margin-top:26px;padding:16px 18px;border:1px solid #E4DED2;border-radius:12px;background:#FAF8F3;">
+         <div style="font-size:15px;font-weight:600;margin-bottom:6px;">Can we pitch you for other roles?</div>
+         <div style="font-size:14px;line-height:1.6;color:#56605A;">When a company is hiring for a role you fit, we can describe your experience to them without your name or current employer. Nothing about you is shared until you say yes to a specific role, and you can change your mind any time.</div>
+         <a href="${esc(href)}" style="display:inline-block;margin-top:12px;padding:10px 18px;border:1.5px solid ${b.color};color:${b.color};text-decoration:none;border-radius:10px;font-family:Arial,sans-serif;font-size:14px;font-weight:600;">Choose on your candidate page</a>
+       </div>`;
+
     if (action === "invite") {
       if (!cand.email) return json({ ok: true, skipped: "No email on file for this candidate" });
       const html = emailShell(brand, `Message ${recruiterName} about ${roleLabel}`,
         `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
          <div style="font-size:15px;line-height:1.6;">You're now connected with <b>${esc(recruiterName)}</b> for <b>${esc(roleLabel)}</b>. Got a question along the way? Reach out any time.</div>
-         ${button(brand, portalUrl, "Message your recruiter")}`);
+         ${button(brand, portalUrl, "Message your recruiter")}
+         ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchAsk(brand, portalUrl + "&pitch=1")}`);
       const sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, `Message ${recruiterName} about ${roleLabel}`, html);
       return json({ ok: true, sent });
     }
