@@ -830,6 +830,21 @@ function Toast({ text }) {
   );
 }
 
+// Errors interrupt with a modal the person has to dismiss, rather than a toast that can be
+// missed or mistaken for a success message.
+function ErrorModal({ message, onClose }) {
+  if (!message) return null;
+  return (
+    <Modal open={!!message} onClose={onClose} title="Something went wrong">
+      <div className="flex items-start gap-3 mb-5">
+        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}><X size={16} strokeWidth={2.5} /></div>
+        <div className="text-sm leading-relaxed pt-1" style={{ color: C.ink }}>{message}</div>
+      </div>
+      <Btn kind="primary" full onClick={onClose}>Dismiss</Btn>
+    </Modal>
+  );
+}
+
 function Modal({ open, onClose, title, children, wide }) {
   if (!open) return null;
   return (
@@ -1086,7 +1101,7 @@ function SecurityTab({ S, toast }) {
   };
   const startEnroll = () => {
     setMfaBusy(true);
-    S.mfaEnroll().then((j) => setEnroll({ factorId: j.id, qr: j.totp && j.totp.qr_code, secret: j.totp && j.totp.secret })).catch((e) => toast(e.message)).finally(() => setMfaBusy(false));
+    S.mfaEnroll().then((j) => setEnroll({ factorId: j.id, qr: j.totp && j.totp.qr_code, secret: j.totp && j.totp.secret })).catch((e) => S.error(e.message)).finally(() => setMfaBusy(false));
   };
   const confirmEnroll = () => {
     if (!code.trim()) { toast("Enter the 6-digit code"); return; }
@@ -1094,12 +1109,12 @@ function SecurityTab({ S, toast }) {
     S.mfaChallenge(enroll.factorId)
       .then((ch) => S.mfaVerify(enroll.factorId, ch.id, code.trim()))
       .then(() => { toast("Two-factor authentication turned on"); setEnroll(null); setCode(""); return S.mfaListFactors().then(setFactors); })
-      .catch((e) => toast(e.message))
+      .catch((e) => S.error(e.message))
       .finally(() => setMfaBusy(false));
   };
   const removeFactor = (id) => {
     setMfaBusy(true);
-    S.mfaUnenroll(id).then(() => { toast("Two-factor authentication turned off"); return S.mfaListFactors().then(setFactors); }).catch((e) => toast(e.message)).finally(() => setMfaBusy(false));
+    S.mfaUnenroll(id).then(() => { toast("Two-factor authentication turned off"); return S.mfaListFactors().then(setFactors); }).catch((e) => S.error(e.message)).finally(() => setMfaBusy(false));
   };
   const signOutEverywhere = () => {
     setSignOutBusy(true);
@@ -1618,7 +1633,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   const sendMsg = (text) => {
     if (!msgLink) { toast("Attach this candidate to a job before messaging them"); return; }
     setMsgBusy(true);
-    S.sendMessage(msgLink.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => toast(e.message)).finally(() => setMsgBusy(false));
+    S.sendMessage(msgLink.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => S.error(e.message)).finally(() => setMsgBusy(false));
   };
   const [reply, setReply] = useState("");
   const placementJobs = S.jobs.filter((j) => candidate.jobLinks.some((l) => l.jobId === j.id) || candidate.endorsed.some((e) => e.role === j.role && e.company === j.client));
@@ -1655,7 +1670,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     try {
       const r = await S.aiScreen("score_cv", { candidateId: candidate.id, rescreenCards: true });
       toast(r && r.rescreened ? "Resume read. " + r.rescreened + (r.rescreened === 1 ? " company" : " companies") + " rescreened." : "Resume read");
-    } catch (e) { toast("Resume saved, but the AI couldn't read it: " + e.message); }
+    } catch (e) { S.error("Resume saved, but the AI couldn't read it: " + e.message); }
     setAiBusy(false);
   };
   const [readBusy, setReadBusy] = useState(false);
@@ -1664,20 +1679,20 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     try {
       const r = await S.aiScreen("read_profile", { candidateId: candidate.id });
       toast(r && r.skillsLocked ? "Details re-read from the resume. Skills kept, because the review is locked." : "Details re-read from the resume");
-    } catch (e) { toast(e.message); }
+    } catch (e) { S.error(e.message); }
     setReadBusy(false);
   };
   const removeResume = async () => {
     setResumeDelBusy(true);
     try { await S.aiScreen("remove_resume", { candidateId: candidate.id }); setResumeDel(false); toast("Resume removed"); }
-    catch (e) { toast(e.message); }
+    catch (e) { S.error(e.message); }
     setResumeDelBusy(false);
   };
   const [unlockBusy, setUnlockBusy] = useState(false);
   const unlockReview = async () => {
     setUnlockBusy(true);
     try { await patch(() => ({ ai_locked: false })); toast("Review unlocked. AI can re-screen this candidate again."); }
-    catch (e) { toast(e.message); }
+    catch (e) { S.error(e.message); }
     setUnlockBusy(false);
   };
   const [editForm, setEditForm] = useState(null);
@@ -1728,7 +1743,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       // insertPlacement itself moves the candidate to "Placed" (it's the single place
       // that creates a placement, so status stays in sync no matter which door was used).
       setPanel(null); setFee(""); setIncentive(""); toast("Marked as placed");
-    } catch (e) { toast(e.message || "Could not record the placement"); }
+    } catch (e) { S.error(e.message || "Could not record the placement"); }
   };
   const postComment = () => {
     if (!draft.trim()) { setErr("Write a note before posting."); return; }
@@ -2071,7 +2086,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const qList = drafts !== null ? drafts : f && f.state === "draft" ? f.questions.map((x) => x.q) : [];
   const editing = staff && ((f && f.state === "draft") || (!f && drafts !== null));
   const setQ = (i, v) => setDrafts(qList.map((q, k) => (k === i ? v : q)));
-  const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { toast(err.message); } setBusy(""); };
+  const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { S.error(err.message); } setBusy(""); };
   const screen = () => run("screen", async () => {
     await S.aiScreen("screen", { linkId: link.id });
     // Draft follow-up questions right away, with no separate manual step -- best-effort, since
@@ -2309,7 +2324,7 @@ function IndustryExperience({ candidate, S, toast }) {
   const run = async () => {
     setBusy(true);
     try { const r = await S.aiScreen("industries", { candidateId: candidate.id }); toast("Looked up " + (r.industries || []).length + " employers"); }
-    catch (e) { toast(e.message); }
+    catch (e) { S.error(e.message); }
     setBusy(false);
   };
   return (
@@ -2533,7 +2548,7 @@ function MatchesCard({ candidate, S, toast }) {
   const busy = busyWith(candidate, S.jobs);
   const refreshTitles = () => {
     setTitlesBusy(true);
-    S.aiScreen("parallel_titles", { candidateId: candidate.id }).then(() => toast("Parallel titles updated")).catch((e) => toast(e.message)).finally(() => setTitlesBusy(false));
+    S.aiScreen("parallel_titles", { candidateId: candidate.id }).then(() => toast("Parallel titles updated")).catch((e) => S.error(e.message)).finally(() => setTitlesBusy(false));
   };
   const titles = (
     <div className="mt-3">
@@ -2621,7 +2636,7 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
       await S.setScreeningAnswers(link.id, answers);
       if (link.response === "accepted") { await S.aiScreen("screen", { linkId: link.id }); toast("Answers saved and rescreened"); }
       else toast("Answers saved");
-    } catch (e) { toast(e.message || "AI screening failed"); }
+    } catch (e) { S.error(e.message || "AI screening failed"); }
     setScoring(false);
   };
   return (
@@ -2778,7 +2793,7 @@ function MessagesPage({ toast, S }) {
   const send = (text) => {
     if (!openThread) return;
     setBusy(true);
-    S.sendMessage(openThread.link.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => toast(e.message)).finally(() => setBusy(false));
+    S.sendMessage(openThread.link.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => S.error(e.message)).finally(() => setBusy(false));
   };
 
   const cq = composeSearch.trim().toLowerCase();
@@ -2901,7 +2916,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
       .then((r) => toast(r.considered
         ? plural(r.considered, "person", "people") + " with a matching title. Reviewed " + r.reviewed + (r.reused ? ", reused " + r.reused + " recent review" + (r.reused > 1 ? "s" : "") : "") + (r.busy ? ". " + r.busy + " busy elsewhere, left out." : ".") + (r.errors && r.errors.length ? " " + r.errors.length + " couldn't be reviewed." : "")
         : "No one free on the bench has a parallel title matching this role" + (r.busy ? " (" + r.busy + " busy elsewhere)." : ".")))
-      .catch((e) => toast(e.message)).finally(() => setBenchBusy(false));
+      .catch((e) => S.error(e.message)).finally(() => setBenchBusy(false));
   };
 
   // Engage/disengage: job_recruiters is "who's on it now"; job_engagements is the permanent
@@ -3188,7 +3203,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     if (!title.trim() || description.trim().length < 40) { toast("Add a job title and a few sentences of description first"); return; }
     setAiBusy(true); setDraftAi(null);
     try { setDraftAi(await S.aiRedraft({ title, client, location, country, currency, minPay: num(minPay) || null, maxPay: num(maxPay) || null, description, workSetup, employmentType, salaryPeriod, commissionOnly, headcount: num(headcount) || null })); }
-    catch (e) { toast(e.message); }
+    catch (e) { S.error(e.message); }
     setAiBusy(false);
   };
   const useRedraft = () => {
@@ -3220,7 +3235,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
       if (r.description) setDescription(r.description);
       if (Array.isArray(r.screeningQuestions) && r.screeningQuestions.length) setQuestions(r.screeningQuestions);
       toast("Filled in from the file — check it over before publishing.");
-    } catch (e) { toast(e.message || "Couldn't read that file"); }
+    } catch (e) { S.error(e.message || "Couldn't read that file"); }
     setImportBusy(false);
   };
   const inp = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
@@ -3907,7 +3922,7 @@ function ScheduleModal({ S, toast, onClose, edit, preset }) {
       const iv = r.interview || {};
       toast((edit ? "Interview updated" : "Interview scheduled") + (r.emailed ? ". " + cand.name.split(" ")[0] + " has been emailed." : "") + (iv.google_error ? " (Google Calendar: " + iv.google_error + ")" : ""));
       onClose();
-    } catch (e) { toast(e.message); }
+    } catch (e) { S.error(e.message); }
     setBusy(false);
   };
   const inp = "w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none";
@@ -3989,7 +4004,7 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
   const past = iv.start <= Date.now() || iv.status !== "scheduled";
   const cand = ivCandOf(iv, S);
   const first = (iv.candidateName || "").split(" ")[0];
-  const run = (k, fn) => { setBusy(k); return fn().catch((e) => toast(e.message)).finally(() => setBusy("")); };
+  const run = (k, fn) => { setBusy(k); return fn().catch((e) => S.error(e.message)).finally(() => setBusy("")); };
   const saveOutcome = (bookNext) => run("save", async () => {
     const r = await S.iv("outcome", { id: iv.id, status, decision: status === "done" ? decision || null : null, feedback });
     toast("Saved" + (r.followup ? ". " + first + " has been sent the follow-up." : ""));
@@ -4091,9 +4106,9 @@ function GoogleCalendarTab({ S, toast }) {
   const [busy, setBusy] = useState("");
   const load = () => S.ivQuiet("google_status", {}).then(setSt).catch((e) => setSt({ error: e.message }));
   React.useEffect(() => { load(); }, []); // eslint-disable-line
-  const connect = () => { setBusy("connect"); S.ivQuiet("google_connect", { returnTo: window.location.origin + window.location.pathname + "?page=myProfile&tab=calendar" }).then((r) => { window.location.href = r.url; }).catch((e) => { toast(e.message); setBusy(""); }); };
-  const disconnect = () => { setBusy("off"); S.ivQuiet("google_disconnect", {}).then(() => { toast("Google Calendar disconnected"); load(); }).catch((e) => toast(e.message)).finally(() => setBusy("")); };
-  const saveSetting = (k, v) => { const settings = { ...(st.settings || {}), [k]: v }; setSt({ ...st, settings }); S.ivQuiet("google_settings", { settings }).then(() => toast("Saved")).catch((e) => toast(e.message)); };
+  const connect = () => { setBusy("connect"); S.ivQuiet("google_connect", { returnTo: window.location.origin + window.location.pathname + "?page=myProfile&tab=calendar" }).then((r) => { window.location.href = r.url; }).catch((e) => { S.error(e.message); setBusy(""); }); };
+  const disconnect = () => { setBusy("off"); S.ivQuiet("google_disconnect", {}).then(() => { toast("Google Calendar disconnected"); load(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const saveSetting = (k, v) => { const settings = { ...(st.settings || {}), [k]: v }; setSt({ ...st, settings }); S.ivQuiet("google_settings", { settings }).then(() => toast("Saved")).catch((e) => S.error(e.message)); };
   if (!st) return <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>;
   const s = st.settings || {};
   return (
@@ -4248,7 +4263,7 @@ function JobSourcingCard({ job, S, toast }) {
   const titles = Array.isArray(row.parallel_titles) ? row.parallel_titles : [];
   const src = row.sourcing || {};
   const internal = src.internal || null, external = src.external || null;
-  const run = (key, fn) => { setBusy(key); return fn().catch((e) => toast(e.message)).finally(() => { setBusy(""); load(); }); };
+  const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const regen = () => run("titles", () => S.aiScreen("job_titles", { jobId: job.id }).then(() => toast("Parallel titles updated")));
   const outside = (force) => run("outside", async () => {
     if (!internal) await S.aiScreen("bench_fits", { jobId: job.id });
@@ -4257,7 +4272,7 @@ function JobSourcingCard({ job, S, toast }) {
   });
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }));
-  const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => toast(e.message));
+  const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
   const waiting = prospects.filter((p) => p.status === "found");
   const state = src.state;
   return (
@@ -4305,12 +4320,12 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ pitch_subject: l.pitch_subject || "", pitch_body: l.pitch_body || "", linkedin_message: l.linkedin_message || "", notes: l.notes || "" });
   const dirty = ["pitch_subject", "pitch_body", "linkedin_message", "notes"].some((k) => f[k] !== (l[k] || ""));
-  const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => toast(e.message));
+  const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => S.error(e.message));
   const matches = Array.isArray(l.matches) ? l.matches : [];
   const emailable = l.channel === "email" && ["new", "approved"].includes(l.status);
   const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
   const inpS = { borderColor: C.line, background: "#FAF8F3" };
-  const convert = () => S.sourcing("convert_lead", { leadId: l.id }).then(() => { toast("Draft job created. Find it under Jobs."); onChanged(); S.reload && S.reload(); }).catch((e) => toast(e.message));
+  const convert = () => S.sourcing("convert_lead", { leadId: l.id }).then(() => { toast("Draft job created. Find it under Jobs."); onChanged(); S.reload && S.reload(); }).catch((e) => S.error(e.message));
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
       <div className="flex items-start gap-3">
@@ -4388,7 +4403,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
     setBusy(true);
     const regions = (f.regions || []).filter(Boolean);
     const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1 } } };
-    S.sb("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body }).then(() => { toast("Outreach settings saved"); onSaved(); }).catch((e) => toast(e.message)).finally(() => setBusy(false));
+    S.sb("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body }).then(() => { toast("Outreach settings saved"); onSaved(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false));
   };
   const conn = (status && status.connections) || {};
   const q = (status && status.queue) || {};
@@ -4412,8 +4427,8 @@ function OutreachSetup({ S, toast, status, onSaved }) {
         <div className="flex items-center justify-between gap-3 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${C.line}` }}>
           <div className="text-sm" style={{ color: C.ink2 }}>{q.queued || 0} queued · {q.sentToday || 0} sent today · {q.failed || 0} failed</div>
           <div className="flex gap-2">
-            {(q.failed || 0) > 0 && <Btn onClick={() => S.sourcing("retry_failed", {}).then((r) => { toast(r.message || "Retried"); onSaved(); }).catch((e) => toast(e.message))}>Retry failed</Btn>}
-            <Btn kind="primary" icon={Send} disabled={!(q.queued > 0)} onClick={() => S.sourcing("send_now", {}).then((r) => { toast(r.message || (r.sent || 0) + " sent"); onSaved(); }).catch((e) => toast(e.message))}>Send queued now</Btn>
+            {(q.failed || 0) > 0 && <Btn onClick={() => S.sourcing("retry_failed", {}).then((r) => { toast(r.message || "Retried"); onSaved(); }).catch((e) => S.error(e.message))}>Retry failed</Btn>}
+            <Btn kind="primary" icon={Send} disabled={!(q.queued > 0)} onClick={() => S.sourcing("send_now", {}).then((r) => { toast(r.message || (r.sent || 0) + " sent"); onSaved(); }).catch((e) => S.error(e.message))}>Send queued now</Btn>
           </div>
         </div>
       </Card>
@@ -4480,7 +4495,7 @@ function CampaignsPage({ toast, S }) {
   );
   const jobLabel = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? j.role + ", " + j.client : ""; };
   const ids = Object.keys(sel).filter((k) => sel[k]);
-  const run = (key, fn) => { setBusy(key); return fn().catch((e) => toast(e.message)).finally(() => { setBusy(""); load(); }); };
+  const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced", "rejected"] };
   const lGroups = { new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
   const pList = (prospects || []).filter((p) => pGroups[pf].includes(p.status));
@@ -4488,7 +4503,7 @@ function CampaignsPage({ toast, S }) {
   const cnt = (list, g) => (list || []).filter((x) => g.includes(x.status)).length;
   const conn = (status && status.connections) || {};
   const notice = status && !status.error && ((status.blockers || []).length || conn.sender === "none");
-  const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => toast(e.message));
+  const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -4655,7 +4670,7 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
     try {
       await S.insertPlacement({ name: cand.name, role: job ? job.role + ", " + job.client : cand.role, candidateId: cand.id, jobId: job ? job.id : null, recruiterId: cand.recruiterId, recruiterInit: cand.recruiterInit, fee: num(fee), feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur , startDate, guaranteeDays: gDays === "" ? null : Math.max(0, Number(gDays) || 0)});
       toast("Billing entry created"); setCandId(""); setJobId(""); setFee(""); setIncentive(""); onClose();
-    } catch (e) { toast(e.message || "Could not create billing entry"); }
+    } catch (e) { S.error(e.message || "Could not create billing entry"); }
     setBusy(false);
   };
   const sel = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
@@ -4786,7 +4801,7 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
       if (st !== p.status) patch.status = st;
       await S.updatePlacement(p.id, patch);
       setStatus(st); toast("Billing entry updated"); S.reload && S.reload();
-    } catch (e) { toast(e.message); }
+    } catch (e) { S.error(e.message); }
     setBusy("");
   };
   const saveInvoice = async (andPrint) => {
@@ -4801,7 +4816,7 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
       await S.updatePlacement(p.id, patch);
       toast("Invoice " + number + " saved"); S.reload && S.reload();
       if (andPrint) printInvoice(data);
-    } catch (e) { toast(e.message); }
+    } catch (e) { S.error(e.message); }
     setBusy("");
   };
   const inp = "w-full mt-1 rounded-lg border px-2.5 py-2 text-sm outline-none";
@@ -4919,7 +4934,7 @@ function BillingPage({ role, toast, S }) {
   const detail = detailId ? S.placements.find((p) => p.id === detailId) : null;
   const confirmDelete = () => {
     setDelBusy(true);
-    S.deletePlacement(delTarget.id).then(() => { toast("Billing entry deleted"); setDelTarget(null); }).catch((e) => toast(e.message || "Could not delete")).finally(() => setDelBusy(false));
+    S.deletePlacement(delTarget.id).then(() => { toast("Billing entry deleted"); setDelTarget(null); }).catch((e) => S.error(e.message || "Could not delete")).finally(() => setDelBusy(false));
   };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -5063,18 +5078,18 @@ function UsersPage({ toast, S }) {
     if (!editName.trim()) { toast("Enter their name"); return; }
     setEditBusy(true);
     S.editUser(editUser.id, { name: editName.trim(), phone: editPhone.trim() })
-      .then(() => { toast("Details updated"); setEditUser(null); }).catch((e) => toast(e.message)).finally(() => setEditBusy(false));
+      .then(() => { toast("Details updated"); setEditUser(null); }).catch((e) => S.error(e.message)).finally(() => setEditBusy(false));
   };
   const savePassword = () => {
     if (pwValue.length < 8) { toast("Password must be at least 8 characters"); return; }
     setPwBusy(true);
     S.setUserPassword(pwUser.id, pwValue)
-      .then(() => { toast("Password set for " + pwUser.name); setPwUser(null); setPwValue(""); }).catch((e) => toast(e.message)).finally(() => setPwBusy(false));
+      .then(() => { toast("Password set for " + pwUser.name); setPwUser(null); setPwValue(""); }).catch((e) => S.error(e.message)).finally(() => setPwBusy(false));
   };
   const confirmDeleteUser = () => {
     setDelBusy(true);
     S.deleteUser(delUser.id)
-      .then(() => { toast(delUser.name + " deleted"); setDelUser(null); }).catch((e) => toast(e.message)).finally(() => setDelBusy(false));
+      .then(() => { toast(delUser.name + " deleted"); setDelUser(null); }).catch((e) => S.error(e.message)).finally(() => setDelBusy(false));
   };
   const invite = async () => {
     if (!name.trim()) { toast("Enter their name"); return; }
@@ -5083,7 +5098,7 @@ function UsersPage({ toast, S }) {
     if (pass.length < 8) { toast("Password must be at least 8 characters"); return; }
     setBusy(true);
     try { await S.createAccount({ email, password: pass, full_name: name, role: roleKey }); setName(""); setEmail(""); setPass(""); setOpen(false); toast("Account created for " + name + " — activate it so they can sign in"); }
-    catch (e) { toast(e.message || "Could not create account"); }
+    catch (e) { S.error(e.message || "Could not create account"); }
     setBusy(false);
   };
   const changeRole = (u, newRoleKey) => {
@@ -5096,7 +5111,7 @@ function UsersPage({ toast, S }) {
     if (!transferTarget) return;
     setTransferBusy(true);
     S.transferOwnership(transferTarget).then(() => { toast("Ownership transferred"); setTransferOpen(false); setTransferTarget(null); })
-      .catch((e) => toast(e.message || "Could not transfer ownership")).finally(() => setTransferBusy(false));
+      .catch((e) => S.error(e.message || "Could not transfer ownership")).finally(() => setTransferBusy(false));
   };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -5490,7 +5505,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
       if (file) { await S.uploadResume(id, file); setFile(null); }
       const r = await S.checkFit(id, jobId, job);
       setFit(r);
-    } catch (e) { toast(e.message || "Could not check fit"); }
+    } catch (e) { S.error(e.message || "Could not check fit"); }
     setChecking(false);
   };
 
@@ -5507,7 +5522,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
       await S.submitDraftCandidate(id, jobId, qs.map((_, i) => answers[i] || ""), job);
       toast("Candidate added");
       setPage("candidates");
-    } catch (e) { toast(e.message || "Could not add candidate"); }
+    } catch (e) { S.error(e.message || "Could not add candidate"); }
     setSubmitting(false);
   };
 
@@ -5892,6 +5907,7 @@ export default function App() {
   const [billFor, setBillFor] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [toastText, setToastText] = useState("");
+  const [errorModalMsg, setErrorModalMsg] = useState("");
   const [promote, setPromote] = useState({ open: false, job: "" });
   const [portal, setPortal] = useState(false);
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
@@ -5900,6 +5916,8 @@ export default function App() {
   const [portalData, setPortalData] = useState(null);
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
+  // Errors get a modal the person has to dismiss, instead of a toast that can be missed.
+  const showError = (msg) => setErrorModalMsg(String(msg || "Something went wrong."));
   const signOut = () => { store.set(null); setSession(null); setMe(null); setData(null); setStatus("signedout"); };
 
   const loadPortal = () => sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then(setPortalData).catch(() => setPortalData({ error: true }));
@@ -5970,8 +5988,8 @@ export default function App() {
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
   const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner };
-  const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => toast(e.message)).finally(() => setRefreshing(false)); };
-  const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { toast(e.message); throw e; } };
+  const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => S.error(e.message)).finally(() => setRefreshing(false)); };
+  const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { S.error(e.message); throw e; } };
   const aiCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
@@ -6021,7 +6039,7 @@ export default function App() {
         const otherFields = Object.keys(body).filter((k) => k !== "status" && k !== "ai_score" && k !== "ai_locked");
         if (otherFields.length) logAudit("edited", "candidate", id, c ? c.name : "");
         reload();
-      } catch (e) { toast(e.message); reload(); }
+      } catch (e) { S.error(e.message); reload(); }
     })();
   };
 
@@ -6043,15 +6061,15 @@ export default function App() {
         if (otherFields.length) logAudit("edited", "job", id, label);
         reload();
       })
-      .catch((e) => { toast(e.message); reload(); throw e; });
+      .catch((e) => { showError(e.message); reload(); throw e; });
   };
 
   const S = {
-    role, me: myMe, query, toast, go: setPage,
+    role, me: myMe, query, toast, error: showError, go: setPage,
     cands: data.cands, updateCand,
     deleteCandidate: (id) => { const c = data.cands.find((x) => x.id === id); return call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "candidate", id, c ? c.name : "")); },
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
-      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
+      setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
     jobs: data.jobs, updateJob,
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
@@ -6087,7 +6105,7 @@ export default function App() {
           updateCand(c.id, (cc) => ({ status: "Placed", timeline: [...cc.timeline, { t: "Status set to Placed", d: todayStr(), done: true }] }));
         }
         reload();
-      } catch (e) { toast(e.message); setData((d) => ({ ...d, placements: d.placements.filter((x) => x.id !== row.id) })); throw e; }
+      } catch (e) { showError(e.message); setData((d) => ({ ...d, placements: d.placements.filter((x) => x.id !== row.id) })); throw e; }
     },
     setPlacementStatus: (id, status) => { const pl = data.placements.find((x) => x.id === id);
       return call("/rest/v1/placements?id=eq." + id, { method: "PATCH", body: { status } })
@@ -6095,7 +6113,7 @@ export default function App() {
           setData((d) => ({ ...d, placements: d.placements.map((p) => (p.id === id ? { ...p, status } : p)) }));
           logAudit("status changed", "placement", id, (pl ? pl.name : "") + ": " + (pl ? pl.status : "?") + " → " + status);
         })
-        .catch((e) => toast(e.message)); },
+        .catch((e) => showError(e.message)); },
     updatePlacement: (id, patch) => { const pl = data.placements.find((x) => x.id === id);
       return call("/rest/v1/placements?id=eq." + id, { method: "PATCH", body: patch })
         .then(() => logAudit("updated", "placement", id, (pl ? pl.name : "") + ": " + Object.keys(patch).join(", "))); },
@@ -6176,13 +6194,13 @@ export default function App() {
     mfaVerify: (factorId, challengeId, code) => sbFetch("/auth/v1/factors/" + factorId + "/verify", { method: "POST", token: session.token, body: { challenge_id: challengeId, code } }),
     mfaUnenroll: (factorId) => sbFetch("/auth/v1/factors/" + factorId, { method: "DELETE", token: session.token }),
     signOutEverywhere: () => sbFetch("/auth/v1/logout?scope=others", { method: "POST", token: session.token, body: {} }),
-    updateNotificationPrefs: (prefs) => { setMe((m) => ({ ...m, notificationPrefs: prefs })); return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { notification_prefs: prefs } }).catch((e) => toast(e.message)); },
+    updateNotificationPrefs: (prefs) => { setMe((m) => ({ ...m, notificationPrefs: prefs })); return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { notification_prefs: prefs } }).catch((e) => showError(e.message)); },
     team: buildTeam(data.users, data.cands, data.placements),
     openCandidate: (id) => setCandId(id),
     // Opens Billing with the new billing entry form ready for this candidate.
     startBilling: (id) => { setCandId(null); setBillFor(id); setPage("billing"); },
     billFor, clearBillFor: () => setBillFor(null),
-    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || null, recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
+    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
     logAudit,
     setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
       return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => {
@@ -6196,17 +6214,17 @@ export default function App() {
     linkJob: async (candidateId, jobId, fit, screeningAnswers) => {
       let rows;
       try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [] } }); }
-      catch (e) { toast(e.message); throw e; }
+      catch (e) { showError(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) { aiCall("screen", { linkId: row.id }).then(() => { toast("AI screening ready"); reload(); }).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
+      if (row) { aiCall("screen", { linkId: row.id }).then(() => { toast("AI screening ready"); reload(); }).catch((e) => showError("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
       return row;
     },
     /* Routing: the role shows on the candidate's page; their company card appears once they accept. */
     routeToJob: async (candidateId, jobId) => {
       let rows;
       try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending" } }); }
-      catch (e) { toast(e.message); throw e; }
+      catch (e) { showError(e.message); throw e; }
       reload();
       const row = rows && rows[0];
       if (row) msgCall("invite", { linkId: row.id }).catch(() => {});
@@ -6228,10 +6246,10 @@ export default function App() {
       try { await aiCall("score_cv", { candidateId }); } catch (e) { /* resume may already be scored from Check fit */ }
       let rows;
       try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, stage: "In review", screening_answers: screeningAnswers || [] } }); }
-      catch (e) { toast(e.message); throw e; }
+      catch (e) { showError(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) { aiCall("screen", { linkId: row.id }).then(() => reload()).catch((e) => toast("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
+      if (row) { aiCall("screen", { linkId: row.id }).then(() => reload()).catch((e) => showError("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
       logAudit("added candidate", "candidate", candidateId, job ? job.role + " – " + job.client : "");
       return row;
     },
@@ -6253,7 +6271,7 @@ export default function App() {
     uploadResume: async (candidateId, file) => {
       const path = candidateId + "/" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
       const r = await fetch(SB_URL + "/storage/v1/object/resumes/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": resumeMime(file.name, file.type), "x-upsert": "true" }, body: file });
-      if (!r.ok) { const t = await r.text(); toast("Upload failed: " + t); throw new Error(t); }
+      if (!r.ok) { const t = await r.text(); showError("Upload failed: " + t); throw new Error(t); }
       await call("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", body: { resume_path: path, resume_name: file.name } });
       return path;
     },
@@ -6264,7 +6282,7 @@ export default function App() {
         const r = await fetch(SB_URL + "/storage/v1/object/sign/" + bucket + "/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ expiresIn: 600 }) });
         const j = await r.json(); if (!r.ok || !j.signedURL) throw new Error(j.message || j.error || "Could not open resume");
         const url = SB_URL + "/storage/v1" + j.signedURL; if (w) w.location.href = url; else window.location.href = url;
-      } catch (e) { if (w) w.close(); toast(e.message); }
+      } catch (e) { if (w) w.close(); showError(e.message); }
     },
     /* AI rewrite of a job ad for search (job-redraft Edge Function) */
     aiRedraft: async (payload) => {
@@ -6296,15 +6314,15 @@ export default function App() {
       setMe((m) => ({ ...m, ...("name" in patch ? { name: patch.name } : {}), ...("phone" in patch ? { phone: patch.phone } : {}) }));
       return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body })
         .then(reload)
-        .catch((e) => { toast(e.message); reload(); throw e; });
+        .catch((e) => { showError(e.message); reload(); throw e; });
     },
     uploadAvatar: async (file) => {
       const path = session.uid + "/" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
       const r = await fetch(SB_URL + "/storage/v1/object/avatars/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": file.type || "image/png", "x-upsert": "true" }, body: file });
-      if (!r.ok) { const t = await r.text(); toast("Upload failed: " + t); throw new Error(t); }
+      if (!r.ok) { const t = await r.text(); showError("Upload failed: " + t); throw new Error(t); }
       const url = SB_URL + "/storage/v1/object/public/avatars/" + path;
       setMe((m) => ({ ...m, avatarUrl: url }));
-      await sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { avatar_url: url } }).catch((e) => toast(e.message));
+      await sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { avatar_url: url } }).catch((e) => showError(e.message));
       reload();
       return url;
     },
@@ -6350,6 +6368,7 @@ export default function App() {
       <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} />
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
+      <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
     </div>
   );
 }
