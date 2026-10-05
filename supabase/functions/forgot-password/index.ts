@@ -63,7 +63,10 @@ Deno.serve(async (req: Request) => {
         sendBrevo({ email: a.email, name: a.full_name }, brand.name + ": password reset requested for " + (profile.full_name || profile.email), adminHtml).catch(() => {});
       }
 
-      await admin.from("audit_log").insert({ actor_id: profile.id, action: "password_reset_requested", entity_type: "profile", entity_id: profile.id, detail: ip ? "from " + ip : null }).select().maybeSingle().catch(() => {});
+      // Best-effort: never let a logging failure break the actual password-reset flow. The
+      // Supabase JS query builder is PromiseLike (has .then) but not a real Promise, so
+      // .catch() on it throws "catch is not a function" -- await inside try/catch instead.
+      try { await admin.from("audit_log").insert({ actor_id: profile.id, action: "password_reset_requested", entity_type: "profile", entity_id: profile.id, detail: ip ? "from " + ip : null }); } catch (e) { console.error("audit_log insert", String((e as Error)?.message || e)); }
       return json({ ...genericOk, sent });
     }
 
@@ -86,7 +89,7 @@ Deno.serve(async (req: Request) => {
       const { error: pwErr } = await admin.auth.admin.updateUserById(row.user_id, { password: newPassword });
       if (pwErr) return json({ error: pwErr.message }, 400);
       await admin.from("password_resets").update({ used: true }).eq("id", row.id);
-      await admin.from("audit_log").insert({ actor_id: row.user_id, action: "password_reset_completed", entity_type: "profile", entity_id: row.user_id, detail: ip ? "from " + ip : null }).select().maybeSingle().catch(() => {});
+      try { await admin.from("audit_log").insert({ actor_id: row.user_id, action: "password_reset_completed", entity_type: "profile", entity_id: row.user_id, detail: ip ? "from " + ip : null }); } catch (e) { console.error("audit_log insert", String((e as Error)?.message || e)); }
       return json({ ok: true });
     }
 
