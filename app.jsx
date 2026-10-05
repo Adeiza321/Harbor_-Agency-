@@ -1240,10 +1240,10 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
         </button>
       </div>
       {!collapsed && <div className="px-4 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>WORKSPACE</div>}
-      <div className="px-3">{collapsed ? <NavList items={items.map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark /> : <NavList items={[...items, ...extra]} page={page} setPage={setPage} dark />}</div>
-      <div className="flex-1" />
+      {/* The menu scrolls on short screens so the sign-out and profile below always stay in view. */}
+      <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>{collapsed ? <NavList items={items.map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark /> : <NavList items={[...items, ...extra]} page={page} setPage={setPage} dark />}</div>
       {!collapsed && (
-        <div className="px-3 pb-3">
+        <div className="px-3 pb-3 pt-3 shrink-0">
           <div className="rounded-xl p-3.5 mb-3" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)" }}>
             <div className="flex items-center gap-2 mb-1"><Sparkles size={15} color={C.lime} /><span className="text-xs font-medium text-white">AI needs your approval</span></div>
             <div className="text-xs" style={{ color: "#A9BBB1" }}>{pendingQ} sets of screening questions are waiting for approval.</div>
@@ -1251,7 +1251,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
           <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: "#A9BBB1", border: "1px solid rgba(255,255,255,0.12)" }}>Sign out</button>
         </div>
       )}
-      <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full" style={{ background: page === "myProfile" ? "rgba(255,255,255,0.07)" : "transparent" }} title="My profile">
+      <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full shrink-0" style={{ background: page === "myProfile" ? "rgba(255,255,255,0.07)" : "transparent" }} title="My profile">
         <Avatar init={me.init} src={me.avatarUrl} tone="em" />
         {!collapsed && (
           <div className="flex-1 min-w-0">
