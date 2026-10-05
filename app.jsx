@@ -129,6 +129,9 @@ const takesCandidates = (j) => !!j && j.status !== "Closed" && j.status !== "On 
 const holdText = (j) => "On hold" + (j.holdUntil ? " until " + fdate(j.holdUntil + "T12:00:00") : "") + (j.holdReason ? ": " + j.holdReason : "");
 // A role the candidate is actively on (accepted, not finished).
 const isLiveLink = (l) => l.response === "accepted" && !["Rejected", "Withdrawn", "Placed"].includes(l.stage);
+// Every match score is a percentage (0-100). One colour scale everywhere: 80+ green,
+// 60-79 amber (60 is where Harbor counts someone as a strong fit), under 60 red.
+const scoreTone = (v) => (!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "danger");
 const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
 /* A Google Calendar "quick add" link — no OAuth needed, just opens their calendar pre-filled. */
 const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent("Interview: " + candidateName + " – " + job.role) + "&details=" + encodeURIComponent("Interview for " + job.role + " at " + job.client + " with " + candidateName + ".");
@@ -1582,7 +1585,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
             ) },
             { key: "recruiter", label: "RECRUITER", render: (c) => c.recruiter ? <div className="flex items-center gap-2"><Avatar init={c.recruiterInit} tone={PEOPLE_TONE[c.recruiterInit]} size={24} /><span className="text-xs">{c.recruiter}</span></div> : <Pill tone="danger">Unassigned</Pill> },
             { key: "status", label: "STATUS", render: (c) => <StatusPill status={c.status} /> },
-            { key: "ai", label: "AI", render: (c) => <Pill tone={!c.ai ? "neutral" : c.ai >= 80 ? "em" : c.ai >= 70 ? "warn" : "danger"}>{c.ai ? c.ai + "%" : "-"}</Pill> },
+            { key: "ai", label: "AI", render: (c) => <Pill tone={scoreTone(c.ai)}>{c.ai ? c.ai + "%" : "-"}</Pill> },
             { key: "email", label: "EMAIL", render: (c) => <Pill tone={c.email === "Verified" ? "em" : "warn"}>{c.email}</Pill> },
             { key: "activity", label: "ACTIVITY", render: (c) => <span className="text-xs" style={{ color: C.ink2 }}>{c.activity}</span> },
           ]}
@@ -2948,7 +2951,7 @@ function InboxPage({ toast, S }) {
             { key: "name", label: "APPLICANT", render: (x) => <div><div className="font-medium">{x.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{x.role}</div></div> },
             { key: "source", label: "SOURCE", render: (x) => <span className="text-xs" style={{ color: C.ink2 }}>{x.source}</span> },
             { key: "email", label: "CONTACT", render: (x) => <span className="text-xs" style={{ color: C.ink2 }}>{x.email || x.phone || "-"}</span> },
-            { key: "ai", label: "AI", render: (x) => <Pill tone={!x.ai ? "neutral" : x.ai >= 80 ? "em" : x.ai >= 70 ? "warn" : "danger"}>{x.ai || "-"}</Pill> },
+            { key: "ai", label: "AI", render: (x) => { const c = x.candidateId ? S.cands.find((y) => y.id === x.candidateId) : null; const v = c && c.ai ? c.ai : x.ai; return <span title={c && c.ai ? "Their current score" : "Score when they applied"}><Pill tone={scoreTone(v)}>{v ? v + "%" : "-"}</Pill></span>; } },
             { key: "when", label: "RECEIVED", render: (x) => <span className="text-xs" style={{ color: C.ink2 }}>{x.when}</span> },
             { key: "assign", label: "RECRUITER", render: (x) => x.assigned
               ? <div className="flex items-center gap-2"><Avatar init={x.assigned} tone={PEOPLE_TONE[x.assigned] || "em"} size={24} /><span className="text-xs">Assigned</span></div>
@@ -3314,7 +3317,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                 </div>
               ) : <StatusPill status={c.status} /> },
               { key: "cv", label: "RESUME", render: (c) => c.cv ? <button className="text-sm underline" style={{ color: C.em }} onClick={(e) => { e.stopPropagation(); S.openResume(c.cv); }}>View</button> : <span className="text-xs" style={{ color: C.ink3 }}>None</span> },
-              { key: "ai", label: "FIT", render: (c) => { const v = c.link && c.link.fit != null ? c.link.fit : c.ai; return <Pill tone={!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "danger"}>{v ? v + "%" : "-"}</Pill>; } },
+              { key: "ai", label: "FIT", render: (c) => { const v = c.link && c.link.fit != null ? c.link.fit : c.ai; return <Pill tone={scoreTone(v)}>{v ? v + "%" : "-"}</Pill>; } },
             ]}
           />
         </div>
