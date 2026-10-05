@@ -60,6 +60,20 @@ async function sbFetch(path, { method = "GET", body, token, prefer, timeout = 20
   return j;
 }
 const store = { get: () => { try { return JSON.parse(localStorage.getItem("harbor.session") || "null"); } catch (e) { return null; } }, set: (v) => { try { if (v) localStorage.setItem("harbor.session", JSON.stringify(v)); else localStorage.removeItem("harbor.session"); } catch (e) {} } };
+// Inactivity tracking for automatic sign-out (see App). The limit is the agency setting,
+// remembered locally so a stale session can be refused before anything loads.
+const IDLE_KEY = "harbor.lastActive", IDLE_MIN_KEY = "harbor.idleMinutes", IDLE_WARN_MS = 120000;
+const idleStore = {
+  last: () => { try { return Number(localStorage.getItem(IDLE_KEY)) || 0; } catch (e) { return 0; } },
+  touch: (t) => { try { localStorage.setItem(IDLE_KEY, String(t)); } catch (e) {} },
+  clear: () => { try { localStorage.removeItem(IDLE_KEY); } catch (e) {} },
+  minutes: () => { try { const m = Number(localStorage.getItem(IDLE_MIN_KEY)); return m >= 5 && m <= 480 ? m : 30; } catch (e) { return 30; } },
+  setMinutes: (m) => { try { localStorage.setItem(IDLE_MIN_KEY, String(m)); } catch (e) {} },
+  label: () => { const m = idleStore.minutes(); return m < 60 ? m + " minutes" : m === 60 ? "1 hour" : m / 60 + " hours"; },
+};
+const idleExpired = () => { const l = idleStore.last(); return !!l && Date.now() - l >= idleStore.minutes() * 60000; };
+// Ends the session on the server too (revokes its refresh token), best effort.
+const endServerSession = (s) => { try { fetch(SB_URL + "/auth/v1/logout?scope=local", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + s.token } }).catch(() => {}); } catch (e) {} };
 const toSession = (j) => ({ token: j.access_token, refresh: j.refresh_token, uid: j.user.id, exp: Date.now() + j.expires_in * 1000 });
 const signIn = async (email, password) => toSession(await sbFetch("/auth/v1/token?grant_type=password", { method: "POST", body: { email, password } }));
 const refreshSession = async (s) => toSession(await sbFetch("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token: s.refresh } }));
@@ -219,7 +233,7 @@ function mapAll(d) {
   return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews,
     settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
-      integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV" } };
+      integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30 } };
 }
 function buildTeam(users, cands, placements) {
   return users.filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops")).map((u) => {
@@ -5334,8 +5348,24 @@ function DataPrivacyTab({ toast, S }) {
     setPurgeBusy(true);
     S.purgeCandidates(eligible.map((c) => c.id)).then(() => { toast(eligible.length + " candidate(s) removed"); setPurgeOpen(false); }).catch(() => {}).finally(() => setPurgeBusy(false));
   };
+  const [idle, setIdle] = useState(String(S.settings.idleMinutes || 30));
+  const [idleBusy, setIdleBusy] = useState(false);
+  const saveIdle = () => {
+    setIdleBusy(true);
+    S.saveSettings({ ...S.settings, idleMinutes: Number(idle) }).then(() => toast("Automatic sign-out saved. It applies to everyone from their next page load.")).catch(() => {}).finally(() => setIdleBusy(false));
+  };
   return (
     <div className="flex flex-col gap-4">
+      <Card>
+        <SectionTitle title="Automatic sign-out" sub="Signs people out of Harbor after a period with no activity, so an unattended computer doesn't stay logged in. They get a 2-minute warning first, and need to sign in again afterwards." size="text-lg" />
+        <div className="flex flex-col sm:flex-row sm:items-end gap-3 mt-4">
+          <div className="sm:w-64"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sign out after no activity for</label>
+            <select value={idle} onChange={(e) => setIdle(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+              {[[15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [120, "2 hours"], [240, "4 hours"], [480, "8 hours"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select></div>
+          <Btn kind="primary" disabled={idleBusy || Number(idle) === (S.settings.idleMinutes || 30)} onClick={saveIdle}>{idleBusy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
+        </div>
+      </Card>
       <Card>
         <SectionTitle title="Export data" sub="Download a CSV for your own records or another system." size="text-lg" />
         <div className="flex flex-wrap gap-2 mt-4"><Btn icon={Download} onClick={exportCandidates}>Export candidates</Btn><Btn icon={Download} onClick={exportPlacements}>Export placements</Btn></div>
@@ -5824,7 +5854,7 @@ function ForgotPassword({ onDone, initialEmail }) {
   );
 }
 
-function SignIn({ onSignedIn }) {
+function SignIn({ onSignedIn, notice }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -5847,6 +5877,7 @@ function SignIn({ onSignedIn }) {
           <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: C.side }}><span style={{ ...SERIF, color: C.lime, fontSize: 18 }}>H</span></div>
           <span className="text-2xl" style={{ ...SERIF }}>Harbor</span>
         </div>
+        {notice && <div className="text-sm rounded-lg px-3 py-2.5 mb-4 flex items-start gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}><Lock size={15} className="shrink-0 mt-0.5" />{notice}</div>}
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         <div className="flex items-center justify-between">
@@ -5893,7 +5924,10 @@ async function loadAll(token) {
 }
 
 export default function App() {
-  const [session, setSession] = useState(() => store.get());
+  // A saved session that's been idle past the limit is thrown away before anything loads.
+  const [signedOutReason, setSignedOutReason] = useState(() => (store.get() && idleExpired() ? "idle" : ""));
+  const [session, setSession] = useState(() => { const s = store.get(); if (s && idleExpired()) { endServerSession(s); store.set(null); return null; } return s; });
+  const [idleLeft, setIdleLeft] = useState(null);
   const [me, setMe] = useState(null);
   const [status, setStatus] = useState("loading"); // loading | signedout | pending | ready | error
   const [refreshing, setRefreshing] = useState(false);
@@ -5918,7 +5952,35 @@ export default function App() {
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
   // Errors get a modal the person has to dismiss, instead of a toast that can be missed.
   const showError = (msg) => setErrorModalMsg(String(msg || "Something went wrong."));
-  const signOut = () => { store.set(null); setSession(null); setMe(null); setData(null); setStatus("signedout"); };
+  const signOut = (reason) => {
+    if (session) endServerSession(session);
+    store.set(null); idleStore.clear(); setIdleLeft(null);
+    setSignedOutReason(typeof reason === "string" ? reason : "");
+    setSession(null); setMe(null); setData(null); setStatus("signedout");
+  };
+  // Automatic sign-out after inactivity. Activity in any Harbor tab counts (shared in
+  // localStorage); signing out in one tab signs out the others.
+  React.useEffect(() => {
+    if (status !== "ready") return;
+    const limitMs = () => idleStore.minutes() * 60000;
+    let lastWrite = 0;
+    const touch = () => { const n = Date.now(); if (n - lastWrite > 5000) { lastWrite = n; idleStore.touch(n); } };
+    const check = () => {
+      const idleMs = Date.now() - (idleStore.last() || Date.now());
+      if (idleMs >= limitMs()) { signOut("idle"); return; }
+      setIdleLeft(idleMs >= limitMs() - IDLE_WARN_MS ? Math.ceil((limitMs() - idleMs) / 1000) : null);
+    };
+    const onStorage = (e) => { if (e.key === "harbor.session" && !e.newValue) { setSignedOutReason("elsewhere"); setSession(null); setMe(null); setData(null); setStatus("signedout"); } else if (e.key === IDLE_KEY) check(); };
+    const onVis = () => { if (document.visibilityState === "visible") check(); };
+    const events = ["mousedown", "mousemove", "keydown", "scroll", "touchstart", "wheel"];
+    if (!idleStore.last()) idleStore.touch(Date.now());
+    events.forEach((ev) => window.addEventListener(ev, touch, { passive: true }));
+    window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVis);
+    const t = setInterval(check, 5000); check();
+    return () => { events.forEach((ev) => window.removeEventListener(ev, touch)); window.removeEventListener("storage", onStorage); document.removeEventListener("visibilitychange", onVis); clearInterval(t); };
+  }, [status]); // eslint-disable-line
+  React.useEffect(() => { if (data && data.settings) idleStore.setMinutes(data.settings.idleMinutes || 30); }, [data && data.settings && data.settings.idleMinutes]); // eslint-disable-line
 
   const loadPortal = () => sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then(setPortalData).catch(() => setPortalData({ error: true }));
   React.useEffect(() => { if (portalToken) loadPortal(); }, [portalToken]); // eslint-disable-line
@@ -5976,7 +6038,7 @@ export default function App() {
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
   if (status === "loading") return <Loader key={"load" + errMsg} label="Loading your workspace…" onRetry={() => window.location.reload()} />;
-  if (status === "signedout") return <SignIn onSignedIn={(s) => { setSession(s); setStatus("loading"); boot(s); }} />;
+  if (status === "signedout") return <SignIn notice={signedOutReason === "idle" ? "You were signed out after " + idleStore.label() + " without activity. Sign in again to continue." : signedOutReason === "elsewhere" ? "You were signed out in another tab." : ""} onSignedIn={(s) => { idleStore.touch(Date.now()); setSignedOutReason(""); setSession(s); setStatus("loading"); boot(s); }} />;
   if (status === "pending") return <AwaitingAccess onSignOut={signOut} />;
   if (status === "error") return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
@@ -6178,7 +6240,7 @@ export default function App() {
       logAudit("deleted", "user", id, u ? u.name : ""); reload();
     },
     settings: data.settings,
-    saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {}, company: v.company || {}, invoice_prefix: v.invoicePrefix || "INV" } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
+    saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {}, company: v.company || {}, invoice_prefix: v.invoicePrefix || "INV", idle_timeout_minutes: Math.min(480, Math.max(5, Number(v.idleMinutes) || 30)) } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
     auditLog: data.auditLog,
     /* Deletes rejected candidates older than the retention window (data-privacy tab computes the eligible list). */
     purgeCandidates: async (ids) => {
@@ -6369,6 +6431,10 @@ export default function App() {
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
+      <Modal open={idleLeft != null} onClose={() => { idleStore.touch(Date.now()); setIdleLeft(null); }} title="Are you still there?">
+        <div className="text-sm mb-5" style={{ color: C.ink2 }}>For security, Harbor signs you out after {idleStore.label()} without activity. You'll be signed out in <span className="font-semibold" style={{ color: C.ink }}>{idleLeft != null ? Math.floor(idleLeft / 60) + ":" + String(idleLeft % 60).padStart(2, "0") : ""}</span>.</div>
+        <div className="flex gap-2 justify-end"><Btn onClick={() => signOut()}>Sign out now</Btn><Btn kind="primary" onClick={() => { idleStore.touch(Date.now()); setIdleLeft(null); }}>Stay signed in</Btn></div>
+      </Modal>
     </div>
   );
 }

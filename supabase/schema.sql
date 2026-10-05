@@ -1501,3 +1501,6 @@ language sql security definer set search_path = public, extensions as $$
 $$;
 revoke all on function public.call_interviews(text) from public, anon, authenticated;
 select cron.schedule('harbor-interviews-tick', '*/10 * * * *', $$select public.call_interviews('tick')$$);
+
+-- migration: idle_timeout
+alter table public.agency_settings add column if not exists idle_timeout_minutes int not null default 30 check (idle_timeout_minutes between 5 and 480);
