@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { GCal, authUrl, emailFromIdToken, exchangeCode, googleConfigured, revoke } from "./google.ts";
-import { Info, NOSHOW_TEXT, TZ_ABBR, PORTAL_BASE, cancelEmail, ics, inviteEmail, noShowEmail, reminderEmail, sendBrevo } from "./mail.ts";
+import { Info, NOSHOW_TEXT, TZ_ABBR, PORTAL_BASE, cancelEmail, ics, inviteEmail, noShowEmail, reminderEmail } from "./mail.ts";
+import { loadBrand, sendBrevo } from "./brand.ts";
 
 // Interview calendar.
 //   Staff and recruiters (their login): create, update (reschedule), cancel, outcome, busy,
@@ -64,10 +65,11 @@ const seqOf = (_iv: any) => Math.floor((Date.now() - Date.UTC(2026, 0, 1)) / 600
 async function mailCandidate(admin: any, iv: any, kind: "invite" | "changed" | "cancel" | "noshow" | "day" | "hour") {
   const { i } = await info(admin, iv);
   if (!i.candidateEmail) return false;
-  const m = kind === "invite" ? inviteEmail(i) : kind === "changed" ? inviteEmail(i, true) : kind === "cancel" ? cancelEmail(i)
-    : kind === "noshow" ? noShowEmail(i) : reminderEmail(i, kind);
+  const b = await loadBrand(admin);
+  const m = kind === "invite" ? inviteEmail(b, i) : kind === "changed" ? inviteEmail(b, i, true) : kind === "cancel" ? cancelEmail(b, i)
+    : kind === "noshow" ? noShowEmail(b, i) : reminderEmail(b, i, kind);
   const attach = ["invite", "changed", "cancel"].includes(kind) ? { name: "interview.ics", content: ics({ ...i, id: iv.id, seq: seqOf(iv), cancelled: kind === "cancel" }) } : undefined;
-  return sendBrevo({ email: i.candidateEmail, name: i.candidateName }, m.subject, m.html, attach);
+  return sendBrevo(b, { email: i.candidateEmail, name: i.candidateName }, m.subject, m.html, attach);
 }
 
 async function timeline(admin: any, candidateId: string, title: string) {

@@ -1,42 +1,11 @@
-// Interview emails to candidates, through Harbor's own candidate email (Brevo). Best effort:
-// a failed or unconfigured send never fails the action, it is reported back as sent:false.
+// Interview emails to candidates, through the agency's own candidate email (Brevo), branded with
+// the agency name from Agency settings. Best effort: a failed or unconfigured send never fails
+// the action, it is reported back as sent:false.
 
 export const PORTAL_BASE = () => Deno.env.get("PORTAL_BASE_URL") || "https://harbor.link";
 
-export function esc(s: unknown) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as any)[c] || c);
-}
-
-export async function sendBrevo(to: { email: string; name?: string }, subject: string, html: string, attachment?: { name: string; content: string }): Promise<boolean> {
-  const key = Deno.env.get("BREVO_API_KEY");
-  const senderEmail = Deno.env.get("BREVO_SENDER_EMAIL");
-  if (!key || !senderEmail || !to.email) { console.error("Brevo not configured or no recipient; email not sent"); return false; }
-  try {
-    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: { accept: "application/json", "content-type": "application/json", "api-key": key },
-      body: JSON.stringify({
-        sender: { email: senderEmail, name: Deno.env.get("BREVO_SENDER_NAME") || "Harbor" },
-        to: [to], subject, htmlContent: html,
-        ...(attachment ? { attachment: [attachment] } : {}),
-      }),
-    });
-    if (!res.ok) { console.error("brevo send failed", res.status, (await res.text()).slice(0, 300)); return false; }
-    return true;
-  } catch (e) { console.error("brevo send threw", String((e as Error)?.message || e)); return false; }
-}
-
-function shell(preheader: string, bodyHtml: string) {
-  return `<!doctype html><html><body style="margin:0;padding:24px;background:#FAF8F3;font-family:Georgia,'Times New Roman',serif;color:#1A1A1A;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(preheader)}</div>
-<div style="max-width:480px;margin:0 auto;background:#ffffff;border:1px solid #E7E2D6;border-radius:16px;padding:28px;">
-${bodyHtml}
-<div style="margin-top:24px;font-size:12px;color:#8A8578;font-family:Arial,sans-serif;">Sent by Harbor on behalf of your recruiter.</div>
-</div></body></html>`;
-}
-function button(href: string, label: string) {
-  return `<a href="${esc(href)}" style="display:inline-block;margin-top:18px;padding:12px 22px;background:#1A1A1A;color:#ffffff;text-decoration:none;border-radius:10px;font-family:Arial,sans-serif;font-size:14px;font-weight:600;">${esc(label)}</a>`;
-}
+import { Brand, button as brandButton, emailShell, esc } from "./brand.ts";
+export { esc };
 const p = (t: string) => `<div style="font-size:15px;line-height:1.6;margin-top:10px;">${t}</div>`;
 const hi = (name: string) => `<div style="font-size:20px;margin-bottom:8px;">Hi ${esc(String(name || "there").split(" ")[0])},</div>`;
 
@@ -82,41 +51,41 @@ export function ics(i: Info & { id: string; seq: number; cancelled?: boolean }) 
   return btoa(unescape(encodeURIComponent(lines.join("\r\n"))));
 }
 
-export function inviteEmail(i: Info, changed = false) {
+export function inviteEmail(b: Brand, i: Info, changed = false) {
   const subject = changed ? `Updated time: your ${i.round.toLowerCase()} for ${i.role}` : `Interview booked: ${i.round} for ${i.role}`;
-  const html = shell(subject, hi(i.candidateName) +
+  const html = emailShell(b, subject, hi(i.candidateName) +
     p(changed ? `The time of your ${roleLine(i)} has changed.` : `Your ${roleLine(i)} is booked.`) +
     p(`<b>${esc(whenText(i.startsAt, i.durationMin, i.tz))}</b><br>${whereHtml(i)}`) +
     p(`Please confirm you'll be there on your candidate page. The attached file adds it to your calendar.`) +
-    button(portal(i), "Confirm I'll be there"));
+    brandButton(b, portal(i), "Confirm I'll be there"));
   return { subject, html };
 }
 
-export function reminderEmail(i: Info, kind: "day" | "hour") {
+export function reminderEmail(b: Brand, i: Info, kind: "day" | "hour") {
   const subject = kind === "day" ? `Tomorrow: ${i.round} for ${i.role}` : `Starting in an hour: ${i.round} for ${i.role}`;
-  const html = shell(subject, hi(i.candidateName) +
+  const html = emailShell(b, subject, hi(i.candidateName) +
     p(kind === "day" ? `A reminder about your ${roleLine(i)} tomorrow.` : `Your ${roleLine(i)} starts in about an hour.`) +
     p(`<b>${esc(whenText(i.startsAt, i.durationMin, i.tz))}</b><br>${whereHtml(i)}`) +
     p(`Good luck. ${esc(i.recruiter || "Your recruiter")} is here if you need anything.`) +
-    button(portal(i), "Open your candidate page"));
+    brandButton(b, portal(i), "Open your candidate page"));
   return { subject, html };
 }
 
 export const NOSHOW_TEXT = "Sorry we missed you at your interview. If you'd still like to be considered and want to reschedule, let us know and we'll ask the client for a new time.";
-export function noShowEmail(i: Info) {
+export function noShowEmail(b: Brand, i: Info) {
   const subject = `We missed you: ${i.round} for ${i.role}`;
-  const html = shell(subject, hi(i.candidateName) +
+  const html = emailShell(b, subject, hi(i.candidateName) +
     p(`About your ${roleLine(i)} on ${esc(whenText(i.startsAt, i.durationMin, i.tz))}:`) +
     p(esc(NOSHOW_TEXT)) +
-    button(portal(i), `Message ${i.recruiter || "your recruiter"}`));
+    brandButton(b, portal(i), `Message ${i.recruiter || "your recruiter"}`));
   return { subject, html };
 }
 
-export function cancelEmail(i: Info) {
+export function cancelEmail(b: Brand, i: Info) {
   const subject = `Interview cancelled: ${i.round} for ${i.role}`;
-  const html = shell(subject, hi(i.candidateName) +
+  const html = emailShell(b, subject, hi(i.candidateName) +
     p(`Your ${roleLine(i)} on ${esc(whenText(i.startsAt, i.durationMin, i.tz))} has been cancelled.`) +
     p(`${esc(i.recruiter || "Your recruiter")} will be in touch about next steps.`) +
-    button(portal(i), "Open your candidate page"));
+    brandButton(b, portal(i), "Open your candidate page"));
   return { subject, html };
 }

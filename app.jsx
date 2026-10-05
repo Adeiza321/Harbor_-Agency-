@@ -175,7 +175,7 @@ function mapAll(d) {
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", profileReadAt: c.profile_read_at || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at })) })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ id: e.id, company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
@@ -1725,15 +1725,11 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   // ordinary reject (never made it that far) in the timeline/history, but both outcomes send
   // the candidate straight back to Active file rather than a dead-end "Rejected" status --
   // they stay searchable for other roles instead of falling out of the pipeline.
-  const reject = (clientReject) => {
-    patch((c) => ({
-      status: "Active file",
-      timeline: [...c.timeline, { t: (clientReject ? "Rejected by the client" : "Rejected") + " — moved to Active file", d: todayStr(), done: true }],
-    }));
-    setReassign("searching");
-    toast(clientReject ? "Marked rejected by the client. Moved to Active file." : "Candidate rejected. Moved to Active file.");
-    setTimeout(() => setReassign("found"), 1200);
-  };
+  // Rejecting records a reason and tells the candidate why (see RejectModal); then suggest
+  // their best other open role.
+  const [rejectKind, setRejectKind] = useState(null);
+  const reject = (clientReject) => setRejectKind(clientReject ? "client" : "internal");
+  const afterReject = () => { setReassign("searching"); setTimeout(() => setReassign("found"), 1200); };
   const doStatus = (opt) => {
     setMenuOpen(false);
     if (opt === "Not a fit for this role") {
@@ -1856,6 +1852,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         })()}
       </Modal>
       {routeJob && <FitReviewModal open onClose={() => setRouteJob(null)} candidate={candidate} job={routeJob} S={S} toast={toast} />}
+      {rejectKind && <RejectModal candidate={candidate} kind={rejectKind} S={S} toast={toast} onClose={() => setRejectKind(null)} onDone={afterReject} />}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
           <Card>
@@ -2197,6 +2194,13 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
       {open && (
         <div className="px-4 pb-4 flex flex-col gap-3.5">
           {group.items.length > 1 && <Tabs tabs={group.items.map((x, i) => ({ key: i, label: x.job.role }))} active={idx} setActive={setIdx} />}
+          {link.reject && (
+            <div className="rounded-lg px-3 py-2.5 text-sm flex flex-col gap-1" style={{ background: C.dangerBg, color: "#8E3320" }}>
+              <div className="font-semibold">{link.reject.kind === "client" ? "Rejected by the client" : "Rejected"}: {REJECT_LABEL[link.reject.reason] || link.reject.reason}{link.reject.at ? " · " + fdate(link.reject.at) : ""}{link.reject.by ? " by " + link.reject.by : ""}</div>
+              {link.reject.feedback && <div style={{ color: C.ink }}><span style={{ color: "#8E3320" }}>Feedback (internal): </span>{link.reject.feedback}</div>}
+              {link.reject.message && <div style={{ color: C.ink2 }}>Told {first}: “{link.reject.message}”</div>}
+            </div>
+          )}
           {pending && (
             <div className="rounded-lg px-3 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}>
               <span className="flex-1">Routed to {job.role}. Waiting for {first} to accept on their candidate page; the full screening runs as soon as they do.{ai.stage ? " Below is the fit review against this job's description." : ""}</span>
@@ -2363,6 +2367,77 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
         body={"This removes the route to " + job.role + ", " + job.client + ". It disappears from " + first + "'s candidate page and from this profile."}
         onConfirm={() => run("withdraw", async () => { await S.unlinkJob(link.id); setWithdrawOpen(false); toast("Route withdrawn"); })} busy={busy === "withdraw"} />
     </div>
+  );
+}
+
+/* Reject with a recorded reason, and tell the candidate why (email + their candidate page). */
+const REJECT_REASONS = [["experience", "Not enough experience"], ["skill", "Missing a must-have skill"], ["salary", "Salary expectation"], ["location", "Location / work authorisation"],
+  ["notice", "Notice period"], ["other_candidate", "Client chose another candidate"], ["role_closed", "Role filled or paused"], ["interview", "Interview performance"], ["other", "Other"]];
+const REJECT_LABEL = Object.fromEntries(REJECT_REASONS);
+function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose, onDone }) {
+  const first = candidate.name.split(" ")[0];
+  const links = candidate.jobLinks.filter((l) => l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)).sort((a, b) => b.createdAt - a.createdAt);
+  const [kind, setKind] = useState(kind0 || "internal");
+  const [linkId, setLinkId] = useState(link0 || (links[0] ? links[0].id : ""));
+  const [reason, setReason] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [notify, setNotify] = useState(!!candidate.emailAddr);
+  const [message, setMessage] = useState("");
+  const [edited, setEdited] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [preview, setPreview] = useState(null);
+  const link = candidate.jobLinks.find((l) => l.id === linkId) || null;
+  const job = link ? S.jobs.find((j) => j.id === link.jobId) : null;
+  const draft = () => { setBusy("draft"); S.msgQuiet("draft_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason, feedback }).then((r) => { setMessage(r.message || ""); setEdited(false); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  // A plain explanation as soon as a reason is picked; "Write it from the feedback" makes it specific.
+  React.useEffect(() => { if (reason && !edited && !feedback.trim()) S.msgQuiet("draft_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason }).then((r) => setMessage(r.message || "")).catch(() => {}); }, [reason, kind]); // eslint-disable-line
+  const showPreview = () => { setBusy("preview"); S.msgQuiet("preview_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason, message }).then(setPreview).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const submit = () => {
+    if (!reason) { toast("Pick the main reason"); return; }
+    setBusy("save");
+    S.rejectCandidate({ linkId: linkId || undefined, candidateId: candidate.id, kind, reason, feedback, message, notify })
+      .then((r) => { toast((kind === "client" ? "Recorded as rejected by the client" : "Candidate rejected") + (r.emailed ? ". " + first + " has been emailed why." : notify && !r.emailed ? ". The email couldn't be sent." : ".") + (r.movedToActiveFile ? " Moved to Active file." : "")); onDone && onDone(r); onClose(); })
+      .catch(() => {}).finally(() => setBusy(""));
+  };
+  const ta = "w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none";
+  const taS = { borderColor: C.line, background: "#FAF8F3" };
+  const pill = (on, label, onClick) => <button key={label} type="button" aria-pressed={on} onClick={onClick} className="rounded-full px-3 py-1.5 text-sm" style={on ? { background: C.ink, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: "#fff" }}>{label}</button>;
+  return (
+    <Modal open onClose={onClose} title={(kind === "client" ? "Client reject · " : "Reject · ") + candidate.name} wide>
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label>
+            <select value={linkId} onChange={(e) => setLinkId(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm" style={taS}>
+              {links.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
+              <option value="">{links.length ? "Not for a specific role" : "No role linked"}</option>
+            </select></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Who decided</label>
+            <div className="flex gap-1.5 mt-1.5">{pill(kind === "client", "The client", () => setKind("client"))}{pill(kind === "internal", "Us", () => setKind("internal"))}</div></div>
+        </div>
+        <div><div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Main reason (required)</div>
+          <div className="flex flex-wrap gap-1.5">{REJECT_REASONS.map(([k, l]) => pill(reason === k, l, () => setReason(k)))}</div></div>
+        <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>{kind === "client" ? "Client's feedback, in full" : "Why, in your words"} (internal, never sent)</label>
+          <textarea rows={3} value={feedback} onChange={(e) => setFeedback(e.target.value)} className={ta} style={taS} placeholder={kind === "client" ? "Paste or type what the client said" : "e.g. 5 years short of the 10 required; no SEC reporting"} /></div>
+        <div className="pt-3 flex flex-col gap-2" style={{ borderTop: `1px solid ${C.line}` }}>
+          <label className="flex items-center gap-2.5 text-sm font-medium"><input type="checkbox" checked={notify} disabled={!candidate.emailAddr && !link} onChange={(e) => setNotify(e.target.checked)} />
+            {candidate.emailAddr ? "Email " + first + " why " + (kind === "client" ? "the client didn't move forward" : "we're not putting them forward") : "Tell " + first + " why on their candidate page (no email on file)"}</label>
+          {notify && <>
+            <div className="flex items-end justify-between gap-2"><label className="text-xs font-medium" style={{ color: C.ink2 }}>What {first} will read</label>
+              <button type="button" disabled={!reason || !feedback.trim() || !!busy} onClick={draft} className="text-xs font-medium" style={{ color: reason && feedback.trim() ? C.em : C.ink3 }}>{busy === "draft" ? "Writing…" : "Write it from the feedback (AI)"}</button></div>
+            <textarea rows={4} value={message} onChange={(e) => { setMessage(e.target.value); setEdited(true); }} className={ta} style={taS} placeholder={reason ? "" : "Pick a reason first"} />
+            <div className="text-xs" style={{ color: C.ink2 }}>Kind and specific, never harsh. It also appears on {first}'s candidate page. <button type="button" className="underline" disabled={!reason || !!busy} onClick={showPreview}>{busy === "preview" ? "Loading…" : "Preview the email"}</button></div>
+          </>}
+        </div>
+        <div className="text-xs rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>The reason and feedback are saved on this role's card and {first}'s timeline. {link ? "The role is marked Rejected. " : ""}They go back to Active file unless they're live on another role, so they stay searchable.</div>
+        <div className="flex justify-end gap-2"><Btn onClick={onClose} disabled={busy === "save"}>Cancel</Btn><Btn kind="danger" disabled={!reason || busy === "save"} onClick={submit}>{busy === "save" ? <>Saving <InlineDots color="#fff" /></> : notify ? "Reject and send" : "Reject"}</Btn></div>
+      </div>
+      <Modal open={!!preview} onClose={() => setPreview(null)} title="Email preview" wide>
+        {preview && <div className="flex flex-col gap-2">
+          <div className="text-xs" style={{ color: C.ink2 }}>To: {preview.to || "(no email on file)"} · Subject: <span style={{ color: C.ink }}>{preview.subject}</span></div>
+          <iframe title="Email preview" srcDoc={preview.html} sandbox="" className="w-full rounded-lg border" style={{ borderColor: C.line, height: 520 }} />
+        </div>}
+      </Modal>
+    </Modal>
   );
 }
 
@@ -4060,8 +4135,11 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
   const cand = ivCandOf(iv, S);
   const first = (iv.candidateName || "").split(" ")[0];
   const run = (k, fn) => { setBusy(k); return fn().catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const [rejectOpen, setRejectOpen] = useState(false);
   const saveOutcome = (bookNext) => run("save", async () => {
     const r = await S.iv("outcome", { id: iv.id, status, decision: status === "done" ? decision || null : null, feedback });
+    // A client reject records the reason and tells the candidate why, like any other reject.
+    if (status === "done" && decision === "client_reject" && cand) { setRejectOpen(true); return; }
     toast("Saved" + (r.followup ? ". " + first + " has been sent the follow-up." : ""));
     if (bookNext) onBookNext({ candidateId: iv.candidateId, jobId: iv.jobId, round: status === "rescheduled" || status === "no_show" || status === "client_cancelled" ? iv.round : nextRound(iv.round), recruiterId: iv.recruiterId, where: iv.locationType, location: iv.locationType === "meet" ? "" : iv.location });
     else onClose();
@@ -4109,7 +4187,7 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
             {status === "done" && <div><div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Client's decision</div>
               <div className="flex flex-wrap gap-1.5">{Object.entries(IV_DECISION).map(([k, l]) => pill(decision === k, l, () => setDecision(decision === k ? "" : k), k === "client_reject" ? C.dangerFg : C.em))}</div>
               {decision === "offer" && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Moves them to Offer on this role.</div>}
-              {decision === "client_reject" && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Marks this role Rejected and returns them to Active file, unless they're live on another role.</div>}
+              {decision === "client_reject" && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Saving opens the reject form: record the client's reason and tell {first} why.</div>}
             </div>}
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Feedback</label>
               <textarea rows={3} value={feedback} onChange={(e) => setFeedback(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
@@ -4120,6 +4198,7 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
           </div>
         )}
       </div>
+      {rejectOpen && cand && <RejectModal candidate={cand} kind="client" linkId={iv.linkId || undefined} S={S} toast={toast} onClose={() => { setRejectOpen(false); onClose(); }} />}
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancel this interview?">
         <div className="flex flex-col gap-3">
           <div className="text-sm" style={{ color: C.ink2 }}>It's removed from Google Calendar and marked cancelled in Harbor.</div>
@@ -5410,6 +5489,14 @@ function AgencyTab({ toast, S }) {
   return (
     <Card className="flex flex-col gap-4 md:max-w-xl">
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+      <div>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Logo (shown at the top of every email; your agency name is used when there's no logo)</label>
+        <div className="flex items-center gap-3 mt-1.5">
+          {company.logoUrl ? <img src={company.logoUrl} alt="Agency logo" className="h-9 max-w-[160px] object-contain rounded" style={{ background: C.canvas }} /> : <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.side, color: C.lime, ...SERIF }}>{(name || "H").charAt(0).toUpperCase()}</div>}
+          <label className="text-sm rounded-lg border px-3 py-2 cursor-pointer" style={{ borderColor: C.line }}>{company.logoUrl ? "Change logo" : "Upload logo"}<input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (!f) return; S.uploadLogo(f).then((url) => { setCompany({ ...company, logoUrl: url }); toast("Logo uploaded. Save changes to use it."); }).catch(() => {}); }} /></label>
+          {company.logoUrl && <button type="button" className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setCompany({ ...company, logoUrl: "" })}>Remove</button>}
+        </div>
+      </div>
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -6192,6 +6279,10 @@ export default function App() {
   // link). Sending goes through the send-message edge function rather than a plain insert
   // because it also emails the candidate; reading is just the messages already embedded on
   // each jobLink, and marking a thread read is a plain PATCH (RLS-scoped, no edge function).
+  const msgQuiet = async (action, payload) => {
+    const r = await fetch(SB_URL + "/functions/v1/send-message", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Request failed"); return j;
+  };
   const msgCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/send-message", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Could not send"); reload(); return j;
@@ -6489,6 +6580,9 @@ export default function App() {
     reload,
     // Recruiter's side of candidate messaging (see msgCall above).
     sendMessage: (linkId, body) => msgCall("reply", { linkId, body }),
+    // Rejections: draft/preview change nothing; reject records it and tells the candidate.
+    msgQuiet: msgQuiet,
+    rejectCandidate: (payload) => msgCall("reject", payload),
     inviteToMessage: (linkId) => msgCall("invite", { linkId }).catch(() => {}), // best-effort, never blocks the action that triggered it
     markThreadRead: (linkId) => call("/rest/v1/candidate_job_messages?link_id=eq." + linkId + "&sender=eq.candidate&recruiter_read_at=is.null", { method: "PATCH", body: { recruiter_read_at: new Date().toISOString() } }),
     /* Your own account: name/phone update straight to your profiles row, avatar via the public `avatars` bucket. */
@@ -6498,6 +6592,13 @@ export default function App() {
       return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body })
         .then(reload)
         .catch((e) => { showError(e.message); reload(); throw e; });
+    },
+    // Agency logo for emails: the public avatars bucket, in the uploader's own folder.
+    uploadLogo: async (file) => {
+      const path = session.uid + "/agency-logo-" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
+      const r = await fetch(SB_URL + "/storage/v1/object/avatars/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": file.type || "image/png", "x-upsert": "true" }, body: file });
+      if (!r.ok) { const t = await r.text(); showError("Upload failed: " + t); throw new Error(t); }
+      return SB_URL + "/storage/v1/object/public/avatars/" + path;
     },
     uploadAvatar: async (file) => {
       const path = session.uid + "/" + Date.now() + "-" + file.name.replace(/[^A-Za-z0-9._-]+/g, "_");

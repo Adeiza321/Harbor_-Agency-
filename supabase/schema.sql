@@ -1531,3 +1531,9 @@ do $$ begin
   if not exists (select 1 from pg_policies where tablename='spend_requests' and policyname='spend_requests_staff_read') then
     create policy spend_requests_staff_read on public.spend_requests for select to authenticated using (public.is_staff()); end if;
 end $$;
+
+-- migration: reject_reasons
+-- Why a candidate was rejected on a role, and what they were told.
+alter table public.candidate_jobs add column if not exists reject_kind text, add column if not exists reject_reason text,
+  add column if not exists reject_feedback text, add column if not exists reject_message text,
+  add column if not exists rejected_at timestamptz, add column if not exists rejected_by uuid references public.profiles(id) on delete set null;
