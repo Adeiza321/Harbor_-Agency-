@@ -48,7 +48,18 @@ function defaultReasonText(reason: string, kind: string) {
   }
 }
 
-function rejectEmail(b: Brand, o: { name: string; role: string; company: string; kind: string; message: string; recruiter: string; portalUrl: string }) {
+// Short opt-in question with Yes / No. Each opens the candidate page with that answer picked,
+// where one click confirms it (mail scanners open links, so nothing is saved from the email).
+function pitchYesNo(b: Brand, portalUrl: string) {
+  const btn = (href: string, label: string, solid: boolean) =>
+    `<a href="${esc(href)}" style="display:inline-block;margin:10px 8px 0 0;padding:10px 22px;border:1.5px solid ${b.color};${solid ? `background:${b.color};color:#ffffff;` : `color:${b.color};`}text-decoration:none;border-radius:10px;font-family:Arial,sans-serif;font-size:14px;font-weight:600;">${label}</a>`;
+  return `<div style="margin-top:26px;padding:16px 18px;border:1px solid #E4DED2;border-radius:12px;background:#FAF8F3;">
+    <div style="font-size:15px;line-height:1.6;">Would you like us to pitch your profile anonymously for future roles we think you might be a good fit for? We won't submit your full profile unless you show interest.</div>
+    ${btn(portalUrl + "&pitch=yes", "Yes", true)}${btn(portalUrl + "&pitch=no", "No", false)}
+  </div>`;
+}
+
+function rejectEmail(b: Brand, o: { name: string; role: string; company: string; kind: string; message: string; recruiter: string; portalUrl: string; askPitch?: boolean }) {
   const first = esc(String(o.name || "there").split(" ")[0]);
   const roleLine = o.company ? `the <b>${esc(o.role)}</b> role at <b>${esc(o.company)}</b>` : `the <b>${esc(o.role)}</b> role`;
   const decision = o.kind === "client"
@@ -60,7 +71,8 @@ function rejectEmail(b: Brand, o: { name: string; role: string; company: string;
      <div style="font-size:15px;line-height:1.6;">Thank you for your time and interest in ${roleLine}. ${decision}</div>
      <div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;line-height:1.55;"><div style="font-family:Arial,sans-serif;font-size:11px;letter-spacing:.06em;color:#56605A;margin-bottom:6px;">WHY</div>${esc(o.message).replace(/\n/g, "<br>")}</div>
      <div style="font-size:15px;line-height:1.6;margin-top:14px;">This decision is about this one role, not about you. Your profile stays active with us, and ${esc(o.recruiter || "your recruiter")} will reach out when a role that fits comes up.</div>
-     ${button(b, o.portalUrl, "See roles that fit you")}`);
+     ${button(b, o.portalUrl, "See roles that fit you")}
+     ${o.askPitch ? pitchYesNo(b, o.portalUrl) : ""}`);
   return { subject, html };
 }
 
@@ -173,7 +185,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "preview_reject") {
-      const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message: String(body.message || defaultReasonText(reason || "other", kind)), recruiter: String(me.full_name || "").split(" ")[0], portalUrl });
+      const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message: String(body.message || defaultReasonText(reason || "other", kind)), recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent && !cand.pitch_consent_at });
       return json({ ok: true, subject: m.subject, html: m.html, to: cand.email || "" });
     }
 
@@ -195,7 +207,7 @@ Deno.serve(async (req: Request) => {
       if (notify) {
         if (link) await admin.from("candidate_job_messages").insert({ link_id: link.id, sender: "recruiter", author_id: me.id, body: (kind === "client" ? "The client has decided not to move forward with your profile for this role. " : "We've decided not to put you forward for this role. ") + message, recruiter_read_at: now });
         if (cand.email) {
-          const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl });
+          const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent && !cand.pitch_consent_at });
           emailed = await sendBrevo(brand, { email: cand.email, name: cand.name }, m.subject, m.html);
         }
       }

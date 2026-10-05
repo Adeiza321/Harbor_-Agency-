@@ -4844,7 +4844,9 @@ function CampaignsPage({ toast, S }) {
 function PitchConsentCard({ token, on, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [asked] = useState(() => new URLSearchParams(window.location.search).get("pitch") === "1");
+  // ?pitch=1 asks; ?pitch=yes / ?pitch=no come from the Yes/No buttons in an email (picked, one click to confirm).
+  const [pre] = useState(() => new URLSearchParams(window.location.search).get("pitch") || "");
+  const asked = ["1", "yes", "no"].includes(pre);
   const [answered, setAnswered] = useState(null);
   const ref = React.useRef(null);
   useEffect(() => { if (asked && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "center" }); }, [asked]);
@@ -4860,9 +4862,10 @@ function PitchConsentCard({ token, on, onChanged }) {
     <div ref={ref}>
       <Card className="border-2" style={{ borderColor: C.em }}>
         <SectionTitle title="Can we pitch you for other roles?" sub={sub} size="text-xl" />
+        {(pre === "yes" || pre === "no") && <div className="text-sm mt-3 font-medium" style={{ color: C.ink }}>You picked {pre === "yes" ? "Yes" : "No"} in our email. Tap it below to confirm.</div>}
         <div className="flex flex-wrap gap-2 mt-4">
-          <Btn kind="primary" onClick={() => set(true)} disabled={busy}>Yes, pitch me anonymously</Btn>
-          <Btn onClick={() => set(false)} disabled={busy}>No thanks</Btn>
+          <Btn kind={pre === "no" ? "ghost" : "primary"} onClick={() => set(true)} disabled={busy}>Yes, pitch me anonymously</Btn>
+          <Btn kind={pre === "no" ? "primary" : "ghost"} onClick={() => set(false)} disabled={busy}>No thanks</Btn>
         </div>
         {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
       </Card>
