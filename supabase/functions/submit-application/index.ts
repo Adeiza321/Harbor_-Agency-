@@ -50,6 +50,7 @@ Deno.serve(async (req: Request) => {
       const { data: job } = jobId ? await q.eq("id", jobId).single() : await q.eq("link_slug", linkSlug).single();
       if (!job) return json({ error: "That role could not be found" }, 404);
       if (job.status === "Closed") return json({ error: "This role is no longer accepting applications" }, 400);
+      if (job.status === "On hold") return json({ error: "This role is paused and isn't taking applications right now. Please check back soon." }, 400);
       resolvedJobId = job.id;
       resolvedRoleTitle = job.role_title;
     }

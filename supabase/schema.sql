@@ -1537,3 +1537,204 @@ end $$;
 alter table public.candidate_jobs add column if not exists reject_kind text, add column if not exists reject_reason text,
   add column if not exists reject_feedback text, add column if not exists reject_message text,
   add column if not exists rejected_at timestamptz, add column if not exists rejected_by uuid references public.profiles(id) on delete set null;
+
+-- migration: job_hold_status_sync_auto_screen
+-- Job statuses are Open, On hold and Closed (plus Draft). "Engaged" is no longer a job status:
+-- engaging is per person (job_recruiters / job_engagements). On hold stops new candidates.
+alter table public.jobs drop constraint if exists jobs_status_check;
+alter table public.jobs add constraint jobs_status_check check (status in ('Draft','Open','On hold','Closed'));
+alter table public.jobs add column if not exists hold_reason text;
+alter table public.jobs add column if not exists hold_until date;
+alter table public.jobs add column if not exists held_at timestamptz;
+alter table public.jobs add column if not exists held_by uuid references public.profiles(id) on delete set null;
+
+-- Candidate status follows their roles; Offer is a candidate status too.
+alter table public.candidates drop constraint if exists candidates_status_check;
+alter table public.candidates add constraint candidates_status_check check (status in ('In review','With client','Interview','Offer','Active file','Placed','Rejected','Hired'));
+
+-- Status changes made by Harbor itself (status sync, reopening held jobs) pass the guards.
+create or replace function public.guard_job_status() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.status is distinct from old.status and not public.is_staff()
+     and coalesce(current_setting('harbor.status_sync', true), '') <> 'on' then
+    raise exception 'Only Rec Ops or Admins can change a job''s status' using errcode = 'P0001';
+  end if;
+  if new.status = 'On hold' and old.status is distinct from 'On hold' then
+    new.held_at := now(); new.held_by := coalesce(auth.uid(), new.held_by);
+  elsif new.status <> 'On hold' then
+    new.hold_reason := null; new.hold_until := null; new.held_at := null; new.held_by := null;
+  end if;
+  return new;
+end $$;
+
+create or replace function public.guard_candidate_status() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.status is distinct from old.status and not public.is_staff() and new.status <> 'Hired'
+     and coalesce(current_setting('harbor.status_sync', true), '') <> 'on' then
+    raise exception 'Recruiters can only flag a candidate as Hired — Rec Ops or an Admin confirms the placement' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+
+-- Coming back from hold doesn't restart sourcing; only a newly live job does.
+create or replace function public.queue_job_sourcing() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if new.status = 'Open' and (tg_op = 'INSERT' or old.status not in ('Open', 'On hold')) then
+    new.sourcing := coalesce(new.sourcing, '{}'::jsonb) || jsonb_build_object('state', 'pending', 'queuedAt', now());
+  end if;
+  return new;
+end $$;
+
+-- The candidate's overall status, from their roles (declined and not-yet-accepted routes don't count).
+create or replace function public.derive_candidate_status(p_cand uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select case
+    when count(*) = 0 then null
+    when bool_or(stage = 'Placed') then 'Placed'
+    when bool_or(stage = 'Offer') then 'Offer'
+    when bool_or(stage = 'Interview') then 'Interview'
+    when bool_or(stage = 'Submitted') then 'With client'
+    when bool_or(stage in ('Sourced', 'In review', 'Screening')) then 'In review'
+    else 'Active file' end
+  from public.candidate_jobs
+  where candidate_id = p_cand and coalesce(candidate_response, 'accepted') = 'accepted'
+$$;
+
+create or replace function public.sync_candidate_status() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cid uuid; cur text; d text; was_placed boolean := false;
+begin
+  if tg_op = 'DELETE' then cid := old.candidate_id; was_placed := old.stage = 'Placed';
+  else cid := new.candidate_id; if tg_op = 'UPDATE' then was_placed := old.stage = 'Placed'; end if; end if;
+  select status into cur from public.candidates where id = cid;
+  if cur is null then return null; end if;
+  d := public.derive_candidate_status(cid);
+  if d is null or d = cur then return null; end if;
+  -- "Hired" is a recruiter's flag waiting for Rec Ops/Admin; it holds until placed or rejected.
+  if cur = 'Hired' and d in ('In review', 'With client', 'Interview', 'Offer') then return null; end if;
+  -- A placement stays Placed unless the placed role itself is moved off Placed.
+  if cur = 'Placed' and not was_placed then return null; end if;
+  perform set_config('harbor.status_sync', 'on', true);
+  update public.candidates set status = d where id = cid;
+  perform set_config('harbor.status_sync', 'off', true);
+  return null;
+end $$;
+
+drop trigger if exists candidate_jobs_sync_status on public.candidate_jobs;
+create trigger candidate_jobs_sync_status after insert or delete or update of stage, candidate_response
+  on public.candidate_jobs for each row execute function public.sync_candidate_status();
+
+-- A status typed in by hand can't contradict the roles (Hired and Placed are confirmed by hand).
+create or replace function public.align_candidate_status() returns trigger
+language plpgsql set search_path = public as $$
+declare d text;
+begin
+  if new.status is distinct from old.status and new.status not in ('Hired', 'Placed')
+     and coalesce(current_setting('harbor.status_sync', true), '') <> 'on' then
+    d := public.derive_candidate_status(new.id);
+    if d is not null then new.status := d; end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists candidates_align_status on public.candidates;
+create trigger candidates_align_status before update of status on public.candidates
+  for each row execute function public.align_candidate_status();
+
+-- Bring every candidate in line once.
+do $$
+declare r record; d text;
+begin
+  perform set_config('harbor.status_sync', 'on', true);
+  for r in select id, status from public.candidates loop
+    d := public.derive_candidate_status(r.id);
+    if d is not null and d <> r.status
+       and not (r.status = 'Hired' and d in ('In review', 'With client', 'Interview', 'Offer'))
+       and not (r.status = 'Placed') then
+      update public.candidates set status = d where id = r.id;
+    end if;
+  end loop;
+  perform set_config('harbor.status_sync', 'off', true);
+end $$;
+
+-- A job on hold (or closed) takes no new candidates, from anyone or any door.
+create or replace function public.guard_job_accepting() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare s text; t text;
+begin
+  select status, role_title into s, t from public.jobs where id = new.job_id;
+  if s = 'On hold' then
+    raise exception '% is on hold and isn''t taking new candidates right now.', coalesce(t, 'This role') using errcode = 'P0001';
+  elsif s = 'Closed' then
+    raise exception '% is closed and isn''t taking new candidates.', coalesce(t, 'This role') using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+drop trigger if exists candidate_jobs_job_accepting on public.candidate_jobs;
+create trigger candidate_jobs_job_accepting before insert or update of job_id on public.candidate_jobs
+  for each row execute function public.guard_job_accepting();
+
+-- Holds with an end date reopen by themselves.
+create or replace function public.reopen_held_jobs() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform set_config('harbor.status_sync', 'on', true);
+  update public.jobs set status = 'Open' where status = 'On hold' and hold_until is not null and hold_until <= current_date;
+  perform set_config('harbor.status_sync', 'off', true);
+end $$;
+revoke all on function public.reopen_held_jobs() from public, anon, authenticated;
+select cron.schedule('harbor-reopen-held-jobs', '7 * * * *', $$select public.reopen_held_jobs()$$);
+
+-- Automatic screening: a candidate added to a role is screened (and follow-up questions drafted)
+-- on the server straight away, with a sweep every 2 minutes as a safety net.
+create or replace function public.call_ai_screen(p_action text, p_link uuid) returns bigint
+language sql security definer set search_path = public, extensions as $$
+  select net.http_post(
+    url := 'https://acjmsihvvupqiikxckho.supabase.co/functions/v1/ai-screen',
+    body := jsonb_build_object('action', p_action, 'linkId', p_link),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'apikey', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjam1zaWh2dnVwcWlpa3hja2hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNzM2MzQsImV4cCI6MjEwNTg0OTYzNH0.SRrACW8uKRzYTmD2JdRQ7oLaF8_Xq7aCHHjWPIhru9w',
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjam1zaWh2dnVwcWlpa3hja2hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNzM2MzQsImV4cCI6MjEwNTg0OTYzNH0.SRrACW8uKRzYTmD2JdRQ7oLaF8_Xq7aCHHjWPIhru9w',
+      'x-harbor-ops', (select decrypted_secret from vault.decrypted_secrets where name = 'harbor_ops_token' limit 1)),
+    timeout_milliseconds := 150000);
+$$;
+revoke all on function public.call_ai_screen(text, uuid) from public, anon, authenticated;
+
+create or replace function public.auto_screen_new_links() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare r record; n int;
+begin
+  select count(*) into n from new_links where coalesce(candidate_response, 'accepted') = 'accepted';
+  -- One or a few at a time are screened now; a bulk import is left to the sweep, a few per run.
+  if n between 1 and 3 then
+    for r in select id from new_links where coalesce(candidate_response, 'accepted') = 'accepted' loop
+      perform public.call_ai_screen('screen_link', r.id);
+    end loop;
+  end if;
+  return null;
+end $$;
+drop trigger if exists candidate_jobs_auto_screen on public.candidate_jobs;
+create trigger candidate_jobs_auto_screen after insert on public.candidate_jobs
+  referencing new table as new_links for each statement execute function public.auto_screen_new_links();
+
+-- Links still waiting: accepted, never screened, added in the last 3 days, not locked, fewer than
+-- 3 automatic attempts and none in the last 10 minutes.
+create or replace function public.screen_sweep() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if exists (
+    select 1 from public.candidate_jobs cj join public.candidates c on c.id = cj.candidate_id
+    where coalesce(cj.candidate_response, 'accepted') = 'accepted'
+      and coalesce(cj.ai->>'stage', '') = ''
+      and cj.created_at > now() - interval '3 days' and cj.created_at < now() - interval '90 seconds'
+      and not coalesce(c.ai_locked, false) and not coalesce(c.is_draft, false)
+      and coalesce((cj.ai->'auto'->>'tries')::int, 0) < 3
+      and coalesce((cj.ai->'auto'->>'at')::timestamptz, 'epoch') < now() - interval '10 minutes')
+  then perform public.call_ai_screen('screen_pending', null);
+  end if;
+end $$;
+revoke all on function public.screen_sweep() from public, anon, authenticated;
+select cron.schedule('harbor-screen-sweep', '*/2 * * * *', $$select public.screen_sweep()$$);

@@ -231,6 +231,33 @@ async function refreshCandidate(admin: any, candidate: any, step: string, force 
   return { ok: false, step, error: "Unknown step" };
 }
 
+// Screens one card on its own (no one has to press "Screen now"), then drafts follow-up questions
+// if the screening didn't already. Each attempt is stamped on ai.auto so the database call and
+// the sweep never screen the same card twice at once, and a failing card is retried at most 3 times.
+async function autoScreen(admin: any, linkId: string) {
+  const { data: link } = await admin.from("candidate_jobs").select("id,ai,candidate_response,candidate_id").eq("id", linkId).maybeSingle();
+  if (!link) return { ok: false, skipped: "not found" };
+  if ((link.candidate_response || "accepted") !== "accepted") return { ok: true, skipped: "not accepted yet" };
+  if (link.ai?.stage) return { ok: true, skipped: "already screened" };
+  const auto = link.ai?.auto || {};
+  if (auto.at && Date.now() - new Date(auto.at).getTime() < 3 * 60e3) return { ok: true, skipped: "already running" };
+  const { data: cand } = await admin.from("candidates").select("ai_locked,is_draft").eq("id", link.candidate_id).maybeSingle();
+  if (!cand || cand.ai_locked || cand.is_draft) return { ok: true, skipped: "locked or draft" };
+  const stamp = { tries: (auto.tries || 0) + 1, at: new Date().toISOString() };
+  await admin.from("candidate_jobs").update({ ai: { ...(link.ai || {}), auto: stamp } }).eq("id", linkId);
+  try {
+    const ai: any = await screenLink(admin, linkId, askAI, loadResume);
+    if (!ai?.followups && ai?.verdict !== "Reject") { try { await draftFollowups(admin, linkId, askAI); } catch (_) { /* nothing open to ask about */ } }
+    return { ok: true, screened: true };
+  } catch (e) {
+    const msg = String((e as Error)?.message || e).slice(0, 200);
+    console.error("auto screen", linkId, msg);
+    const { data: cur } = await admin.from("candidate_jobs").select("ai").eq("id", linkId).maybeSingle();
+    if (!cur?.ai?.stage) await admin.from("candidate_jobs").update({ ai: { ...(cur?.ai || {}), auto: { ...stamp, error: msg } } }).eq("id", linkId);
+    return { ok: false, error: msg };
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -260,7 +287,7 @@ Deno.serve(async (req: Request) => {
           ...(accept ? { stage: "In review" } : { stage: "Withdrawn" }),
         }).eq("id", link.id);
         await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: (accept ? "Accepted " : "Declined ") + roleName + " on their candidate page", done: true });
-        if (accept) { try { await screenLink(admin, link.id, askAI, loadResume); } catch (e) { console.error("screen after accept", String((e as Error)?.message || e)); } }
+        if (accept) { try { const sc: any = await screenLink(admin, link.id, askAI, loadResume); if (!sc?.followups && sc?.verdict !== "Reject") await draftFollowups(admin, link.id, askAI).catch(() => {}); } catch (e) { console.error("screen after accept", String((e as Error)?.message || e)); } }
         return json({ ok: true });
       }
 
@@ -285,7 +312,21 @@ Deno.serve(async (req: Request) => {
       if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
       // The sourcing function's scheduled runs check the bench for newly live jobs.
       if (body.action === "bench_fits" && body.jobId) return json({ ok: true, ...(await benchFits(admin, body.jobId, askAI, loadResume)) });
-      if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate or bench_fits run with an ops token" }, 400);
+      // Automatic screening: called by the database the moment a candidate is added to a role,
+      // and by a sweep every 2 minutes for anything that slipped through (a few per run).
+      if (body.action === "screen_link" && body.linkId) return json(await autoScreen(admin, String(body.linkId)));
+      if (body.action === "screen_pending") {
+        const since = new Date(Date.now() - 3 * 864e5).toISOString(), settled = new Date(Date.now() - 90e3).toISOString();
+        const { data: rows } = await admin.from("candidate_jobs").select("id,ai,candidate_response,candidates!inner(ai_locked,is_draft)")
+          .gt("created_at", since).lt("created_at", settled).eq("candidates.ai_locked", false).eq("candidates.is_draft", false)
+          .order("created_at").limit(40);
+        const due = (rows || []).filter((r: any) => (r.candidate_response || "accepted") === "accepted" && !r.ai?.stage
+          && (r.ai?.auto?.tries || 0) < 3 && Date.now() - new Date(r.ai?.auto?.at || 0).getTime() > 10 * 60e3).slice(0, 3);
+        const out = [];
+        for (const r of due) out.push({ id: r.id, ...(await autoScreen(admin, r.id)) });
+        return json({ ok: true, screened: out });
+      }
+      if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate, bench_fits or screening run with an ops token" }, 400);
       const { data: cand } = await admin.from("candidates").select("*").eq("id", body.candidateId).maybeSingle();
       if (!cand) return json({ error: "Candidate not found" }, 404);
       const r = await refreshCandidate(admin, cand, String(body.step || ""), !!body.force);

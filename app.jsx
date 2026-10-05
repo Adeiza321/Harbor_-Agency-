@@ -24,7 +24,7 @@ const TONE = {
 const STATUS_TONE = {
   Interview: "info", "With client": "info", "In review": "warn",
   "Active file": "neutral", Placed: "em", Rejected: "danger", Hired: "em",
-  Open: "info", Engaged: "em", Closing: "warn", Closed: "neutral",
+  Open: "info", "On hold": "warn", Closed: "neutral", Offer: "em", Engaged: "em", Closing: "warn",
   Guarantee: "warn", Ready: "em", Invoiced: "info", Paid: "em", Fallout: "danger",
   Sent: "em", Scheduled: "info", Draft: "neutral", Live: "em",
   "Pending approval": "warn", Ended: "neutral", Active: "em", Invited: "warn",
@@ -122,6 +122,13 @@ function suggestBilling(job, candidatePay) {
 const RESUME_ACCEPT = ".pdf,.doc,.docx,.odt,.rtf,.txt,.jpg,.jpeg,.png,.webp,.heic,.heif";
 const RESUME_TYPES = { pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", odt: "application/vnd.oasis.opendocument.text", rtf: "application/rtf", txt: "text/plain", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heif" };
 const resumeMime = (name, fallback) => RESUME_TYPES[((name.match(/\.([A-Za-z0-9]+)$/) || [])[1] || "").toLowerCase()] || fallback || "application/octet-stream";
+// Job status is the role's own state (Open, On hold, Closed). Engaging is per person and separate.
+const JOB_STATUSES = ["Open", "On hold", "Closed"];
+// On hold and Closed roles take no new candidates (the database enforces it too).
+const takesCandidates = (j) => !!j && j.status !== "Closed" && j.status !== "On hold";
+const holdText = (j) => "On hold" + (j.holdUntil ? " until " + fdate(j.holdUntil + "T12:00:00") : "") + (j.holdReason ? ": " + j.holdReason : "");
+// A role the candidate is actively on (accepted, not finished).
+const isLiveLink = (l) => l.response === "accepted" && !["Rejected", "Withdrawn", "Placed"].includes(l.stage);
 const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
 /* A Google Calendar "quick add" link — no OAuth needed, just opens their calendar pre-filled. */
 const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent("Interview: " + candidateName + " – " + job.role) + "&details=" + encodeURIComponent("Interview for " + job.role + " at " + job.client + " with " + candidateName + ".");
@@ -198,6 +205,8 @@ function mapAll(d) {
       billingType: j.billing_type || "percent", billingAmount: j.billing_amount, billingCurrency: j.billing_currency || j.currency || "NGN",
       incentiveType: j.incentive_type || "percent", incentiveAmount: j.incentive_amount, incentiveCurrency: j.incentive_currency || j.currency || "NGN",
       recruiters: (j.job_recruiters || []).map((r) => initialsOf(pname(r.recruiter_id))),
+      engagedIds: (j.job_recruiters || []).map((r) => r.recruiter_id), engagedNames: (j.job_recruiters || []).map((r) => pname(r.recruiter_id)),
+      holdReason: j.hold_reason || "", holdUntil: j.hold_until || null, heldAt: j.held_at ? new Date(j.held_at).getTime() : null, heldBy: j.held_by ? pname(j.held_by) : "",
       submitted: new Set([...en.map((e) => e.candidate_id), ...submittedLinks.map((l) => l.candidate_id)]).size,
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, candidateId: a.candidate_id }));
@@ -612,7 +621,7 @@ function realMatches(c, S) {
   if (busyWith(c, S.jobs)) return [];
   return (c.matches || []).filter((m) => {
     const j = S.jobs.find((x) => x.id === m.job_id);
-    return j && j.status !== "Closed" && !c.jobLinks.some((l) => l.jobId === j.id) && isRealFit(m);
+    return j && takesCandidates(j) && !c.jobLinks.some((l) => l.jobId === j.id) && isRealFit(m);
   });
 }
 
@@ -735,7 +744,7 @@ function SectionTitle({ title, sub, size = "text-2xl" }) {
   );
 }
 
-function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", full = false, type = "button", disabled = false }) {
+function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", full = false, type = "button", disabled = false, title }) {
   const base = `inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${full ? "w-full" : ""}`;
   const style =
     kind === "primary" ? { background: C.em, color: "#fff" } :
@@ -743,7 +752,7 @@ function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", fu
     kind === "danger" ? { background: C.dangerFg, color: "#fff" } :
     { background: "#fff", color: C.ink, border: `1px solid ${C.line}` };
   return (
-    <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${className}`} style={{ ...style, ...(disabled ? { opacity: 0.6, cursor: "not-allowed" } : {}) }}>
+    <button type={type} onClick={onClick} disabled={disabled} title={title || undefined} className={`${base} ${className}`} style={{ ...style, ...(disabled ? { opacity: 0.6, cursor: "not-allowed" } : {}) }}>
       {Icon && <Icon size={16} />}
       {children}
     </button>
@@ -1520,7 +1529,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
     (roleF === "All" || c.role === roleF) && (sourceF === "All" || c.source === sourceF) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
   const activeFilterCount = [recF !== "All", minAi > 0, roleF !== "All", sourceF !== "All", !!dateFrom, !!dateTo].filter(Boolean).length;
-  const tabs = ["All", "In review", "With client", "Interview", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
+  const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -1730,19 +1739,28 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   const [rejectKind, setRejectKind] = useState(null);
   const reject = (clientReject) => setRejectKind(clientReject ? "client" : "internal");
   const afterReject = () => { setReassign("searching"); setTimeout(() => setReassign("found"), 1200); };
+  // Status follows the candidate's roles: every action here changes a role's stage, and their
+  // overall status (In review, With client, Interview, Offer, Placed, Active file) follows from
+  // that in the database. Only someone with no live role has their status set directly.
+  const activeRoles = candidate.jobLinks.filter(isLiveLink).map((l) => ({ link: l, job: S.jobs.find((j) => j.id === l.jobId) })).filter((x) => x.job);
+  const [holdPick, setHoldPick] = useState(false);
+  const holdOn = (x) => S.setStage(x.link.id, "In review").then(() => { setHoldPick(false); toast("Back to In review for " + x.job.role); }).catch(() => {});
   const doStatus = (opt) => {
     setMenuOpen(false);
     if (opt === "Not a fit for this role") {
+      if (activeRoles.length) { reject(false); return; }
       setStatus("Active file"); setReassign("searching"); toast("Moved to Active file");
       setTimeout(() => setReassign("found"), 1200);
-    } else if (opt === "Approve, forward to client") { setStatus("With client"); toast("Forwarded to client"); }
+    } else if (opt === "Approve, forward to client") { setFwd(activeRoles.length === 1 ? activeRoles[0].job.id : ""); setPanel("fwd"); }
     else if (opt === "Reject") { reject(false); }
     else if (opt === "Client reject") { reject(true); }
     else if (opt === "Mark placed") { openPlaced(); }
     // A recruiter's only status action: flags the candidate for Rec Ops/Admin to confirm.
     // Doesn't create a placement or billing entry — that still only happens via Mark placed.
     else if (opt === "Hired") { setStatus("Hired"); toast("Marked Hired — Rec Ops or an Admin will confirm the placement"); }
-    else { setStatus("In review"); toast("Status set to hold"); }
+    else if (activeRoles.length === 0) { setStatus("In review"); toast("Status set to In review"); }
+    else if (activeRoles.length === 1) holdOn(activeRoles[0]);
+    else setHoldPick(true);
   };
   const markPlaced = async () => {
     const amt = num(fee); if (!amt) { toast("Enter the placement fee"); return; }
@@ -1832,7 +1850,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <>
               <div className="text-sm mb-3" style={{ color: C.ink2 }}>Pick the role. A role they're already on is marked as sent to the client; any other role is reviewed against its job description, then routed to {candidate.name.split(" ")[0]} to accept.</div>
               <div className="flex flex-col gap-2 mb-4">
-                {S.jobs.filter((j) => j.status !== "Closed").map((j) => { const l = candidate.jobLinks.find((x) => x.jobId === j.id); return (
+                {S.jobs.filter((j) => j.status !== "Closed" && (takesCandidates(j) || candidate.jobLinks.some((x) => x.jobId === j.id))).map((j) => { const l = candidate.jobLinks.find((x) => x.jobId === j.id); return (
                   <button key={j.id} onClick={() => setFwd(j.id)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between gap-2" style={{ borderColor: fwd === j.id ? C.em : C.line, background: fwd === j.id ? C.emTint : "#fff" }}>
                     <span>{j.role}, {j.client}</span>
                     {l && <span className="text-xs shrink-0" style={{ color: C.ink2 }}>{l.response === "pending" ? "routed, waiting" : l.response === "declined" ? "declined" : "on this role"}</span>}
@@ -1843,7 +1861,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 if (!fj) { toast("Pick a role"); return; }
                 if (onIt) {
                   S.setStage(fl.id, "Submitted").catch(() => {});
-                  patch((c) => ({ status: "With client", timeline: [...c.timeline, { t: "Sent to " + fj.client + " for " + fj.role, d: todayStr(), done: true }] }));
+                  patch((c) => ({ timeline: [...c.timeline, { t: "Sent to " + fj.client + " for " + fj.role, d: todayStr(), done: true }] }));
                   setPanel(null); toast("Marked as sent to " + fj.client);
                 } else { setPanel(null); setRouteJob(fj); }
               }}>{!fj ? "Pick a role" : onIt ? "Mark as sent to " + fj.client : fl ? "Already routed" : "Review fit and route"}</Btn>
@@ -1852,6 +1870,15 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         })()}
       </Modal>
       {routeJob && <FitReviewModal open onClose={() => setRouteJob(null)} candidate={candidate} job={routeJob} S={S} toast={toast} />}
+      <Modal open={holdPick} onClose={() => setHoldPick(false)} title="Which role goes back to review?">
+        <div className="flex flex-col gap-2">
+          {activeRoles.map((x) => (
+            <button key={x.link.id} onClick={() => holdOn(x)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between gap-2" style={{ borderColor: C.line }}>
+              <span>{x.job.role}, {x.job.client}</span><StatusPill status={x.link.stage} />
+            </button>
+          ))}
+        </div>
+      </Modal>
       {rejectKind && <RejectModal candidate={candidate} kind={rejectKind} S={S} toast={toast} onClose={() => setRejectKind(null)} onDone={afterReject} />}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
@@ -1888,7 +1915,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 <Btn kind="primary" className="w-full justify-center" onClick={() => setMenuOpen((m) => !m)}>Update status</Btn>
                 {menuOpen && (
                   <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-56 py-1" style={{ background: "#fff", borderColor: C.line }}>
-                    {["Hold", "Approve, forward to client", "Not a fit for this role", "Mark placed", status === "With client" ? "Client reject" : "Reject"].map((o) => (
+                    {["Hold", "Approve, forward to client", "Not a fit for this role", "Mark placed", ["With client", "Interview", "Offer"].includes(status) ? "Client reject" : "Reject"].map((o) => (
                       <button key={o} onClick={() => doStatus(o)} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: o === "Reject" || o === "Client reject" ? C.dangerFg : C.ink }}>{o}</button>
                     ))}
                   </div>
@@ -2130,6 +2157,15 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const editing = !pending && staff && ((f && f.state === "draft") || (!f && drafts !== null));
   const setQ = (i, v) => setDrafts(qList.map((q, k) => (k === i ? v : q)));
   const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { S.error(err.message); } setBusy(""); };
+  // New cards are screened on the server by themselves. While that runs (up to ~10 minutes,
+  // with retries) the card says so and refreshes itself instead of offering a button.
+  const autoRunning = !pending && !ai.stage && !candidate.ai_locked && !(ai.auto && ai.auto.error && (ai.auto.tries || 0) >= 3)
+    && Date.now() - (link.createdAt || 0) < 12 * 60e3;
+  useEffect(() => {
+    if (!autoRunning || !S.reload) return;
+    const t = setInterval(() => S.reload(), 15000);
+    return () => clearInterval(t);
+  }, [autoRunning]); // eslint-disable-line react-hooks/exhaustive-deps
   const screen = () => run("screen", async () => {
     await S.aiScreen("screen", { linkId: link.id });
     // Draft follow-up questions right away, with no separate manual step -- best-effort, since
@@ -2215,8 +2251,11 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
           )}
           {!ai.stage ? (
             <div className="rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center gap-3" style={box}>
-              <div className="text-sm flex-1" style={{ color: C.ink2 }}>{pending ? "Not screened yet. It runs automatically once " + first + " accepts this role." : <>Not screened yet. The AI reads {candidate.cv ? "their resume" : "their answers (no resume on file)"} and any answers they've given, for this and other jobs.</>}</div>
-              {!pending && <Btn kind="primary" onClick={screen} disabled={!!busy || candidate.ai_locked}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>}
+              <div className="text-sm flex-1" style={{ color: C.ink2 }}>{pending ? "Not screened yet. It runs automatically once " + first + " accepts this role."
+                : autoRunning ? <span className="inline-flex items-center gap-2"><Sparkles size={14} color={C.em} className="shrink-0" />Screening automatically against this job. It takes about a minute; this card updates by itself. <InlineDots /></span>
+                : candidate.ai_locked ? "Not screened. The review is locked."
+                : <>Automatic screening didn't finish{ai.auto && ai.auto.error ? " (" + ai.auto.error + ")" : ""}. Screen now to try again.</>}</div>
+              {!pending && !autoRunning && <Btn kind="primary" onClick={screen} disabled={!!busy || candidate.ai_locked}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>}
             </div>
           ) : (
             <>
@@ -2657,7 +2696,7 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
             <span className="text-sm" style={{ color: C.ink2 }}>{link.response === "pending" ? "Already routed, waiting for " + first + " to accept." : link.response === "declined" ? first + " declined this role." : "Already under Companies."}</span>
           ) : (
             <>
-              <Btn kind="primary" onClick={route} disabled={!!busy || job.status === "Closed"}>{busy === "route" ? <>Routing <InlineDots color="#fff" /></> : chosen.length ? "Route with " + chosen.length + " question" + (chosen.length > 1 ? "s" : "") : "Route without questions"}</Btn>
+              <Btn kind="primary" onClick={route} disabled={!!busy || !takesCandidates(job)}>{busy === "route" ? <>Routing <InlineDots color="#fff" /></> : chosen.length ? "Route with " + chosen.length + " question" + (chosen.length > 1 ? "s" : "") : "Route without questions"}</Btn>
               <span className="text-xs flex-1" style={{ color: C.ink2 }}>Goes to {first}'s candidate page{chosen.length ? (staff ? " with the questions" : "; questions wait for Rec Ops approval") : ""}. The job shows under Companies once they accept.</span>
             </>
           )}
@@ -2705,7 +2744,7 @@ function MatchesCard({ candidate, S, toast }) {
     .map((m) => ({ m, job: S.jobs.find((j) => j.id === m.job_id) }))
     .sort((a, b) => (b.m.fit || 0) - (a.m.fit || 0));
   const listed = new Set(rows.map((x) => x.job.id));
-  const others = S.jobs.filter((j) => j.status !== "Closed" && !listed.has(j.id) && !candidate.jobLinks.some((l) => l.jobId === j.id));
+  const others = S.jobs.filter((j) => takesCandidates(j) && !listed.has(j.id) && !candidate.jobLinks.some((l) => l.jobId === j.id));
   return (
     <Card>
       <SectionTitle title="Other roles they could fit" sub="Roles the full AI review rated a fit on location, experience, skills and requirements. A company card appears once you route them and they accept." size="text-xl" />
@@ -2802,7 +2841,7 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
 /* The roles a candidate is attached to (candidate_jobs), with a stage per role. */
 function CandidateJobsCard({ candidate, S, toast }) {
   const [pick, setPick] = useState("");
-  const available = S.jobs.filter((j) => j.status !== "Closed" && !candidate.jobLinks.some((l) => l.jobId === j.id));
+  const available = S.jobs.filter((j) => takesCandidates(j) && !candidate.jobLinks.some((l) => l.jobId === j.id));
   const sel = "text-sm rounded-lg border px-2 py-1.5 bg-white";
   const pickedJob = pick ? S.jobs.find((j) => j.id === pick) : null;
   const pickedQs = (pickedJob && pickedJob.screeningQuestions) || [];
@@ -3036,7 +3075,10 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
     .map((c) => ({ ...c, link: c.jobLinks.find((l) => l.jobId === job.id) || null }))
     .sort((a, b) => ((b.link && b.link.fit) || b.ai || 0) - ((a.link && a.link.fit) || a.ai || 0));
   const activeCount = candidates.filter((c) => !c.link || !["Rejected", "Withdrawn"].includes(c.link.stage)).length;
-  const setStatus = (v) => S.setJobStatus(job.id, v);
+  const setStatus = (v) => { if (v === "On hold") { setHold({ reason: job.holdReason || "", until: job.holdUntil || "" }); return; } S.setJobStatus(job.id, v).then(() => toast(v === "Open" ? "Role reopened" : "Role " + v.toLowerCase())).catch(() => {}); };
+  const [hold, setHold] = useState(null);
+  const saveHold = () => { setBusy(true); S.setJobStatus(job.id, "On hold", hold).then(() => { setHold(null); toast("Role on hold. No new candidates until it's reopened."); }).catch(() => {}).finally(() => setBusy(false)); };
+  const engagedPeople = (job.engagedNames || []).filter(Boolean);
   const copyLink = () => { try { navigator.clipboard.writeText("https://" + job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const fits = benchFitsFor(job, S);
   const lastBench = Math.max(0, ...S.cands.flatMap((c) => (c.matches || []).filter((m) => m.job_id === job.id && m.reviewedAt).map((m) => new Date(m.reviewedAt).getTime())));
@@ -3052,7 +3094,8 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   // Engage/disengage: job_recruiters is "who's on it now"; job_engagements is the permanent
   // history admins review (per job: who, how long, and why they stepped back).
   const jobEngLog = (S.jobEngagements || []).filter((e) => e.jobId === job.id);
-  const myOpenEngagement = jobEngLog.find((e) => e.recruiterId === S.me.id && !e.disengagedAt);
+  // Engaging is personal: it only marks the person who clicked it, never the job for everyone.
+  const myOpenEngagement = jobEngLog.find((e) => e.recruiterId === S.me.id && !e.disengagedAt) || ((job.engagedIds || []).includes(S.me.id) ? { engagedAt: null } : null);
   const engage = () => { setBusy(true); S.engageJob(job.id).then(() => toast("You're engaged on this role")).catch(() => {}).finally(() => setBusy(false)); };
   const confirmDisengage = () => { setBusy(true); S.disengageJob(job.id, reason.trim()).then(() => { setReasonOpen(false); setReason(""); toast("Disengaged from this role"); }).catch(() => {}).finally(() => setBusy(false)); };
   const copyQuestions = () => {
@@ -3077,11 +3120,11 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           </div>
           <div className="flex flex-wrap gap-2">
             <Btn icon={Copy} onClick={copyLink}>Copy link</Btn>
-            <Btn icon={Upload} kind="dark" onClick={onAddCandidate}>Add candidate</Btn>
+            <Btn icon={Upload} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job)} title={takesCandidates(job) ? "" : "This role isn't taking new candidates"}>Add candidate</Btn>
             <Btn onClick={() => onPromote(job.role)}>Promote</Btn>
-            {S.role === "recruiter" && (myOpenEngagement
+            {myOpenEngagement
               ? <Btn onClick={() => setReasonOpen(true)} disabled={busy}>Disengage</Btn>
-              : <Btn kind="primary" onClick={engage} disabled={busy}>Engage</Btn>)}
+              : <Btn kind="primary" onClick={engage} disabled={busy || job.status === "Closed"}>Engage</Btn>}
             {S.role !== "recruiter" && <Btn icon={Pencil} onClick={onEdit}>Edit</Btn>}
             {S.role === "admin" && <Btn icon={X} onClick={() => setDelOpen(true)}>Delete</Btn>}
             {S.role !== "recruiter" && (
@@ -3089,8 +3132,10 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                 <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
                 {menuOpen && (
                   <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-48 py-1" style={{ background: "#fff", borderColor: C.line }}>
-                    {["Open", "Engaged", "Closing", "Closed"].map((o) => (
-                      <button key={o} onClick={() => { setStatus(o); setMenuOpen(false); }} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: C.ink }}>{o}</button>
+                    {JOB_STATUSES.map((o) => (
+                      <button key={o} onClick={() => { setStatus(o); setMenuOpen(false); }} disabled={o === job.status && o !== "On hold"} className="w-full text-left px-3.5 py-2.5 text-sm flex items-center justify-between" style={{ color: o === job.status && o !== "On hold" ? C.ink3 : C.ink }}>
+                        <span>{o === "Open" && job.status !== "Open" && job.status !== "Draft" ? "Reopen" : o === "On hold" && job.status === "On hold" ? "Edit hold" : o === "On hold" ? "Put on hold" : o}</span>{o === job.status && <Check size={14} />}
+                      </button>
                     ))}
                   </div>
                 )}
@@ -3100,9 +3145,15 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         </div>
         <div className="flex flex-wrap gap-2 mb-4">
           <StatusPill status={job.status} />
-          {job.recruiters.length > 0 && <Pill tone="neutral">{job.recruiters.length} recruiter{job.recruiters.length > 1 ? "s" : ""} on this role</Pill>}
-          {S.role === "recruiter" && (myOpenEngagement ? <Pill tone="em">You're engaged · since {ago(myOpenEngagement.engagedAt)}</Pill> : <Pill tone="neutral">Not engaged</Pill>)}
+          {myOpenEngagement ? <Pill tone="em">You're engaged{myOpenEngagement.engagedAt ? " · since " + ago(myOpenEngagement.engagedAt) : ""}</Pill> : <Pill tone="neutral">You're not engaged</Pill>}
+          {engagedPeople.length > 0 && <span title={engagedPeople.join(", ")}><Pill tone="neutral">{engagedPeople.length} {engagedPeople.length === 1 ? "person" : "people"} engaged</Pill></span>}
         </div>
+        {job.status === "On hold" && (
+          <div className="rounded-lg px-3 py-2.5 mb-4 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}>
+            <span className="flex-1"><b>{holdText(job)}.</b> Recruiters can't add or route new candidates until it's reopened{job.holdUntil ? " (it reopens by itself on that date)" : ""}. Candidates already on it carry on as normal.{job.heldBy ? " Put on hold by " + job.heldBy + (job.heldAt ? " " + ago(job.heldAt) : "") + "." : ""}</span>
+            {S.role !== "recruiter" && <Btn onClick={() => setStatus("Open")} className="shrink-0">Reopen</Btn>}
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
           <div><div className="text-xs" style={{ color: C.ink3 }}>Submitted</div><div className="text-sm font-medium mt-0.5">{job.submitted}</div></div>
           <div><div className="text-xs" style={{ color: C.ink3 }}>Interview</div><div className="text-sm font-medium mt-0.5">{job.interview}</div></div>
@@ -3173,7 +3224,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         </Card>
       )}
       {fitFor && <FitReviewModal open onClose={() => setFitFor(null)} candidate={S.cands.find((x) => x.id === fitFor.id) || fitFor} job={job} S={S} toast={toast} />}
-      {S.role !== "recruiter" && job.status !== "Closed" && (
+      {S.role !== "recruiter" && takesCandidates(job) && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <SectionTitle title="Candidates who might fit this role" sub="Only people whose parallel job titles match this role are reviewed, on location, work setup, experience, skills and every requirement. Anyone at Interview or Offer on another role is left out." size="text-xl" />
@@ -3237,6 +3288,19 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           />
         </div>
       </Card>
+      <Modal open={!!hold} onClose={() => setHold(null)} title={job.status === "On hold" ? "Edit the hold" : "Put this role on hold"}>
+        {hold && (
+          <div className="flex flex-col gap-3">
+            <div className="text-sm" style={{ color: C.ink2 }}>While it's on hold, no one can add, route or resubmit new candidates to {job.role}, and its public page stops taking applications. Candidates already on it carry on: interviews, offers and status changes still work.</div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Why (optional, everyone on the team sees it)</label>
+              <input value={hold.reason} onChange={(e) => setHold({ ...hold, reason: e.target.value })} placeholder="e.g. Client reviewing the shortlist" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Reopen automatically on (optional)</label>
+              <input type="date" value={hold.until || ""} min={ymdToday()} onChange={(e) => setHold({ ...hold, until: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <div className="text-xs mt-1" style={{ color: C.ink3 }}>Leave empty to keep it on hold until someone reopens it.</div></div>
+            <Btn kind="primary" full onClick={saveHold} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : job.status === "On hold" ? "Save" : "Put on hold"}</Btn>
+          </div>
+        )}
+      </Modal>
       <Modal open={reasonOpen} onClose={() => setReasonOpen(false)} title="Disengage from this role">
         <div className="flex flex-col gap-3">
           <div className="text-sm" style={{ color: C.ink2 }}>A short reason helps admin see why recruiters step back from a role.</div>
@@ -3261,7 +3325,11 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const [q, setQ] = useState("");
   const gq = (S.query || "").toLowerCase();
   const hit = (j, t) => j.role.toLowerCase().includes(t) || j.client.toLowerCase().includes(t);
-  const filtered = S.jobs.filter((j) => hit(j, q.toLowerCase()) && hit(j, gq));
+  const [tab, setTab] = useState("All");
+  const mine = (j) => (j.engagedIds || []).includes(S.me.id);
+  const inTab = (j, t) => t === "All" || (t === "Mine" ? mine(j) : j.status === t);
+  const filtered = S.jobs.filter((j) => inTab(j, tab) && hit(j, q.toLowerCase()) && hit(j, gq));
+  const tabs = ["All", "Open", "On hold", "Closed", "Mine"].map((t) => ({ key: t, label: (t === "Mine" ? "I'm engaged" : t) + " " + S.jobs.filter((j) => inTab(j, t)).length }));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -3269,19 +3337,21 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
         <Btn kind="primary" icon={Plus} onClick={() => setPage("postJob")}>Post a job</Btn>
       </div>
       <Card>
+        <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
         <div className="mb-3"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
         <DataTable
           rows={filtered}
           onRowClick={(j) => onOpenJob(j.id)}
           columns={[
             { key: "role", label: "ROLE", render: (j) => <div><div className="font-medium">{j.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{j.client}</div></div> },
-            { key: "recruiters", label: "RECRUITERS", render: (j) => j.recruiters.length ? <div className="flex -space-x-2">{j.recruiters.map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={26} />)}</div> : <span className="text-xs" style={{ color: C.ink3 }}>None yet</span> },
+            { key: "recruiters", label: "ENGAGED", render: (j) => j.recruiters.length ? <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={26} />)}</div> : <span className="text-xs" style={{ color: C.ink3 }}>None yet</span> },
             { key: "submitted", label: "SUBMITTED", render: (j) => j.submitted },
             { key: "interview", label: "INTERVIEW", render: (j) => j.interview },
             { key: "days", label: "DAYS", render: (j) => `${j.days}d` },
             { key: "status", label: "STATUS", render: (j) => (
               <div className="flex items-center gap-2">
-                <StatusPill status={j.status} />
+                <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>
+                {mine(j) && <Pill tone="em">You're engaged</Pill>}
                 <button onClick={(e) => { e.stopPropagation(); onPromote(j.role); }} className="text-xs" style={{ color: C.em }}>Promote</button>
               </div>
             ) },
@@ -5675,10 +5745,11 @@ const fileToBase64 = (f) => new Promise((resolve, reject) => {
    the backend and logged to the audit log. Nothing shows up for Admin/Rec Ops until
    Submit, which needs the resume AND the job's screening questions answered. */
 function AddCandidate({ setPage, toast, S, initialJobId }) {
-  const openJobs = S.jobs.filter((j) => j.status !== "Closed");
+  const openJobs = S.jobs.filter(takesCandidates);
   // Coming from a specific job's page pre-selects it here; opened from the Candidates
   // page directly (initialJobId null), the recruiter picks the job themselves below.
-  const [jobId, setJobId] = useState(initialJobId && S.jobs.some((j) => j.id === initialJobId) ? initialJobId : "");
+  const [jobId, setJobId] = useState(initialJobId && openJobs.some((j) => j.id === initialJobId) ? initialJobId : "");
+  const heldJob = initialJobId ? S.jobs.find((j) => j.id === initialJobId && !takesCandidates(j)) : null;
   const job = jobId ? S.jobs.find((j) => j.id === jobId) : null;
   const qs = (job && job.screeningQuestions) || [];
   const [answers, setAnswers] = useState([]);
@@ -5772,6 +5843,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
       <button onClick={() => setPage("candidates")} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Candidates</button>
       <SectionTitle size="text-3xl md:text-4xl" title="Add candidate" sub="Pick the job, then their resume and (if you're ready) the screening answers." />
       <Card className="md:max-w-xl flex flex-col gap-4">
+        {heldJob && <div className="rounded-lg px-3 py-2.5 text-sm" style={{ background: C.warnBg, color: "#7A4B05" }}>{heldJob.role} is {heldJob.status === "Closed" ? "closed" : holdText(heldJob).replace("On hold", "on hold")} and isn't taking new candidates. Pick another job below.</div>}
         <div>
           <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Job</div>
           <select className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: C.line, color: C.ink }} value={jobId} onChange={(e) => { setJobId(e.target.value); setAnswers([]); setFit(null); }}>
@@ -6374,6 +6446,9 @@ export default function App() {
         // placement (both "Mark placed" and "New billing entry" call it), so fixing
         // the candidate's status here keeps the two in sync no matter which door was used.
         const c = data.cands.find((x) => x.id === p.candidateId);
+        // The role they were placed on moves to Placed too, so the role card and status agree.
+        const lk = c && p.jobId ? (c.jobLinks || []).find((l) => l.jobId === p.jobId) : null;
+        if (lk && lk.stage !== "Placed") await sbFetch("/rest/v1/candidate_jobs?id=eq." + lk.id, { method: "PATCH", token: session.token, body: { stage: "Placed" } }).catch(() => {});
         if (c && c.status !== "Placed") {
           updateCand(c.id, (cc) => ({ status: "Placed", timeline: [...cc.timeline, { t: "Status set to Placed", d: todayStr(), done: true }] }));
         }
@@ -6475,10 +6550,12 @@ export default function App() {
     billFor, clearBillFor: () => setBillFor(null),
     insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
     logAudit,
-    setJobStatus: (id, status) => { const j = data.jobs.find((x) => x.id === id);
-      return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body: { status } }).then(() => {
-        setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status } : x)) }));
-        logAudit("status changed", "job", id, (j ? j.role + ", " + j.client : "") + ": " + (j ? j.status : "?") + " → " + status);
+    // On hold takes an optional reason and end date (the role reopens by itself on that date).
+    setJobStatus: (id, status, hold) => { const j = data.jobs.find((x) => x.id === id);
+      const body = { status, ...(status === "On hold" ? { hold_reason: (hold && hold.reason) || null, hold_until: (hold && hold.until) || null } : {}) };
+      return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body }).then(() => {
+        setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status, holdReason: status === "On hold" ? body.hold_reason || "" : "", holdUntil: status === "On hold" ? body.hold_until : null } : x)) }));
+        logAudit("status changed", "job", id, (j ? j.role + ", " + j.client : "") + ": " + (j ? j.status : "?") + " → " + (status === "On hold" ? holdText({ holdReason: body.hold_reason, holdUntil: body.hold_until }) : status));
       }); },
     /* Candidate <-> job pipeline (candidate_jobs table). screeningAnswers: [{q,a}] answered by the
        recruiter right when they attach the candidate to a job that has screening_questions. */
@@ -6490,7 +6567,8 @@ export default function App() {
       catch (e) { showError(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) { aiCall("screen", { linkId: row.id }).then(() => { toast("AI screening ready"); reload(); }).catch((e) => showError("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
+      // Screening starts on the server the moment the row exists (no button to press).
+      if (row) msgCall("invite", { linkId: row.id }).catch(() => {});
       return row;
     },
     /* Routing: the role shows on the candidate's page; their company card appears once they accept. */
@@ -6522,7 +6600,7 @@ export default function App() {
       catch (e) { showError(e.message); throw e; }
       reload();
       const row = rows && rows[0];
-      if (row) { aiCall("screen", { linkId: row.id }).then(() => reload()).catch((e) => showError("Added, but the AI couldn't screen yet: " + e.message)); msgCall("invite", { linkId: row.id }).catch(() => {}); }
+      if (row) msgCall("invite", { linkId: row.id }).catch(() => {});
       logAudit("added candidate", "candidate", candidateId, job ? job.role + " – " + job.client : "");
       return row;
     },
