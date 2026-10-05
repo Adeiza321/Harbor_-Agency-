@@ -11,7 +11,7 @@ import { searchJobs, theirstackKey } from "./theirstack.ts";
 import { apolloKey, matchByName } from "./apollo.ts";
 import { countryCode, regionOf, targetCodes } from "./regions.ts";
 import { emailHash } from "./send.ts";
-import { anonSummary, candEmployers, candTitles, isBusy, scrub, titlesMatch, workedAt, type Settings } from "./common.ts";
+import { anonSummary, candEmployers, candTitles, fitsToPercent, isBusy, scrub, titlesMatch, workedAt, type Settings } from "./common.ts";
 
 export async function pitchableCandidates(admin: any) {
   const { data } = await admin.from("candidates")
@@ -52,12 +52,12 @@ export async function processLead(admin: any, lead: any, s: Settings) {
 
   // Fit check: the posting against each candidate's anonymous profile.
   const fitSys = "You are a recruitment analyst at an agency. For each candidate, judge fit for this job posting on must-have experience, seniority, skills, industry and location/work setup. " +
-    "Reply with STRICT JSON only: {\"results\": [{\"n\": number, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"reason\": string, \"bullets\": string[]}]}. " +
+    "Reply with STRICT JSON only: {\"results\": [{\"n\": number, \"fit\": number (a percentage from 0 to 100, e.g. 85; never a 0-10 score), \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"reason\": string, \"bullets\": string[]}]}. " +
     "reason: one short sentence. bullets: 3 short selling points for the hiring manager, each under 15 words, anonymous (no names, no employer names; say e.g. 'Big 4-trained').";
   const posting = `Job: ${lead.job_title} at ${lead.company}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}\nDescription:\n${String(lead.description || "").slice(0, 4000)}`;
   const list = pool.map((c: any, i: number) => `n=${i} | ${anonSummary(c)}`).join("\n");
   const fits = await askAI(fitSys, posting + "\n\nCandidates:\n" + list, 3000);
-  const kept = (Array.isArray(fits?.results) ? fits.results : [])
+  const kept = fitsToPercent(Array.isArray(fits?.results) ? fits.results : [])
     .map((r: any) => ({ r, c: pool[Number(r.n)] })).filter((x: any) => x.c && ["Perfect fit", "Good fit"].includes(x.r.verdict))
     .sort((a: any, b: any) => (Number(b.r.fit) || 0) - (Number(a.r.fit) || 0));
   if (!kept.length) return ignore("Our candidates weren't a strong enough fit");

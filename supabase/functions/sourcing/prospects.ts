@@ -11,7 +11,7 @@ import { askAI } from "./ai.ts";
 import { searchPeople, matchById, apolloKey, type ApolloPerson } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, jobCountryCode, regionOf, targetCodes } from "./regions.ts";
 import { emailHash, normEmail } from "./send.ts";
-import { anonymizeJd, historyEmployers, sameCompany, workedAt, type Settings } from "./common.ts";
+import { anonymizeJd, fitsToPercent, historyEmployers, sameCompany, workedAt, type Settings } from "./common.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -161,12 +161,12 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
 
   // 4. Fit check on the full profile.
   const fitSys = "You are a recruitment analyst. For each person, judge fit for the job from their title, employer, location and work history: " +
-    "must-have experience, seniority and location/work setup. Reply with STRICT JSON only: {\"results\": [{\"id\": string, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"reason\": string}]}. " +
+    "must-have experience, seniority and location/work setup. Reply with STRICT JSON only: {\"results\": [{\"id\": string, \"fit\": number (a percentage from 0 to 100, e.g. 85; never a 0-10 score), \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"reason\": string}]}. " +
     "reason: one short sentence naming the deciding points. Be strict: 'Good fit' only when most must-haves are clearly shown.";
   const profiles = people.map((p) => `id=${p.id} | ${p.title} at ${p.company} | ${[p.city, p.state, p.country].filter(Boolean).join(", ")} | history: ${p.history || "?"}`).join("\n");
   const fits = await askAI(fitSys, jobBrief(job, false) + "\n\nPeople:\n" + profiles, 4000);
   const byId: Record<string, any> = {};
-  for (const r of Array.isArray(fits?.results) ? fits.results : []) byId[String(r.id)] = r;
+  for (const r of fitsToPercent(Array.isArray(fits?.results) ? fits.results : [])) byId[String(r.id)] = r;
   const keep = people.filter((p) => { const r = byId[p.id]; return r && (["Perfect fit", "Good fit"].includes(r.verdict) || Number(r.fit) >= 70); });
   if (!keep.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0 }); return { ok: true, found: 0, message: `Checked ${people.length} people; none were a strong enough fit.` }; }
 

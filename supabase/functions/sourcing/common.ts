@@ -141,3 +141,11 @@ export function anonymizeJd(desc: unknown, client: unknown): string {
   if (name.length >= 2) t = t.replace(new RegExp("\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "('s)?\\b", "gi"), (_m: string, poss?: string) => (poss ? "our client's" : "our client"));
   return t;
 }
+
+// Fit is always a percentage. If the AI answered a whole batch on a 0-10 scale (every score 10 or
+// less), scale it up so 8 becomes 80%, not 8%.
+export function fitsToPercent(results: any[]): any[] {
+  const vals = results.map((r) => Number(r?.fit)).filter((n) => Number.isFinite(n) && n > 0);
+  const tenScale = vals.length > 0 && vals.every((n) => n <= 10);
+  return results.map((r) => ({ ...r, fit: Math.max(0, Math.min(100, Math.round((Number(r?.fit) || 0) * (tenScale ? 10 : 1)))) }));
+}
