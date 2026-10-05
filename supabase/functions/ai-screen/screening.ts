@@ -477,9 +477,10 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
     }));
   }
   // How many strong fits the bench now has for this job (decides whether to search outside Harbor).
+  // People already submitted to this job aren't bench: they're counted separately (onRole), never here.
   const { data: after } = await admin.from("candidates").select("id,matches").in("id", pool.map((x: any) => x.c.id).concat(["00000000-0000-0000-0000-000000000000"]));
   const goodFits = (after || []).filter((c: any) => (Array.isArray(c.matches) ? c.matches : []).some((m: any) =>
-    m?.job_id === jobId && ["Perfect fit", "Good fit"].includes(m.verdict) && (m.fit || 0) >= 60)).length + onRole;
+    m?.job_id === jobId && ["Perfect fit", "Good fit"].includes(m.verdict) && (m.fit || 0) >= 60)).length;
   const internal = { at: new Date().toISOString(), considered: pool.length, reviewed, goodFits, onRole, titles: jobTitles };
   await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), internal } }).eq("id", jobId);
   return { reviewed, reused: pool.filter((x: any) => fresh(x.c)).length, considered: pool.length, free: free.length, busy, titled, errors, goodFits, onRole, jobTitles };

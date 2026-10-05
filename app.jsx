@@ -4619,7 +4619,7 @@ function JobSourcingCard({ job, S, toast }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
           <div className="text-xs" style={{ color: C.ink3 }}>In Harbor</div>
-          <div className="text-sm mt-0.5">{internal ? <>{plural(internal.goodFits || 0, "strong fit")}{internal.onRole ? " (" + internal.onRole + " already on this role)" : ""} · {internal.considered || 0} more on the bench with a matching title · checked {fdate(internal.at)}</> : state === "pending" ? "Queued. The bench is checked automatically within about 10 minutes." : "Not checked yet"}</div>
+          <div className="text-sm mt-0.5">{internal ? <>{plural(internal.goodFits || 0, "strong fit")} on the bench · {internal.considered || 0} with a matching title{internal.onRole ? " · " + internal.onRole + " already submitted to this role (not counted)" : ""} · checked {fdate(internal.at)}</> : state === "pending" ? "Queued. The bench is checked automatically within about 10 minutes." : "Not checked yet"}</div>
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
           <div className="text-xs" style={{ color: C.ink3 }}>Outside Harbor</div>
