@@ -178,7 +178,7 @@ function mapAll(d) {
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at })) })),
-    endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
+    endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ id: e.id, company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
   }));
@@ -1664,7 +1664,11 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency);
     setPanel("placed");
   };
-  const sug = S.jobs.find((j) => j.status === "Open" && !candidate.endorsed.some((e) => e.role === j.role && e.company === j.client));
+  // Best open role they've actually been reviewed as fitting (not just the first open job).
+  const sugMatch = realMatches(candidate, S).slice().sort((a, b) => (b.fit || 0) - (a.fit || 0))[0] || null;
+  const sug = sugMatch ? S.jobs.find((j) => j.id === sugMatch.job_id) || null : null;
+  // Rerouting and forwarding to another role both go through the fit review and Route.
+  const [routeJob, setRouteJob] = useState(null);
   const [fwd, setFwd] = useState(S.jobs[0] ? S.jobs[0].id : 0);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reassign, setReassign] = useState(null);
@@ -1824,13 +1828,34 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         </div>
       </Modal>
       <Modal open={panel === "fwd"} onClose={() => setPanel(null)} title="Forward to a client">
-        <div className="flex flex-col gap-2 mb-4">
-          {S.jobs.filter((j) => j.status !== "Closed").map((j) => (
-            <button key={j.id} onClick={() => setFwd(j.id)} className="rounded-xl border p-3 text-sm text-left" style={{ borderColor: fwd === j.id ? C.em : C.line, background: fwd === j.id ? C.emTint : "#fff" }}>{j.role}, {j.client}</button>
-          ))}
-        </div>
-        <Btn kind="primary" full onClick={() => { const j = S.jobs.find((x) => x.id === fwd); if (!j) { toast("Pick a role"); return; } patch((c) => ({ status: "With client", endorsed: [...c.endorsed, { company: j.client, role: j.role, by: todayStr() + " by " + S.me.first, status: "With client", next: "Awaiting feedback" }], timeline: [...c.timeline, { t: "Forwarded to " + j.client, d: todayStr(), done: true }] })); setPanel(null); toast("Forwarded to " + j.client); }}>Forward</Btn>
+        {(() => {
+          const fj = S.jobs.find((x) => x.id === fwd) || null;
+          const fl = fj ? candidate.jobLinks.find((l) => l.jobId === fj.id) || null : null;
+          const onIt = fl && fl.response === "accepted";
+          return (
+            <>
+              <div className="text-sm mb-3" style={{ color: C.ink2 }}>Pick the role. A role they're already on is marked as sent to the client; any other role is reviewed against its job description, then routed to {candidate.name.split(" ")[0]} to accept.</div>
+              <div className="flex flex-col gap-2 mb-4">
+                {S.jobs.filter((j) => j.status !== "Closed").map((j) => { const l = candidate.jobLinks.find((x) => x.jobId === j.id); return (
+                  <button key={j.id} onClick={() => setFwd(j.id)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between gap-2" style={{ borderColor: fwd === j.id ? C.em : C.line, background: fwd === j.id ? C.emTint : "#fff" }}>
+                    <span>{j.role}, {j.client}</span>
+                    {l && <span className="text-xs shrink-0" style={{ color: C.ink2 }}>{l.response === "pending" ? "routed, waiting" : l.response === "declined" ? "declined" : "on this role"}</span>}
+                  </button>
+                ); })}
+              </div>
+              <Btn kind="primary" full disabled={!fj || (fl && fl.response !== "accepted")} onClick={() => {
+                if (!fj) { toast("Pick a role"); return; }
+                if (onIt) {
+                  S.setStage(fl.id, "Submitted").catch(() => {});
+                  patch((c) => ({ status: "With client", timeline: [...c.timeline, { t: "Sent to " + fj.client + " for " + fj.role, d: todayStr(), done: true }] }));
+                  setPanel(null); toast("Marked as sent to " + fj.client);
+                } else { setPanel(null); setRouteJob(fj); }
+              }}>{!fj ? "Pick a role" : onIt ? "Mark as sent to " + fj.client : fl ? "Already routed" : "Review fit and route"}</Btn>
+            </>
+          );
+        })()}
       </Modal>
+      {routeJob && <FitReviewModal open onClose={() => setRouteJob(null)} candidate={candidate} job={routeJob} S={S} toast={toast} />}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
           <Card>
@@ -1884,8 +1909,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 {reassign === "searching" && <div className="text-sm flex items-center gap-2" style={{ color: C.em }}><Sparkles size={15} /> Comparing against other open roles&hellip;</div>}
                 {(reassign === "found" || reassign === "submitted") && (
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                    <div className="text-sm" style={{ color: C.em }}>{reassign === "found" ? <><Sparkles size={15} className="inline mr-1" />{sug ? <>Suggested: <b>{sug.role}, {sug.client}</b></> : "No other open roles right now"}</> : "Submitted to " + (sug ? sug.role + ", " + sug.client : "the role")}</div>
-                    {reassign === "found" && sug && <Btn kind="primary" onClick={() => { setReassign("submitted"); patch((c) => ({ status: "With client", endorsed: [...c.endorsed, { company: sug.client, role: sug.role, by: todayStr() + " by " + S.me.first, status: "With client", next: "Awaiting feedback" }] })); toast("Submitted to " + sug.role); }}>Submit to this role</Btn>}
+                    <div className="text-sm" style={{ color: C.em }}><Sparkles size={15} className="inline mr-1" />{sug ? <>Best match: <b>{sug.role}, {sug.client}</b>{sugMatch && sugMatch.fit != null ? " (" + sugMatch.fit + "% fit)" : ""}</> : "No reviewed open role fits them right now. Use Forward to review them against a specific job."}</div>
+                    {sug && <Btn kind="primary" onClick={() => setRouteJob(sug)}>Review and route</Btn>}
                   </div>
                 )}
               </div>
@@ -2035,8 +2060,10 @@ function Fold({ title, count, pill, sub, open, onToggle, children }) {
 
 function CompanyScreeningCards({ candidate, S, toast }) {
   const groups = [];
+  // Accepted roles, and roles they've been routed to but haven't accepted yet (shown with the
+  // fit review against that job's description, and screened in full once they accept).
   candidate.jobLinks
-    .filter((l) => l.response === "accepted")
+    .filter((l) => l.response === "accepted" || (l.response === "pending" && l.stage !== "Withdrawn"))
     .sort((a, b) => b.createdAt - a.createdAt)
     .forEach((l) => {
       const job = S.jobs.find((j) => j.id === l.jobId);
@@ -2067,6 +2094,7 @@ function CompanyScreeningCards({ candidate, S, toast }) {
               <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: C.canvas }}>{e.company[0]}</div>
               <div className="flex-1 min-w-0"><div className="font-medium text-sm">{e.company}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.role}</div></div>
               <div className="text-right shrink-0"><StatusPill status={e.status} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>{e.next}</div></div>
+              {S.role !== "recruiter" && e.id && <button type="button" title="Remove this submission" aria-label={"Remove the " + e.company + " submission"} onClick={() => S.deleteEndorsement(e.id).then(() => toast("Submission removed")).catch(() => {})} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={14} /></button>}
             </div>
           ))}
         </div>
@@ -2082,14 +2110,18 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const f = ai.followups || null;
   const staff = S.role === "admin" || S.role === "recops";
   const first = candidate.name.split(" ")[0];
+  // Routed but not accepted yet: shows the fit review against this job; screening, questions
+  // and answers open up once they accept on their candidate page.
+  const pending = link.response === "pending";
   const e = endorsed.find((x) => x.role === job.role) || null;
-  const status = e ? e.status : link.stage;
+  const status = pending ? "Routed, waiting for " + first + " to accept" : e ? e.status : link.stage;
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
   // Once put forward to the client, this always reads Good fit, whatever the AI verdict was.
   const sent = !!e || SENT_STAGES.includes(link.stage);
   const verdict = shownVerdict(ai.verdict, sent);
   const upgraded = !!ai.verdict && verdict !== ai.verdict;
   // Typing in answers from a call, or removing questions: Rec Ops/Admin or the candidate's recruiter.
-  const canAnswer = staff || candidate.recruiterId === S.me.id;
+  const canAnswer = !pending && (staff || candidate.recruiterId === S.me.id);
   const [answering, setAnswering] = useState(null);
   const [busy, setBusy] = useState("");
   // Editable copy of the drafted follow-up questions; reset whenever a new screening lands.
@@ -2098,7 +2130,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const [seen, setSeen] = useState(stamp);
   if (stamp !== seen) { setSeen(stamp); setDrafts(null); setAnswering(null); }
   const qList = drafts !== null ? drafts : f && f.state === "draft" ? f.questions.map((x) => x.q) : [];
-  const editing = staff && ((f && f.state === "draft") || (!f && drafts !== null));
+  const editing = !pending && staff && ((f && f.state === "draft") || (!f && drafts !== null));
   const setQ = (i, v) => setDrafts(qList.map((q, k) => (k === i ? v : q)));
   const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { S.error(err.message); } setBusy(""); };
   const screen = () => run("screen", async () => {
@@ -2165,6 +2197,12 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
       {open && (
         <div className="px-4 pb-4 flex flex-col gap-3.5">
           {group.items.length > 1 && <Tabs tabs={group.items.map((x, i) => ({ key: i, label: x.job.role }))} active={idx} setActive={setIdx} />}
+          {pending && (
+            <div className="rounded-lg px-3 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}>
+              <span className="flex-1">Routed to {job.role}. Waiting for {first} to accept on their candidate page; the full screening runs as soon as they do.{ai.stage ? " Below is the fit review against this job's description." : ""}</span>
+              {staff && <Btn onClick={() => setWithdrawOpen(true)} disabled={!!busy} className="shrink-0">Withdraw</Btn>}
+            </div>
+          )}
           {verdict && <span className="sm:hidden w-fit"><Pill tone={VERDICT_TONE[verdict] || "neutral"}>{verdict}</Pill></span>}
           {candidate.ai_locked && (
             <div className="rounded-lg p-2.5 flex items-center gap-2 text-xs" style={{ background: C.warnBg, color: C.warnFg }}>
@@ -2173,15 +2211,15 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
           )}
           {!ai.stage ? (
             <div className="rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center gap-3" style={box}>
-              <div className="text-sm flex-1" style={{ color: C.ink2 }}>Not screened yet. The AI reads {candidate.cv ? "their resume" : "their answers (no resume on file)"} and any answers they've given, for this and other jobs.</div>
-              <Btn kind="primary" onClick={screen} disabled={!!busy || candidate.ai_locked}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>
+              <div className="text-sm flex-1" style={{ color: C.ink2 }}>{pending ? "Not screened yet. It runs automatically once " + first + " accepts this role." : <>Not screened yet. The AI reads {candidate.cv ? "their resume" : "their answers (no resume on file)"} and any answers they've given, for this and other jobs.</>}</div>
+              {!pending && <Btn kind="primary" onClick={screen} disabled={!!busy || candidate.ai_locked}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>}
             </div>
           ) : (
             <>
               <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: C.ink2 }}>
                 <Sparkles size={14} color={C.em} className="shrink-0" />
                 <span>{ai.stage === "final" ? "Final screening" : "First screening"} · {ai.usedResume ? "resume + " : "no resume · "}{ai.answersUsed || 0} {ai.answersUsed === 1 ? "answer" : "answers"} · updated {ai.updatedAt ? fdate(ai.updatedAt) : "–"}</span>
-                {!candidate.ai_locked && S.role !== "recruiter" && <button type="button" onClick={screen} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>{busy === "screen" ? "Screening…" : "Rescreen"}</button>}
+                {!pending && !candidate.ai_locked && S.role !== "recruiter" && <button type="button" onClick={screen} disabled={!!busy} className="ml-auto font-medium" style={{ color: C.em }}>{busy === "screen" ? "Screening…" : "Rescreen"}</button>}
               </div>
               {ai.summary && <div className="text-sm leading-relaxed">{ai.summary}</div>}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2316,11 +2354,14 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               )}
             </Fold>
           )}
-          {!f && !editing && staff && ai.stage && ai.verdict !== "Reject" && (
+          {!pending && !f && !editing && staff && ai.stage && ai.verdict !== "Reject" && (
             <button type="button" onClick={() => setDrafts([""])} className="text-xs font-medium w-fit" style={{ color: C.em }}>+ Ask an AI follow-up question</button>
           )}
         </div>
       )}
+      <ConfirmModal open={withdrawOpen} onClose={() => setWithdrawOpen(false)} title={"Withdraw " + job.role + "?"} confirmLabel="Withdraw"
+        body={"This removes the route to " + job.role + ", " + job.client + ". It disappears from " + first + "'s candidate page and from this profile."}
+        onConfirm={() => run("withdraw", async () => { await S.unlinkJob(link.id); setWithdrawOpen(false); toast("Route withdrawn"); })} busy={busy === "withdraw"} />
     </div>
   );
 }
@@ -6318,6 +6359,7 @@ export default function App() {
     setStage: (linkId, stage) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { stage } }),
     setScreeningAnswers: (linkId, screeningAnswers) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { screening_answers: screeningAnswers } }),
     unlinkJob: (linkId) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "DELETE" }),
+    deleteEndorsement: (id) => call("/rest/v1/candidate_endorsements?id=eq." + id, { method: "DELETE" }),
     /* Engage/disengage log: job_recruiters is the "currently on it" set; job_engagements is the
        permanent history (engaged_at / disengaged_at / reason) admins review per job. */
     jobEngagements: data.jobEngagements,
