@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { loadSettings, sendBlockers } from "./common.ts";
-import { sourceExternal } from "./prospects.ts";
+import { searchArea, sourceExternal } from "./prospects.ts";
+import { COUNTRY_NAMES, targetCodes } from "./regions.ts";
 import { fetchLeads, processLead } from "./leads.ts";
 import { processQueue, queueLeads, queueProspects } from "./queue.ts";
 import { apolloKey } from "./apollo.ts";
@@ -55,7 +56,12 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
     await admin.from("jobs").update({ sourcing: { ...(fresh?.sourcing || {}), state: next, ...(r?.ok ? {} : { error: String(r?.error || res.status).slice(0, 200) }) } }).eq("id", job.id);
     return { job: job.id, step: "bench", ok: !!r?.ok, goodFits: r?.goodFits };
   }
-  // internal_done: outside search only when the bench is short and Apollo is connected.
+  // internal_done: work out the search area (shown on the job page either way), then an outside
+  // search only when the bench is short and Apollo is connected.
+  try {
+    const { data: full } = await admin.from("jobs").select("*").eq("id", job.id).single();
+    if (full) { await searchArea(admin, full, targetCodes(s.regions).map((c: string) => COUNTRY_NAMES[c]).filter(Boolean)); job.sourcing = full.sourcing; }
+  } catch (e) { console.error("search area", errMsg(e)); }
   if (!apolloKey()) {
     await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), state: "done", external: { at: new Date().toISOString(), skipped: "Apollo not connected" } } }).eq("id", job.id);
     return { job: job.id, step: "external", skipped: "apollo" };
@@ -64,6 +70,8 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
   try {
     const chk: any = await sourceExternal(admin, job.id, s, { checkOnly: true });
     if (!chk.needed) return { job: job.id, step: "external", ...chk };
+    const { data: cur } = await admin.from("jobs").select("sourcing").eq("id", job.id).single();
+    job.sourcing = cur?.sourcing || job.sourcing;
     const { request } = await requestSpend(admin, "apollo_search", s, { jobId: job.id, title: `Search Apollo for outside candidates: ${chk.jobTitle}${chk.client ? ", " + chk.client : ""}` });
     await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), state: "awaiting_approval", external: { requestedAt: new Date().toISOString(), requestId: request.id } } }).eq("id", job.id);
     return { job: job.id, step: "external", awaitingApproval: request.id };
@@ -119,6 +127,11 @@ Deno.serve(async (req: Request) => {
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
       }
+      if (body.action === "search_area" && body.jobId) {
+        const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();
+        if (!job) return json({ error: "Job not found" }, 404);
+        return json({ ok: true, area: await searchArea(admin, job, targetCodes(s.regions).map((c: string) => COUNTRY_NAMES[c]).filter(Boolean)) });
+      }
       if (body.action === "leads_daily") {
         if (!s.leads.enabled) return json({ ok: true, skipped: "Client leads are switched off in Outreach > Setup" });
         if (!theirstackKey()) return json({ ok: true, skipped: "TheirStack isn't connected" });
@@ -169,13 +182,21 @@ Deno.serve(async (req: Request) => {
       return { ...r, processed: pr.processed, kept: pr.kept, message: r.message + ` Checked ${pr.processed}, kept ${pr.kept}; the rest are checked over the next hour.` };
     };
 
+    // Where an outside search would look (free: no Apollo credits, one small AI call, cached).
+    if (action === "search_area") {
+      const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId || "")).maybeSingle();
+      if (!job) return json({ error: "Job not found" }, 404);
+      const area = await searchArea(admin, job, targetCodes(s.regions).map((c) => COUNTRY_NAMES[c]).filter(Boolean));
+      return json({ ok: true, area });
+    }
+
     if (action === "search_external") {
       if (!body.jobId) return json({ error: "jobId is required" }, 400);
       if (!apolloKey()) return json({ ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Harbor." });
       const chk: any = await sourceExternal(admin, body.jobId, s, { force: !!body.force, checkOnly: true });
       if (!chk.needed) return json(chk);
       const title = `Search Apollo for outside candidates: ${chk.jobTitle}${chk.client ? ", " + chk.client : ""}`;
-      if (isAdmin && !body.confirmed) return json({ ok: true, needsConfirm: true, costText: `up to ${s.prospectsPerJob} Apollo credits`, title });
+      if (isAdmin && !body.confirmed) return json({ ok: true, needsConfirm: true, costText: `up to ${s.prospectsPerJob} Apollo credits` + (chk.area ? `. Searching: ${chk.area}` : ""), title });
       if (isAdmin) { const r = await runApproved({ kind: "apollo_search", job_id: body.jobId }); await logDirect("apollo_search", body.jobId, title, { a: s.prospectsPerJob, t: 0 }, r); return json(r); }
       const { created } = await requestSpend(admin, "apollo_search", s, { jobId: body.jobId, title, requestedBy: me.id });
       return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });

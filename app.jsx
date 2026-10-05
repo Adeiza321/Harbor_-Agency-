@@ -4569,6 +4569,15 @@ function JobSourcingCard({ job, S, toast }) {
     canRun ? S.sb("/rest/v1/prospects?job_id=eq." + job.id + "&select=*&order=fit.desc.nullslast&limit=200").then((r) => setProspects(r || [])) : Promise.resolve(),
   ]).catch(() => {});
   React.useEffect(() => { load(); }, [job.id]); // eslint-disable-line
+  // Search area (commutable cities, or preferred time zones for remote roles) is worked out on
+  // the server the first time it's needed; no credits are spent. Fetched once here if missing.
+  const [areaOpen, setAreaOpen] = useState(false);
+  const [areaAsked, setAreaAsked] = useState(false);
+  React.useEffect(() => {
+    if (!row || areaAsked || !canRun || (row.sourcing && row.sourcing.area)) return;
+    setAreaAsked(true);
+    S.sourcing("search_area", { jobId: job.id }).then(() => load()).catch(() => {});
+  }, [row]); // eslint-disable-line
   if (!row) return null;
   const titles = Array.isArray(row.parallel_titles) ? row.parallel_titles : [];
   const src = row.sourcing || {};
@@ -4595,6 +4604,17 @@ function JobSourcingCard({ job, S, toast }) {
       <div className="mt-3">
         <div className="flex items-center justify-between gap-2"><div className="text-xs" style={{ color: C.ink3 }}>Parallel titles for this job</div>{canRun && !titles.length && <button onClick={regen} disabled={!!busy} className="text-xs" style={{ color: C.em }}>{busy === "titles" ? "Working out…" : "Generate"}</button>}</div>
         <div className="flex flex-wrap gap-1.5 mt-1.5">{titles.length ? titles.map((t) => <Pill key={t} tone="neutral">{t}</Pill>) : <span className="text-sm" style={{ color: C.ink2 }}>Not generated yet. They're created the first time the bench is checked.</span>}</div>
+      </div>
+      <div className="mt-3">
+        <div className="text-xs" style={{ color: C.ink3 }}>Where Harbor looks outside</div>
+        {src.area && src.area.locations ? (
+          <div className="text-sm mt-1">
+            <span>{src.area.summary || src.area.locations.join(", ")}</span>
+            {src.area.locations.length > 1 && <button onClick={() => setAreaOpen((v) => !v)} className="text-xs ml-2 underline" style={{ color: C.ink2 }}>{areaOpen ? "Hide" : "Show " + src.area.locations.length + " places"}</button>}
+            {areaOpen && <div className="flex flex-wrap gap-1.5 mt-1.5">{src.area.locations.map((l) => <Pill key={l} tone="neutral">{l}</Pill>)}</div>}
+            <div className="text-xs mt-1" style={{ color: C.ink2 }}>{src.area.mode === "commute" ? "The job's office plus places within about an hour's commute." : src.area.mode === "region" ? "The job is located by state only, so the whole state." : src.area.mode === "timezone" ? "Remote role: only the states in the time zones the job description prefers." : "Remote role: no time zone preference in the job description, so the whole country."}</div>
+          </div>
+        ) : <div className="text-sm mt-1" style={{ color: C.ink2 }}>{canRun ? <>Working it out <InlineDots /></> : "Worked out when the job goes live."}</div>}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>

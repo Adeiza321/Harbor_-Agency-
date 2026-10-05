@@ -21,7 +21,10 @@ Never put a key in the repo or in `index.html`.
 2. Add the secret `APOLLO_API_KEY`.
 
 After this, when the bench has fewer strong fits than your setting (default 3), Harbor searches
-Apollo in the job's location, reveals verified work emails for the best matches (1 credit each,
+Apollo in the job's search area (shown on the job page under Sourcing): for on-site and hybrid
+jobs, the office city plus places within about an hour's commute; for a job located by state
+only, that whole state; for remote jobs, the states in the time zones the job description
+prefers, or the whole country if it states none. It then reveals verified work emails for the best matches (1 credit each,
 capped by "Most outside candidates per job"), checks each person's fit, and drafts an email.
 People already in Harbor, or who unsubscribed, are skipped.
 

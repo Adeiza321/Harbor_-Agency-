@@ -22,6 +22,71 @@ export function jobBrief(job: any, includePay: boolean) {
     `Description:\n${String(job.description || "").slice(0, 3500)}`;
 }
 
+export type SearchArea = { mode: "commute" | "region" | "timezone" | "country"; locations: string[]; summary: string; key: string; at: string };
+// US states by main time zone, so a time zone preference always covers every state in it.
+const US_TZ_STATES: Record<string, string[]> = {
+  eastern: ["Connecticut", "Delaware", "District of Columbia", "Florida", "Georgia", "Indiana", "Maine", "Maryland", "Massachusetts", "Michigan", "New Hampshire", "New Jersey", "New York", "North Carolina", "Ohio", "Pennsylvania", "Rhode Island", "South Carolina", "Vermont", "Virginia", "West Virginia", "Kentucky"],
+  central: ["Alabama", "Arkansas", "Illinois", "Iowa", "Kansas", "Louisiana", "Minnesota", "Mississippi", "Missouri", "Nebraska", "North Dakota", "Oklahoma", "South Dakota", "Tennessee", "Texas", "Wisconsin"],
+  mountain: ["Arizona", "Colorado", "Idaho", "Montana", "New Mexico", "Utah", "Wyoming"],
+  pacific: ["California", "Nevada", "Oregon", "Washington"],
+  alaska: ["Alaska"], hawaii: ["Hawaii"],
+};
+async function areaKey(job: any) {
+  const raw = ["v2", job.work_setup, job.location, job.country, String(job.description || "").slice(0, 4000)].join("|");
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  return [...new Uint8Array(d)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+// Where to look for people. On-site and hybrid jobs: the job's city (and any other office the
+// description names) plus places within about an hour's commute. A job located only by state or
+// region: that whole state. Remote jobs: the states in the time zones the description prefers,
+// or the whole country when it states none. Worked out once by the AI and kept on the job
+// (recomputed only if the location, setup or description changes). No Apollo credits are used.
+export async function searchArea(admin: any, job: any, fallbackCountries: string[]): Promise<SearchArea | null> {
+  const key = await areaKey(job);
+  const cached = job.sourcing?.area;
+  if (cached?.key === key && Array.isArray(cached.locations) && cached.locations.length) return cached;
+  const sys = "You decide where a recruiter should search for candidates for one job, for a people-search tool that matches on place names. Reply with STRICT JSON only: " +
+    "{\"remote\": boolean, \"offices\": string[], \"stateOnly\": string, \"places\": [{\"place\": string, \"minutes\": number}], \"timeZones\": string[], \"regions\": string[], \"country\": string}. " +
+    "remote: true if the job is fully remote, judged from the work setup and also the location or description (e.g. 'Fully remote (US)'). Hybrid and on-site are not remote. " +
+    "If NOT remote: offices = the job's office cities, written 'City, State' in the US (full state name) or 'City, Country' elsewhere (the job's location, plus any other office the description says the role can be based in). " +
+    "If the location is only a state or region with no city (e.g. 'Virginia'), set stateOnly to that state's full name and leave offices and places empty. " +
+    "places = towns and cities people realistically commute from to any of the offices, with minutes = typical one-way drive time in normal traffic; include only real places within 60 minutes; fewer is fine, never pad the list; at most 12 per office. " +
+    "If remote: timeZones = the time zones the description prefers or requires, as lowercase words from: eastern, central, mountain, pacific, alaska, hawaii (US), or the zone names used in that country; [] if none stated. " +
+    "regions = only for a remote job outside the US with a time zone preference: the states/provinces/regions of that country in those zones (full names). " +
+    "country = the hiring country's full name.";
+  const text = `Job: ${job.role_title}\nWork setup: ${job.work_setup || "(not set)"}\nLocation: ${job.location || "(not set)"}\nHiring country: ${job.country || fallbackCountries.join(", ") || "(not set)"}\nDescription:\n${String(job.description || "").slice(0, 4000)}`;
+  let out: any = null;
+  try { out = await askAI(sys, text, 1500); } catch (e) { console.error("search area", String((e as Error)?.message || e)); }
+  if (!out) return null;
+  const clean = (xs: unknown) => [...new Set((Array.isArray(xs) ? xs : []).map((x) => String(x || "").trim()).filter(Boolean))] as string[];
+  const country = String(out.country || job.country || "").trim();
+  const isUS = /^(us|usa|united states)/i.test(country);
+  let area: Omit<SearchArea, "key" | "at"> | null = null;
+  if (out.remote) {
+    const zones = clean(out.timeZones).map((z) => z.toLowerCase().replace(/ time$/, ""));
+    const states = isUS ? [...new Set(zones.flatMap((z) => US_TZ_STATES[z] || []))] : clean(out.regions);
+    const zoneText = zones.map((z) => z.charAt(0).toUpperCase() + z.slice(1)).join(" and ");
+    area = states.length
+      ? { mode: "timezone", locations: states, summary: `Remote: ${zoneText} time zone${zones.length > 1 ? "s" : ""} (${states.length} ${isUS ? "states" : "regions"})` }
+      : country ? { mode: "country", locations: [country], summary: `Remote: anywhere in ${country}` } : null;
+  } else if (String(out.stateOnly || "").trim()) {
+    const st = String(out.stateOnly).trim();
+    area = { mode: "region", locations: [st], summary: `All of ${st}` };
+  } else {
+    const offices = clean(out.offices);
+    const near = (Array.isArray(out.places) ? out.places : [])
+      .filter((p: any) => p && String(p.place || "").trim() && Number(p.minutes) > 0 && Number(p.minutes) <= 60)
+      .map((p: any) => String(p.place).trim());
+    const locations = [...new Set([...offices, ...near])].slice(0, 40);
+    if (locations.length) area = { mode: "commute", locations, summary: `${offices.join(" and ") || locations[0]}${near.length ? ` and ${near.length} place${near.length > 1 ? "s" : ""} within an hour's commute` : ""}` };
+  }
+  if (!area || !area.locations.length) return null;
+  const full: SearchArea = { ...area, summary: area.summary.slice(0, 200), key, at: new Date().toISOString() };
+  job.sourcing = { ...(job.sourcing || {}), area: full };
+  await admin.from("jobs").update({ sourcing: job.sourcing }).eq("id", job.id);
+  return full;
+}
+
 export async function sourceExternal(admin: any, jobId: string, s: Settings, opts: { force?: boolean; checkOnly?: boolean } = {}) {
   if (!apolloKey()) return { ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Harbor." };
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
@@ -46,13 +111,16 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
   const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8);
   const remote = String(job.work_setup || "").toLowerCase() === "remote";
   const countryName = code ? COUNTRY_NAMES[code] : "";
-  const locations = remote
+  // Commutable cities for on-site/hybrid, preferred time zones for remote (see searchArea);
+  // falls back to the plain location or country if that can't be worked out.
+  const area = await searchArea(admin, job, allowed.map((c) => COUNTRY_NAMES[c]).filter(Boolean));
+  const locations = area ? area.locations : remote
     ? (countryName ? [countryName] : allowed.map((c) => COUNTRY_NAMES[c]).filter(Boolean))
     : [job.location || countryName].filter(Boolean);
   if (!locations.length) { await record({ error: "The job has no location or country" }); return { ok: false, message: "Add a location or country to the job first." }; }
   // Checks passed: an outside search is needed. With checkOnly nothing is spent; the caller
   // asks an Admin to approve the Apollo credits first.
-  if (opts.checkOnly) return { ok: true, needed: true, jobTitle: job.role_title, client: job.client };
+  if (opts.checkOnly) return { ok: true, needed: true, jobTitle: job.role_title, client: job.client, area: area?.summary || "" };
 
   // 1. Search
   const { hits, total } = await searchPeople({ titles, locations, perPage: 100 });
