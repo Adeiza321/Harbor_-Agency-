@@ -183,6 +183,7 @@ function mapAll(d) {
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, profileReadAt: c.profile_read_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
+      clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at })) })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ id: e.id, company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
@@ -2129,6 +2130,39 @@ function CompanyScreeningCards({ candidate, S, toast }) {
   );
 }
 
+// A blind, anonymized profile link to share with the client once a candidate is sent to them.
+// Hides name, contact details and current employer until a recruiter/Rec Ops explicitly reveals
+// them on the same link -- the client never gets a second link.
+function ClientLinkBox({ link, job, candidate, S, toast }) {
+  const [busy, setBusy] = useState(false);
+  const canManage = S.role !== "recruiter";
+  const url = window.location.origin + window.location.pathname + "?t=" + link.clientToken;
+  const copy = () => copyText(url, toast, "Client link copied");
+  const reveal = () => {
+    setBusy(true);
+    S.sb("/rest/v1/candidate_jobs?id=eq." + link.id, { method: "PATCH", body: { client_revealed: true, client_revealed_at: new Date().toISOString() } })
+      .then(() => S.sb("/rest/v1/candidate_timeline", { method: "POST", body: { candidate_id: candidate.id, title: "Full details revealed to " + job.client } }))
+      .then(() => { toast("Full details revealed to " + job.client); S.reload(); })
+      .catch((e) => S.error(e.message))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ background: "#fff" }}>
+      <div className="flex-1 text-sm">
+        <div className="font-medium">Blind profile for {job.client}</div>
+        <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>
+          {link.clientRevealed ? "Full details revealed" + (link.clientRevealedAt ? " " + ago(link.clientRevealedAt) : "" ) : "Name, contact and current employer are hidden until you reveal them"}
+          {link.clientViewedAt ? " · opened by the client" : ""}
+        </div>
+      </div>
+      <div className="flex gap-2 shrink-0">
+        <Btn icon={Copy} onClick={copy}>Copy link</Btn>
+        {canManage && !link.clientRevealed && <Btn kind="primary" disabled={busy} onClick={reveal}>{busy ? "Revealing…" : "Reveal full details"}</Btn>}
+      </div>
+    </div>
+  );
+}
+
 function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const [idx, setIdx] = useState(0);
   const { link, job } = group.items[Math.min(idx, group.items.length - 1)];
@@ -2245,6 +2279,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               {staff && <Btn onClick={() => setWithdrawOpen(true)} disabled={!!busy} className="shrink-0">Withdraw</Btn>}
             </div>
           )}
+          {sent && link.clientToken && <ClientLinkBox link={link} job={job} candidate={candidate} S={S} toast={toast} />}
           {verdict && <span className="sm:hidden w-fit"><Pill tone={VERDICT_TONE[verdict] || "neutral"}>{verdict}</Pill></span>}
           {candidate.ai_locked && (
             <div className="rounded-lg p-2.5 flex items-center gap-2 text-xs" style={{ background: C.warnBg, color: C.warnFg }}>
@@ -4934,6 +4969,63 @@ function OutreachLinkPage({ token, kind, action }) {
   );
 }
 
+// Public page behind the blind-profile link shared with a client: /?t=<client_token>.
+// Blind until the recruiter reveals it -- same link, same token, no second link to send.
+function ClientViewPage({ token }) {
+  const [info, setInfo] = useState(null);
+  const [err, setErr] = useState("");
+  const [resumeBusy, setResumeBusy] = useState(false);
+  React.useEffect(() => {
+    sbFetch("/rest/v1/rpc/client_view", { method: "POST", body: { p_token: token } }).then((j) => { if (!j) throw new Error("not found"); setInfo(j); }).catch(() => setErr("not found"));
+  }, [token]); // eslint-disable-line
+  const openResume = () => {
+    setResumeBusy(true);
+    fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token }) })
+      .then((r) => r.json()).then((j) => { if (j.error) throw new Error(j.error); window.open(j.url, "_blank"); })
+      .catch((e) => setErr(e.message)).finally(() => setResumeBusy(false));
+  };
+  let bodyEl;
+  if (err) bodyEl = <div className="text-sm" style={{ color: C.dangerFg }}>{err === "not found" ? "This link is not valid." : err}</div>;
+  else if (!info) bodyEl = <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div>;
+  else {
+    const Row = ({ label, value }) => value ? <div className="flex gap-2 text-sm"><span className="font-medium shrink-0" style={{ color: C.ink2, width: 90 }}>{label}</span><span>{value}</span></div> : null;
+    const chips = (list, tone) => !!(list && list.length) && (
+      <div className="flex flex-wrap gap-1.5 mt-1.5">{list.map((x, i) => <span key={i} className="rounded-full px-2.5 py-1 text-xs" style={{ background: TONE[tone].bg, color: TONE[tone].fg }}>{x}</span>)}</div>
+    );
+    bodyEl = (
+      <>
+        <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>{info.role}{info.client ? ", " + info.client : ""}</div>
+        <div className="text-xl mb-3" style={{ ...SERIF }}>{info.revealed ? info.name : "Candidate profile"}</div>
+        {!info.revealed && <div className="text-xs rounded-lg px-3 py-2 mb-4" style={{ background: C.neutralBg, color: C.ink2 }}>Presented anonymously. Your recruiter will share full contact details once you'd like to move forward.</div>}
+        {info.score != null && <div className="flex items-center gap-2 mb-3"><div className="text-2xl" style={{ ...SERIF }}>{info.score}%</div>{info.verdict && <Pill tone={VERDICT_TONE[info.verdict] || "neutral"}>{info.verdict}</Pill>}</div>}
+        {info.summary && <div className="text-sm leading-relaxed mb-4">{info.summary}</div>}
+        <div className="flex flex-col gap-1.5 mb-3">
+          <Row label="Title" value={info.currentTitle} />
+          <Row label="Experience" value={info.experience} />
+          <Row label="Location" value={info.location} />
+          <Row label="Notice" value={info.notice} />
+          {info.revealed && <Row label="Employer" value={info.currentCompany} />}
+          {info.revealed && <Row label="Email" value={info.email} />}
+          {info.revealed && <Row label="Phone" value={info.phone} />}
+          {info.revealed && info.linkedin && <Row label="LinkedIn" value={<a href={info.linkedin} target="_blank" rel="noreferrer" className="underline" style={{ color: C.em }}>{info.linkedin}</a>} />}
+        </div>
+        {!!(info.skills && info.skills.length) && <div className="mb-3"><div className="text-xs font-semibold" style={{ color: C.ink3 }}>SKILLS</div>{chips(info.skills, "neutral")}</div>}
+        {!!(info.strengths && info.strengths.length) && <div className="mb-3"><div className="text-xs font-semibold" style={{ color: C.ink3 }}>STRENGTHS</div>{chips(info.strengths, "em")}</div>}
+        {!!(info.industries && info.industries.length) && <div className="mb-3"><div className="text-xs font-semibold" style={{ color: C.ink3 }}>INDUSTRIES</div>{chips(info.industries, "info")}</div>}
+        {info.revealed && info.hasResume && <Btn kind="primary" full disabled={resumeBusy} onClick={openResume} className="mt-2">{resumeBusy ? "Opening…" : "View resume"}</Btn>}
+      </>
+    );
+  }
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
+      <div className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+        <div className="text-2xl mb-3" style={{ ...SERIF }}>Harbor</div>
+        {bodyEl}
+      </div>
+    </div>
+  );
+}
+
 function NewBillingModal({ open, onClose, toast, S, presetId }) {
   const [candId, setCandId] = useState("");
   const [jobId, setJobId] = useState("");
@@ -6247,6 +6339,7 @@ export default function App() {
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [portalToken] = useState(() => new URLSearchParams(window.location.search).get("c"));
   const [outreachLink] = useState(() => { const q = new URLSearchParams(window.location.search); return q.get("u") ? { token: q.get("u"), kind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" } : null; });
+  const [clientToken] = useState(() => new URLSearchParams(window.location.search).get("t"));
   const [portalData, setPortalData] = useState(null);
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
@@ -6330,6 +6423,7 @@ export default function App() {
   }, []);
 
   if (outreachLink) return <OutreachLinkPage {...outreachLink} />;
+  if (clientToken) return <ClientViewPage token={clientToken} />;
   if (portalToken) {
     if (!portalData) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>Loading&hellip;</div></div>;
     if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
