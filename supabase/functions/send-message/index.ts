@@ -185,7 +185,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "preview_reject") {
-      const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message: String(body.message || defaultReasonText(reason || "other", kind)), recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent && !cand.pitch_consent_at });
+      const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message: String(body.message || defaultReasonText(reason || "other", kind)), recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
       return json({ ok: true, subject: m.subject, html: m.html, to: cand.email || "" });
     }
 
@@ -207,7 +207,7 @@ Deno.serve(async (req: Request) => {
       if (notify) {
         if (link) await admin.from("candidate_job_messages").insert({ link_id: link.id, sender: "recruiter", author_id: me.id, body: (kind === "client" ? "The client has decided not to move forward with your profile for this role. " : "We've decided not to put you forward for this role. ") + message, recruiter_read_at: now });
         if (cand.email) {
-          const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent && !cand.pitch_consent_at });
+          const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
           emailed = await sendBrevo(brand, { email: cand.email, name: cand.name }, m.subject, m.html);
         }
       }
