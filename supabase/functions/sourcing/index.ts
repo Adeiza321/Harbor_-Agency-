@@ -6,6 +6,7 @@ import { processQueue, queueLeads, queueProspects } from "./queue.ts";
 import { apolloKey } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
+import { requestSpend } from "./approvals.ts";
 
 // Sourcing and outreach for Harbor.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
@@ -59,10 +60,13 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
     await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), state: "done", external: { at: new Date().toISOString(), skipped: "Apollo not connected" } } }).eq("id", job.id);
     return { job: job.id, step: "external", skipped: "apollo" };
   }
+  // Apollo costs credits: check whether an outside search is needed, then ask an Admin.
   try {
-    const r = await sourceExternal(admin, job.id, s);
-    if (s.approval === "auto" && r.ids?.length && !sendBlockers(s).length) await queueProspects(admin, r.ids, null, s, agencyName);
-    return { job: job.id, step: "external", ...r };
+    const chk: any = await sourceExternal(admin, job.id, s, { checkOnly: true });
+    if (!chk.needed) return { job: job.id, step: "external", ...chk };
+    const { request } = await requestSpend(admin, "apollo_search", s, { jobId: job.id, title: `Search Apollo for outside candidates: ${chk.jobTitle}${chk.client ? ", " + chk.client : ""}` });
+    await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), state: "awaiting_approval", external: { requestedAt: new Date().toISOString(), requestId: request.id } } }).eq("id", job.id);
+    return { job: job.id, step: "external", awaitingApproval: request.id };
   } catch (e) {
     await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), state: "done", external: { at: new Date().toISOString(), error: errMsg(e).slice(0, 200) } } }).eq("id", job.id);
     return { job: job.id, step: "external", error: errMsg(e) };
@@ -117,7 +121,10 @@ Deno.serve(async (req: Request) => {
       }
       if (body.action === "leads_daily") {
         if (!s.leads.enabled) return json({ ok: true, skipped: "Client leads are switched off in Outreach > Setup" });
-        return json(await fetchLeads(admin, s));
+        if (!theirstackKey()) return json({ ok: true, skipped: "TheirStack isn't connected" });
+        // TheirStack and Apollo cost credits: today's feed waits for an Admin's approval.
+        const { request, created } = await requestSpend(admin, "leads_fetch", s, { title: "Fetch today's new job postings for client leads" });
+        return json({ ok: true, awaitingApproval: request.id, created });
       }
       return json({ error: "Unknown scheduled action" }, 400);
     }
@@ -139,12 +146,68 @@ Deno.serve(async (req: Request) => {
         admin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", since.toISOString()),
         admin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "failed"),
       ]);
-      return json({ ok: true, connections: connections(), settings: s, blockers: sendBlockers(s), queue: { queued, sentToday, failed } });
+      const { count: approvals } = await admin.from("spend_requests").select("id", { count: "exact", head: true }).eq("status", "pending");
+      return json({ ok: true, connections: connections(), settings: s, blockers: sendBlockers(s), queue: { queued, sentToday, failed }, approvals: approvals || 0, canApprove: me.role === "admin" });
     }
+
+    // Paid work from a button: an Admin confirms the cost and it runs; anyone else's click
+    // becomes a request for an Admin to approve.
+    const isAdmin = me.role === "admin";
+    const logDirect = async (kind: string, jobId: string | null, title: string, est: { a: number; t: number }, result: unknown) => {
+      await admin.from("spend_requests").insert({ kind, job_id: jobId, title, est_apollo: est.a, est_theirstack: est.t, cost_text: [est.t ? `up to ${est.t} TheirStack credits` : "", est.a ? `up to ${est.a} Apollo credits` : ""].filter(Boolean).join(" and "),
+        status: "done", requested_by: me.id, decided_by: me.id, decided_at: new Date().toISOString(), result }).then(() => {}, () => {});
+    };
+    const runApproved = async (req: any) => {
+      if (req.kind === "apollo_search") {
+        const r: any = await sourceExternal(admin, req.job_id, s, { force: true });
+        if (s.approval === "auto" && r.ids?.length && !sendBlockers(s).length) await queueProspects(admin, r.ids, null, s, agencyName);
+        return r;
+      }
+      const r: any = await fetchLeads(admin, s);
+      if (!r.ok) return r;
+      const pr = await stepLeads(admin, s, agencyName, 3);
+      return { ...r, processed: pr.processed, kept: pr.kept, message: r.message + ` Checked ${pr.processed}, kept ${pr.kept}; the rest are checked over the next hour.` };
+    };
 
     if (action === "search_external") {
       if (!body.jobId) return json({ error: "jobId is required" }, 400);
-      return json(await sourceExternal(admin, body.jobId, s, { force: !!body.force }));
+      if (!apolloKey()) return json({ ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Harbor." });
+      const chk: any = await sourceExternal(admin, body.jobId, s, { force: !!body.force, checkOnly: true });
+      if (!chk.needed) return json(chk);
+      const title = `Search Apollo for outside candidates: ${chk.jobTitle}${chk.client ? ", " + chk.client : ""}`;
+      if (isAdmin && !body.confirmed) return json({ ok: true, needsConfirm: true, costText: `up to ${s.prospectsPerJob} Apollo credits`, title });
+      if (isAdmin) { const r = await runApproved({ kind: "apollo_search", job_id: body.jobId }); await logDirect("apollo_search", body.jobId, title, { a: s.prospectsPerJob, t: 0 }, r); return json(r); }
+      const { created } = await requestSpend(admin, "apollo_search", s, { jobId: body.jobId, title, requestedBy: me.id });
+      return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
+    }
+
+    if (action === "list_requests") {
+      const { data } = await admin.from("spend_requests").select("*").order("created_at", { ascending: false }).limit(60);
+      return json({ ok: true, requests: data || [], canApprove: isAdmin });
+    }
+    if (action === "approve_request" || action === "decline_request") {
+      if (!isAdmin) return json({ error: "Only an Admin can approve spending" }, 403);
+      const { data: req } = await admin.from("spend_requests").select("*").eq("id", body.id).maybeSingle();
+      if (!req) return json({ error: "Request not found" }, 404);
+      if (req.status !== "pending") return json({ error: "This request was already " + req.status }, 409);
+      const now = new Date().toISOString();
+      if (action === "decline_request") {
+        await admin.from("spend_requests").update({ status: "declined", decided_by: me.id, decided_at: now }).eq("id", req.id);
+        if (req.kind === "apollo_search" && req.job_id) {
+          const { data: j } = await admin.from("jobs").select("sourcing").eq("id", req.job_id).maybeSingle();
+          await admin.from("jobs").update({ sourcing: { ...(j?.sourcing || {}), state: "done", external: { at: now, skipped: "Declined by " + (me.full_name || "an Admin") } } }).eq("id", req.job_id);
+        }
+        return json({ ok: true, message: "Declined. Nothing was spent." });
+      }
+      await admin.from("spend_requests").update({ status: "approved", decided_by: me.id, decided_at: now }).eq("id", req.id);
+      try {
+        const r: any = await runApproved(req);
+        await admin.from("spend_requests").update({ status: r?.ok === false ? "failed" : "done", result: r, error: r?.ok === false ? String(r.message || "").slice(0, 300) : null }).eq("id", req.id);
+        return json({ ok: true, ...r });
+      } catch (e) {
+        await admin.from("spend_requests").update({ status: "failed", error: errMsg(e).slice(0, 300) }).eq("id", req.id);
+        return json({ error: errMsg(e) }, 500);
+      }
     }
 
     if (action === "approve_prospects") return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName) });
@@ -156,10 +219,13 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "fetch_leads") {
-      const r = await fetchLeads(admin, s);
-      if (!r.ok) return json(r);
-      const p = await stepLeads(admin, s, agencyName, 3);
-      return json({ ...r, processed: p.processed, kept: p.kept, message: r.message + ` Checked ${p.processed}, kept ${p.kept}; the rest are checked over the next hour.` });
+      if (!theirstackKey()) return json({ ok: false, notConnected: "theirstack", message: "The job feed isn't connected yet. Add the THEIRSTACK_API_KEY secret." });
+      const title = "Fetch today's new job postings for client leads";
+      const costText = `up to ${s.leads.postingsPerDay} TheirStack credits and up to ${s.leads.postingsPerDay} Apollo credits`;
+      if (isAdmin && !body.confirmed) return json({ ok: true, needsConfirm: true, costText, title });
+      if (isAdmin) { const r = await runApproved({ kind: "leads_fetch" }); await logDirect("leads_fetch", null, title, { a: s.leads.postingsPerDay, t: s.leads.postingsPerDay }, r); return json(r); }
+      const { created } = await requestSpend(admin, "leads_fetch", s, { title, requestedBy: me.id });
+      return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
     }
     if (action === "process_leads") return json({ ok: true, ...(await stepLeads(admin, s, agencyName, 3)) });
 

@@ -22,7 +22,7 @@ export function jobBrief(job: any, includePay: boolean) {
     `Description:\n${String(job.description || "").slice(0, 3500)}`;
 }
 
-export async function sourceExternal(admin: any, jobId: string, s: Settings, opts: { force?: boolean } = {}) {
+export async function sourceExternal(admin: any, jobId: string, s: Settings, opts: { force?: boolean; checkOnly?: boolean } = {}) {
   if (!apolloKey()) return { ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Harbor." };
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("Job not found");
@@ -50,6 +50,9 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     ? (countryName ? [countryName] : allowed.map((c) => COUNTRY_NAMES[c]).filter(Boolean))
     : [job.location || countryName].filter(Boolean);
   if (!locations.length) { await record({ error: "The job has no location or country" }); return { ok: false, message: "Add a location or country to the job first." }; }
+  // Checks passed: an outside search is needed. With checkOnly nothing is spent; the caller
+  // asks an Admin to approve the Apollo credits first.
+  if (opts.checkOnly) return { ok: true, needed: true, jobTitle: job.role_title, client: job.client };
 
   // 1. Search
   const { hits, total } = await searchPeople({ titles, locations, perPage: 100 });

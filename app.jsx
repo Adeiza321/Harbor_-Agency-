@@ -4257,6 +4257,79 @@ const REGION_OPTIONS = [["US", "United States"], ["EU", "Europe (EU, UK, EEA, Sw
 const approvedMsg = (n) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected.";
 const copyText = (t, toast, label) => { try { navigator.clipboard.writeText(t); toast(label || "Copied"); } catch (e) { toast("Copy failed. Select and copy it manually."); } };
 
+// Paid work (Apollo, TheirStack): an Admin confirms the cost before it runs.
+function SpendConfirm({ c, onClose, busy }) {
+  return (
+    <Modal open={!!c} onClose={onClose} title="Approve this spend?">
+      {c && <div className="flex flex-col gap-4">
+        <div className="text-sm">{c.title}</div>
+        <div className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.warnBg, color: "#7A4B05" }}>Cost: {c.costText}. Nothing is spent until you approve.</div>
+        <div className="flex gap-2 justify-end"><Btn onClick={onClose} disabled={busy}>Cancel</Btn><Btn kind="primary" disabled={busy} onClick={c.go}>{busy ? <>Running <InlineDots color="#fff" /></> : "Approve and run"}</Btn></div>
+      </div>}
+    </Modal>
+  );
+}
+// Runs a paid sourcing action: Admins confirm the cost first; anyone else's click goes to an
+// Admin as an approval request.
+function paidAction(S, toast, action, payload, setConfirm, onDone) {
+  return S.sourcing(action, payload).then((r) => {
+    if (r.needsConfirm) {
+      setConfirm({ title: r.title, costText: r.costText, go: () => S.sourcing(action, { ...payload, confirmed: true }).then((x) => { setConfirm(null); toast(x.message || "Done"); onDone && onDone(); }).catch((e) => { setConfirm(null); S.error(e.message); }) });
+      return;
+    }
+    toast(r.message || "Done"); onDone && onDone();
+  });
+}
+
+function ApprovalsPanel({ S, toast, onChanged }) {
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState("");
+  const load = () => S.sourcing("list_requests", {}).then(setData).catch((e) => setData({ error: e.message }));
+  React.useEffect(() => { load(); }, []); // eslint-disable-line
+  const act = (id, action) => { setBusy(id + action); S.sourcing(action, { id }).then((r) => toast(r.message || (action === "approve_request" ? "Approved" : "Declined"))).catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); onChanged && onChanged(); }); };
+  if (!data) return <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>;
+  if (data.error) return <Card><div className="text-sm" style={{ color: C.dangerFg }}>{data.error}</div></Card>;
+  const pending = data.requests.filter((r) => r.status === "pending"), done = data.requests.filter((r) => r.status !== "pending");
+  const who = (id) => (S.users.find((u) => u.id === id) || {}).name || "";
+  const tone = { approved: "info", done: "em", declined: "neutral", failed: "danger" };
+  const label = { approved: "Running", done: "Done", declined: "Declined", failed: "Failed" };
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <SectionTitle title="Waiting for approval" sub={"Anything that uses paid credits (Apollo, TheirStack) waits here until an Admin approves it. Admins are emailed when a request comes in." + (data.canApprove ? "" : " Only an Admin can approve.")} size="text-xl" />
+        <div className="flex flex-col gap-2 mt-3">
+          {pending.length ? pending.map((r) => (
+            <div key={r.id} className="rounded-xl border p-3 flex flex-col sm:flex-row sm:items-center gap-3" style={{ borderColor: C.line }}>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium">{r.title}</div>
+                <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Cost: {r.cost_text} · {r.requested_by ? "asked by " + who(r.requested_by) : "requested automatically"} · {ago(r.created_at)}</div>
+              </div>
+              {data.canApprove && <div className="flex gap-2 shrink-0">
+                <Btn disabled={!!busy} onClick={() => act(r.id, "decline_request")}>{busy === r.id + "decline_request" ? "Declining…" : "Decline"}</Btn>
+                <Btn kind="primary" disabled={!!busy} onClick={() => act(r.id, "approve_request")}>{busy === r.id + "approve_request" ? <>Running <InlineDots color="#fff" /></> : "Approve and run"}</Btn>
+              </div>}
+            </div>
+          )) : <div className="text-sm" style={{ color: C.ink2 }}>Nothing waiting.</div>}
+        </div>
+      </Card>
+      {done.length > 0 && (
+        <Card>
+          <SectionTitle title="History" size="text-xl" />
+          <div className="flex flex-col mt-2">
+            {done.slice(0, 30).map((r, i) => (
+              <div key={r.id} className="py-2.5 flex items-start justify-between gap-3" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+                <div className="min-w-0"><div className="text-sm">{r.title}</div>
+                  <div className="text-xs" style={{ color: C.ink2 }}>{r.cost_text}{r.decided_by ? " · " + (r.status === "declined" ? "declined" : "approved") + " by " + who(r.decided_by) : ""}{r.decided_at ? " · " + ago(r.decided_at) : ""}{r.result && r.result.message ? " · " + r.result.message : ""}{r.error ? " · " + r.error : ""}</div></div>
+                <Pill tone={tone[r.status] || "neutral"}>{label[r.status] || r.status}</Pill>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit }) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(p.subject || "");
@@ -4305,6 +4378,8 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
 // Job page: parallel titles, the bench result, and outside candidates found for this job.
 function JobSourcingCard({ job, S, toast }) {
   const [row, setRow] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [prospects, setProspects] = useState([]);
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState({});
@@ -4322,8 +4397,7 @@ function JobSourcingCard({ job, S, toast }) {
   const regen = () => run("titles", () => S.aiScreen("job_titles", { jobId: job.id }).then(() => toast("Parallel titles updated")));
   const outside = (force) => run("outside", async () => {
     if (!internal) await S.aiScreen("bench_fits", { jobId: job.id });
-    const r = await S.sourcing("search_external", { jobId: job.id, force });
-    toast(r.message || (r.found != null ? r.found + " people found outside Harbor" : "Done"));
+    await paidAction(S, toast, "search_external", { jobId: job.id, force }, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load);
   });
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }));
@@ -4349,7 +4423,7 @@ function JobSourcingCard({ job, S, toast }) {
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
           <div className="text-xs" style={{ color: C.ink3 }}>Outside Harbor</div>
-          <div className="text-sm mt-0.5">{external ? (external.skipped || external.error || (plural(external.found || 0, "person", "people") + " found · " + fdate(external.at))) : "Not searched yet"}</div>
+          <div className="text-sm mt-0.5">{src.state === "awaiting_approval" ? "Waiting for an Admin to approve the Apollo search (Outreach > Approvals)" : external ? (external.skipped || external.error || (plural(external.found || 0, "person", "people") + " found · " + fdate(external.at))) : "Not searched yet"}</div>
         </div>
       </div>
       {canRun && prospects.length > 0 && (
@@ -4367,6 +4441,7 @@ function JobSourcingCard({ job, S, toast }) {
           </div>
         </div>
       )}
+      <SpendConfirm c={confirm} busy={confirmBusy} onClose={() => setConfirm(null)} />
     </Card>
   );
 }
@@ -4525,7 +4600,9 @@ function OutreachSetup({ S, toast, status, onSaved }) {
 }
 
 function CampaignsPage({ toast, S }) {
-  const [tab, setTab] = useState("candidates");
+  const [tab, setTab] = useState(() => (new URLSearchParams(window.location.search).get("tab") === "approvals" ? "approvals" : "candidates"));
+  const [confirm, setConfirm] = useState(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [status, setStatus] = useState(null);
   const [prospects, setProspects] = useState(null);
   const [leads, setLeads] = useState(null);
@@ -4570,7 +4647,7 @@ function CampaignsPage({ toast, S }) {
           <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
         </div>
       ) : null}
-      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "leads", label: "Client leads" }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); }} />
+      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); }} />
 
       {tab === "candidates" && (
         <Card>
@@ -4598,7 +4675,7 @@ function CampaignsPage({ toast, S }) {
             <div className="flex gap-2 shrink-0 flex-wrap">
               {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
               {pendingLeads > 0 && <Btn disabled={!!busy} onClick={() => run("process", () => S.sourcing("process_leads", {}).then((r) => toast("Checked " + (r.processed || 0) + ", kept " + (r.kept || 0))))}>{busy === "process" ? "Checking…" : "Check " + pendingLeads + " waiting"}</Btn>}
-              <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => S.sourcing("fetch_leads", {}).then((r) => toast(r.message || "Fetched")))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
+              <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
           <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning Harbor pulls new postings in your target regions for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
@@ -4610,6 +4687,8 @@ function CampaignsPage({ toast, S }) {
         </Card>
       )}
 
+      {tab === "approvals" && <ApprovalsPanel S={S} toast={toast} onChanged={load} />}
+      <SpendConfirm c={confirm} busy={confirmBusy} onClose={() => setConfirm(null)} />
       {tab === "setup" && (status ? (status.error ? <Card><div className="text-sm" style={{ color: C.dangerFg }}>Couldn't load outreach status. Try again in a moment.</div></Card> : <OutreachSetup key={JSON.stringify(status.settings)} S={S} toast={toast} status={status} onSaved={load} />) : <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>)}
     </div>
   );

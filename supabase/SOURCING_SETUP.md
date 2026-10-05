@@ -69,6 +69,14 @@ law (CAN-SPAM in the US, GDPR in Europe, PDPA in Malaysia) requires the address 
 unsubscribe link in every email. Harbor adds these, plus a "why you're getting this" notice for
 people outside the US, automatically.
 
+## Spending needs an Admin's approval
+
+Nothing that costs credits runs on its own. When a job's bench is short, or the daily client-lead
+feed is due, Harbor creates a request in **Outreach → Approvals** with the estimated cost and emails
+every Admin. It runs only when an Admin clicks **Approve and run** (or is declined, and nothing is
+spent). When an Admin clicks "Search outside Harbor" or "Fetch today's jobs" themselves, they confirm
+the cost first; when Rec Ops clicks them, it becomes a request for an Admin.
+
 ## How sending works
 
 - **Approval**: by default a person approves every email (Outreach → Candidate outreach or

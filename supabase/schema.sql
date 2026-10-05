@@ -1504,3 +1504,30 @@ select cron.schedule('harbor-interviews-tick', '*/10 * * * *', $$select public.c
 
 -- migration: idle_timeout
 alter table public.agency_settings add column if not exists idle_timeout_minutes int not null default 30 check (idle_timeout_minutes between 5 and 480);
+
+-- migration: spend_approvals
+-- Paid work (Apollo, TheirStack) waits here until an Admin approves it.
+create table if not exists public.spend_requests (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null check (kind in ('apollo_search','leads_fetch')),
+  job_id uuid references public.jobs(id) on delete cascade,
+  title text not null,
+  est_apollo int not null default 0,
+  est_theirstack int not null default 0,
+  cost_text text,
+  payload jsonb not null default '{}',
+  status text not null default 'pending' check (status in ('pending','approved','declined','done','failed')),
+  requested_by uuid references public.profiles(id) on delete set null,
+  decided_by uuid references public.profiles(id) on delete set null,
+  decided_at timestamptz,
+  result jsonb,
+  error text,
+  created_at timestamptz not null default now()
+);
+create index if not exists spend_requests_status_idx on public.spend_requests(status, created_at desc);
+alter table public.spend_requests enable row level security;
+revoke insert, update, delete on public.spend_requests from anon, authenticated;
+do $$ begin
+  if not exists (select 1 from pg_policies where tablename='spend_requests' and policyname='spend_requests_staff_read') then
+    create policy spend_requests_staff_read on public.spend_requests for select to authenticated using (public.is_staff()); end if;
+end $$;
