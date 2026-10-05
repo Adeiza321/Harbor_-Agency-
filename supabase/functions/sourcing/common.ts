@@ -112,3 +112,32 @@ export function scrub(text: string, cands: any[]): string {
   }
   return t;
 }
+
+// ---- Never pitch someone to their own (current or former) employer ----
+const CO_SUFFIX = /\b(the|inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|companies|and|plc|gmbh|ag|sa|bv|nv|group|holdings?|international|intl)\b/g;
+export function normCompany(v: unknown): string {
+  return String(v || "").toLowerCase().replace(/&/g, " ").replace(/[^a-z0-9 ]+/g, " ").replace(CO_SUFFIX, " ").replace(/\s+/g, " ").trim();
+}
+// Same company: equal once normalised, or one is the other plus extra words ("Bill" / "Bill.com").
+export function sameCompany(a: unknown, b: unknown): boolean {
+  const x = normCompany(a), y = normCompany(b);
+  if (x.length < 2 || y.length < 2) return false;
+  return x === y || x.startsWith(y + " ") || y.startsWith(x + " ");
+}
+export function workedAt(employers: unknown[], company: unknown): boolean {
+  return employers.some((e) => String(e || "").split(/[,/;]| and /i).some((part) => sameCompany(part, company)) || sameCompany(e, company));
+}
+// Every employer we know a Harbor candidate has had: current employer plus the employers looked
+// up from their resume.
+export const candEmployers = (c: any): string[] =>
+  [c.current_company, ...(Array.isArray(c.industries) ? c.industries.map((x: any) => x?.company) : [])].filter(Boolean).map(String);
+// Employers in an Apollo profile's history line ("Title at Company (2019-01 to now); ...").
+export const historyEmployers = (h: string): string[] => [...String(h || "").matchAll(/ at (.+?) \(/g)].map((m) => m[1]);
+
+// The job description as an outside candidate may see it: the client's name taken out.
+export function anonymizeJd(desc: unknown, client: unknown): string {
+  let t = String(desc || "").trim();
+  const name = String(client || "").trim();
+  if (name.length >= 2) t = t.replace(new RegExp("\\b" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "('s)?\\b", "gi"), (_m: string, poss?: string) => (poss ? "our client's" : "our client"));
+  return t;
+}

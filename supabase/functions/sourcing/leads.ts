@@ -11,7 +11,7 @@ import { searchJobs, theirstackKey } from "./theirstack.ts";
 import { apolloKey, matchByName } from "./apollo.ts";
 import { countryCode, regionOf, targetCodes } from "./regions.ts";
 import { emailHash } from "./send.ts";
-import { anonSummary, candTitles, isBusy, scrub, titlesMatch, type Settings } from "./common.ts";
+import { anonSummary, candEmployers, candTitles, isBusy, scrub, titlesMatch, workedAt, type Settings } from "./common.ts";
 
 export async function pitchableCandidates(admin: any) {
   const { data } = await admin.from("candidates")
@@ -43,7 +43,8 @@ export async function fetchLeads(admin: any, s: Settings) {
 }
 
 export async function processLead(admin: any, lead: any, s: Settings) {
-  const cands = await pitchableCandidates(admin);
+  // Never pitch a candidate to a company they work for or have worked for.
+  const cands = (await pitchableCandidates(admin)).filter((c: any) => !workedAt(candEmployers(c), lead.company));
   const pool = cands.map((c: any) => ({ c, score: titlesMatch([lead.job_title], candTitles(c)) }))
     .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score).slice(0, 3).map((x: any) => x.c);
   const ignore = async (why: string) => { await admin.from("leads").update({ status: "ignored", notes: why }).eq("id", lead.id); return { ok: true, kept: false, why }; };

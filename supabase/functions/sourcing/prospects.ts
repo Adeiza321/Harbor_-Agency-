@@ -11,7 +11,7 @@ import { askAI } from "./ai.ts";
 import { searchPeople, matchById, apolloKey, type ApolloPerson } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, jobCountryCode, regionOf, targetCodes } from "./regions.ts";
 import { emailHash, normEmail } from "./send.ts";
-import type { Settings } from "./common.ts";
+import { anonymizeJd, historyEmployers, sameCompany, workedAt, type Settings } from "./common.ts";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -126,7 +126,8 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
   const { hits, total } = await searchPeople({ titles, locations, perPage: 100 });
   const { data: existing } = await admin.from("prospects").select("external_id,status").or(`job_id.eq.${jobId},status.eq.unsubscribed`);
   const seen = new Set((existing || []).map((x: any) => x.external_id));
-  const fresh = hits.filter((h) => h.has_email && !seen.has(h.id));
+  // Never approach people who work for the client: they'd be pitched their own employer's job.
+  const fresh = hits.filter((h) => h.has_email && !seen.has(h.id) && !sameCompany(h.company, job.client));
   if (!fresh.length) { await record({ searched: total, ranked: 0, revealed: 0, kept: 0 }); return { ok: true, found: 0, message: "Apollo found nobody new for this job." }; }
 
   // 2. Rank on what the search shows (free), so credits go only to the likeliest fits.
@@ -152,6 +153,8 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     if (sup) continue;
     const pc = countryCode(p.country);
     if (pc && !allowed.includes(pc)) continue;
+    // Nor anyone who has worked there before (from their full employment history).
+    if (workedAt([p.company, ...historyEmployers(p.history)], job.client)) continue;
     people.push(p);
   }
   if (!people.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0 }); return { ok: true, found: 0, message: "No new people with verified emails matched." }; }
@@ -175,9 +178,9 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     "(3) say we're recruiting for the role (title, seniority, location or remote, and pay if given) and came across their profile in a professional-contacts database while searching for people with their experience (never claim we met, were referred, or saw them on LinkedIn). " +
     "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. " +
     "(4) say we think they'd be a good fit because ... and give the specific reasons from their title, employer and work history (one or two sentences). " +
-    "(5) the line: 'You can read the full job description here: {{JOB_LINK}}' " +
+    "(5) the line 'Here's the full job description:' and, on the next line, exactly {{JOB_DESCRIPTION}} (it is replaced with the description; don't summarise it yourself). " +
     "(6) the line: 'If it feels like a good fit, click here to let me know you're interested: {{INTERESTED_LINK}} (or just reply to this email).' " +
-    "(7) a sign-off line with only the sender's first name. No postscript, no footer, no unsubscribe text (added separately). Keep {{JOB_LINK}} and {{INTERESTED_LINK}} exactly as written.";
+    "(7) a sign-off line with only the sender's first name. No postscript, no footer, no unsubscribe text (added separately). Keep {{JOB_DESCRIPTION}} and {{INTERESTED_LINK}} exactly as written. The 90-140 words don't include the job description.";
   const who = keep.map((p) => `id=${p.id} | first name: ${p.first_name} | ${p.title} at ${p.company} | ${p.history.slice(0, 300)}`).join("\n");
   const { data: ag } = await admin.from("agency_settings").select("agency_name").limit(1).maybeSingle();
   const sender = `Sender first name: ${(s.senderName || "").split(" ")[0] || "the recruiter"}\nSender title: ${s.senderTitle || "(not given)"}\nAgency name: ${String(ag?.agency_name || "").trim() || "(not given)"}`;
@@ -194,7 +197,9 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
       title: p.title, company: p.company, location: [p.city, p.state].filter(Boolean).join(", "), country: cc || p.country, region: regionOf(cc),
       linkedin_url: p.linkedin_url, email: p.email, email_status: p.email_status,
       fit: Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0))), verdict: String(r.verdict || ""), fit_reason: String(r.reason || "").slice(0, 300),
-      subject: String(m.subject || `${job.role_title} opportunity`).slice(0, 120), body: String(m.body || "").slice(0, 3000),
+      subject: String(m.subject || `${job.role_title} opportunity`).slice(0, 120),
+      // The full description goes in the email itself, with the client's name taken out.
+      body: String(m.body || "").slice(0, 3000).replace("{{JOB_DESCRIPTION}}", anonymizeJd(job.description, job.client).slice(0, 6000) || "(see the link below)"),
       status: "found", data: { history: p.history, domain: p.domain },
     };
   });
