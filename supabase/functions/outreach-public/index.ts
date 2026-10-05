@@ -3,7 +3,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // Public endpoint behind the links in outreach emails (no login; the random token in the link
 // identifies the person). The page itself is Harbor's app at /?u=<token>&k=p|l&a=<action>,
 // which calls this function:
-//   info         what the link is about (role, company) so the page can show it
+//   info         what the link is about (role, company) so the page can show it; for a
+//                candidate, also the job description with the client's name taken out
+//   job          (page only) the job description page linked from a candidate email
 //   interested   prospect: lands in the Inbox as an application for that job
 //                lead: marked replied so a recruiter follows up
 //   unsubscribe  never emailed again (hash of the address kept on the suppression list)
@@ -40,10 +42,24 @@ Deno.serve(async (req: Request) => {
     };
 
     if (kind === "p") {
-      const { data: p } = await admin.from("prospects").select("id,job_id,first_name,full_name,email,status,jobs(role_title,location,work_setup,status)").eq("unsub_token", token).maybeSingle();
+      const { data: p } = await admin.from("prospects").select("id,job_id,first_name,full_name,email,status,jobs(role_title,location,work_setup,status,description,client,employment_type,min_pay,max_pay,currency,salary_period,commission_only)").eq("unsub_token", token).maybeSingle();
       if (!p) return json({ ok: true, gone: true });
       const job: any = (p as any).jobs || {};
-      if (action === "info") return json({ ok: true, kind, firstName: p.first_name, role: job.role_title, location: job.location, setup: job.work_setup, status: p.status });
+      if (action === "info") {
+        const { data: st } = await admin.from("agency_settings").select("agency_name,outreach").limit(1).maybeSingle();
+        // The client is never named to an outside candidate: their name is taken out of the description.
+        const client = String(job.client || "").trim();
+        const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        let description = String(job.description || "");
+        if (client.length >= 2) description = description.replace(new RegExp("\\b" + esc(client) + "('s)?\\b", "gi"), (_m: string, poss?: string) => (poss ? "our client's" : "our client"));
+        const showPay = !!st?.outreach?.includePay && !job.commission_only && (job.min_pay || job.max_pay);
+        let money = (n: number) => String(n);
+        try { const f = new Intl.NumberFormat("en-US", { style: "currency", currency: job.currency || "USD", maximumFractionDigits: 0 }); money = (n: number) => f.format(n); } catch (_) { /* unknown currency code */ }
+        const per = ({ yearly: "a year", monthly: "a month", weekly: "a week", daily: "a day", hourly: "an hour" } as Record<string, string>)[String(job.salary_period || "Yearly").toLowerCase()] || "";
+        const pay = showPay ? [job.min_pay, job.max_pay].filter(Boolean).map((n: number) => money(Number(n))).join(" – ") + (per ? " " + per : "") : "";
+        return json({ ok: true, kind, firstName: p.first_name, role: job.role_title, location: job.location, setup: job.work_setup, employment: job.employment_type || "",
+          pay, description: job.status === "Closed" ? "" : description.slice(0, 20000), closed: job.status === "Closed", agencyName: String(st?.agency_name || "").trim(), status: p.status });
+      }
       if (action === "unsubscribe") {
         await suppress(p.email, "unsubscribed");
         await admin.from("prospects").update({ status: "unsubscribed" }).eq("id", p.id);

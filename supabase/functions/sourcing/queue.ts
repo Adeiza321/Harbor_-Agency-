@@ -6,11 +6,12 @@ import { emailHash, provider, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
 
 export const portalBase = () => (Deno.env.get("PORTAL_BASE_URL") || "https://harbor.link").replace(/\/+$/, "");
-export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "unsubscribe" | "delete") =>
+export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "unsubscribe" | "delete" | "job") =>
   `${portalBase()}/?u=${token}&k=${kind}&a=${action}`;
 
 function finalBody(body: string, token: string, kind: "p" | "l", region: Region, s: Settings, agencyName: string, who: "candidate" | "client") {
-  const text = String(body || "").replace(/\{\{INTERESTED_LINK\}\}/g, linkFor(token, kind, "interested")).trim();
+  const text = String(body || "").replace(/\{\{INTERESTED_LINK\}\}/g, linkFor(token, kind, "interested"))
+    .replace(/\{\{JOB_LINK\}\}/g, linkFor(token, kind, "job")).trim();
   const sender = [s.senderName, s.senderTitle].filter(Boolean).join(", ");
   return text + "\n" + footerText(region, { senderName: sender, agencyName, businessAddress: s.businessAddress,
     unsubUrl: linkFor(token, kind, "unsubscribe"), deleteUrl: linkFor(token, kind, "delete") }, who);

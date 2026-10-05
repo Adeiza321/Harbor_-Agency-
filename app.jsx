@@ -4963,6 +4963,24 @@ function OutreachLinkPage({ token, kind, action }) {
   else if (done === "closed") bodyEl = <div className="text-sm">Sorry, this role has just been filled. We'll keep you in mind for similar ones.</div>;
   else if (done === "unsubscribed") bodyEl = <div className="text-sm">You're unsubscribed. We won't email you again.</div>;
   else if (done === "deleted") bodyEl = <div className="text-sm">Done. We've deleted your details and won't contact you again.</div>;
+  else if (action === "job" && kind === "p") {
+    // The job description page linked from a candidate email (the client's name is taken out).
+    const facts = [info.location, info.setup, info.employment, info.pay].filter(Boolean);
+    bodyEl = info.closed ? <div className="text-sm">Sorry, this role has just been filled. We'll keep you in mind for similar ones.</div> : (
+      <>
+        <div className="text-xs mb-1" style={{ color: C.ink3 }}>{info.firstName ? "For " + info.firstName : "Job description"}</div>
+        <div className="text-2xl md:text-3xl" style={{ ...SERIF }}>{role || "The role"}</div>
+        {facts.length > 0 && <div className="flex flex-wrap gap-1.5 mt-2">{facts.map((f) => <Pill key={f} tone="neutral">{f}</Pill>)}</div>}
+        {info.description && <div className="text-sm mt-5 whitespace-pre-wrap leading-relaxed" style={{ color: C.ink }}>{info.description}</div>}
+        <div className="mt-6 pt-5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
+          <div className="text-sm flex-1" style={{ color: C.ink2 }}>Feels like a good fit? Let us know and a recruiter will be in touch.</div>
+          <Btn kind="primary" disabled={busy} onClick={() => go("interested")}>{busy ? "One moment…" : "I'm interested"}</Btn>
+        </div>
+        <div className="text-xs mt-4" style={{ color: C.ink3 }}>Not for you? <button className="underline" disabled={busy} onClick={() => go("unsubscribe")}>Unsubscribe</button> · <button className="underline" disabled={busy} onClick={() => go("delete")}>Delete my details</button></div>
+        {err && <div className="text-xs mt-3" style={{ color: C.dangerFg }}>{err}</div>}
+      </>
+    );
+  }
   else {
     const labels = { interested: "Yes, I'm interested", unsubscribe: "Unsubscribe", delete: "Delete my details" };
     const main = labels[action] ? action : "interested";
@@ -4981,8 +4999,8 @@ function OutreachLinkPage({ token, kind, action }) {
   }
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
-      <div className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
-        <div className="text-2xl mb-3" style={{ ...SERIF }}>Harbor</div>
+      <div className={"w-full rounded-2xl border p-6 " + (action === "job" && kind === "p" && !done ? "max-w-2xl md:p-8" : "max-w-sm")} style={{ background: "#fff", borderColor: C.line }}>
+        <div className="text-2xl mb-3" style={{ ...SERIF }}>{(info && info.agencyName) || "Harbor"}</div>
         {bodyEl}
       </div>
     </div>

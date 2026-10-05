@@ -169,13 +169,15 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
 
   // 5. Draft a short, personal email for each.
   const mailSys = "You write short, honest recruiting emails to professionals who have not heard from us before. Reply with STRICT JSON only: " +
-    "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 90-140 words, plain text, " +
-    "start 'Hi <first name>,'. Then open in this order: (1) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given (e.g. 'I'm Ahmed, a recruiter at Harbor Agency.'); " +
-    "(2) say honestly how we came across them: their profile came up in a professional-contacts database while we were looking for people with their kind of experience in their area (never claim we met, were referred, or saw them on LinkedIn); " +
-    "(3) say specifically why we think they're a good fit, from their title, employer and work history (one or two sentences). " +
-    "Then describe the role (title, seniority, location or remote, and pay if given), " +
-    "NEVER name the hiring company (say e.g. 'a US fintech' from the description), then ask if they're open to a quick chat and end the body with the line: " +
-    "'If you're interested, click here: {{INTERESTED_LINK}} or just reply to this email.' Then a sign-off line with only the sender's first name. No postscript, no footer, no unsubscribe text (added separately).";
+    "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 90-140 words, plain text, in this order: " +
+    "(1) 'Hi <first name>,' " +
+    "(2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given (e.g. 'I'm Ahmed, a recruiter at Harbor Agency.'). " +
+    "(3) say we're recruiting for the role (title, seniority, location or remote, and pay if given) and came across their profile in a professional-contacts database while searching for people with their experience (never claim we met, were referred, or saw them on LinkedIn). " +
+    "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. " +
+    "(4) say we think they'd be a good fit because ... and give the specific reasons from their title, employer and work history (one or two sentences). " +
+    "(5) the line: 'You can read the full job description here: {{JOB_LINK}}' " +
+    "(6) the line: 'If it feels like a good fit, click here to let me know you're interested: {{INTERESTED_LINK}} (or just reply to this email).' " +
+    "(7) a sign-off line with only the sender's first name. No postscript, no footer, no unsubscribe text (added separately). Keep {{JOB_LINK}} and {{INTERESTED_LINK}} exactly as written.";
   const who = keep.map((p) => `id=${p.id} | first name: ${p.first_name} | ${p.title} at ${p.company} | ${p.history.slice(0, 300)}`).join("\n");
   const { data: ag } = await admin.from("agency_settings").select("agency_name").limit(1).maybeSingle();
   const sender = `Sender first name: ${(s.senderName || "").split(" ")[0] || "the recruiter"}\nSender title: ${s.senderTitle || "(not given)"}\nAgency name: ${String(ag?.agency_name || "").trim() || "(not given)"}`;
