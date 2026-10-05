@@ -4,7 +4,7 @@ import {
   CreditCard, Megaphone, Search, Bell, ChevronDown, ChevronRight, ChevronLeft,
   Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
-  Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info,
+  Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
 } from "lucide-react";
 
 /* Design tokens */
@@ -206,7 +206,17 @@ function mapAll(d) {
   const secByUser = {};
   (d.profileSecurity || []).forEach((s) => { secByUser[s.user_id] = { lastIp: s.last_ip || "", lastLocation: s.last_location || "", lastLoginAt: s.last_login_at ? new Date(s.last_login_at).getTime() : null }; });
   const users = d.profiles.map(mapUser).map((u) => ({ ...u, security: secByUser[u.id] || { lastIp: "", lastLocation: "", lastLoginAt: null } }));
-  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users,
+  const candName = {}; d.candidates.forEach((c) => (candName[c.id] = c.name));
+  const jobRow = {}; d.jobs.forEach((j) => (jobRow[j.id] = j));
+  const interviews = (d.interviews || []).map((i) => {
+    const start = new Date(i.starts_at).getTime(), j = jobRow[i.job_id] || null;
+    return { id: i.id, candidateId: i.candidate_id, candidateName: candName[i.candidate_id] || "Candidate", jobId: i.job_id, linkId: i.link_id, roleTitle: j ? j.role_title : "", client: j ? j.client : "",
+      round: i.round || "1st round", start, end: start + (i.duration_min || 60) * 60000, durationMin: i.duration_min || 60, locationType: i.location_type || "meet", location: i.location || "", meetUrl: i.meet_url || "",
+      notes: i.notes || "", recruiterId: i.recruiter_id, recruiter: pname(i.recruiter_id), schedulerTz: i.scheduler_tz, candidateTz: i.candidate_tz, clientTz: i.client_tz,
+      status: i.status, decision: i.decision, feedback: i.feedback || "", confirmed: !!i.candidate_confirmed_at, googleEventId: i.google_event_id, googleError: i.google_error || "",
+      sendReminders: i.send_reminders !== false, noshowSent: i.noshow_followup_sent_at || null };
+  });
+  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews,
     settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
       integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV" } };
@@ -934,6 +944,7 @@ const NAV_RECOPS = [
   { key: "inbox", label: "Inbox", icon: InboxIcon },
   { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "jobs", label: "Jobs", icon: Briefcase },
+  { key: "interviews", label: "Interviews", icon: Calendar },
   { key: "campaigns", label: "Outreach", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
   { key: "ads", label: "Ads", icon: Megaphone },
@@ -947,6 +958,7 @@ const NAV_RECRUITER = [
   { key: "candidates", label: "My candidates", icon: Users },
   { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "jobs", label: "Jobs", icon: Briefcase },
+  { key: "interviews", label: "Interviews", icon: Calendar },
   { key: "campaigns", label: "Outreach", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
 ];
@@ -1140,16 +1152,17 @@ function SecurityTab({ S, toast }) {
   );
 }
 
-function MyProfilePage({ S, toast, onBack }) {
-  const [tab, setTab] = useState("account");
+function MyProfilePage({ S, toast, onBack, initialTab }) {
+  const [tab, setTab] = useState(["account", "notifications", "security", "calendar"].includes(initialTab) ? initialTab : "account");
   return (
     <div className="flex flex-col gap-5 md:gap-6 max-w-2xl">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
-      <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }]} active={tab} setActive={setTab} />
+      <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }, { key: "calendar", label: "Calendar" }]} active={tab} setActive={setTab} />
       {tab === "account" && <AccountTab S={S} toast={toast} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
       {tab === "security" && <SecurityTab S={S} toast={toast} />}
+      {tab === "calendar" && <GoogleCalendarTab S={S} toast={toast} />}
     </div>
   );
 }
@@ -1924,6 +1937,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         </div>
 
         <div className="flex flex-col gap-4">
+          <CandidateInterviewsCard candidate={candidate} S={S} toast={toast} />
           <CandidateJobsCard candidate={candidate} S={S} toast={toast} />
           <Card>
             <SectionTitle title="Candidate page" sub="Their secure link. No login needed." size="text-xl" />
@@ -3555,6 +3569,612 @@ function PromoteModal({ open, onClose, jobTitle, toast, S }) {
    ====================================================================== */
 
 /* ----------------------------------------------------------------------
+   Interviews: calendar, scheduling, outcomes. Server side is the `interviews` Edge Function
+   (Google Calendar sync, candidate emails and reminders, no-show follow-up).
+   Times are stored once (UTC) and shown in each viewer's own time zone.
+   ---------------------------------------------------------------------- */
+const MY_TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"; } catch (e) { return "UTC"; } })();
+const TZ_OPTIONS = [
+  ["Africa/Lagos", "Lagos (WAT)"], ["Europe/London", "London"], ["Europe/Dublin", "Dublin"], ["Europe/Lisbon", "Lisbon"],
+  ["Europe/Paris", "Central Europe (Paris, Berlin, Madrid)"], ["Europe/Athens", "Eastern Europe (Athens, Helsinki)"],
+  ["America/New_York", "US Eastern"], ["America/Chicago", "US Central"], ["America/Denver", "US Mountain"], ["America/Phoenix", "Arizona"],
+  ["America/Los_Angeles", "US Pacific"], ["America/Anchorage", "Alaska"], ["Pacific/Honolulu", "Hawaii"], ["America/Toronto", "Toronto"],
+  ["Asia/Kuala_Lumpur", "Malaysia"], ["Asia/Singapore", "Singapore"], ["Asia/Dubai", "Dubai"], ["Asia/Kolkata", "India"],
+  ["Africa/Nairobi", "Nairobi"], ["Africa/Johannesburg", "Johannesburg"], ["Australia/Sydney", "Sydney"], ["UTC", "UTC"],
+];
+if (!TZ_OPTIONS.some(([z]) => z === MY_TZ)) TZ_OPTIONS.unshift([MY_TZ, MY_TZ.replace(/_/g, " ")]);
+const US_TZ = { ET: "America/New_York", CT: "America/Chicago", MT: "America/Denver", PT: "America/Los_Angeles" };
+const US_STATE_TZ = {};
+"CT DE DC FL GA IN KY ME MD MA MI NH NJ NY NC OH PA RI SC VT VA WV".split(" ").forEach((s) => (US_STATE_TZ[s] = US_TZ.ET));
+"AL AR IL IA KS LA MN MS MO NE ND OK SD TN TX WI".split(" ").forEach((s) => (US_STATE_TZ[s] = US_TZ.CT));
+"CO ID MT NM UT WY".split(" ").forEach((s) => (US_STATE_TZ[s] = US_TZ.MT));
+"CA NV OR WA".split(" ").forEach((s) => (US_STATE_TZ[s] = US_TZ.PT));
+Object.assign(US_STATE_TZ, { AZ: "America/Phoenix", AK: "America/Anchorage", HI: "Pacific/Honolulu" });
+const COUNTRY_TZ = { nigeria: "Africa/Lagos", ghana: "Africa/Lagos", "united kingdom": "Europe/London", uk: "Europe/London", england: "Europe/London", scotland: "Europe/London", ireland: "Europe/Dublin", portugal: "Europe/Lisbon",
+  malaysia: "Asia/Kuala_Lumpur", singapore: "Asia/Singapore", "united arab emirates": "Asia/Dubai", uae: "Asia/Dubai", india: "Asia/Kolkata", kenya: "Africa/Nairobi", "south africa": "Africa/Johannesburg", australia: "Australia/Sydney", canada: "America/Toronto",
+  greece: "Europe/Athens", finland: "Europe/Athens", romania: "Europe/Athens", bulgaria: "Europe/Athens", estonia: "Europe/Athens", latvia: "Europe/Athens", lithuania: "Europe/Athens", cyprus: "Europe/Athens" };
+["france", "germany", "spain", "italy", "netherlands", "belgium", "austria", "switzerland", "sweden", "norway", "denmark", "poland", "czech republic", "hungary", "luxembourg", "croatia", "slovenia", "slovakia", "malta"].forEach((c) => (COUNTRY_TZ[c] = "Europe/Paris"));
+// Best guess of a time zone from "Austin, TX", "Tulsa, Oklahoma", "Lagos, Nigeria", "Remote (US)"...
+const US_STATE_NAMES = { alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD", massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS", missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT", virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY" };
+function guessTz(...places) {
+  for (const raw of places) {
+    const s = String(raw || "").trim(); if (!s) continue;
+    const low = s.toLowerCase();
+    const abbr = (s.match(/\b[A-Z]{2}\b/g) || []).find((t) => US_STATE_TZ[t]);
+    if (abbr) return US_STATE_TZ[abbr];
+    const named = Object.keys(US_STATE_NAMES).sort((a, b) => b.length - a.length).find((n) => new RegExp("\\b" + n + "\\b").test(low));
+    if (named) return US_STATE_TZ[US_STATE_NAMES[named]];
+    const country = Object.keys(COUNTRY_TZ).sort((a, b) => b.length - a.length).find((n) => new RegExp("\\b" + n + "\\b").test(low));
+    if (country) return COUNTRY_TZ[country];
+    if (/united states?|\busa?\b/i.test(s)) return US_TZ.ET;
+    if (/lagos|abuja/i.test(s)) return "Africa/Lagos";
+    if (/london/i.test(s)) return "Europe/London";
+    if (/kuala lumpur/i.test(s)) return "Asia/Kuala_Lumpur";
+  }
+  return "";
+}
+// Offset of a zone from UTC at a moment, in ms.
+function tzOffset(ms, tz) {
+  try {
+    const p = {}; new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).forEach((x) => (p[x.type] = x.value));
+    return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+  } catch (e) { return 0; }
+}
+// "2026-10-01" + "17:00" in Africa/Lagos -> UTC ms.
+function zonedToUtc(dateStr, timeStr, tz) {
+  const [y, m, d] = String(dateStr).split("-").map(Number), [hh, mm] = String(timeStr || "00:00").split(":").map(Number);
+  const guess = Date.UTC(y, m - 1, d, hh || 0, mm || 0);
+  let t = guess - tzOffset(guess, tz);
+  t = guess - tzOffset(t, tz);
+  return t;
+}
+const zoned = (ms, tz) => { const off = tzOffset(ms, tz); const d = new Date(ms + off); return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate(), wd: d.getUTCDay(), h: d.getUTCHours(), min: d.getUTCMinutes() }; };
+const pad2 = (n) => String(n).padStart(2, "0");
+const ymdIn = (ms, tz) => { const z = zoned(ms, tz); return z.y + "-" + pad2(z.m + 1) + "-" + pad2(z.d); };
+const hmIn = (ms, tz) => { const z = zoned(ms, tz); return pad2(z.h) + ":" + pad2(z.min); };
+const TZ_ABBR = { "Africa/Lagos": "WAT", "Asia/Kuala_Lumpur": "MYT", "Asia/Singapore": "SGT", "Asia/Dubai": "GST", "Africa/Nairobi": "EAT", "Africa/Johannesburg": "SAST", "Asia/Kolkata": "IST" };
+function tzAbbr(ms, tz) {
+  if (TZ_ABBR[tz]) return TZ_ABBR[tz];
+  try { return new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(ms)).find((x) => x.type === "timeZoneName").value; } catch (e) { return tz; }
+}
+const fmtDay = (ms, tz) => { try { return new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short" }).format(new Date(ms)); } catch (e) { return fdate(ms); } };
+const fmtDayLong = (ms, tz) => { try { return new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "long", day: "numeric", month: "long" }).format(new Date(ms)); } catch (e) { return fdate(ms); } };
+const tzLabel = (tz) => (TZ_OPTIONS.find(([z]) => z === tz) || [tz, String(tz || "").replace(/_/g, " ")])[1];
+const ROUNDS = ["1st round", "2nd round", "3rd round", "Final round", "Technical test", "Phone screen", "Other"];
+const nextRound = (r) => ({ "Phone screen": "1st round", "1st round": "2nd round", "2nd round": "3rd round", "3rd round": "Final round" }[r] || r);
+const IV_STATUS = { scheduled: "Scheduled", done: "Took place", no_show: "Candidate no-show", client_cancelled: "Client cancelled", rescheduled: "To be rescheduled", cancelled: "Cancelled" };
+const IV_DECISION = { next_round: "Through to next round", offer: "Offer", client_reject: "Client reject", waiting: "Waiting for feedback" };
+const WHERE = { meet: "Google Meet", link: "Client's video link", phone: "Phone", in_person: "In person" };
+const ivJobOf = (iv, S) => S.jobs.find((j) => j.id === iv.jobId) || null;
+const ivCandOf = (iv, S) => S.cands.find((c) => c.id === iv.candidateId) || null;
+const needsOutcome = (iv) => iv.status === "scheduled" && iv.end < Date.now();
+// Clashes: two upcoming interviews overlapping for the same recruiter or the same candidate.
+function clashesOf(list) {
+  const out = new Set(); const live = list.filter((i) => i.status === "scheduled").sort((a, b) => a.start - b.start);
+  for (let a = 0; a < live.length; a++) for (let b = a + 1; b < live.length && live[b].start < live[a].end; b++) {
+    if ((live[a].recruiterId && live[a].recruiterId === live[b].recruiterId) || live[a].candidateId === live[b].candidateId) { out.add(live[a].id); out.add(live[b].id); }
+  }
+  return out;
+}
+function ivTone(iv, clash) {
+  if (iv.status !== "scheduled" || iv.end < Date.now()) return { bg: "#EFEBE1", fg: "#3E4742", border: "transparent" };
+  const base = iv.confirmed ? { bg: C.emTint, fg: "#14503C" } : { bg: C.warnBg, fg: "#7A4B05" };
+  return { ...base, border: clash ? C.dangerFg : "transparent" };
+}
+
+function GoogleChip({ S }) {
+  const [st, setSt] = useState(null);
+  React.useEffect(() => { S.ivQuiet("google_status", {}).then(setSt).catch(() => setSt({ error: true })); }, []); // eslint-disable-line
+  if (!st || st.error) return null;
+  const ok = st.connected && !st.lastError;
+  return (
+    <button onClick={() => S.goProfile && S.goProfile("calendar")} className="flex items-center gap-2 rounded-xl border px-3 py-2 text-xs md:text-sm" style={{ borderColor: C.line, background: "#fff", color: C.ink }}>
+      <span className="w-2 h-2 rounded-full" style={{ background: ok ? C.em : st.connected ? C.dangerFg : "#B9B5AA" }} />
+      {st.connected ? (st.lastError ? "Google Calendar needs attention" : "Google Calendar connected") : "Connect Google Calendar"}
+    </button>
+  );
+}
+
+// Week grid: the viewer's own time zone; overlapping interviews sit side by side.
+function WeekGrid({ days, list, clash, onOpen }) {
+  const HOUR = 52;
+  const inDay = (d) => list.filter((iv) => ymdIn(iv.start, MY_TZ) === d.ymd);
+  const mins = list.flatMap((iv) => { const z = zoned(iv.start, MY_TZ); return [z.h, Math.ceil((z.h * 60 + z.min + iv.durationMin) / 60)]; });
+  const from = Math.min(8, ...mins), to = Math.max(19, ...mins.map((m) => Math.min(m, 24)));
+  const hours = []; for (let h = from; h < to; h++) hours.push(h);
+  const now = Date.now(), todayYmd = ymdIn(now, MY_TZ), nz = zoned(now, MY_TZ);
+  const lay = (items) => {
+    const sorted = items.slice().sort((a, b) => a.start - b.start); const lanes = []; const pos = {};
+    sorted.forEach((iv) => { let l = lanes.findIndex((end) => end <= iv.start); if (l < 0) { l = lanes.length; lanes.push(0); } lanes[l] = iv.end; pos[iv.id] = l; });
+    return { pos, n: Math.max(1, lanes.length) };
+  };
+  return (
+    <div className="overflow-x-auto">
+      <div style={{ minWidth: 60 + days.length * 84 }}>
+        <div className="grid gap-1.5 pb-2 text-xs" style={{ gridTemplateColumns: `44px repeat(${days.length}, minmax(0, 1fr))`, borderBottom: `1px solid ${C.line}`, color: C.ink2 }}>
+          <div />
+          {days.map((d) => (
+            <div key={d.ymd} className="px-1.5 flex items-center gap-1.5">{d.wd}
+              <span className={d.ymd === todayYmd ? "rounded-full px-2 font-semibold" : "font-semibold"} style={d.ymd === todayYmd ? { background: C.em, color: "#fff" } : { color: C.ink, fontSize: 14 }}>{d.d}</span>
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-1.5 mt-2" style={{ gridTemplateColumns: `44px repeat(${days.length}, minmax(0, 1fr))`, height: hours.length * HOUR }}>
+          <div className="relative">{hours.map((h, i) => <div key={h} className="absolute right-1.5 text-[11px]" style={{ top: i * HOUR - 6, color: C.ink2 }}>{pad2(h)}:00</div>)}</div>
+          {days.map((d) => {
+            const items = inDay(d); const { pos, n } = lay(items);
+            return (
+              <div key={d.ymd} className="relative" style={{ borderLeft: `1px solid #EFEBE1`, background: d.ymd === todayYmd ? "#FBFAF6" : "transparent" }}>
+                {hours.map((h, i) => <div key={h} className="absolute left-0 right-0" style={{ top: i * HOUR, borderTop: i ? "1px dashed #F0ECE3" : "none" }} />)}
+                {d.ymd === todayYmd && nz.h >= from && nz.h < to && <div className="absolute left-0 right-0" style={{ top: ((nz.h - from) * 60 + nz.min) * HOUR / 60, height: 2, background: C.dangerFg, zIndex: 2 }} />}
+                {items.map((iv) => {
+                  const z = zoned(iv.start, MY_TZ); const top = ((z.h - from) * 60 + z.min) * HOUR / 60; const h = Math.max(24, iv.durationMin * HOUR / 60 - 2);
+                  const t = ivTone(iv, clash.has(iv.id)); const w = 100 / n;
+                  return (
+                    <button key={iv.id} onClick={() => onOpen(iv)} title={iv.title} className="absolute rounded-lg px-1.5 py-1 text-left overflow-hidden"
+                      style={{ top, height: h, left: `calc(${pos[iv.id] * w}% + 2px)`, width: `calc(${w}% - 4px)`, background: t.bg, color: t.fg, border: `2px solid ${t.border}`, fontSize: 11, lineHeight: 1.25, zIndex: 1 }}>
+                      <div className="font-semibold truncate" style={{ color: C.ink }}>{iv.candidateName}</div>
+                      <div className="truncate">{hmIn(iv.start, MY_TZ)} · {iv.round}</div>
+                      {h > 50 && <div className="truncate">{iv.client}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonthGrid({ anchor, list, clash, onOpen }) {
+  const a = zoned(anchor, MY_TZ); const first = Date.UTC(a.y, a.m, 1); const startWd = (new Date(first).getUTCDay() + 6) % 7;
+  const daysIn = new Date(Date.UTC(a.y, a.m + 1, 0)).getUTCDate(); const cells = [];
+  for (let i = 0; i < startWd; i++) cells.push(null);
+  for (let d = 1; d <= daysIn; d++) cells.push(a.y + "-" + pad2(a.m + 1) + "-" + pad2(d));
+  while (cells.length % 7) cells.push(null);
+  const todayYmd = ymdIn(Date.now(), MY_TZ);
+  return (
+    <div className="overflow-x-auto"><div style={{ minWidth: 640 }}>
+      <div className="grid grid-cols-7 gap-1 text-xs mb-1" style={{ color: C.ink2 }}>{["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="px-1.5">{d}</div>)}</div>
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((ymd, i) => {
+          const items = ymd ? list.filter((iv) => ymdIn(iv.start, MY_TZ) === ymd).sort((x, y) => x.start - y.start) : [];
+          return (
+            <div key={i} className="rounded-lg p-1.5 min-h-[92px]" style={{ background: ymd ? (ymd === todayYmd ? "#FBFAF6" : "#fff") : "transparent", border: ymd ? `1px solid ${C.line}` : "none" }}>
+              {ymd && <div className="text-xs font-semibold mb-1" style={{ color: ymd === todayYmd ? C.em : C.ink }}>{Number(ymd.slice(8))}</div>}
+              <div className="flex flex-col gap-1">
+                {items.slice(0, 3).map((iv) => { const t = ivTone(iv, clash.has(iv.id)); return (
+                  <button key={iv.id} onClick={() => onOpen(iv)} className="text-left rounded px-1.5 py-0.5 text-[11px] truncate" style={{ background: t.bg, color: C.ink, border: `1.5px solid ${t.border}` }}>{hmIn(iv.start, MY_TZ)} {iv.candidateName}</button>
+                ); })}
+                {items.length > 3 && <div className="text-[11px]" style={{ color: C.ink2 }}>+{items.length - 3} more</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div></div>
+  );
+}
+
+function IvRow({ iv, onOpen, clash, showDate = true }) {
+  return (
+    <button onClick={() => onOpen(iv)} className="w-full text-left rounded-xl border p-3 flex flex-col gap-0.5" style={{ borderColor: clash ? C.dangerFg : C.line, background: "#fff" }}>
+      <div className="flex items-center justify-between gap-2 text-sm">
+        <span className="font-semibold">{showDate ? fmtDay(iv.start, MY_TZ) + " · " : ""}{hmIn(iv.start, MY_TZ)}–{hmIn(iv.end, MY_TZ)}</span>
+        {needsOutcome(iv) ? <Pill tone="neutral">Needs outcome</Pill> : iv.status === "scheduled" ? <Pill tone={iv.confirmed ? "em" : "warn"}>{iv.confirmed ? "Confirmed" : "Not confirmed"}</Pill> : <Pill tone={iv.status === "no_show" ? "danger" : "neutral"}>{iv.decision ? IV_DECISION[iv.decision] : IV_STATUS[iv.status]}</Pill>}
+      </div>
+      <div className="text-sm">{iv.candidateName}</div>
+      <div className="text-xs" style={{ color: C.ink2 }}>{[iv.round, iv.roleTitle, iv.client].filter(Boolean).join(" · ")}</div>
+      {iv.status === "scheduled" && !needsOutcome(iv) && iv.candidateTz && iv.candidateTz !== MY_TZ && <div className="text-xs" style={{ color: C.ink2 }}>Candidate: {hmIn(iv.start, iv.candidateTz)} {tzAbbr(iv.start, iv.candidateTz)}{iv.clientTz && iv.clientTz !== iv.candidateTz ? " · Client: " + hmIn(iv.start, iv.clientTz) + " " + tzAbbr(iv.start, iv.clientTz) : ""}</div>}
+    </button>
+  );
+}
+
+function InterviewsPage({ S, toast }) {
+  const [view, setView] = useState("week");
+  const [anchor, setAnchor] = useState(Date.now());
+  const [rec, setRec] = useState("All");
+  const [client, setClient] = useState("All");
+  const [open, setOpen] = useState(null);
+  const [sched, setSched] = useState(null);
+  const all = S.interviews || [];
+  const list = all.filter((iv) => (rec === "All" || iv.recruiterId === rec) && (client === "All" || iv.client === client) && iv.status !== "cancelled");
+  const clash = clashesOf(list);
+  const clients = [...new Set(all.map((i) => i.client).filter(Boolean))].sort();
+  const recs = [...new Map(all.filter((i) => i.recruiterId).map((i) => [i.recruiterId, i.recruiter])).entries()];
+  // Week starting Monday, in the viewer's zone.
+  const az = zoned(anchor, MY_TZ); const mondayUtc = Date.UTC(az.y, az.m, az.d) - ((az.wd + 6) % 7) * 864e5;
+  const week = [0, 1, 2, 3, 4, 5, 6].map((i) => { const d = new Date(mondayUtc + i * 864e5); return { ymd: d.toISOString().slice(0, 10), d: d.getUTCDate(), wd: ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][d.getUTCDay()] }; });
+  const days = week.filter((d, i) => i < 5 || list.some((iv) => ymdIn(iv.start, MY_TZ) === d.ymd));
+  const step = (dir) => setAnchor((a) => { if (view === "month") { const z = zoned(a, MY_TZ); return Date.UTC(z.y, z.m + dir, 15, 12); } return a + dir * 7 * 864e5; });
+  const rangeLabel = view === "month" ? new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" }).format(new Date(Date.UTC(az.y, az.m, 15)))
+    : fmtDay(Date.parse(week[0].ymd + "T12:00:00Z"), "UTC") + " – " + fmtDay(Date.parse(week[6].ymd + "T12:00:00Z"), "UTC");
+  const todayYmd = ymdIn(Date.now(), MY_TZ);
+  const today = list.filter((iv) => ymdIn(iv.start, MY_TZ) === todayYmd && iv.status === "scheduled").sort((a, b) => a.start - b.start);
+  const upcoming = list.filter((iv) => iv.status === "scheduled" && iv.end >= Date.now()).sort((a, b) => a.start - b.start);
+  const outcome = list.filter(needsOutcome).sort((a, b) => b.start - a.start);
+  const unconfirmed = upcoming.filter((iv) => !iv.confirmed && iv.start - Date.now() < 48 * 3600e3);
+  const gErr = upcoming.filter((iv) => iv.googleError);
+  const clashList = upcoming.filter((iv) => clash.has(iv.id));
+  const liveOpen = open ? all.find((x) => x.id === open.id) || open : null;
+  const selSt = "rounded-lg border px-2 py-1.5 text-sm bg-white";
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+        <SectionTitle size="text-3xl md:text-4xl" title="Interviews" sub={"Every client interview across your candidates. Times are in your time zone (" + tzLabel(MY_TZ) + ")."} />
+        <div className="flex gap-2 flex-wrap items-center"><GoogleChip S={S} /><Btn kind="primary" icon={Plus} onClick={() => setSched({})}>Schedule interview</Btn></div>
+      </div>
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+        <Tabs tabs={[{ key: "week", label: "Week" }, { key: "month", label: "Month" }, { key: "list", label: "Upcoming list" }]} active={view} setActive={setView} />
+        {view !== "list" && <div className="flex items-center gap-2 text-sm">
+          <button aria-label="Previous" onClick={() => step(-1)} className="w-8 h-8 rounded-lg border bg-white flex items-center justify-center" style={{ borderColor: C.line }}><ChevronLeft size={16} /></button>
+          <span className="font-semibold min-w-[150px] text-center">{rangeLabel}</span>
+          <button aria-label="Next" onClick={() => step(1)} className="w-8 h-8 rounded-lg border bg-white flex items-center justify-center" style={{ borderColor: C.line }}><ChevronRight size={16} /></button>
+          <button onClick={() => setAnchor(Date.now())} className="rounded-lg border bg-white px-3 py-1.5" style={{ borderColor: C.line }}>Today</button>
+        </div>}
+        <div className="flex gap-2 flex-wrap">
+          <label className="text-xs flex items-center gap-1.5" style={{ color: C.ink2 }}>Recruiter<select value={rec} onChange={(e) => setRec(e.target.value)} className={selSt} style={{ borderColor: C.line }}><option value="All">Everyone</option>{recs.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></label>
+          <label className="text-xs flex items-center gap-1.5" style={{ color: C.ink2 }}>Client<select value={client} onChange={(e) => setClient(e.target.value)} className={selSt} style={{ borderColor: C.line }}><option value="All">All clients</option>{clients.map((c) => <option key={c}>{c}</option>)}</select></label>
+        </div>
+      </div>
+      <div className="flex flex-col xl:flex-row gap-5">
+        <Card className="flex-1 min-w-0">
+          {view === "week" && <WeekGrid days={days} list={list} clash={clash} onOpen={setOpen} />}
+          {view === "month" && <MonthGrid anchor={anchor} list={list} clash={clash} onOpen={setOpen} />}
+          {view === "list" && (
+            <div className="flex flex-col gap-2">
+              {upcoming.length ? upcoming.map((iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />) : <div className="text-sm" style={{ color: C.ink2 }}>No upcoming interviews.</div>}
+            </div>
+          )}
+          {view !== "list" && <div className="flex flex-wrap gap-4 text-xs mt-3" style={{ color: C.ink2 }}>
+            {[[C.emTint, "transparent", "Candidate confirmed"], [C.warnBg, "transparent", "Waiting for candidate"], ["#EFEBE1", "transparent", "Done"], ["#fff", C.dangerFg, "Clash"]].map(([bg, b, l]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: bg, border: `2px solid ${b}` }} />{l}</span>)}
+          </div>}
+        </Card>
+        <div className="xl:w-[300px] shrink-0 flex flex-col gap-4">
+          <Card>
+            <SectionTitle title="Today" size="text-xl" />
+            <div className="flex flex-col gap-2 mt-3">{today.length ? today.map((iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} showDate={false} />) : <div className="text-sm" style={{ color: C.ink2 }}>No interviews today.</div>}</div>
+          </Card>
+          {(outcome.length + clashList.length + unconfirmed.length + gErr.length) > 0 && (
+            <Card>
+              <SectionTitle title="Needs attention" size="text-xl" />
+              <div className="flex flex-col gap-2 mt-3 text-sm">
+                {clashList.slice(0, 4).map((iv) => <button key={"c" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>Clash: {iv.candidateName}, {fmtDay(iv.start, MY_TZ)} {hmIn(iv.start, MY_TZ)}</button>)}
+                {outcome.slice(0, 5).map((iv) => <button key={"o" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.neutralBg, color: "#3E4742" }}>{iv.candidateName}'s {iv.round.toLowerCase()} needs an outcome</button>)}
+                {unconfirmed.slice(0, 4).map((iv) => <button key={"u" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.warnBg, color: "#7A4B05" }}>{iv.candidateName} hasn't confirmed {fmtDay(iv.start, MY_TZ)}</button>)}
+                {gErr.slice(0, 3).map((iv) => <button key={"g" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>Not in Google Calendar: {iv.candidateName}</button>)}
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+      {liveOpen && <InterviewModal iv={liveOpen} S={S} toast={toast} onClose={() => setOpen(null)} onReschedule={(iv) => { setOpen(null); setSched({ edit: iv }); }} onBookNext={(p) => { setOpen(null); setSched({ preset: p }); }} />}
+      {sched && <ScheduleModal S={S} toast={toast} edit={sched.edit} preset={sched.preset} onClose={() => setSched(null)} />}
+    </div>
+  );
+}
+
+// Schedule or reschedule.
+function ScheduleModal({ S, toast, onClose, edit, preset }) {
+  const p = preset || {};
+  const init = edit ? { candidateId: edit.candidateId, jobId: edit.jobId || "", round: edit.round, recruiterId: edit.recruiterId || S.me.id,
+    tz: edit.schedulerTz || MY_TZ, date: ymdIn(edit.start, edit.schedulerTz || MY_TZ), time: hmIn(edit.start, edit.schedulerTz || MY_TZ), duration: edit.durationMin,
+    candTz: edit.candidateTz || "", clientTz: edit.clientTz || "", where: edit.locationType, location: edit.location || "", notes: edit.notes || "", notify: edit.sendReminders !== false }
+    : { candidateId: p.candidateId || "", jobId: p.jobId || "", round: p.round || "1st round", recruiterId: p.recruiterId || S.me.id, tz: MY_TZ, date: "", time: "", duration: 60,
+      candTz: "", clientTz: "", where: p.where || "meet", location: p.location || "", notes: "", notify: true };
+  const [f, setF] = useState(init);
+  const [moveStage, setMoveStage] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [g, setG] = useState(null);
+  const [gBusy, setGBusy] = useState([]);
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const cand = S.cands.find((c) => c.id === f.candidateId) || null;
+  const links = cand ? cand.jobLinks.filter((l) => l.response !== "declined") : [];
+  const job = S.jobs.find((j) => j.id === f.jobId) || null;
+  const link = cand && f.jobId ? cand.jobLinks.find((l) => l.jobId === f.jobId) : null;
+  React.useEffect(() => { S.ivQuiet("google_status", {}).then(setG).catch(() => setG(null)); }, []); // eslint-disable-line
+  // Fill in likely time zones from the candidate's and the job's locations.
+  React.useEffect(() => { if (cand && !edit) set("candTz", guessTz(cand.location) || ""); }, [f.candidateId]); // eslint-disable-line
+  React.useEffect(() => { if (!edit) set("clientTz", job ? guessTz(job.location, job.country) || "" : ""); }, [f.jobId]); // eslint-disable-line
+  React.useEffect(() => { if (cand && !f.jobId && links.length === 1 && !edit) set("jobId", links[0].jobId); }, [f.candidateId]); // eslint-disable-line
+  const start = f.date && f.time ? zonedToUtc(f.date, f.time, f.tz) : null;
+  const end = start ? start + Number(f.duration) * 60000 : null;
+  // Busy times in the recruiter's Google Calendar that day.
+  React.useEffect(() => {
+    if (!start) { setGBusy([]); return; }
+    const dayStart = zonedToUtc(f.date, "00:00", f.tz);
+    S.ivQuiet("busy", { recruiterId: f.recruiterId, timeMin: new Date(dayStart).toISOString(), timeMax: new Date(dayStart + 864e5).toISOString() }).then((r) => setGBusy(r.busy || [])).catch(() => setGBusy([]));
+  }, [f.date, f.recruiterId, f.tz]); // eslint-disable-line
+  const others = (S.interviews || []).filter((iv) => iv.status === "scheduled" && (!edit || iv.id !== edit.id) && start && iv.start < end && iv.end > start);
+  const clashes = [
+    ...others.filter((iv) => iv.recruiterId === f.recruiterId).map((iv) => (f.recruiterId === S.me.id ? "You already have " : (S.users.find((u) => u.id === f.recruiterId) || {}).name + " already has ") + iv.candidateName + " (" + iv.round + ") " + hmIn(iv.start, MY_TZ) + "–" + hmIn(iv.end, MY_TZ) + ".")
+    , ...others.filter((iv) => iv.candidateId === f.candidateId && iv.recruiterId !== f.recruiterId).map((iv) => iv.candidateName + " already has an interview " + hmIn(iv.start, MY_TZ) + "–" + hmIn(iv.end, MY_TZ) + "."),
+    ...(start && gBusy.some((b) => Date.parse(b.start) < end && Date.parse(b.end) > start) && !others.length ? ["Busy in Google Calendar at that time."] : []),
+  ];
+  const staffUsers = (S.users || []).filter((u) => u.status === "Active" || !u.status);
+  const meetNeedsGoogle = f.where === "meet" && g && !g.connected;
+  const valid = cand && f.date && f.time && (f.where === "meet" || f.where === "phone" || (f.location || "").trim());
+  const save = async () => {
+    if (!valid) { toast(!cand ? "Pick a candidate" : !f.date || !f.time ? "Pick a date and time" : "Add the link or address"); return; }
+    setBusy(true);
+    const payload = { round: f.round, starts_at: new Date(start).toISOString(), duration_min: Number(f.duration), location_type: f.where, location: f.where === "meet" ? null : (f.location || "").trim() || null,
+      notes: f.notes.trim() || null, recruiter_id: f.recruiterId, scheduler_tz: f.tz, candidate_tz: f.candTz || null, client_tz: f.clientTz || null, send_reminders: !!f.notify };
+    try {
+      const r = edit ? await S.iv("update", { id: edit.id, patch: payload, notifyCandidate: f.notify })
+        : await S.iv("create", { ...payload, candidate_id: f.candidateId, job_id: f.jobId || null, link_id: link ? link.id : null, moveStage: moveStage && !!link, notifyCandidate: f.notify });
+      const iv = r.interview || {};
+      toast((edit ? "Interview updated" : "Interview scheduled") + (r.emailed ? ". " + cand.name.split(" ")[0] + " has been emailed." : "") + (iv.google_error ? " (Google Calendar: " + iv.google_error + ")" : ""));
+      onClose();
+    } catch (e) { toast(e.message); }
+    setBusy(false);
+  };
+  const inp = "w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const lbl = "text-xs font-medium";
+  const zoneRow = (label, tz) => tz ? <div><div className="text-[11px]" style={{ color: C.ink2 }}>{label}</div><div className="text-sm font-semibold">{start ? hmIn(start, tz) + " " + tzAbbr(start, tz) : "–"}</div></div> : null;
+  return (
+    <Modal open onClose={onClose} title={edit ? "Reschedule interview" : "Schedule an interview"} wide>
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div><label className={lbl} style={{ color: C.ink2 }}>Candidate</label>
+            <select value={f.candidateId} disabled={!!edit} onChange={(e) => setF((x) => ({ ...x, candidateId: e.target.value, jobId: "" }))} className={inp} style={inpS}>
+              <option value="">Choose a candidate…</option>
+              {S.cands.slice().sort((a, b) => a.name.localeCompare(b.name)).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select></div>
+          <div><label className={lbl} style={{ color: C.ink2 }}>Role</label>
+            <select value={f.jobId} disabled={!!edit} onChange={(e) => set("jobId", e.target.value)} className={inp} style={inpS}>
+              <option value="">{cand ? (links.length ? "Choose a role…" : "No role linked yet") : "Pick a candidate first"}</option>
+              {links.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return j ? <option key={l.id} value={j.id}>{j.role} · {j.client}</option> : null; })}
+            </select></div>
+          <div><label className={lbl} style={{ color: C.ink2 }}>Round</label>
+            <select value={f.round} onChange={(e) => set("round", e.target.value)} className={inp} style={inpS}>{(ROUNDS.includes(f.round) ? ROUNDS : [f.round, ...ROUNDS]).map((r) => <option key={r}>{r}</option>)}</select></div>
+          <div><label className={lbl} style={{ color: C.ink2 }}>Recruiter</label>
+            <select value={f.recruiterId} onChange={(e) => set("recruiterId", e.target.value)} className={inp} style={inpS}>
+              {staffUsers.map((u) => <option key={u.id} value={u.id}>{u.name}{u.id === S.me.id ? " (you)" : ""}</option>)}
+              {!staffUsers.some((u) => u.id === f.recruiterId) && <option value={f.recruiterId}>{S.me.name}</option>}
+            </select></div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div><label className={lbl} style={{ color: C.ink2 }}>Date</label><input type="date" value={f.date} onChange={(e) => set("date", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className={lbl} style={{ color: C.ink2 }}>Start</label><input type="time" value={f.time} onChange={(e) => set("time", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className={lbl} style={{ color: C.ink2 }}>Length</label><select value={f.duration} onChange={(e) => set("duration", e.target.value)} className={inp} style={inpS}>{[15, 30, 45, 60, 75, 90, 120, 180].map((m) => <option key={m} value={m}>{m < 60 ? m + " min" : m / 60 + (m === 60 ? " hour" : " hours")}</option>)}</select></div>
+          <div><label className={lbl} style={{ color: C.ink2 }}>In time zone</label><select value={f.tz} onChange={(e) => set("tz", e.target.value)} className={inp} style={inpS}>{TZ_OPTIONS.map(([z, l]) => <option key={z} value={z}>{l}</option>)}</select></div>
+        </div>
+        <div className="rounded-xl p-3 grid grid-cols-1 sm:grid-cols-3 gap-3" style={{ background: C.canvas }}>
+          {zoneRow("You · " + tzLabel(MY_TZ), MY_TZ)}
+          <div><div className="text-[11px]" style={{ color: C.ink2 }}>Candidate{cand && cand.location ? " · " + cand.location : ""}</div>
+            <select aria-label="Candidate's time zone" value={f.candTz} onChange={(e) => set("candTz", e.target.value)} className="text-xs rounded border bg-white px-1.5 py-1 mt-0.5 max-w-full" style={{ borderColor: C.line }}><option value="">Not sure</option>{TZ_OPTIONS.map(([z, l]) => <option key={z} value={z}>{l}</option>)}</select>
+            {f.candTz && start && <div className="text-sm font-semibold mt-0.5">{hmIn(start, f.candTz)} {tzAbbr(start, f.candTz)}</div>}</div>
+          <div><div className="text-[11px]" style={{ color: C.ink2 }}>Client{job && job.location ? " · " + job.location : ""}</div>
+            <select aria-label="Client's time zone" value={f.clientTz} onChange={(e) => set("clientTz", e.target.value)} className="text-xs rounded border bg-white px-1.5 py-1 mt-0.5 max-w-full" style={{ borderColor: C.line }}><option value="">Not sure</option>{TZ_OPTIONS.map(([z, l]) => <option key={z} value={z}>{l}</option>)}</select>
+            {f.clientTz && start && <div className="text-sm font-semibold mt-0.5">{hmIn(start, f.clientTz)} {tzAbbr(start, f.clientTz)}</div>}</div>
+        </div>
+        <div>
+          <div className={lbl} style={{ color: C.ink2 }}>Where</div>
+          <div className="flex gap-1.5 flex-wrap mt-1.5">{Object.entries(WHERE).map(([k, l]) => (
+            <button key={k} type="button" aria-pressed={f.where === k} onClick={() => set("where", k)} className="rounded-full px-3.5 py-2 text-sm" style={f.where === k ? { background: C.ink, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: "#fff" }}>{k === "meet" ? "Google Meet (created for you)" : l}</button>
+          ))}</div>
+          {meetNeedsGoogle && <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.warnBg, color: "#7A4B05" }}>Connect Google Calendar on My profile to create Meet links automatically. Until then, pick "Client's video link" and paste one.</div>}
+          {f.where !== "meet" && <input value={f.location} onChange={(e) => set("location", e.target.value)} placeholder={f.where === "link" ? "Paste the Zoom, Teams or Meet link" : f.where === "phone" ? "Who calls whom, and the number (optional)" : "Address"} className={inp} style={inpS} />}
+        </div>
+        <div><label className={lbl} style={{ color: C.ink2 }}>Client interviewers and notes (internal, never sent to the candidate)</label>
+          <textarea rows={2} value={f.notes} onChange={(e) => set("notes", e.target.value)} className={inp + " resize-none"} style={inpS} /></div>
+        <div className="flex flex-col gap-2 text-sm">
+          {g && g.connected && <div className="flex items-center gap-2" style={{ color: C.ink2 }}><CheckCircle2 size={15} color={C.em} />Goes into {f.recruiterId === S.me.id ? "your" : "their"} Google Calendar ("Harbor interviews")</div>}
+          <label className="flex items-center gap-2.5"><input type="checkbox" checked={f.notify} disabled={cand && !cand.emailAddr} onChange={(e) => set("notify", e.target.checked)} />
+            {cand && !cand.emailAddr ? "No email on file, so the candidate can't be emailed" : "Email " + (cand ? cand.name.split(" ")[0] : "the candidate") + (edit ? " about any change" : " the invite") + ", with reminders 24 hours and 1 hour before"}</label>
+          {!edit && link && <label className="flex items-center gap-2.5"><input type="checkbox" checked={moveStage} onChange={(e) => setMoveStage(e.target.checked)} />Move to the Interview stage for this role</label>}
+        </div>
+        {clashes.map((c, i) => <div key={i} className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>Clash: {c}</div>)}
+        <div className="flex justify-end gap-2">
+          <Btn onClick={onClose}>Cancel</Btn>
+          <Btn kind="primary" disabled={busy || !valid} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : edit ? "Save changes" : "Schedule interview"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// One interview: details, actions, and the outcome form once it has happened.
+function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
+  const [status, setStatus] = useState(iv.status === "scheduled" ? "done" : iv.status);
+  const [decision, setDecision] = useState(iv.decision || "");
+  const [feedback, setFeedback] = useState(iv.feedback || "");
+  const [busy, setBusy] = useState("");
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [notify, setNotify] = useState(true);
+  const upcoming = iv.status === "scheduled" && iv.end >= Date.now();
+  const past = iv.start <= Date.now() || iv.status !== "scheduled";
+  const cand = ivCandOf(iv, S);
+  const first = (iv.candidateName || "").split(" ")[0];
+  const run = (k, fn) => { setBusy(k); return fn().catch((e) => toast(e.message)).finally(() => setBusy("")); };
+  const saveOutcome = (bookNext) => run("save", async () => {
+    const r = await S.iv("outcome", { id: iv.id, status, decision: status === "done" ? decision || null : null, feedback });
+    toast("Saved" + (r.followup ? ". " + first + " has been sent the follow-up." : ""));
+    if (bookNext) onBookNext({ candidateId: iv.candidateId, jobId: iv.jobId, round: status === "rescheduled" || status === "no_show" || status === "client_cancelled" ? iv.round : nextRound(iv.round), recruiterId: iv.recruiterId, where: iv.locationType, location: iv.locationType === "meet" ? "" : iv.location });
+    else onClose();
+  });
+  const doCancel = () => run("cancel", () => S.iv("cancel", { id: iv.id, notifyCandidate: notify }).then((r) => { toast("Interview cancelled" + (r.emailed ? ". " + first + " has been told." : "")); setCancelOpen(false); onClose(); }));
+  const copy = () => {
+    const t = [iv.round + ": " + iv.candidateName + (iv.roleTitle ? " – " + iv.roleTitle : "") + (iv.client ? " (" + iv.client + ")" : ""),
+      fmtDayLong(iv.start, MY_TZ) + ", " + hmIn(iv.start, MY_TZ) + "–" + hmIn(iv.end, MY_TZ) + " " + tzAbbr(iv.start, MY_TZ),
+      iv.candidateTz && iv.candidateTz !== MY_TZ ? "Candidate: " + hmIn(iv.start, iv.candidateTz) + " " + tzAbbr(iv.start, iv.candidateTz) : "",
+      iv.clientTz && iv.clientTz !== MY_TZ ? "Client: " + hmIn(iv.start, iv.clientTz) + " " + tzAbbr(iv.start, iv.clientTz) : "",
+      WHERE[iv.locationType] + (iv.locationType === "meet" ? (iv.meetUrl ? ": " + iv.meetUrl : "") : iv.location ? ": " + iv.location : "")].filter(Boolean).join("\n");
+    copyText(t, toast, "Details copied");
+  };
+  const pill = (on, label, onClick, tone) => <button key={label} type="button" aria-pressed={on} onClick={onClick} className="rounded-full px-3.5 py-2 text-sm" style={on ? { background: tone || C.ink, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: "#fff" }}>{label}</button>;
+  const joinUrl = iv.locationType === "meet" ? iv.meetUrl : iv.locationType === "link" ? iv.location : null;
+  return (
+    <Modal open onClose={onClose} title={iv.round + " · " + iv.candidateName} wide>
+      <div className="flex flex-col gap-4">
+        <div className="rounded-xl p-3.5 flex flex-col gap-1" style={{ background: C.canvas }}>
+          <div className="text-sm font-semibold">{fmtDayLong(iv.start, MY_TZ)}, {hmIn(iv.start, MY_TZ)}–{hmIn(iv.end, MY_TZ)} {tzAbbr(iv.start, MY_TZ)}</div>
+          {(iv.candidateTz && iv.candidateTz !== MY_TZ) || (iv.clientTz && iv.clientTz !== MY_TZ) ? <div className="text-xs" style={{ color: C.ink2 }}>{[iv.candidateTz && iv.candidateTz !== MY_TZ ? "Candidate " + hmIn(iv.start, iv.candidateTz) + " " + tzAbbr(iv.start, iv.candidateTz) : "", iv.clientTz && iv.clientTz !== MY_TZ ? "Client " + hmIn(iv.start, iv.clientTz) + " " + tzAbbr(iv.start, iv.clientTz) : ""].filter(Boolean).join(" · ")}</div> : null}
+          <div className="text-sm" style={{ color: C.ink2 }}>{[iv.roleTitle, iv.client].filter(Boolean).join(" · ") || "No role linked"} · Recruiter {iv.recruiter || "–"}</div>
+          <div className="text-sm" style={{ color: C.ink2 }}>{WHERE[iv.locationType]}{joinUrl ? <>: <a href={joinUrl} target="_blank" rel="noreferrer" style={{ color: C.em }} className="underline break-all">{joinUrl}</a></> : iv.locationType === "meet" ? " (link appears once Google Calendar is connected)" : iv.location ? ": " + iv.location : ""}</div>
+          {iv.notes && <div className="text-sm mt-1" style={{ color: C.ink }}><span style={{ color: C.ink2 }}>Notes: </span>{iv.notes}</div>}
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {iv.status === "scheduled" && <Pill tone={iv.confirmed ? "em" : "warn"}>{iv.confirmed ? "Candidate confirmed" : "Candidate hasn't confirmed"}</Pill>}
+            {iv.status !== "scheduled" && <Pill tone="neutral">{IV_STATUS[iv.status]}</Pill>}
+            {iv.googleEventId && <Pill tone="info">In Google Calendar</Pill>}
+            {iv.googleError && <Pill tone="danger">Google: {iv.googleError.slice(0, 60)}</Pill>}
+            {iv.sendReminders && iv.status === "scheduled" && <Pill tone="neutral">Reminders on</Pill>}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {cand && <Btn onClick={() => { onClose(); S.openCandidate(cand.id); }}>Open candidate</Btn>}
+          <Btn icon={Copy} onClick={copy}>Copy details</Btn>
+          {upcoming && <Btn onClick={() => onReschedule(iv)}>Reschedule</Btn>}
+          {upcoming && <Btn onClick={() => setCancelOpen(true)}>Cancel interview</Btn>}
+        </div>
+        {past && (
+          <div className="flex flex-col gap-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+            <div className="text-lg" style={{ ...SERIF }}>How did it go?</div>
+            <div><div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Did it happen?</div>
+              <div className="flex flex-wrap gap-1.5">{pill(status === "done", "It went ahead", () => setStatus("done"))}{pill(status === "no_show", "Candidate no-show", () => setStatus("no_show"))}{pill(status === "client_cancelled", "Client cancelled", () => setStatus("client_cancelled"))}{pill(status === "rescheduled", "Rescheduled", () => setStatus("rescheduled"))}</div></div>
+            {status === "no_show" && <div className="text-xs rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{iv.noshowSent ? first + " was sent the follow-up on " + fdate(iv.noshowSent) + "." : "Saving sends " + first + " a short follow-up by email and on their candidate page: sorry we missed you, and if they'd like to reschedule, let us know."}</div>}
+            {status === "done" && <div><div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Client's decision</div>
+              <div className="flex flex-wrap gap-1.5">{Object.entries(IV_DECISION).map(([k, l]) => pill(decision === k, l, () => setDecision(decision === k ? "" : k), k === "client_reject" ? C.dangerFg : C.em))}</div>
+              {decision === "offer" && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Moves them to Offer on this role.</div>}
+              {decision === "client_reject" && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Marks this role Rejected and returns them to Active file, unless they're live on another role.</div>}
+            </div>}
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Feedback</label>
+              <textarea rows={3} value={feedback} onChange={(e) => setFeedback(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div className="flex justify-end gap-2 flex-wrap">
+              <Btn disabled={!!busy} onClick={() => saveOutcome(false)}>{busy === "save" ? <>Saving <InlineDots /></> : "Save"}</Btn>
+              {(decision === "next_round" || status === "rescheduled" || status === "client_cancelled") && <Btn kind="primary" disabled={!!busy} onClick={() => saveOutcome(true)}>{status === "done" ? "Save and book " + nextRound(iv.round).toLowerCase() : "Save and book a new time"}</Btn>}
+            </div>
+          </div>
+        )}
+      </div>
+      <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancel this interview?">
+        <div className="flex flex-col gap-3">
+          <div className="text-sm" style={{ color: C.ink2 }}>It's removed from Google Calendar and marked cancelled in Harbor.</div>
+          <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />Email {first} that it's cancelled</label>
+          <div className="flex justify-end gap-2"><Btn onClick={() => setCancelOpen(false)}>Keep it</Btn><Btn kind="danger" disabled={!!busy} onClick={doCancel}>{busy === "cancel" ? <>Cancelling <InlineDots color="#fff" /></> : "Cancel interview"}</Btn></div>
+        </div>
+      </Modal>
+    </Modal>
+  );
+}
+
+// On the candidate's profile.
+function CandidateInterviewsCard({ candidate, S, toast }) {
+  const [open, setOpen] = useState(null);
+  const [sched, setSched] = useState(null);
+  const list = (S.interviews || []).filter((iv) => iv.candidateId === candidate.id && iv.status !== "cancelled").sort((a, b) => b.start - a.start);
+  const up = list.filter((iv) => iv.status === "scheduled" && iv.end >= Date.now()).sort((a, b) => a.start - b.start);
+  const rest = list.filter((iv) => !up.includes(iv));
+  const clash = clashesOf(S.interviews || []);
+  const liveOpen = open ? (S.interviews || []).find((x) => x.id === open.id) || open : null;
+  const outcomeDue = rest.find(needsOutcome);
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Interviews" sub={list.length ? up.length + " upcoming" : "None scheduled yet."} size="text-xl" />
+        <Btn icon={Plus} className="shrink-0 text-xs px-3 py-1.5" onClick={() => setSched({ preset: { candidateId: candidate.id } })}>Schedule</Btn>
+      </div>
+      {outcomeDue && <button onClick={() => setOpen(outcomeDue)} className="w-full text-left text-sm rounded-lg px-3 py-2 mt-3" style={{ background: C.warnBg, color: "#7A4B05" }}>How did the {outcomeDue.round.toLowerCase()} on {fmtDay(outcomeDue.start, MY_TZ)} go? Record the outcome.</button>}
+      <div className="flex flex-col gap-2 mt-3">{[...up, ...rest].slice(0, 8).map((iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />)}</div>
+      {liveOpen && <InterviewModal iv={liveOpen} S={S} toast={toast} onClose={() => setOpen(null)} onReschedule={(iv) => { setOpen(null); setSched({ edit: iv }); }} onBookNext={(p) => { setOpen(null); setSched({ preset: p }); }} />}
+      {sched && <ScheduleModal S={S} toast={toast} edit={sched.edit} preset={sched.preset} onClose={() => setSched(null)} />}
+    </Card>
+  );
+}
+
+// My profile > Calendar: connect your own Google account.
+function GoogleCalendarTab({ S, toast }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState("");
+  const load = () => S.ivQuiet("google_status", {}).then(setSt).catch((e) => setSt({ error: e.message }));
+  React.useEffect(() => { load(); }, []); // eslint-disable-line
+  const connect = () => { setBusy("connect"); S.ivQuiet("google_connect", { returnTo: window.location.origin + window.location.pathname + "?page=myProfile&tab=calendar" }).then((r) => { window.location.href = r.url; }).catch((e) => { toast(e.message); setBusy(""); }); };
+  const disconnect = () => { setBusy("off"); S.ivQuiet("google_disconnect", {}).then(() => { toast("Google Calendar disconnected"); load(); }).catch((e) => toast(e.message)).finally(() => setBusy("")); };
+  const saveSetting = (k, v) => { const settings = { ...(st.settings || {}), [k]: v }; setSt({ ...st, settings }); S.ivQuiet("google_settings", { settings }).then(() => toast("Saved")).catch((e) => toast(e.message)); };
+  if (!st) return <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>;
+  const s = st.settings || {};
+  return (
+    <Card>
+      <SectionTitle title="Google Calendar" sub="Connect your own Google account. Interviews you schedule in Harbor appear in your calendar with a Meet link, and moving or cancelling them in Google updates Harbor." size="text-lg" />
+      {st.error && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{st.error}</div>}
+      {!st.configured && !st.error && <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.warnBg, color: "#7A4B05" }}>Google sign-in isn't set up for Harbor yet. An admin needs to create the Google sign-in app and add its two keys (see supabase/INTERVIEWS_SETUP.md). Interviews still work without it; you just won't get Meet links or calendar sync.</div>}
+      {st.configured && !st.connected && <Btn kind="primary" className="mt-4" disabled={!!busy} onClick={connect}>{busy === "connect" ? <>Opening Google <InlineDots color="#fff" /></> : "Connect Google Calendar"}</Btn>}
+      {st.connected && (
+        <div className="flex flex-col gap-3 mt-4">
+          <div className="flex items-center justify-between gap-3 rounded-xl px-3.5 py-3" style={{ background: C.canvas }}>
+            <div><div className="text-sm font-medium">Connected as {st.email || "your Google account"}</div><div className="text-xs" style={{ color: C.ink2 }}>Calendar: Harbor interviews{st.lastSync ? " · last synced " + ago(st.lastSync) : ""}</div></div>
+            <Btn disabled={!!busy} onClick={disconnect} className="shrink-0">Disconnect</Btn>
+          </div>
+          {st.lastError && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>{st.lastError} <button className="underline" onClick={connect}>Reconnect</button></div>}
+          <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={s.clashCheck !== false} onChange={(e) => saveSetting("clashCheck", e.target.checked)} />Warn me about clashes with my other Google events</label>
+          <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={!!s.inviteCandidate} onChange={(e) => saveSetting("inviteCandidate", e.target.checked)} />Invite the candidate from Google too (they already get Harbor's email)</label>
+        </div>
+      )}
+      <div className="text-xs mt-4" style={{ color: C.ink2 }}>Harbor only reads free/busy times and the events it created. It never reads the details of your other meetings.</div>
+    </Card>
+  );
+}
+
+// Candidate page: upcoming interviews and the no-show follow-up.
+function PortalInterviews({ list, token, onChanged }) {
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const confirm = (id) => { setBusy(id); setErr(""); sbFetch("/rest/v1/rpc/candidate_confirm_interview", { method: "POST", body: { p_token: token, p_interview_id: id } }).then(() => onChanged && onChanged()).catch((e) => setErr(e.message)).finally(() => setBusy("")); };
+  const addToCal = (iv) => {
+    const s = Date.parse(iv.startsAt), e = s + iv.durationMin * 60000;
+    const f = (ms) => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+    const clean = (t) => String(t || "").replace(/[\\;,]/g, (m) => "\\" + m).replace(/\n/g, "\\n");
+    const loc = iv.locationType === "phone" ? "Phone" + (iv.location ? " " + iv.location : "") : iv.locationType === "in_person" ? iv.location || "In person" : iv.joinUrl || "Video call";
+    const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Harbor//Interviews//EN", "BEGIN:VEVENT", "UID:" + iv.id + "@harbor", "DTSTAMP:" + f(Date.now()), "DTSTART:" + f(s), "DTEND:" + f(e),
+      "SUMMARY:" + clean(iv.round + ": " + (iv.role || "Interview") + (iv.company ? " at " + iv.company : "")), "LOCATION:" + clean(loc), "DESCRIPTION:" + clean(window.location.href), "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+    const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+    const a = document.createElement("a"); a.href = url; a.download = "interview.ics"; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  };
+  const openThread = (linkId) => { const el = document.getElementById("thread-" + linkId); if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "center" }); } };
+  const tz = MY_TZ;
+  return (
+    <>
+      {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+      {list.map((iv) => {
+        const s = Date.parse(iv.startsAt), e = s + iv.durationMin * 60000;
+        if (iv.status === "no_show") return (
+          <Card key={iv.id}>
+            <Pill tone="warn">Missed interview</Pill>
+            <div className="text-base font-semibold mt-2">{iv.role}</div>
+            <div className="text-sm" style={{ color: C.ink2 }}>{iv.company}{iv.company ? " · " : ""}{fmtDayLong(s, tz)}, {hmIn(s, tz)} your time</div>
+            <div className="text-sm mt-2" style={{ color: C.ink, lineHeight: 1.5 }}>Sorry we missed you at your interview. If you'd still like to be considered and want to reschedule, let us know and we'll ask the client for a new time.</div>
+            {iv.linkId && <Btn kind="primary" full className="mt-3" onClick={() => openThread(iv.linkId)}>Message {iv.recruiter || "your recruiter"}</Btn>}
+          </Card>
+        );
+        const days = Math.round((Date.UTC(...ymdIn(s, tz).split("-").map((x, i) => i === 1 ? x - 1 : +x)) - Date.UTC(...ymdIn(Date.now(), tz).split("-").map((x, i) => i === 1 ? x - 1 : +x))) / 864e5);
+        return (
+          <Card key={iv.id}>
+            <div className="flex items-center justify-between gap-2"><Pill tone="em">{iv.round}</Pill><span className="text-xs" style={{ color: C.ink2 }}>{days <= 0 ? "today" : days === 1 ? "tomorrow" : "in " + days + " days"}</span></div>
+            <div className="text-base font-semibold mt-2">{iv.role}</div>
+            <div className="text-sm" style={{ color: C.ink2 }}>{iv.company}</div>
+            <div className="rounded-xl p-3 mt-3" style={{ background: C.canvas }}>
+              <div className="text-sm font-semibold">{fmtDayLong(s, tz)}</div>
+              <div className="text-sm">{hmIn(s, tz)} – {hmIn(e, tz)} your time ({tzAbbr(s, tz)})</div>
+              <div className="text-xs mt-1" style={{ color: C.ink2 }}>{iv.locationType === "phone" ? "Phone call" + (iv.location ? ": " + iv.location : "") : iv.locationType === "in_person" ? "In person" + (iv.location ? ": " + iv.location : "") : "Video call"}</div>
+              {iv.joinUrl && <a href={iv.joinUrl} target="_blank" rel="noreferrer" className="text-sm underline break-all" style={{ color: C.em }}>Join the call</a>}
+            </div>
+            <div className="flex flex-col gap-2 mt-3">
+              {iv.confirmed ? <div className="text-sm rounded-xl px-3.5 py-2.5 text-center" style={{ background: C.emTint, color: C.em }}>You've confirmed. See you there!</div>
+                : <Btn kind="primary" full disabled={busy === iv.id} onClick={() => confirm(iv.id)}>{busy === iv.id ? <>Confirming <InlineDots color="#fff" /></> : "Yes, I'll be there"}</Btn>}
+              <Btn full onClick={() => addToCal(iv)}>Add to calendar</Btn>
+            </div>
+            <div className="text-xs mt-3" style={{ color: C.ink2 }}>You'll get a reminder by email the day before and an hour before.{iv.linkId ? <> Questions? <button className="underline" onClick={() => openThread(iv.linkId)}>Message {iv.recruiter || "your recruiter"}</button>.</> : ""}</div>
+          </Card>
+        );
+      })}
+    </>
+  );
+}
+
+/* ----------------------------------------------------------------------
    Outreach: sourcing outside Harbor (candidates) and the daily client-lead feed.
    Server side lives in the `sourcing` and `outreach-public` Edge Functions; nothing is
    sent until an email sender, a sender name and a postal address are set (Setup tab).
@@ -5021,6 +5641,8 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
         {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
 
+        {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
+
         {c.routed.map((r) => (
           <Card key={r.linkId}>
             <div className="text-xs font-semibold mb-2" style={{ color: C.warnFg }}>A NEW ROLE FOR YOU</div>
@@ -5061,7 +5683,7 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
             <SectionTitle title="Messages" sub="One thread per role — your recruiter sees these right away." size="text-xl" />
             <div className="flex flex-col gap-3 mt-1">
               {c.threads.map((t) => (
-                <details key={t.linkId} className="rounded-xl border" style={{ borderColor: C.line }} onToggle={(e) => { if (e.target.open && t.unread) openThread(t.linkId); }}>
+                <details key={t.linkId} id={"thread-" + t.linkId} className="rounded-xl border" style={{ borderColor: C.line }} onToggle={(e) => { if (e.target.open && t.unread) openThread(t.linkId); }}>
                   <summary className="flex items-center justify-between gap-2 px-3.5 py-3 cursor-pointer select-none">
                     <div>
                       <div className="text-sm font-medium">{t.role}</div>
@@ -5238,7 +5860,7 @@ function AwaitingAccess({ onSignOut }) {
 
 const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*,candidate_job_messages(*))&order=created_at.desc";
 async function loadAll(token) {
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -5250,8 +5872,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/job_engagements?select=*&order=engaged_at.desc", { token }),
     sbFetch("/rest/v1/audit_log?select=*&order=created_at.desc&limit=200", { token }).catch(() => []), // empty for non-admins (RLS), never fatal
     sbFetch("/rest/v1/profile_security?select=*", { token }).catch(() => []), // admin-or-self only (RLS); IP/location per user
+    sbFetch("/rest/v1/interviews?select=*&order=starts_at.asc", { token }).catch(() => []), // RLS: same reach as candidates
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity });
+  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews });
 }
 
 export default function App() {
@@ -5271,6 +5894,7 @@ export default function App() {
   const [toastText, setToastText] = useState("");
   const [promote, setPromote] = useState({ open: false, job: "" });
   const [portal, setPortal] = useState(false);
+  const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [portalToken] = useState(() => new URLSearchParams(window.location.search).get("c"));
   const [outreachLink] = useState(() => { const q = new URLSearchParams(window.location.search); return q.get("u") ? { token: q.get("u"), kind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" } : null; });
   const [portalData, setPortalData] = useState(null);
@@ -5352,6 +5976,13 @@ export default function App() {
     const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
   };
+  // Interviews (interviews Edge Function): ivCall refreshes Harbor's data after a change; ivQuiet
+  // is for lookups (Google status, busy times) that change nothing.
+  const ivQuiet = async (action, payload) => {
+    const r = await fetch(SB_URL + "/functions/v1/interviews", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Request failed"); return j;
+  };
+  const ivCall = async (action, payload) => { const j = await ivQuiet(action, payload); reload(); return j; };
   // Sourcing and outreach (sourcing Edge Function). Pages refresh their own lists, so no reload here.
   const srcCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/sourcing", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
@@ -5648,6 +6279,10 @@ export default function App() {
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "Couldn't read that file"); return j;
     },
     aiScreen: aiCall,
+    interviews: data.interviews || [],
+    iv: ivCall,
+    ivQuiet: ivQuiet,
+    goProfile: (tab) => { setProfileTab(tab || "account"); setPage("myProfile"); },
     sourcing: srcCall,
     sb: (path, opts) => sbFetch(path, { ...(opts || {}), token: session.token }),
     reload,
@@ -5695,11 +6330,12 @@ export default function App() {
   else if (page === "editJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} editJob={data.jobs.find((j) => j.id === jobId)} />;
   else if (page === "jobDetail") content = <JobDetail job={data.jobs.find((j) => j.id === jobId)} S={S} toast={toast} onBack={() => setPage("jobs")} onPromote={onPromote} onEdit={() => setPage("editJob")} onDeleted={() => setPage("jobs")} onAddCandidate={() => { setAddCandidateJobId(jobId); setPage("uploadCandidates"); }} />;
   else if (page === "campaigns") content = <CampaignsPage toast={toast} S={S} />;
+  else if (page === "interviews") content = <InterviewsPage toast={toast} S={S} />;
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
   else if (page === "ads") content = <AdsPage role={role} toast={toast} onPromote={onPromote} S={S} />;
   else if (page === "users") content = role === "admin" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "settings") content = role === "admin" ? <SettingsPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
-  else if (page === "myProfile") content = <MyProfilePage S={S} toast={toast} onBack={() => setPage("overview")} />;
+  else if (page === "myProfile") content = <MyProfilePage key={profileTab} initialTab={profileTab} S={S} toast={toast} onBack={() => setPage("overview")} />;
   else content = <OverviewRecOps S={S} />;
 
   return (

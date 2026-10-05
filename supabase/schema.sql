@@ -1325,3 +1325,179 @@ revoke all on function public.call_sourcing(text) from public, anon, authenticat
 select cron.schedule('harbor-sourcing-tick', '*/10 * * * *', $$select public.call_sourcing('tick')$$);
 -- Daily 06:00 UTC: pull yesterday's job postings (only runs if client leads are switched on).
 select cron.schedule('harbor-leads-daily', '0 6 * * *', $$select public.call_sourcing('leads_daily')$$);
+
+-- migration: interview_calendar
+-- Interview calendar: interviews, per-recruiter Google Calendar connections, candidate page
+-- support, and the schedule that sends reminders and syncs Google. Safe to re-run.
+
+create table if not exists public.interviews (
+  id uuid primary key default gen_random_uuid(),
+  candidate_id uuid not null references public.candidates(id) on delete cascade,
+  job_id uuid references public.jobs(id) on delete set null,
+  link_id uuid references public.candidate_jobs(id) on delete set null,
+  round text not null default '1st round',
+  starts_at timestamptz not null,
+  duration_min int not null default 60 check (duration_min between 5 and 600),
+  location_type text not null default 'meet' check (location_type in ('meet','link','phone','in_person')),
+  location text,                       -- video link, phone number or address
+  meet_url text,                       -- Google Meet link created with the calendar event
+  notes text,                          -- internal: client interviewers etc. Never shown to candidates.
+  recruiter_id uuid references public.profiles(id) on delete set null,
+  scheduler_tz text,                   -- time zone of the person who booked it (display only)
+  candidate_tz text,
+  client_tz text,
+  status text not null default 'scheduled' check (status in ('scheduled','done','no_show','client_cancelled','rescheduled','cancelled')),
+  decision text check (decision in ('next_round','offer','client_reject','waiting')),
+  feedback text,
+  candidate_confirmed_at timestamptz,
+  google_event_id text,
+  google_owner uuid references public.profiles(id) on delete set null,
+  google_synced_at timestamptz,
+  google_error text,
+  send_reminders boolean not null default true,
+  reminder_day_sent_at timestamptz,
+  reminder_hour_sent_at timestamptz,
+  noshow_followup_sent_at timestamptz,
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists interviews_starts_idx on public.interviews(starts_at);
+create index if not exists interviews_candidate_idx on public.interviews(candidate_id);
+create or replace trigger interviews_touch before update on public.interviews for each row execute function public.touch_updated_at();
+
+alter table public.interviews enable row level security;
+-- Same reach as candidates: staff see all; recruiters see their own candidates, roles they're on,
+-- and interviews they run.
+create or replace function public.can_see_interview(p_candidate uuid, p_job uuid, p_recruiter uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_staff()
+      or p_recruiter = auth.uid()
+      or exists (select 1 from candidates c where c.id = p_candidate and c.recruiter_id = auth.uid())
+      or exists (select 1 from job_recruiters jr where jr.job_id = p_job and jr.recruiter_id = auth.uid());
+$$;
+revoke all on function public.can_see_interview(uuid, uuid, uuid) from public, anon;
+do $$ begin
+  if not exists (select 1 from pg_policies where tablename='interviews' and policyname='interviews_read') then
+    create policy interviews_read on public.interviews for select to authenticated using (public.can_see_interview(candidate_id, job_id, recruiter_id)); end if;
+  if not exists (select 1 from pg_policies where tablename='interviews' and policyname='interviews_insert') then
+    create policy interviews_insert on public.interviews for insert to authenticated with check (public.can_see_interview(candidate_id, job_id, recruiter_id)); end if;
+  if not exists (select 1 from pg_policies where tablename='interviews' and policyname='interviews_update') then
+    create policy interviews_update on public.interviews for update to authenticated using (public.can_see_interview(candidate_id, job_id, recruiter_id)) with check (public.can_see_interview(candidate_id, job_id, recruiter_id)); end if;
+  if not exists (select 1 from pg_policies where tablename='interviews' and policyname='interviews_delete') then
+    create policy interviews_delete on public.interviews for delete to authenticated using (public.is_staff() or recruiter_id = auth.uid()); end if;
+end $$;
+
+-- Google Calendar connection per person. Holds a refresh token, so no app access at all:
+-- only the interviews Edge Function (service role) reads or writes it.
+create table if not exists public.google_calendar_connections (
+  profile_id uuid primary key references public.profiles(id) on delete cascade,
+  google_email text,
+  refresh_token text not null,
+  calendar_id text not null default 'primary',
+  sync_token text,
+  settings jsonb not null default '{"separateCalendar": true, "clashCheck": true, "inviteCandidate": false}',
+  connected_at timestamptz not null default now(),
+  last_sync_at timestamptz,
+  last_error text
+);
+alter table public.google_calendar_connections enable row level security;
+revoke all on public.google_calendar_connections from anon, authenticated;
+
+create table if not exists public.google_oauth_states (
+  state text primary key,
+  profile_id uuid not null references public.profiles(id) on delete cascade,
+  return_to text,
+  created_at timestamptz not null default now()
+);
+alter table public.google_oauth_states enable row level security;
+revoke all on public.google_oauth_states from anon, authenticated;
+
+-- Candidate page: the candidate confirms they'll attend.
+create or replace function public.candidate_confirm_interview(p_token text, p_interview_id uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  update interviews i set candidate_confirmed_at = coalesce(i.candidate_confirmed_at, now())
+    from candidates c
+   where i.id = p_interview_id and c.id = i.candidate_id and c.portal_token = p_token and i.status = 'scheduled';
+  get diagnostics n = row_count;
+  return n > 0;
+end $$;
+grant execute on function public.candidate_confirm_interview(text, uuid) to anon, authenticated;
+
+-- Candidate page data: add upcoming interviews and recent missed ones (with the follow-up).
+create or replace function public.candidate_portal(p_token text)
+ returns jsonb
+ language sql
+ stable security definer
+ set search_path to 'public'
+as $function$
+  select jsonb_build_object(
+    'name', c.name,
+    'pitchConsent', c.pitch_consent,
+    'endorsements', coalesce((select jsonb_agg(jsonb_build_object('company', e.company, 'role', e.role_title, 'status', e.status))
+                              from candidate_endorsements e where e.candidate_id = c.id), '[]'::jsonb),
+    'matches', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client, 'fit', (m->>'fit')::int))
+                         from jsonb_array_elements(c.matches) m
+                         join jobs j on j.id::text = m->>'job_id'
+                         where (m->>'fit')::int >= 60 and m ? 'reviewedAt' and coalesce(m->>'verdict', '') in ('Perfect fit', 'Good fit', 'Possible fit')
+                           and coalesce(j.status, '') <> 'Closed'
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id and l.job_id = j.id)
+                           and c.status not in ('Interview', 'Placed', 'Hired')
+                           and not exists (select 1 from candidate_jobs l where l.candidate_id = c.id
+                                             and l.candidate_response <> 'declined' and l.stage in ('Interview', 'Offer', 'Placed'))), '[]'::jsonb),
+    'routed', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client, 'location', j.location) order by l.created_at)
+                        from candidate_jobs l join jobs j on j.id = l.job_id
+                        where l.candidate_id = c.id and l.candidate_response = 'pending'), '[]'::jsonb),
+    'questions', coalesce((select jsonb_agg(jsonb_build_object('linkId', l.id, 'role', j.role_title, 'company', j.client,
+                             'questions', (select coalesce(jsonb_agg(x->>'q'), '[]'::jsonb) from jsonb_array_elements(l.ai->'followups'->'questions') x)) order by l.created_at)
+                           from candidate_jobs l join jobs j on j.id = l.job_id
+                           where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'sent'), '[]'::jsonb),
+    'answered', coalesce((select jsonb_agg(jsonb_build_object('role', j.role_title, 'company', j.client))
+                          from candidate_jobs l join jobs j on j.id = l.job_id
+                          where l.candidate_id = c.id and l.ai->'followups'->>'state' = 'answered'), '[]'::jsonb),
+    'threads', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'linkId', l.id, 'role', j.role_title, 'company', j.client,
+        'messages', coalesce((select jsonb_agg(jsonb_build_object('sender', m.sender, 'body', m.body, 'createdAt', m.created_at) order by m.created_at)
+                               from candidate_job_messages m where m.link_id = l.id), '[]'::jsonb),
+        'unread', (select count(*) from candidate_job_messages m where m.link_id = l.id and m.sender = 'recruiter' and m.candidate_read_at is null)
+      ) order by l.created_at desc)
+      from candidate_jobs l join jobs j on j.id = l.job_id
+      where l.candidate_id = c.id and l.candidate_response <> 'declined'
+    ), '[]'::jsonb),
+    'interviews', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', i.id, 'linkId', i.link_id, 'round', i.round, 'role', j.role_title, 'company', j.client,
+        'startsAt', i.starts_at, 'durationMin', i.duration_min, 'locationType', i.location_type,
+        'location', case when i.location_type in ('phone', 'in_person') then i.location end,
+        'joinUrl', case when i.location_type = 'meet' then i.meet_url when i.location_type = 'link' then i.location end,
+        'status', i.status, 'confirmed', i.candidate_confirmed_at is not null,
+        'recruiter', split_part(coalesce(p.full_name, ''), ' ', 1)
+      ) order by i.starts_at)
+      from interviews i
+      left join jobs j on j.id = i.job_id
+      left join profiles p on p.id = i.recruiter_id
+      where i.candidate_id = c.id
+        and ((i.status = 'scheduled' and i.starts_at + make_interval(mins => i.duration_min) > now() - interval '2 hours')
+          or (i.status = 'no_show' and i.noshow_followup_sent_at is not null and i.starts_at > now() - interval '21 days'))
+    ), '[]'::jsonb))
+  from candidates c where c.portal_token = p_token
+$function$;
+
+-- Schedule: reminders, no-show follow-ups and Google sync every 10 minutes (reuses the vault
+-- ops token created for sourcing).
+create or replace function public.call_interviews(p_action text) returns bigint
+language sql security definer set search_path = public, extensions as $$
+  select net.http_post(
+    url := 'https://acjmsihvvupqiikxckho.supabase.co/functions/v1/interviews',
+    body := jsonb_build_object('action', p_action),
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'apikey', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjam1zaWh2dnVwcWlpa3hja2hvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAyNzM2MzQsImV4cCI6MjEwNTg0OTYzNH0.SRrACW8uKRzYTmD2JdRQ7oLaF8_Xq7aCHHjWPIhru9w',
+      'x-harbor-ops', (select decrypted_secret from vault.decrypted_secrets where name = 'harbor_ops_token' limit 1)),
+    timeout_milliseconds := 120000);
+$$;
+revoke all on function public.call_interviews(text) from public, anon, authenticated;
+select cron.schedule('harbor-interviews-tick', '*/10 * * * *', $$select public.call_interviews('tick')$$);

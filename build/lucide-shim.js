@@ -7,5 +7,5 @@ export {
   LuCheck as Check, LuCheckCheck as CheckCheck, LuX as X, LuLock as Lock, LuCopy as Copy, LuMessageSquare as MessageSquare,
   LuSparkles as Sparkles, LuTriangleAlert as AlertTriangle, LuMail as Mail, LuMapPin as MapPin, LuClock as Clock,
   LuSettings as Settings, LuShield as Shield, LuPhone as Phone, LuCircleCheck as CheckCircle2,
-  LuEllipsis as MoreHorizontal, LuUserPlus as UserPlus, LuPencil as Pencil, LuInfo as Info,
+  LuEllipsis as MoreHorizontal, LuUserPlus as UserPlus, LuPencil as Pencil, LuInfo as Info, LuCalendar as Calendar,
 } from "react-icons/lu";
