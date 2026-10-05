@@ -1738,3 +1738,7 @@ begin
 end $$;
 revoke all on function public.screen_sweep() from public, anon, authenticated;
 select cron.schedule('harbor-screen-sweep', '*/2 * * * *', $$select public.screen_sweep()$$);
+
+-- migration: candidate_linkedin
+-- LinkedIn profile URL read from the resume (or typed in by staff).
+alter table public.candidates add column if not exists linkedin_url text;

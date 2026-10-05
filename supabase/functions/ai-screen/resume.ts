@@ -261,6 +261,26 @@ function docText(bytes: Uint8Array): string {
 }
 
 // Returns what to send to the AI, or a plain-English reason it can't be read.
+// A LinkedIn profile URL in the file itself. A resume often shows just the word "LinkedIn" with
+// the address hidden in the link, which the AI can't see, so the raw file is searched too:
+// PDF link annotations, and the hyperlink list inside a .docx/.odt.
+export function normalizeLinkedIn(v: unknown): string {
+  const m = String(v ?? "").match(/linkedin\.com\/in\/([A-Za-z0-9\-_%.]{2,100})/i);
+  return m ? "https://www.linkedin.com/in/" + m[1].replace(/[.\/]+$/, "") : "";
+}
+export async function findLinkedIn(bytes: Uint8Array, name: string): Promise<string> {
+  try {
+    const fmt = detectFormat(bytes, name);
+    let hay = "";
+    if (fmt === "docx" || fmt === "odt") {
+      for (const e of ["word/_rels/document.xml.rels", "word/document.xml", "content.xml"]) {
+        const x = await readZipEntry(bytes, e); if (x) hay += new TextDecoder().decode(x) + "\n";
+      }
+    } else hay = new TextDecoder("latin1").decode(bytes.length > 4_000_000 ? bytes.subarray(0, 4_000_000) : bytes);
+    return normalizeLinkedIn(hay);
+  } catch { return ""; }
+}
+
 export async function prepareResume(bytes: Uint8Array, name: string): Promise<{ input?: ResumeInput; why?: string }> {
   const fmt = detectFormat(bytes, name);
   if (fmt === "pdf") return { input: { kind: "pdf", data: bytesToBase64(bytes) } };

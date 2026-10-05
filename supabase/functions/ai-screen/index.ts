@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { prepareResume, type ResumeInput } from "./resume.ts";
+import { prepareResume, findLinkedIn, type ResumeInput } from "./resume.ts";
 import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
@@ -132,14 +132,16 @@ async function askAI(system: string, text: string, resume: ResumeInput | null = 
 }
 
 // The resume on file, ready for the AI (any supported format), or a reason it can't be read.
-async function loadResume(admin: any, candidate: any): Promise<{ resume: ResumeInput | null; why?: string }> {
+async function loadResume(admin: any, candidate: any): Promise<{ resume: ResumeInput | null; why?: string; linkedin?: string }> {
   const path = candidate.resume_path || candidate.cv_path;
   if (!path) return { resume: null, why: "No resume on file for this candidate. Upload one to score them." };
   const bucket = candidate.resume_path ? "resumes" : "cvs";
   const { data: file, error } = await admin.storage.from(bucket).download(path);
   if (error || !file) return { resume: null, why: "Could not read the stored resume. Try re-uploading it." };
-  const r = await prepareResume(new Uint8Array(await file.arrayBuffer()), (candidate.resume_path && candidate.resume_name) || path);
-  return r.input ? { resume: r.input } : { resume: null, why: r.why };
+  const bytes = new Uint8Array(await file.arrayBuffer()), fname = (candidate.resume_path && candidate.resume_name) || path;
+  const r = await prepareResume(bytes, fname);
+  const linkedin = await findLinkedIn(bytes, fname);
+  return r.input ? { resume: r.input, linkedin } : { resume: null, why: r.why, linkedin };
 }
 
 // Everything the candidate has answered for this job, as readable Q&A lines.
@@ -183,7 +185,7 @@ const clampScore = (n: unknown) => Math.max(0, Math.min(100, Math.round(Number(n
 // skills) from the resume and everything the candidate has answered. Replaces those fields.
 // Allowed on locked candidates, except skills, which are part of the locked review.
 async function readProfile(admin: any, candidate: any) {
-  const { resume, why } = await loadResume(admin, candidate);
+  const { resume, why, linkedin: fileLinkedIn } = await loadResume(admin, candidate);
   if (!resume) return { error: why || "No resume on file" };
   const { data: links } = await admin.from("candidate_jobs").select("*").eq("candidate_id", candidate.id);
   const { data: ljobs } = (links || []).length ? await admin.from("jobs").select("*").in("id", [...new Set((links || []).map((l: any) => l.job_id))]) : { data: [] };
@@ -199,6 +201,8 @@ async function readProfile(admin: any, candidate: any) {
     profile_read_at: new Date().toISOString(),
   };
   if (prof.phone) patch.phone = prof.phone;
+  const li = prof.linkedin || fileLinkedIn || "";
+  if (li) patch.linkedin_url = li;
   const skillsLocked = !!candidate.ai_locked;
   if (!skillsLocked && prof.skills.length) patch.skills = prof.skills;
   const { error } = await admin.from("candidates").update(patch).eq("id", candidate.id);
@@ -557,7 +561,7 @@ Deno.serve(async (req: Request) => {
     //    A fresh base64 upload is stored first so it can be re-scored later.
     // ---------------------------------------------------------------
     if (action === "score_cv") {
-      let resume: ResumeInput | null = null;
+      let resume: ResumeInput | null = null, fileLinkedIn = "";
       if (body.fileBase64) {
         const cvPath = candidateId + "/" + Date.now() + "-cv.pdf";
         const bytes = Uint8Array.from(atob(body.fileBase64), (c) => c.charCodeAt(0));
@@ -565,10 +569,11 @@ Deno.serve(async (req: Request) => {
         if (upErr) return json({ error: "Could not store the CV: " + upErr.message }, 500);
         await admin.from("candidates").update({ resume_path: cvPath, resume_name: "CV.pdf" }).eq("id", candidateId);
         resume = { kind: "pdf", data: body.fileBase64 };
+        fileLinkedIn = await findLinkedIn(bytes, "CV.pdf");
       } else {
         const r = await loadResume(admin, candidate);
         if (!r.resume) return json({ error: r.why }, 400);
-        resume = r.resume;
+        resume = r.resume; fileLinkedIn = r.linkedin || "";
       }
 
       const material = await screeningMaterial(admin, candidate, job);
@@ -614,6 +619,8 @@ Deno.serve(async (req: Request) => {
       // file — never let a re-score silently overwrite a value staff typed in themselves.
       if (prof.phone && !candidate.phone) patch.phone = prof.phone;
       if (prof.location && !candidate.location) patch.location = prof.location;
+      const li = prof.linkedin || fileLinkedIn;
+      if (li && !candidate.linkedin_url) patch.linkedin_url = li;
       await admin.from("candidates").update(patch).eq("id", candidateId);
       // The per-job fit shown on the job page and the candidate's Jobs card.
       if (job && material.linkId) await admin.from("candidate_jobs").update({ fit: score }).eq("id", material.linkId);

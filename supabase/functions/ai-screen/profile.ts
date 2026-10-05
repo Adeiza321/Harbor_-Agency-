@@ -1,15 +1,19 @@
+import { normalizeLinkedIn } from "./resume.ts";
+
 // Profile facts read from a resume: current title and employer, experience, location, phone,
 // notice, pay and skills. Strict rules plus a clean-up pass, so the profile holds short,
 // accurate values instead of paragraphs, guesses or the wrong kind of answer.
 
 export const PROFILE_SHAPE =
-  `"current_title": string, "current_company": string, "experience": string, "location": string, "phone": string, "notice": string, "pay": string, "skills": string[]`;
+  `"current_title": string, "current_company": string, "experience": string, "location": string, "phone": string, "linkedin": string, "notice": string, "pay": string, "skills": string[]`;
 
 export const PROFILE_RULES =
   "PROFILE FACTS: take them ONLY from what the CV or the candidate's own answers actually state. Never guess or infer; use '' when something isn't stated. " +
   "'current_title': their current or most recent job title exactly as the CV gives it (NOT the job they are being considered for). 'current_company': that employer. " +
   "'experience': at most 60 characters, total years plus field, e.g. '12 yrs technical accounting' or '20+ yrs finance leadership'. No lists of roles or sentences. " +
-  "'location': 'City, ST' (US) or 'City, Country', as stated on the CV or in their answers. No street or postcode. '' if not stated. NEVER infer a location from a phone area code. " +
+  "'location': where the CANDIDATE lives, taken ONLY from the CV's header/contact block (at the top, with their name, email and phone) or from their own answers. 'City, ST' (US) or 'City, Country'. No street or postcode. " +
+  "NEVER use the location of an employer, job, client, school or project, NEVER infer it from a phone area code, and never guess: if the header doesn't give their location, use ''. " +
+  "'linkedin': their LinkedIn profile URL if the CV shows one (e.g. 'linkedin.com/in/jane-doe'), else ''. " +
   "'phone': the phone number exactly as written. " +
   "'notice': ONLY their notice period or earliest start date as they stated it (e.g. '2 weeks', 'Available immediately', '1 month, early Nov start'). Interview availability or time slots are NOT notice. '' if not stated. " +
   "'pay': ONLY their own salary or rate expectation, shortened to amount, currency and period (e.g. '$150k–$200k/yr', '$85–$115/hr', '₦12m/yr'). '' if not stated. " +
@@ -71,6 +75,7 @@ export function cleanProfile(r: any) {
     experience: str(r?.experience, 70),
     location,
     phone: str(r?.phone, 40),
+    linkedin: normalizeLinkedIn(r?.linkedin),
     notice: str(r?.notice, 80),
     pay: cleanPay(r?.pay),
     skills,

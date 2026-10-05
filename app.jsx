@@ -181,7 +181,7 @@ function mapAll(d) {
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
-    currentTitle: c.current_title || "", currentCompany: c.current_company || "", profileReadAt: c.profile_read_at || null,
+    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", profileReadAt: c.profile_read_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at })) })),
@@ -1537,7 +1537,6 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
         <div className="flex gap-2.5">
           <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Btn>
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
-          {S.role !== "recruiter" && <Btn icon={Sparkles} onClick={rereadAll} disabled={!!rereading} className="flex-1 md:flex-none justify-center">{rereading ? "Refreshing " + rereading : "Refresh AI data"}</Btn>}
           <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
@@ -1723,10 +1722,11 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     setUnlockBusy(false);
   };
   const [editForm, setEditForm] = useState(null);
-  const openEdit = () => setEditForm({ name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
+  const openEdit = () => setEditForm({ linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
   const saveEdit = () => {
     if (!editForm.name.trim()) { toast("Name can't be empty"); return; }
-    patch(() => ({ ...editForm }));
+    const li = (editForm.linkedin || "").trim();
+    patch(() => ({ ...editForm, linkedin: li && !/^https?:\/\//i.test(li) ? "https://" + li : li }));
     setEditForm(null); toast("Candidate details updated");
   };
 
@@ -1809,6 +1809,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <div className="grid grid-cols-2 gap-3">
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label><input value={editForm.emailAddr} onChange={(e) => setEditForm((f) => ({ ...f, emailAddr: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label><input value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>LinkedIn</label><input value={editForm.linkedin} placeholder="linkedin.com/in/…" onChange={(e) => setEditForm((f) => ({ ...f, linkedin: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Experience</label><input value={editForm.experience} onChange={(e) => setEditForm((f) => ({ ...f, experience: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
@@ -1952,6 +1953,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
               <div className="flex items-center gap-2 min-w-0" style={{ color: C.ink2 }}><Mail size={15} className="shrink-0" /><span className="truncate">{candidate.emailAddr || "No email on file"}</span></div>
               <div className="flex items-center gap-2" style={{ color: C.ink2 }}><Phone size={15} className="shrink-0" />{candidate.phone || "No phone on file"}</div>
+              {candidate.linkedin && <a href={candidate.linkedin} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium" style={{ color: C.em }}><span className="text-[10px] font-bold rounded px-1 leading-4" style={{ background: C.em, color: "#fff" }}>in</span>LinkedIn</a>}
               <div className="flex items-center gap-1.5 sm:ml-auto">
                 {aiBusy ? (
                   <span className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}>Reading resume <InlineDots /></span>
@@ -1959,7 +1961,6 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                   <>
                     <Download size={15} color={C.em} className="shrink-0" />
                     <button type="button" onClick={() => S.openResume(candidate.cv)} className="text-sm font-medium" style={{ color: C.em }} title={candidate.cvName || "Resume"}>View resume</button>
-                    <button type="button" onClick={readProfile} disabled={readBusy} className="text-xs underline mx-1" style={{ color: C.ink2 }} title="Replaces current title, experience, location, phone, notice, pay and skills with what the resume and their answers say">{readBusy ? "Re-reading…" : "Re-read details"}</button>
                     <button type="button" aria-label="Remove resume" title="Remove resume" onClick={() => setResumeDel(true)} className="w-6 h-6 rounded-full border flex items-center justify-center" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={11} strokeWidth={2.5} /></button>
                   </>
                 ) : (
@@ -2500,14 +2501,9 @@ function IndustryExperience({ candidate, S, toast }) {
     <div className="mb-4">
       <div className="flex items-center gap-2 mb-1.5">
         <div className="text-xs" style={{ color: C.ink3 }}>INDUSTRY EXPERIENCE</div>
-        {candidate.cv && (S.role !== "recruiter" || !items.length) && (
-          <button type="button" onClick={run} disabled={busy} className="ml-auto text-xs font-medium" style={{ color: C.em }}>
-            {busy ? <span className="inline-flex items-center gap-1.5">Looking up companies <InlineDots /></span> : items.length ? "Refresh" : "Look up companies"}
-          </button>
-        )}
       </div>
       {!items.length ? (
-        <div className="text-sm" style={{ color: C.ink3 }}>{candidate.cv ? "Not looked up yet. It runs on the next screening, or look it up now." : "Upload a resume to look up their employers."}</div>
+        <div className="text-sm" style={{ color: C.ink3 }}>{candidate.cv ? "Not looked up yet. It runs automatically when they're screened." : "Upload a resume to look up their employers."}</div>
       ) : (
         <>
           <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="w-full flex items-center gap-1.5 flex-wrap text-left">
@@ -2723,12 +2719,11 @@ function MatchesCard({ candidate, S, toast }) {
     <div className="mt-3">
       <div className="flex items-center justify-between gap-2">
         <div className="text-xs font-medium" style={{ color: C.ink2 }}>PARALLEL TITLES · roles they could be hired into now</div>
-        {(S.role !== "recruiter" || !candidate.parallelTitles.length) && <button onClick={refreshTitles} disabled={titlesBusy} className="text-xs underline shrink-0" style={{ color: C.ink2 }}>{titlesBusy ? "Updating…" : candidate.parallelTitles.length ? "Refresh" : "Work out titles"}</button>}
       </div>
       <div className="flex flex-wrap gap-1.5 mt-1.5">
         {candidate.parallelTitles.length
           ? candidate.parallelTitles.map((t) => <span key={t} className="text-xs rounded-full px-2.5 py-1" style={{ background: C.canvas, color: C.ink }}>{t}</span>)
-          : <span className="text-xs" style={{ color: C.ink2 }}>Not worked out yet. They're added at the next screening, or now with the link above.</span>}
+          : <span className="text-xs" style={{ color: C.ink2 }}>Not worked out yet. They're added automatically when the resume is read or the candidate is screened.</span>}
       </div>
       <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Bench checks for a new job only consider people whose parallel titles match it.</div>
     </div>
@@ -4562,7 +4557,7 @@ function JobSourcingCard({ job, S, toast }) {
         </div>}
       </div>
       <div className="mt-3">
-        <div className="flex items-center justify-between gap-2"><div className="text-xs" style={{ color: C.ink3 }}>Parallel titles for this job</div>{canRun && <button onClick={regen} disabled={!!busy} className="text-xs" style={{ color: C.em }}>{busy === "titles" ? "Updating…" : titles.length ? "Regenerate" : "Generate"}</button>}</div>
+        <div className="flex items-center justify-between gap-2"><div className="text-xs" style={{ color: C.ink3 }}>Parallel titles for this job</div>{canRun && !titles.length && <button onClick={regen} disabled={!!busy} className="text-xs" style={{ color: C.em }}>{busy === "titles" ? "Working out…" : "Generate"}</button>}</div>
         <div className="flex flex-wrap gap-1.5 mt-1.5">{titles.length ? titles.map((t) => <Pill key={t} tone="neutral">{t}</Pill>) : <span className="text-sm" style={{ color: C.ink2 }}>Not generated yet. They're created the first time the bench is checked.</span>}</div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
@@ -6365,7 +6360,7 @@ export default function App() {
   };
 
   // Local candidate field -> candidates table column, for the fields a person can actually edit.
-  const CAND_FIELD_MAP = { status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id", ai_locked: "ai_locked" };
+  const CAND_FIELD_MAP = { status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", linkedin: "linkedin_url", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id", ai_locked: "ai_locked" };
   const updateCand = (id, patch) => {
     const c = data.cands.find((x) => x.id === id); const p = typeof patch === "function" ? patch(c) : patch;
     const body = {}; Object.entries(CAND_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
