@@ -28,12 +28,12 @@ export function emailShell(b: Brand, preheader: string, bodyHtml: string, footer
 <div style="background:#ffffff;border:1px solid #E6E1D6;border-radius:16px;padding:28px;">
 ${bodyHtml}
 </div>
-<div style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#56605A;font-family:Arial,sans-serif;text-align:center;">
-<div style="font-weight:700;color:#14201B;">${esc(b.name)}</div>
-${b.address ? `<div>${esc(b.address)}</div>` : ""}
-<div style="margin-top:6px;">${footer ? esc(footer) : "You are receiving this email because you signed up as a candidate on " + esc(b.name) + "." + (unsubscribeUrl ? ` If you wish to unsubscribe, <a href="${esc(unsubscribeUrl)}" style="color:#56605A;text-decoration:underline;">click here</a>.` : "")}</div>
-<div style="margin-top:6px;color:#8A8578;">&copy; ${new Date().getFullYear()} ${esc(b.name)}</div>
-</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr><td align="center" style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#56605A;font-family:Arial,sans-serif;text-align:center;">
+<div style="font-weight:700;color:#14201B;text-align:center;">${esc(b.name)}</div>
+${b.address ? `<div style="text-align:center;">${esc(b.address)}</div>` : ""}
+<div style="margin-top:6px;text-align:center;">${footer ? esc(footer) : "You are receiving this email because you signed up as a candidate on " + esc(b.name) + "." + (unsubscribeUrl ? ` If you wish to unsubscribe, <a href="${esc(unsubscribeUrl)}" style="color:#56605A;text-decoration:underline;">click here</a>.` : "")}</div>
+<div style="margin-top:6px;color:#8A8578;text-align:center;">&copy; ${new Date().getFullYear()} ${esc(b.name)}</div>
+</td></tr></table>
 </div></body></html>`;
 }
 

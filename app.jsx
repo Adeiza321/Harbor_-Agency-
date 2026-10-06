@@ -4943,94 +4943,26 @@ function CampaignsPage({ toast, S }) {
   );
 }
 
-// Candidate page: permission to be presented anonymously to employers. The first email links
-// here with &pitch=1, which brings this card to the top of their attention with a clear Yes/No.
-function PitchConsentCard({ token, on, onChanged }) {
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  // ?pitch=1 asks; ?pitch=yes / ?pitch=no come from the Yes/No buttons in an email (picked, one click to confirm).
-  const [pre] = useState(() => new URLSearchParams(window.location.search).get("pitch") || "");
-  const asked = ["1", "yes", "no"].includes(pre);
-  const [answered, setAnswered] = useState(null);
-  const ref = React.useRef(null);
-  useEffect(() => { if (asked && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "center" }); }, [asked]);
-  const set = async (v) => {
-    setBusy(true); setErr("");
-    try { await sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: v } }); setAnswered(v); if (onChanged) await onChanged(); }
-    catch (e) { setErr(e.message); }
-    setBusy(false);
-  };
-  const toggle = () => set(!on);
-  const sub = "When a company posts a role you fit, we can describe your experience to them without your name or current employer. We only share your details after you say yes to a specific role, and you can change this any time.";
-  if (asked && answered === null) return (
-    <div ref={ref}>
-      <Card className="border-2" style={{ borderColor: C.em }}>
-        <SectionTitle title="Can we pitch you for other roles?" sub={sub} size="text-xl" />
-        {(pre === "yes" || pre === "no") && <div className="text-sm mt-3 font-medium" style={{ color: C.ink }}>You picked {pre === "yes" ? "Yes" : "No"} in our email. Tap it below to confirm.</div>}
-        <div className="flex flex-wrap gap-2 mt-4">
-          <Btn kind={pre === "no" ? "ghost" : "primary"} onClick={() => set(true)} disabled={busy}>Yes, pitch me anonymously</Btn>
-          <Btn kind={pre === "no" ? "primary" : "ghost"} onClick={() => set(false)} disabled={busy}>No thanks</Btn>
-        </div>
-        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
-      </Card>
-    </div>
-  );
-  return (
-    <div ref={ref}>
-      <Card>
-        <SectionTitle title="Let us pitch you to employers" sub={sub} size="text-xl" />
-        {answered !== null && <div className="text-sm mt-3 font-medium" style={{ color: C.em }}>{answered ? "Thanks. We'll only share your details once you say yes to a specific role." : "No problem. We won't present you to other employers."}</div>}
-        <label className="flex items-center gap-2.5 mt-3 text-sm cursor-pointer">
-          <input type="checkbox" checked={!!on} disabled={busy} onChange={toggle} />
-          {on ? "Yes, you can present me anonymously" : "No, don't present me to employers"}
-        </label>
-        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
-      </Card>
-    </div>
-  );
-}
-
-// Candidate page: the "click here" unsubscribe link at the bottom of every candidate email lands
-// here with &unsub=1. Unsubscribing stops all ProNext emails to them; they can turn them back on.
-function EmailPrefsCard({ token }) {
-  const [pre] = useState(() => new URLSearchParams(window.location.search).get("unsub") === "1");
-  const [out, setOut] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [justDone, setJustDone] = useState(false);
-  const ref = React.useRef(null);
-  const call = (v) => sbFetch("/rest/v1/rpc/candidate_email_prefs", { method: "POST", body: { p_token: token, p_out: v } });
-  useEffect(() => { call(null).then((r) => setOut(!!(r && r.optedOut))).catch(() => setOut(false)); }, [token]);
-  useEffect(() => { if (pre && out !== null && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "center" }); }, [pre, out]);
-  const set = async (v) => {
-    setBusy(true); setErr("");
-    try { const r = await call(v); setOut(!!(r && r.optedOut)); setJustDone(true); } catch (e) { setErr(e.message); }
-    setBusy(false);
-  };
-  if (out === null) return null;
-  if (pre && !out && !justDone) return (
-    <div ref={ref}>
-      <Card className="border-2" style={{ borderColor: C.em }}>
-        <SectionTitle title="Unsubscribe from our emails?" sub="You won't get any more emails from us, including updates on your applications and interviews. You can still check everything on this page, and turn emails back on any time." size="text-xl" />
-        <div className="flex flex-wrap gap-2 mt-4">
-          <Btn kind="primary" onClick={() => set(true)} disabled={busy}>{busy ? "Unsubscribing…" : "Unsubscribe"}</Btn>
-          <Btn kind="ghost" onClick={() => { const u = new URL(window.location.href); u.searchParams.delete("unsub"); window.history.replaceState({}, "", u.toString()); window.location.reload(); }} disabled={busy}>Keep my emails</Btn>
-        </div>
-        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
-      </Card>
-    </div>
-  );
-  return (
-    <div ref={ref}>
-      <Card>
-        <SectionTitle title="Email updates" size="text-xl" />
-        {justDone && <div className="text-sm mt-2 font-medium" style={{ color: C.em }}>{out ? "You've been unsubscribed. We won't email you again." : "Emails are back on."}</div>}
-        <div className="text-sm mt-2" style={{ color: C.ink2 }}>{out ? "You're unsubscribed, so we don't email you. Updates still appear on this page." : "We email you about your applications, interviews and messages from your recruiter."}</div>
-        <div className="mt-3"><Btn kind="ghost" onClick={() => set(!out)} disabled={busy}>{out ? "Turn emails back on" : "Unsubscribe"}</Btn></div>
-        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
-      </Card>
-    </div>
-  );
+// Candidate page: the Yes/No pitching buttons and the "click here" unsubscribe link in our emails
+// land here (?pitch=yes|no, ?unsub=1). The choice is recorded straight away and confirmed in a
+// short note; these settings aren't shown on the candidate page otherwise.
+function EmailChoiceNote({ token, onChanged }) {
+  const [msg, setMsg] = useState(null);
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const pitch = q.get("pitch"), unsub = q.get("unsub") === "1";
+    const clear = () => { const u = new URL(window.location.href); u.searchParams.delete("pitch"); u.searchParams.delete("unsub"); window.history.replaceState({}, "", u.toString()); };
+    const fail = () => setMsg({ err: true, text: "We couldn't record that. Please try the link in the email again." });
+    if (unsub) {
+      sbFetch("/rest/v1/rpc/candidate_email_prefs", { method: "POST", body: { p_token: token, p_out: true } })
+        .then(() => { clear(); setMsg({ text: "You've been unsubscribed. We won't send you any more emails." }); }).catch(fail);
+    } else if (pitch === "yes" || pitch === "no") {
+      sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: pitch === "yes" } })
+        .then(() => { clear(); setMsg({ text: pitch === "yes" ? "Thanks. We'll pitch your profile anonymously for roles that fit you, and only share your details once you say yes to a specific role." : "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); }).catch(fail);
+    }
+  }, [token]);
+  if (!msg) return null;
+  return <div className="text-sm rounded-xl px-3.5 py-2.5" style={msg.err ? { background: C.dangerBg, color: C.dangerFg } : { background: C.emTint, color: C.em }}>{msg.text}</div>;
 }
 
 // Public page behind the links in outreach emails: /?u=<token>&k=p|l&a=interested|unsubscribe|delete
@@ -6203,6 +6135,8 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         {onBack && <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back to dashboard</button>}
+        <div className="mb-2"><BrandLogo height={30} /></div>
+        {token && <EmailChoiceNote token={token} onChanged={onChanged} />}
         <div className="text-3xl md:text-4xl" style={{ ...SERIF }}>Hi {(c.name || "there").split(" ")[0]}</div>
         <div className="text-sm" style={{ color: C.ink2 }}>{c.routed.length || c.questions.length ? "Your recruiter has something for you below. Your answers go straight into your application." : "Here is where your applications stand."}</div>
         {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
@@ -6278,7 +6212,6 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
             </div>
           ))}
         </Card>
-        {token && <PitchConsentCard token={token} on={c.pitchConsent} onChanged={onChanged} />}
         {c.matches.length > 0 && (
           <Card>
             <SectionTitle title="Roles that fit you" sub="Shown at 70% match or higher." size="text-xl" />
@@ -6290,7 +6223,6 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
             ))}
           </Card>
         )}
-        {token && <EmailPrefsCard token={token} />}
       </div>
     </div>
   );
