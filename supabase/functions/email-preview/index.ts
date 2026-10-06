@@ -31,6 +31,16 @@ Deno.serve(async (req: Request) => {
     const { data: s } = await admin.from("agency_settings").select("agency_name").limit(1).maybeSingle();
     const senderName = String(s?.agency_name || "Pronext").trim() || "Pronext";
 
+    // A one-off test send of a rendered email to an address given by the operator (e.g. to see it in a real inbox).
+    if (body.action === "send_test") {
+      const to = String(body.to || "").trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to) || !body.html) return json({ error: "to and html are required" }, 400);
+      const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": key, "Content-Type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ sender: { name: senderName, email: sender }, to: [{ email: to }], subject: String(body.subject || "Test email"), htmlContent: String(body.html) }), signal: AbortSignal.timeout(25000) });
+      const j = await r.json().catch(() => ({}));
+      return json({ ok: r.ok, messageId: j.messageId, error: r.ok ? undefined : (j.message || String(r.status)) }, r.ok ? 200 : 400);
+    }
+
     const templates: { name: string; subject: string; html: string }[] = Array.isArray(body.templates) ? body.templates : [];
     const h = { "api-key": key, "Content-Type": "application/json", accept: "application/json" };
     let listRes: Response;
