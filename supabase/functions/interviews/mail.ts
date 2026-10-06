@@ -42,7 +42,7 @@ export function ics(i: Info & { id: string; seq: number; cancelled?: boolean }) 
   const loc = i.locationType === "phone" ? "Phone" + (i.location ? " " + i.location : "") : i.locationType === "in_person" ? (i.location || "In person") : (i.joinUrl || "Video call");
   const clean = (t: string) => t.replace(/[\\;,]/g, (m) => "\\" + m).replace(/\n/g, "\\n");
   const lines = [
-    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Harbor//Interviews//EN", "METHOD:PUBLISH", "BEGIN:VEVENT",
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Pronext//Interviews//EN", "METHOD:PUBLISH", "BEGIN:VEVENT",
     `UID:${i.id}@harbor`, `SEQUENCE:${i.seq}`, `DTSTAMP:${f(new Date())}`, `DTSTART:${f(s)}`, `DTEND:${f(e)}`,
     `SUMMARY:${clean(`${i.round}: ${i.role}${i.company ? " at " + i.company : ""}`)}`,
     `LOCATION:${clean(loc)}`, `DESCRIPTION:${clean("Your candidate page: " + portal(i))}`,

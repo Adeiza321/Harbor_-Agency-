@@ -1,7 +1,7 @@
 // Google Calendar for interviews. Each person connects their own Google account once.
-// Harbor creates its own "Harbor interviews" calendar in that account and only touches that
+// Pronext creates its own "Pronext interviews" calendar in that account and only touches that
 // calendar, plus free/busy times for clash warnings. Scopes:
-//   calendar.app.created  manage calendars Harbor created (and their events)
+//   calendar.app.created  manage calendars Pronext created (and their events)
 //   calendar.freebusy     see busy times only, never event details
 // Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET. Redirect URI to register in Google Cloud:
 //   <SUPABASE_URL>/functions/v1/interviews/oauth
@@ -71,12 +71,12 @@ export class GCal {
     return data;
   }
 
-  // The "Harbor interviews" calendar, created on first use.
+  // The "Pronext interviews" calendar, created on first use.
   async ensureCalendar(timeZone: string): Promise<string> {
     if (this.conn.calendar_id && this.conn.calendar_id !== "primary") {
       try { await this.call("GET", "/calendars/" + encodeURIComponent(this.conn.calendar_id)); return this.conn.calendar_id; } catch (e) { if ((e as any).status !== 404) throw e; }
     }
-    const cal = await this.call("POST", "/calendars", { summary: "Harbor interviews", description: "Interviews scheduled in Harbor. Moving or cancelling an event here updates Harbor.", timeZone: timeZone || "UTC" });
+    const cal = await this.call("POST", "/calendars", { summary: "Pronext interviews", description: "Interviews scheduled in Pronext. Moving or cancelling an event here updates Pronext.", timeZone: timeZone || "UTC" });
     this.conn.calendar_id = cal.id;
     this.conn.sync_token = null;
     return cal.id;

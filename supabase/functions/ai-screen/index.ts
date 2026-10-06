@@ -4,7 +4,7 @@ import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, 
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
 
-// AI screening for Harbor: CV scoring, screening-question drafting and the fit verdict.
+// AI screening for Pronext: CV scoring, screening-question drafting and the fit verdict.
 //
 // Provider: Claude ONLY (ANTHROPIC_API_KEY; model from ANTHROPIC_MODEL, default the
 // low-cost claude-haiku-4-5) — deliberately no Gemini fallback here. Two different models
@@ -44,7 +44,7 @@ const withResumeText = (text: string, resume: ResumeInput | null) =>
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Models to try in order. When one is overloaded (503) or rate-limited (429), Harbor
+// Models to try in order. When one is overloaded (503) or rate-limited (429), Pronext
 // waits briefly, retries, then moves to the next model instead of failing.
 const GEMINI_FALLBACKS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash"];
 
@@ -339,7 +339,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // ---------------------------------------------------------------
-    // Everything below needs a signed-in, active Harbor user.
+    // Everything below needs a signed-in, active Pronext user.
     // ---------------------------------------------------------------
     const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
     const { data: caller } = await admin.auth.getUser(token);
@@ -429,7 +429,7 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, titles: await jobParallelTitles(admin, j, askAI, true) });
     }
 
-    // Bench check (Rec Ops/Admin): review the closest non-busy people in Harbor against a job.
+    // Bench check (Rec Ops/Admin): review the closest non-busy people in Pronext against a job.
     if (action === "bench_fits") {
       if (!isStaff) return json({ error: "Only Rec Ops or Admins can check the bench" }, 403);
       if (!body.jobId) return json({ error: "jobId is required" }, 400);

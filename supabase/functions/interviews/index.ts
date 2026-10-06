@@ -8,8 +8,8 @@ import { loadBrand, sendBrevo } from "./brand.ts";
 //   google_status / google_connect / google_disconnect / google_settings.
 //   Google redirect (GET /interviews/oauth): finishes connecting a Google account.
 //   Scheduler (x-harbor-ops): tick = reminder emails 24h and 1h before, and changes made in
-//   Google (moved or deleted events) brought back into Harbor.
-// Deployed with verify_jwt off because Google's redirect carries no Harbor login; every POST
+//   Google (moved or deleted events) brought back into Pronext.
+// Deployed with verify_jwt off because Google's redirect carries no Pronext login; every POST
 // checks the caller itself.
 
 const cors = {
@@ -105,7 +105,7 @@ async function pushToGoogle(admin: any, iv: any): Promise<any> {
     const wantMeet = iv.location_type === "meet" && !iv.meet_url;
     const ev: any = {
       summary: `${iv.round}: ${i.candidateName} – ${i.role}${i.company ? " (" + i.company + ")" : ""}`,
-      description: [iv.notes ? "Notes: " + iv.notes : "", `Candidate page: ${PORTAL_BASE()}/?c=${i.portalToken}`, `Harbor: ${PORTAL_BASE()}/?page=interviews`].filter(Boolean).join("\n\n"),
+      description: [iv.notes ? "Notes: " + iv.notes : "", `Candidate page: ${PORTAL_BASE()}/?c=${i.portalToken}`, `Pronext: ${PORTAL_BASE()}/?page=interviews`].filter(Boolean).join("\n\n"),
       start: { dateTime: start.toISOString(), timeZone: iv.scheduler_tz || "UTC" },
       end: { dateTime: end.toISOString(), timeZone: iv.scheduler_tz || "UTC" },
       location: iv.location_type === "meet" ? undefined : iv.location || undefined,
@@ -139,7 +139,7 @@ async function removeFromGoogle(admin: any, iv: any) {
   await admin.from("interviews").update({ google_event_id: null }).eq("id", iv.id);
 }
 
-// Events moved or deleted in Google come back into Harbor.
+// Events moved or deleted in Google come back into Pronext.
 async function pullFromGoogle(admin: any) {
   if (!googleConfigured()) return { skipped: "Google not configured" };
   const { data: conns } = await admin.from("google_calendar_connections").select("*").neq("calendar_id", "primary");
@@ -200,7 +200,7 @@ async function reminders(admin: any) {
 function page(title: string, text: string, back: string) {
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" } as any)[c]);
   return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(title)}</title><meta http-equiv="refresh" content="2;url=${esc(back)}"></head>
-<body style="margin:0;background:#F3EFE7;font-family:system-ui,sans-serif;color:#14201B;display:flex;min-height:100vh;align-items:center;justify-content:center"><div style="background:#fff;border:1px solid #E6E1D6;border-radius:16px;padding:28px;max-width:380px"><div style="font-family:Georgia,serif;font-size:22px;margin-bottom:8px">${esc(title)}</div><div style="font-size:14px;color:#56605A">${esc(text)}</div><a href="${esc(back)}" style="display:inline-block;margin-top:16px;color:#1F6F54">Back to Harbor</a></div></body></html>`,
+<body style="margin:0;background:#F3EFE7;font-family:system-ui,sans-serif;color:#14201B;display:flex;min-height:100vh;align-items:center;justify-content:center"><div style="background:#fff;border:1px solid #E6E1D6;border-radius:16px;padding:28px;max-width:380px"><div style="font-family:Georgia,serif;font-size:22px;margin-bottom:8px">${esc(title)}</div><div style="font-size:14px;color:#56605A">${esc(text)}</div><a href="${esc(back)}" style="display:inline-block;margin-top:16px;color:#1F6F54">Back to Pronext</a></div></body></html>`,
     { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }
 
@@ -217,20 +217,20 @@ Deno.serve(async (req: Request) => {
       const { data: st } = await admin.from("google_oauth_states").select("*").eq("state", state).maybeSingle();
       if (st?.return_to) back = st.return_to;
       if (url.searchParams.get("error")) return page("Google Calendar not connected", "You didn't allow access, so nothing changed.", back);
-      if (!st || Date.now() - new Date(st.created_at).getTime() > 15 * 60000) return page("Link expired", "Start again from My profile in Harbor.", back);
+      if (!st || Date.now() - new Date(st.created_at).getTime() > 15 * 60000) return page("Link expired", "Start again from My profile in Pronext.", back);
       await admin.from("google_oauth_states").delete().eq("state", state);
       const tok = await exchangeCode(code);
       const { data: existing } = await admin.from("google_calendar_connections").select("refresh_token,calendar_id,settings").eq("profile_id", st.profile_id).maybeSingle();
       const refresh = tok.refresh_token || existing?.refresh_token;
-      if (!refresh) return page("Please try again", "Google didn't return long-term access. Remove Harbor under your Google account's third-party access, then connect again.", back);
+      if (!refresh) return page("Please try again", "Google didn't return long-term access. Remove Pronext under your Google account's third-party access, then connect again.", back);
       await admin.from("google_calendar_connections").upsert({
         profile_id: st.profile_id, google_email: emailFromIdToken(tok.id_token), refresh_token: refresh,
         calendar_id: existing?.calendar_id || "primary", settings: existing?.settings || undefined, connected_at: new Date().toISOString(), last_error: null,
       }, { onConflict: "profile_id" });
-      // Create the "Harbor interviews" calendar now so the first booking is quick.
+      // Create the "Pronext interviews" calendar now so the first booking is quick.
       const { data: conn } = await admin.from("google_calendar_connections").select("*").eq("profile_id", st.profile_id).single();
       try { const g = new GCal(conn); await g.ensureCalendar("UTC"); await saveConn(admin, g); } catch (e) { console.error("calendar create", errMsg(e)); }
-      return page("Google Calendar connected", "Interviews you schedule in Harbor will now appear in your Google Calendar.", back);
+      return page("Google Calendar connected", "Interviews you schedule in Pronext will now appear in your Google Calendar.", back);
     } catch (e) {
       return page("Couldn't connect Google Calendar", errMsg(e).slice(0, 200), back);
     }
@@ -284,7 +284,7 @@ Deno.serve(async (req: Request) => {
     if (action === "google_connect") {
       if (!googleConfigured()) return json({ error: "Google sign-in isn't set up yet. An admin needs to add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET (see supabase/INTERVIEWS_SETUP.md)." }, 400);
       const state = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
-      // Back to wherever Harbor is open (its address can differ from PORTAL_BASE_URL).
+      // Back to wherever Pronext is open (its address can differ from PORTAL_BASE_URL).
       const returnTo = typeof body.returnTo === "string" && /^https?:\/\/[^\s]+$/.test(body.returnTo) ? body.returnTo.slice(0, 500) : null;
       await admin.from("google_oauth_states").insert({ state, profile_id: me.id, return_to: returnTo });
       return json({ ok: true, url: authUrl(state) });

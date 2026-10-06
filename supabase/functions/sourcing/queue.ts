@@ -99,7 +99,7 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
 }
 
 // "Send it myself": until an outreach sender (Instantly/Gmail) is connected, a recruiter can send
-// an approved email by hand from their own mailbox. Harbor gives them the finished email (links,
+// an approved email by hand from their own mailbox. Pronext gives them the finished email (links,
 // sender details, unsubscribe and privacy notice included), then records it as sent when they say so.
 export async function manualCompose(admin: any, kind: "p" | "l", id: string, s: Settings, agencyName: string) {
   const missing = sendBlockers(s);

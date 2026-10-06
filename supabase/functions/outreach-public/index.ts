@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 // Public endpoint behind the links in outreach emails (no login; the random token in the link
-// identifies the person). The page itself is Harbor's app at /?u=<token>&k=p|l&a=<action>,
+// identifies the person). The page itself is Pronext's app at /?u=<token>&k=p|l&a=<action>,
 // which calls this function:
 //   info         what the link is about (role, company) so the page can show it; for a
 //                candidate, also the job description with the client's name taken out
@@ -9,7 +9,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 //   interested   prospect: lands in the Inbox as an application for that job
 //                lead: marked replied so a recruiter follows up
 //   unsubscribe  never emailed again (hash of the address kept on the suppression list)
-//   delete       as unsubscribe, and their details are erased from Harbor
+//   delete       as unsubscribe, and their details are erased from Pronext
 
 const cors = {
   "Access-Control-Allow-Origin": "*",

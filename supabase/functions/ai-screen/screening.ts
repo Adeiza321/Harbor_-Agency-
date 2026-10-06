@@ -387,7 +387,7 @@ export async function ensureIndustries(admin: any, candidate: any, resume: Resum
 }
 
 // ---------------------------------------------------------------------------
-// Bench check for a job: which people already in Harbor could fit it.
+// Bench check for a job: which people already in Pronext could fit it.
 // Busy candidates are never pitched: anyone at Interview or Offer on another role, or already
 // Placed/Hired. Of the rest, only people whose parallel titles match the job's title are
 // considered, and the closest few get the full AI review above (location, seniority, skills,
@@ -476,7 +476,7 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
       catch (e) { errors.push(c.name + ": " + String((e as Error)?.message || e).slice(0, 120)); }
     }));
   }
-  // How many strong fits the bench now has for this job (decides whether to search outside Harbor).
+  // How many strong fits the bench now has for this job (decides whether to search outside Pronext).
   // People already submitted to this job aren't bench: they're counted separately (onRole), never here.
   const { data: after } = await admin.from("candidates").select("id,matches").in("id", pool.map((x: any) => x.c.id).concat(["00000000-0000-0000-0000-000000000000"]));
   const goodFits = (after || []).filter((c: any) => (Array.isArray(c.matches) ? c.matches : []).some((m: any) =>

@@ -9,10 +9,10 @@ import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
 
-// Sourcing and outreach for Harbor.
+// Sourcing and outreach for Pronext.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
 //   matching the job's parallel titles both ways); only if there are fewer strong fits than the
-//   setting does Harbor search Apollo, reveal verified emails for the best matches and draft emails.
+//   setting does Pronext search Apollo, reveal verified emails for the best matches and draft emails.
 //   Client side: a daily job feed (TheirStack) is matched against candidates who agreed to be
 //   presented anonymously; the hiring contact gets an anonymous pitch by email, or a LinkedIn
 //   note for a person to send (LinkedIn doesn't allow automated messages).
@@ -192,7 +192,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "search_external") {
       if (!body.jobId) return json({ error: "jobId is required" }, 400);
-      if (!apolloKey()) return json({ ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Harbor." });
+      if (!apolloKey()) return json({ ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Pronext." });
       const chk: any = await sourceExternal(admin, body.jobId, s, { force: !!body.force, checkOnly: true });
       if (!chk.needed) return json(chk);
       const title = `Search Apollo for outside candidates: ${chk.jobTitle}${chk.client ? ", " + chk.client : ""}`;
@@ -256,7 +256,7 @@ Deno.serve(async (req: Request) => {
     }
     if (action === "process_leads") return json({ ok: true, ...(await stepLeads(admin, s, agencyName, 3)) });
 
-    // Won lead -> a draft job in Harbor (then it goes live like any other job).
+    // Won lead -> a draft job in Pronext (then it goes live like any other job).
     if (action === "convert_lead") {
       const { data: l } = await admin.from("leads").select("*").eq("id", body.leadId).maybeSingle();
       if (!l) return json({ error: "Lead not found" }, 404);

@@ -3,7 +3,7 @@
 //      people with a verified work email only
 //   2. AI ranks the search results on title, seniority and employer; only the best get revealed
 //   3. reveal emails (1 Apollo credit each) up to the per-job limit; drop anyone unsubscribed,
-//      already in Harbor, or outside the target regions
+//      already in Pronext, or outside the target regions
 //   4. AI checks each revealed profile against the job; keeps Perfect/Good fits
 //   5. AI writes each person a short email; saved as prospects for review (or queued if auto)
 
@@ -88,7 +88,7 @@ export async function searchArea(admin: any, job: any, fallbackCountries: string
 }
 
 export async function sourceExternal(admin: any, jobId: string, s: Settings, opts: { force?: boolean; checkOnly?: boolean } = {}) {
-  if (!apolloKey()) return { ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Harbor." };
+  if (!apolloKey()) return { ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to search outside Pronext." };
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("Job not found");
   const record = async (external: Record<string, unknown>) => {
@@ -139,7 +139,7 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
 
   // 3. Reveal emails for the best, within the per-job limit.
   const { data: candEmails } = await admin.from("candidates").select("email").not("email", "is", null);
-  const inHarbor = new Set((candEmails || []).map((c: any) => normEmail(c.email)));
+  const inPronext = new Set((candEmails || []).map((c: any) => normEmail(c.email)));
   const people: ApolloPerson[] = [];
   let revealed = 0;
   for (const h of picks) {
@@ -148,7 +148,7 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     try { p = await matchById(h.id); revealed++; } catch (e) { console.error("apollo match", String((e as Error)?.message || e)); break; }
     await sleep(700);
     if (!p?.email || p.email_status !== "verified") continue;
-    if (inHarbor.has(normEmail(p.email))) continue;
+    if (inPronext.has(normEmail(p.email))) continue;
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
     if (sup) continue;
     const pc = countryCode(p.country);
@@ -174,7 +174,7 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
   const mailSys = "You write short, honest recruiting emails to professionals who have not heard from us before. Reply with STRICT JSON only: " +
     "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 90-140 words, plain text, in this order: " +
     "(1) 'Hi <first name>,' " +
-    "(2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given (e.g. 'I'm Ahmed, a recruiter at Harbor Agency.'). " +
+    "(2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given (e.g. 'I'm Ahmed, a recruiter at Pronext.'). " +
     "(3) say we're recruiting for the role (title, seniority, location or remote, and pay if given) and came across their profile in a professional-contacts database while searching for people with their experience (never claim we met, were referred, or saw them on LinkedIn). " +
     "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. " +
     "(4) say we think they'd be a good fit because ... and give the specific reasons from their title, employer and work history (one or two sentences). " +

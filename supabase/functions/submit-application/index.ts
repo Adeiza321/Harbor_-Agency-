@@ -2,7 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 // Public, unauthenticated endpoint: the front door for every inbound source (a future
 // public job page, a paste-in from Indeed/LinkedIn, a manual entry tool, a webhook from a
-// job board) to land a candidate in Harbor's existing Inbox (`applications` table), which
+// job board) to land a candidate in Pronext's existing Inbox (`applications` table), which
 // already has a UI for recruiters to claim and promote into a real `candidates` row.
 //
 // This is deliberately the ONLY writer of unauthenticated data: it validates, rate-limits

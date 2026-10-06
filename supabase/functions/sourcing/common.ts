@@ -4,7 +4,7 @@
 export type Settings = {
   approval: "manual" | "auto";        // manual: a person approves each email before it is sent
   regions: string[];                   // "US", "EU", "MY"
-  minInternalFits: number;             // search outside Harbor only when fewer good fits than this
+  minInternalFits: number;             // search outside Pronext only when fewer good fits than this
   prospectsPerJob: number;             // most emails revealed (Apollo credits) per job
   dailyCap: number;                    // most outreach emails sent per day
   senderName: string; senderTitle: string; businessAddress: string;
@@ -127,7 +127,7 @@ export function sameCompany(a: unknown, b: unknown): boolean {
 export function workedAt(employers: unknown[], company: unknown): boolean {
   return employers.some((e) => String(e || "").split(/[,/;]| and /i).some((part) => sameCompany(part, company)) || sameCompany(e, company));
 }
-// Every employer we know a Harbor candidate has had: current employer plus the employers looked
+// Every employer we know a Pronext candidate has had: current employer plus the employers looked
 // up from their resume.
 export const candEmployers = (c: any): string[] =>
   [c.current_company, ...(Array.isArray(c.industries) ? c.industries.map((x: any) => x?.company) : [])].filter(Boolean).map(String);

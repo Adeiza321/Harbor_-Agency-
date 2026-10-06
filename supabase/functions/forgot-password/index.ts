@@ -14,7 +14,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 import { emailShell as brandShell, esc, loadBrand, sendBrevo as brandSend, type Brand } from "./brand.ts";
-let brand: Brand = { name: "Harbor", logo: null, color: "#1F6F54" };
+let brand: Brand = { name: "Pronext", logo: null, color: "#1F6F54" };
 const sendBrevo = (to: { email: string; name?: string }, subject: string, html: string) => brandSend(brand, to, subject, html);
 const emailShell = (preheader: string, bodyHtml: string) => brandShell(brand, preheader, bodyHtml, brand.name + " account security");
 
@@ -33,7 +33,7 @@ Deno.serve(async (req: Request) => {
     if (action === "request") {
       const email = String(body.email || "").trim().toLowerCase();
       // Always the same reply, found or not -- never reveal whether an email has an account.
-      const genericOk = { ok: true, message: "If that email has a Harbor account, a code has been sent to it." };
+      const genericOk = { ok: true, message: "If that email has a Pronext account, a code has been sent to it." };
       if (!email || !email.includes("@")) return json(genericOk);
 
       const { data: profile } = await admin.from("profiles").select("id,email,full_name,status").ilike("email", email).maybeSingle();

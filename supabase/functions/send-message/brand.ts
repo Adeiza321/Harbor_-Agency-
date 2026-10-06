@@ -1,14 +1,15 @@
 // Email branding: your agency's name (and logo, if set) from Agency settings, in your green.
 // The same file is copied into every function that sends email, so all emails look alike.
-export type Brand = { name: string; logo: string | null; color: string };
+export type Brand = { name: string; logo: string | null; color: string; address?: string };
 
 export async function loadBrand(admin: any): Promise<Brand> {
   try {
-    const { data } = await admin.from("agency_settings").select("agency_name,company").limit(1).maybeSingle();
+    const { data } = await admin.from("agency_settings").select("agency_name,company,outreach").limit(1).maybeSingle();
     const company = (data?.company && typeof data.company === "object") ? data.company : {};
     const logo = String(company.logoUrl || "").trim();
-    return { name: String(data?.agency_name || company.name || "Harbor").trim() || "Harbor", logo: /^https:\/\//.test(logo) ? logo : null, color: "#1F6F54" };
-  } catch { return { name: "Harbor", logo: null, color: "#1F6F54" }; }
+    const address = String(company.address || data?.outreach?.businessAddress || "").trim();
+    return { name: String(data?.agency_name || company.name || "Pronext").trim() || "Pronext", logo: /^https:\/\//.test(logo) ? logo : null, color: "#1F6F54", address };
+  } catch { return { name: "Pronext", logo: null, color: "#1F6F54" }; }
 }
 
 export function esc(s: unknown) {
@@ -26,7 +27,12 @@ export function emailShell(b: Brand, preheader: string, bodyHtml: string, footer
 <div style="background:#ffffff;border:1px solid #E6E1D6;border-radius:16px;padding:28px;">
 ${bodyHtml}
 </div>
-<div style="padding:14px 4px 0;font-size:12px;line-height:1.5;color:#56605A;font-family:Arial,sans-serif;">${footer ? esc(footer) : "Sent by " + esc(b.name) + " on behalf of your recruiter."}</div>
+<div style="padding:16px 4px 0;font-size:12px;line-height:1.6;color:#56605A;font-family:Arial,sans-serif;">
+<div style="font-weight:700;color:#14201B;">${esc(b.name)}</div>
+${b.address ? `<div>${esc(b.address)}</div>` : ""}
+<div style="margin-top:6px;">${footer ? esc(footer) : "You're receiving this because you're working with " + esc(b.name) + " on your job search. You can reach your recruiter any time from your candidate page."}</div>
+<div style="margin-top:6px;color:#8A8578;">&copy; ${new Date().getFullYear()} ${esc(b.name)}</div>
+</div>
 </div></body></html>`;
 }
 

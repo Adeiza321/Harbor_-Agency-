@@ -1,5 +1,5 @@
 // Sending outreach email. Never through Brevo: Brevo forbids third-party contact lists, and
-// Harbor's own candidate emails must not be put at risk. Two providers, whichever is set up:
+// Pronext's own candidate emails must not be put at risk. Two providers, whichever is set up:
 //
 //   Instantly (recommended)  INSTANTLY_API_KEY, INSTANTLY_CAMPAIGN_ID, optional INSTANTLY_CLIENT_CAMPAIGN_ID
 //     Each email becomes a lead in an Instantly campaign whose step uses {{subject}} and {{body}}.

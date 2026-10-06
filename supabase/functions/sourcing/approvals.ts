@@ -1,5 +1,5 @@
 // Spend approvals. Anything that uses paid credits (Apollo, TheirStack) waits here until an
-// Admin approves it in Harbor (Outreach > Approvals). Admins get an email when one comes in.
+// Admin approves it in Pronext (Outreach > Approvals). Admins get an email when one comes in.
 //   apollo_search  outside search for one job: Apollo reveals up to prospectsPerJob emails
 //   leads_fetch    the client-lead feed: up to postingsPerDay TheirStack postings, plus up to
 //                  the same number of Apollo lookups for hiring contacts' emails
@@ -29,7 +29,7 @@ async function alertAdmins(admin: any, req: any) {
     `<div style="font-size:20px;margin-bottom:10px;">Your approval is needed</div>
 <div style="font-size:15px;line-height:1.6;">${esc(req.title)}</div>
 <div style="font-size:14px;line-height:1.6;color:#56605A;margin-top:8px;">Cost: ${esc(req.cost_text)}. Nothing is spent until you approve.</div>
-${button(b, link, "Review in Harbor")}`, b.name + " · spending approvals");
+${button(b, link, "Review in Pronext")}`, b.name + " · spending approvals");
   for (const t of to) await sendBrevo(b, t, "Approval needed: " + req.title, html);
 }
 

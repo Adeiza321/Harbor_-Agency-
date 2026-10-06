@@ -130,7 +130,7 @@ const holdText = (j) => "On hold" + (j.holdUntil ? " until " + fdate(j.holdUntil
 // A role the candidate is actively on (accepted, not finished).
 const isLiveLink = (l) => l.response === "accepted" && !["Rejected", "Withdrawn", "Placed"].includes(l.stage);
 // Every match score is a percentage (0-100). One colour scale everywhere: 80+ green,
-// 60-79 amber (60 is where Harbor counts someone as a strong fit), under 60 red.
+// 60-79 amber (60 is where Pronext counts someone as a strong fit), under 60 red.
 const scoreTone = (v) => (!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "danger");
 const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
 /* A Google Calendar "quick add" link — no OAuth needed, just opens their calendar pre-filled. */
@@ -244,7 +244,7 @@ function mapAll(d) {
       sendReminders: i.send_reminders !== false, noshowSent: i.noshow_followup_sent_at || null };
   });
   return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews,
-    settings: { name: set.agency_name || "Harbor Agency", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
+    settings: { name: set.agency_name || "Pronext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
       integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30 } };
 }
@@ -815,10 +815,10 @@ function Loader({ label = "Loading…", onRetry }) {
       <div className="relative flex items-center justify-center" style={{ width: 56, height: 56 }}>
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `3px solid ${C.line}` }} />
         <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "3px solid transparent", borderTopColor: C.em, animation: "harborSpin 0.85s linear infinite" }} />
-        <div style={{ ...SERIF, fontSize: 20, color: C.em }}>H</div>
+        <div style={{ ...SERIF, fontSize: 20, color: C.em }}>P</div>
       </div>
       <div className="flex flex-col items-center gap-1.5">
-        <div style={{ ...SERIF, fontSize: 18, color: C.ink, animation: "harborPulse 1.8s ease-in-out infinite" }}>Harbor</div>
+        <div style={{ ...SERIF, fontSize: 18, color: C.ink, animation: "harborPulse 1.8s ease-in-out infinite" }}>Pronext</div>
         <div className="text-xs" style={{ color: C.ink3 }}>{label}</div>
         {slow && <div className="text-xs mt-2 text-center" style={{ color: C.ink2 }}>This is taking longer than usual. Your connection may be slow.</div>}
         {slow && onRetry && <button type="button" onClick={onRetry} className="text-xs font-medium mt-1" style={{ color: C.em }}>Try again</button>}
@@ -1245,9 +1245,9 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
     <div className="flex-col shrink-0 h-screen sticky top-0" style={{ display: desktop ? "flex" : "none", width: collapsed ? 72 : 260, background: C.side }}>
       <div className="flex items-center gap-2.5 px-4 pt-6 pb-5">
         <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.lime }}>
-          <span style={{ ...SERIF, color: C.side, fontSize: 18 }}>H</span>
+          <span style={{ ...SERIF, color: C.side, fontSize: 18 }}>P</span>
         </div>
-        {!collapsed && <span className="text-xl flex-1" style={{ ...SERIF, color: "#fff" }}>Harbor</span>}
+        {!collapsed && <span className="text-xl flex-1" style={{ ...SERIF, color: "#fff" }}>Pronext</span>}
         <button onClick={() => setCollapsed((c) => !c)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}>
           {collapsed ? <ChevronRight size={16} color="#A9BBB1" /> : <ChevronLeft size={16} color="#A9BBB1" />}
         </button>
@@ -1331,7 +1331,7 @@ function TopBar({ query, setQuery, S }) {
   return (
     <div className="flex items-center gap-3 px-4 md:px-8 py-4 md:py-5">
       <div className="w-8 h-8 rounded-lg items-center justify-center shrink-0" style={{ display: desktop ? "none" : "flex", background: C.side }}>
-        <span style={{ ...SERIF, color: C.lime, fontSize: 16 }}>H</span>
+        <span style={{ ...SERIF, color: C.lime, fontSize: 16 }}>P</span>
       </div>
       <div className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5 flex-1 max-w-xl" style={{ borderColor: C.line, background: "#fff" }}>
         <Search size={17} color={C.ink3} />
@@ -3282,7 +3282,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                 <div className="flex gap-2 mt-2 justify-end"><Btn onClick={() => setFitFor(c)}>Open review</Btn><Btn kind="primary" onClick={() => reroute(c)}>Route</Btn></div>
               </div>
             ))}
-            {!fits.length && <div className="text-sm" style={{ color: C.ink2 }}>{lastBench ? "No one on the bench meets this role's must-haves yet." : "Not checked yet. Check the bench to review the closest people already in Harbor."}</div>}
+            {!fits.length && <div className="text-sm" style={{ color: C.ink2 }}>{lastBench ? "No one on the bench meets this role's must-haves yet." : "Not checked yet. Check the bench to review the closest people already in Pronext."}</div>}
           </div>
         </Card>
       )}
@@ -3745,10 +3745,10 @@ function PromoteModal({ open, onClose, jobTitle, toast, S }) {
   const [channels, setChannels] = useState({ GJ: channelAvailable("GJ"), LI: channelAvailable("LI"), FB: false, GA: false });
   const [budget, setBudget] = useState("300,000");
   const [payer, setPayer] = useState("agency");
-  const [copy, setCopy] = useState(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through Harbor today.`);
+  const [copy, setCopy] = useState(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through Pronext today.`);
 
   React.useEffect(() => {
-    setCopy(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through Harbor today.`);
+    setCopy(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through Pronext today.`);
   }, [jobTitle, open]);
 
   const toggle = (k) => { if (!channelAvailable(k)) { toast(AD_CHANNELS.find((c) => c.key === k).name + " isn't connected — turn it on in Agency settings → Integrations."); return; } setChannels((c) => ({ ...c, [k]: !c[k] })); };
@@ -4211,7 +4211,7 @@ function ScheduleModal({ S, toast, onClose, edit, preset }) {
         <div><label className={lbl} style={{ color: C.ink2 }}>Client interviewers and notes (internal, never sent to the candidate)</label>
           <textarea rows={2} value={f.notes} onChange={(e) => set("notes", e.target.value)} className={inp + " resize-none"} style={inpS} /></div>
         <div className="flex flex-col gap-2 text-sm">
-          {g && g.connected && <div className="flex items-center gap-2" style={{ color: C.ink2 }}><CheckCircle2 size={15} color={C.em} />Goes into {f.recruiterId === S.me.id ? "your" : "their"} Google Calendar ("Harbor interviews")</div>}
+          {g && g.connected && <div className="flex items-center gap-2" style={{ color: C.ink2 }}><CheckCircle2 size={15} color={C.em} />Goes into {f.recruiterId === S.me.id ? "your" : "their"} Google Calendar ("Pronext interviews")</div>}
           <label className="flex items-center gap-2.5"><input type="checkbox" checked={f.notify} disabled={cand && !cand.emailAddr} onChange={(e) => set("notify", e.target.checked)} />
             {cand && !cand.emailAddr ? "No email on file, so the candidate can't be emailed" : "Email " + (cand ? cand.name.split(" ")[0] : "the candidate") + (edit ? " about any change" : " the invite") + ", with reminders 24 hours and 1 hour before"}</label>
           {!edit && link && <label className="flex items-center gap-2.5"><input type="checkbox" checked={moveStage} onChange={(e) => setMoveStage(e.target.checked)} />Move to the Interview stage for this role</label>}
@@ -4305,7 +4305,7 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
       {rejectOpen && cand && <RejectModal candidate={cand} kind="client" linkId={iv.linkId || undefined} S={S} toast={toast} onClose={() => { setRejectOpen(false); onClose(); }} />}
       <Modal open={cancelOpen} onClose={() => setCancelOpen(false)} title="Cancel this interview?">
         <div className="flex flex-col gap-3">
-          <div className="text-sm" style={{ color: C.ink2 }}>It's removed from Google Calendar and marked cancelled in Harbor.</div>
+          <div className="text-sm" style={{ color: C.ink2 }}>It's removed from Google Calendar and marked cancelled in Pronext.</div>
           <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} />Email {first} that it's cancelled</label>
           <div className="flex justify-end gap-2"><Btn onClick={() => setCancelOpen(false)}>Keep it</Btn><Btn kind="danger" disabled={!!busy} onClick={doCancel}>{busy === "cancel" ? <>Cancelling <InlineDots color="#fff" /></> : "Cancel interview"}</Btn></div>
         </div>
@@ -4351,22 +4351,22 @@ function GoogleCalendarTab({ S, toast }) {
   const s = st.settings || {};
   return (
     <Card>
-      <SectionTitle title="Google Calendar" sub="Connect your own Google account. Interviews you schedule in Harbor appear in your calendar with a Meet link, and moving or cancelling them in Google updates Harbor." size="text-lg" />
+      <SectionTitle title="Google Calendar" sub="Connect your own Google account. Interviews you schedule in Pronext appear in your calendar with a Meet link, and moving or cancelling them in Google updates Pronext." size="text-lg" />
       {st.error && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{st.error}</div>}
-      {!st.configured && !st.error && <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.warnBg, color: "#7A4B05" }}>Google sign-in isn't set up for Harbor yet. An admin needs to create the Google sign-in app and add its two keys (see supabase/INTERVIEWS_SETUP.md). Interviews still work without it; you just won't get Meet links or calendar sync.</div>}
+      {!st.configured && !st.error && <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.warnBg, color: "#7A4B05" }}>Google sign-in isn't set up for Pronext yet. An admin needs to create the Google sign-in app and add its two keys (see supabase/INTERVIEWS_SETUP.md). Interviews still work without it; you just won't get Meet links or calendar sync.</div>}
       {st.configured && !st.connected && <Btn kind="primary" className="mt-4" disabled={!!busy} onClick={connect}>{busy === "connect" ? <>Opening Google <InlineDots color="#fff" /></> : "Connect Google Calendar"}</Btn>}
       {st.connected && (
         <div className="flex flex-col gap-3 mt-4">
           <div className="flex items-center justify-between gap-3 rounded-xl px-3.5 py-3" style={{ background: C.canvas }}>
-            <div><div className="text-sm font-medium">Connected as {st.email || "your Google account"}</div><div className="text-xs" style={{ color: C.ink2 }}>Calendar: Harbor interviews{st.lastSync ? " · last synced " + ago(st.lastSync) : ""}</div></div>
+            <div><div className="text-sm font-medium">Connected as {st.email || "your Google account"}</div><div className="text-xs" style={{ color: C.ink2 }}>Calendar: Pronext interviews{st.lastSync ? " · last synced " + ago(st.lastSync) : ""}</div></div>
             <Btn disabled={!!busy} onClick={disconnect} className="shrink-0">Disconnect</Btn>
           </div>
           {st.lastError && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>{st.lastError} <button className="underline" onClick={connect}>Reconnect</button></div>}
           <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={s.clashCheck !== false} onChange={(e) => saveSetting("clashCheck", e.target.checked)} />Warn me about clashes with my other Google events</label>
-          <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={!!s.inviteCandidate} onChange={(e) => saveSetting("inviteCandidate", e.target.checked)} />Invite the candidate from Google too (they already get Harbor's email)</label>
+          <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={!!s.inviteCandidate} onChange={(e) => saveSetting("inviteCandidate", e.target.checked)} />Invite the candidate from Google too (they already get Pronext's email)</label>
         </div>
       )}
-      <div className="text-xs mt-4" style={{ color: C.ink2 }}>Harbor only reads free/busy times and the events it created. It never reads the details of your other meetings.</div>
+      <div className="text-xs mt-4" style={{ color: C.ink2 }}>Pronext only reads free/busy times and the events it created. It never reads the details of your other meetings.</div>
     </Card>
   );
 }
@@ -4381,7 +4381,7 @@ function PortalInterviews({ list, token, onChanged }) {
     const f = (ms) => new Date(ms).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
     const clean = (t) => String(t || "").replace(/[\\;,]/g, (m) => "\\" + m).replace(/\n/g, "\\n");
     const loc = iv.locationType === "phone" ? "Phone" + (iv.location ? " " + iv.location : "") : iv.locationType === "in_person" ? iv.location || "In person" : iv.joinUrl || "Video call";
-    const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Harbor//Interviews//EN", "BEGIN:VEVENT", "UID:" + iv.id + "@harbor", "DTSTAMP:" + f(Date.now()), "DTSTART:" + f(s), "DTEND:" + f(e),
+    const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Pronext//Interviews//EN", "BEGIN:VEVENT", "UID:" + iv.id + "@harbor", "DTSTAMP:" + f(Date.now()), "DTSTART:" + f(s), "DTEND:" + f(e),
       "SUMMARY:" + clean(iv.round + ": " + (iv.role || "Interview") + (iv.company ? " at " + iv.company : "")), "LOCATION:" + clean(loc), "DESCRIPTION:" + clean(window.location.href), "END:VEVENT", "END:VCALENDAR"].join("\r\n");
     const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
     const a = document.createElement("a"); a.href = url; a.download = "interview.ics"; document.body.appendChild(a); a.click(); document.body.removeChild(a);
@@ -4428,7 +4428,7 @@ function PortalInterviews({ list, token, onChanged }) {
 }
 
 /* ----------------------------------------------------------------------
-   Outreach: sourcing outside Harbor (candidates) and the daily client-lead feed.
+   Outreach: sourcing outside Pronext (candidates) and the daily client-lead feed.
    Server side lives in the `sourcing` and `outreach-public` Edge Functions; nothing is
    sent until an email sender, a sender name and a postal address are set (Setup tab).
    ---------------------------------------------------------------------- */
@@ -4530,7 +4530,7 @@ function ManualSend({ kind, id, S, toast, onDone, label }) {
       <Modal open={!!mail} onClose={() => setMail(null)} title="Send it from your own email">
         {mail && (
           <div className="flex flex-col gap-3">
-            <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so Harbor records it. The "I'm interested" and unsubscribe links still work.</div>
+            <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so Pronext records it. The "I'm interested" and unsubscribe links still work.</div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.to, toast, "Address copied")}>Copy</button></div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.subject, toast, "Subject copied")}>Copy</button></div>
             <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
@@ -4636,9 +4636,9 @@ function JobSourcingCard({ job, S, toast }) {
   return (
     <Card>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <SectionTitle title="Sourcing" sub="Harbor checks your own candidates first, using the job's parallel titles. Only when there aren't enough strong fits does it look outside Harbor for people with verified emails." size="text-xl" />
+        <SectionTitle title="Sourcing" sub="Pronext checks your own candidates first, using the job's parallel titles. Only when there aren't enough strong fits does it look outside Pronext for people with verified emails." size="text-xl" />
         {canRun && <div className="flex gap-2 shrink-0 flex-wrap">
-          <Btn kind="primary" icon={Search} onClick={() => outside(!!external)} disabled={!!busy}>{busy === "outside" ? "Searching…" : external ? "Search outside again" : "Search outside Harbor"}</Btn>
+          <Btn kind="primary" icon={Search} onClick={() => outside(!!external)} disabled={!!busy}>{busy === "outside" ? "Searching…" : external ? "Search outside again" : "Search outside Pronext"}</Btn>
         </div>}
       </div>
       <div className="mt-3">
@@ -4646,7 +4646,7 @@ function JobSourcingCard({ job, S, toast }) {
         <div className="flex flex-wrap gap-1.5 mt-1.5">{titles.length ? titles.map((t) => <Pill key={t} tone="neutral">{t}</Pill>) : <span className="text-sm" style={{ color: C.ink2 }}>Not generated yet. They're created the first time the bench is checked.</span>}</div>
       </div>
       <div className="mt-3">
-        <div className="text-xs" style={{ color: C.ink3 }}>Where Harbor looks outside</div>
+        <div className="text-xs" style={{ color: C.ink3 }}>Where Pronext looks outside</div>
         {src.area && src.area.locations ? (
           <div className="text-sm mt-1">
             <span>{src.area.summary || src.area.locations.join(", ")}</span>
@@ -4658,18 +4658,18 @@ function JobSourcingCard({ job, S, toast }) {
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
-          <div className="text-xs" style={{ color: C.ink3 }}>In Harbor</div>
+          <div className="text-xs" style={{ color: C.ink3 }}>In Pronext</div>
           <div className="text-sm mt-0.5">{internal ? <>{plural(internal.goodFits || 0, "strong fit")} on the bench · {internal.considered || 0} with a matching title{internal.onRole ? " · " + internal.onRole + " already submitted to this role (not counted)" : ""} · checked {fdate(internal.at)}</> : state === "pending" ? "Queued. The bench is checked automatically within about 10 minutes." : "Not checked yet"}</div>
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
-          <div className="text-xs" style={{ color: C.ink3 }}>Outside Harbor</div>
+          <div className="text-xs" style={{ color: C.ink3 }}>Outside Pronext</div>
           <div className="text-sm mt-0.5">{src.state === "awaiting_approval" ? "Waiting for an Admin to approve the Apollo search (Outreach > Approvals)" : external ? (external.skipped || external.error || (plural(external.found || 0, "person", "people") + " found · " + fdate(external.at))) : "Not searched yet"}</div>
         </div>
       </div>
       {canRun && prospects.length > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-            <div className="text-sm font-medium">People found outside Harbor <span style={{ color: C.ink3 }}>· {waiting.length} waiting for approval</span></div>
+            <div className="text-sm font-medium">People found outside Pronext <span style={{ color: C.ink3 }}>· {waiting.length} waiting for approval</span></div>
             {waiting.length > 0 && <div className="flex gap-2">
               <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all"}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={approve}>{busy === "approve" ? "Approving…" : "Approve " + (ids.length || "") + " email" + (ids.length === 1 ? "" : "s")}</Btn>
@@ -4790,7 +4790,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
         <SectionTitle title="Connections" sub="Keys are stored as Supabase secrets, never in the app. See supabase/SOURCING_SETUP.md." size="text-xl" />
         <div className="mt-2">
           <Row ok={conn.anthropic} label="AI (Claude)" hint={conn.anthropic ? "Connected" : "Add ANTHROPIC_API_KEY"} />
-          <Row ok={conn.apollo} label="Apollo: finds candidates outside Harbor and hiring managers' emails" hint={conn.apollo ? "Connected" : "Add APOLLO_API_KEY. Until then, jobs only check your own bench."} />
+          <Row ok={conn.apollo} label="Apollo: finds candidates outside Pronext and hiring managers' emails" hint={conn.apollo ? "Connected" : "Add APOLLO_API_KEY. Until then, jobs only check your own bench."} />
           <Row ok={conn.theirstack} label="TheirStack: daily feed of new job postings" hint={conn.theirstack ? "Connected" : "Add THEIRSTACK_API_KEY. Until then, no client leads are fetched."} />
           <Row ok={conn.sender && conn.sender !== "none"} label="Email sender" hint={conn.sender === "instantly" ? "Instantly" : conn.sender === "gmail" ? "Gmail (Google Workspace)" : "Not connected. Needs a separate outreach domain and mailboxes, then Instantly or Gmail keys. Approved emails wait in the queue until then."} />
           <Row ok={!(status && status.blockers && status.blockers.length)} label="Sender details" hint={status && status.blockers && status.blockers.length ? "Missing: " + status.blockers.join(", ") + ". Required by anti-spam law in every email." : "Set"} />
@@ -4822,7 +4822,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
               <label key={k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={(f.regions || []).includes(k)} onChange={(e) => set("regions", e.target.checked ? [...new Set([...(f.regions || []), k])] : (f.regions || []).filter((x) => x !== k))} />{label}</label>
             ))}</div>
           </div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside Harbor when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside Pronext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outreach emails per day</label><input type="number" min="1" value={f.dailyCap ?? 40} onChange={(e) => set("dailyCap", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete outside contacts who never engaged after (days)</label><input type="number" min="14" value={f.retentionDays ?? 90} onChange={(e) => set("retentionDays", e.target.value)} className={inp} style={inpS} /></div>
@@ -4863,7 +4863,7 @@ function CampaignsPage({ toast, S }) {
   if (!canRun) return (
     <div className="flex flex-col gap-5">
       <SectionTitle size="text-3xl md:text-4xl" title="Outreach" sub="Rec Ops and Admins run candidate outreach and client leads." />
-      <Card><div className="text-sm" style={{ color: C.ink2 }}>Ask your Rec Ops manager if you'd like a role sourced outside Harbor.</div></Card>
+      <Card><div className="text-sm" style={{ color: C.ink2 }}>Ask your Rec Ops manager if you'd like a role sourced outside Pronext.</div></Card>
     </div>
   );
   const jobLabel = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? j.role + ", " + j.client : ""; };
@@ -4880,7 +4880,7 @@ function CampaignsPage({ toast, S }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Outreach" sub="Candidates found outside Harbor for your live jobs, and hiring managers whose new postings fit your candidates." />
+        <SectionTitle size="text-3xl md:text-4xl" title="Outreach" sub="Candidates found outside Pronext for your live jobs, and hiring managers whose new postings fit your candidates." />
       </div>
       {notice ? (
         <div className="rounded-xl px-4 py-3 text-sm flex items-start gap-2.5" style={{ background: C.warnBg, color: C.warnFg }}>
@@ -4899,7 +4899,7 @@ function CampaignsPage({ toast, S }) {
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, Harbor checks your bench first. If there are fewer strong fits than your setting, it searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, Pronext checks your bench first. If there are fewer strong fits than your setting, it searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>
           <div className="flex flex-col gap-2 mt-3">
             {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pList.map((p) => (
               <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
@@ -4919,7 +4919,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning Harbor pulls new postings in your target regions for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning Pronext pulls new postings in your target regions for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : lList.length ? lList.map((l) => (
               <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
@@ -5041,7 +5041,7 @@ function OutreachLinkPage({ token, kind, action }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
       <div className={"w-full rounded-2xl border p-6 " + (action === "job" && kind === "p" && !done ? "max-w-2xl md:p-8" : "max-w-sm")} style={{ background: "#fff", borderColor: C.line }}>
-        <div className="text-2xl mb-3" style={{ ...SERIF }}>{(info && info.agencyName) || "Harbor"}</div>
+        <div className="text-2xl mb-3" style={{ ...SERIF }}>{(info && info.agencyName) || "Pronext"}</div>
         {bodyEl}
       </div>
     </div>
@@ -5098,7 +5098,7 @@ function ClientViewPage({ token }) {
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
       <div className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
-        <div className="text-2xl mb-3" style={{ ...SERIF }}>Harbor</div>
+        <div className="text-2xl mb-3" style={{ ...SERIF }}>Pronext</div>
         {bodyEl}
       </div>
     </div>
@@ -5754,7 +5754,7 @@ function AgencyTab({ toast, S }) {
       <div>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Logo (shown at the top of every email; your agency name is used when there's no logo)</label>
         <div className="flex items-center gap-3 mt-1.5">
-          {company.logoUrl ? <img src={company.logoUrl} alt="Agency logo" className="h-9 max-w-[160px] object-contain rounded" style={{ background: C.canvas }} /> : <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.side, color: C.lime, ...SERIF }}>{(name || "H").charAt(0).toUpperCase()}</div>}
+          {company.logoUrl ? <img src={company.logoUrl} alt="Agency logo" className="h-9 max-w-[160px] object-contain rounded" style={{ background: C.canvas }} /> : <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.side, color: C.lime, ...SERIF }}>{(name || "P").charAt(0).toUpperCase()}</div>}
           <label className="text-sm rounded-lg border px-3 py-2 cursor-pointer" style={{ borderColor: C.line }}>{company.logoUrl ? "Change logo" : "Upload logo"}<input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (!f) return; S.uploadLogo(f).then((url) => { setCompany({ ...company, logoUrl: url }); toast("Logo uploaded. Save changes to use it."); }).catch(() => {}); }} /></label>
           {company.logoUrl && <button type="button" className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setCompany({ ...company, logoUrl: "" })}>Remove</button>}
         </div>
@@ -5826,7 +5826,7 @@ function DataPrivacyTab({ toast, S }) {
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <SectionTitle title="Automatic sign-out" sub="Signs people out of Harbor after a period with no activity, so an unattended computer doesn't stay logged in. They get a 2-minute warning first, and need to sign in again afterwards." size="text-lg" />
+        <SectionTitle title="Automatic sign-out" sub="Signs people out of Pronext after a period with no activity, so an unattended computer doesn't stay logged in. They get a 2-minute warning first, and need to sign in again afterwards." size="text-lg" />
         <div className="flex flex-col sm:flex-row sm:items-end gap-3 mt-4">
           <div className="sm:w-64"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sign out after no activity for</label>
             <select value={idle} onChange={(e) => setIdle(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
@@ -5871,7 +5871,7 @@ function IntegrationsTab({ toast, S }) {
   const save = () => { setBusy(true); S.saveSettings({ ...S.settings, integrations: enabled }).then(() => toast("Integrations saved")).catch(() => {}).finally(() => setBusy(false)); };
   return (
     <Card>
-      <SectionTitle title="Integrations" sub="Turn on the channels and tools your team can use elsewhere in Harbor." size="text-lg" />
+      <SectionTitle title="Integrations" sub="Turn on the channels and tools your team can use elsewhere in Pronext." size="text-lg" />
       <div className="flex flex-col gap-1 mt-4">
         {INTEGRATIONS_LIST.map((i) => (
           <button key={i.key} onClick={() => toggle(i.key)} className="py-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -5880,7 +5880,7 @@ function IntegrationsTab({ toast, S }) {
           </button>
         ))}
       </div>
-      <div className="text-xs mt-3" style={{ color: C.ink3 }}>LinkedIn and Google for Jobs post through your ad campaigns, tracked here in Harbor — a real posting connection to either platform isn't wired up yet.</div>
+      <div className="text-xs mt-3" style={{ color: C.ink3 }}>LinkedIn and Google for Jobs post through your ad campaigns, tracked here in Pronext — a real posting connection to either platform isn't wired up yet.</div>
       <Btn kind="primary" className="mt-4" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
     </Card>
   );
@@ -6080,14 +6080,14 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
         )}
         {!candId && dup.state === "ok" && (dup.elsewhere || []).length > 0 && (
           <div className="rounded-xl p-3 text-sm" style={{ background: TONE.info.bg }}>
-            <span className="font-semibold" style={{ color: TONE.info.fg }}>Already in Harbor for other jobs. </span>
+            <span className="font-semibold" style={{ color: TONE.info.fg }}>Already in Pronext for other jobs. </span>
             <span style={{ color: C.ink }}>{dup.elsewhere.map((x) => x.name + " (" + (x.mine ? "yours" : x.recruiter) + "): " + x.jobs.join(", ")).join("; ")}. {job ? "You can still submit them for this job." : ""}</span>
           </div>
         )}
         {!candId && dup.state !== "taken" && (dup.similar || []).length > 0 && (
           <div className="rounded-xl p-3 text-sm" style={{ background: TONE.warn.bg }}>
             <span className="font-semibold" style={{ color: TONE.warn.fg }}>Possible duplicate. </span>
-            <span style={{ color: C.ink }}>Someone with the same name is already in Harbor under a different email: {dup.similar.map((x) => x.name + " (" + (x.mine ? "yours" : x.recruiter) + ", added " + fdate(x.since) + ")").join("; ")}. Make sure it isn't the same person before you submit.</span>
+            <span style={{ color: C.ink }}>Someone with the same name is already in Pronext under a different email: {dup.similar.map((x) => x.name + " (" + (x.mine ? "yours" : x.recruiter) + ", added " + fdate(x.since) + ")").join("; ")}. Make sure it isn't the same person before you submit.</span>
           </div>
         )}
         <div>
@@ -6269,7 +6269,7 @@ function ForgotPassword({ onDone, initialEmail }) {
     if (busy) return;
     if (!email || !email.includes("@")) { setErr("Enter your email"); return; }
     setBusy(true); setErr("");
-    try { const j = await call({ action: "request", email }); setMsg(j.message || "If that email has a Harbor account, a code has been sent to it."); setStep("verify"); }
+    try { const j = await call({ action: "request", email }); setMsg(j.message || "If that email has a Pronext account, a code has been sent to it."); setStep("verify"); }
     catch (e) { setErr(e.message); }
     setBusy(false);
   };
@@ -6290,12 +6290,12 @@ function ForgotPassword({ onDone, initialEmail }) {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
       <form onSubmit={step === "request" ? requestCode : verifyCode} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
         <div className="flex items-center gap-2.5 mb-6">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: C.side }}><span style={{ ...SERIF, color: C.lime, fontSize: 18 }}>H</span></div>
-          <span className="text-2xl" style={{ ...SERIF }}>Harbor</span>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: C.side }}><span style={{ ...SERIF, color: C.lime, fontSize: 18 }}>P</span></div>
+          <span className="text-2xl" style={{ ...SERIF }}>Pronext</span>
         </div>
         {step === "request" && (<>
           <div className="text-sm font-medium mb-1">Forgot your password?</div>
-          <div className="text-xs mb-4" style={{ color: C.ink2 }}>Enter your Harbor email and we'll send you a one-time code to reset it. Your admin is notified too, for visibility.</div>
+          <div className="text-xs mb-4" style={{ color: C.ink2 }}>Enter your Pronext email and we'll send you a one-time code to reset it. Your admin is notified too, for visibility.</div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
           {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
@@ -6345,8 +6345,8 @@ function SignIn({ onSignedIn, notice }) {
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
       <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
         <div className="flex items-center gap-2.5 mb-6">
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: C.side }}><span style={{ ...SERIF, color: C.lime, fontSize: 18 }}>H</span></div>
-          <span className="text-2xl" style={{ ...SERIF }}>Harbor</span>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: C.side }}><span style={{ ...SERIF, color: C.lime, fontSize: 18 }}>P</span></div>
+          <span className="text-2xl" style={{ ...SERIF }}>Pronext</span>
         </div>
         {notice && <div className="text-sm rounded-lg px-3 py-2.5 mb-4 flex items-start gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}><Lock size={15} className="shrink-0 mt-0.5" />{notice}</div>}
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
@@ -6368,7 +6368,7 @@ function AwaitingAccess({ onSignOut }) {
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
       <div className="max-w-sm">
         <div className="text-2xl mb-2" style={{ ...SERIF }}>Almost there</div>
-        <div className="text-sm mb-5" style={{ color: C.ink2 }}>Your account is signed in but not active yet. Ask your Harbor admin to activate it.</div>
+        <div className="text-sm mb-5" style={{ color: C.ink2 }}>Your account is signed in but not active yet. Ask your Pronext admin to activate it.</div>
         <Btn onClick={onSignOut}>Sign out</Btn>
       </div>
     </div>
@@ -6430,7 +6430,7 @@ export default function App() {
     setSignedOutReason(typeof reason === "string" ? reason : "");
     setSession(null); setMe(null); setData(null); setStatus("signedout");
   };
-  // Automatic sign-out after inactivity. Activity in any Harbor tab counts (shared in
+  // Automatic sign-out after inactivity. Activity in any Pronext tab counts (shared in
   // localStorage); signing out in one tab signs out the others.
   React.useEffect(() => {
     if (status !== "ready") return;
@@ -6485,7 +6485,7 @@ export default function App() {
   }, []);
 
   // Keep the URL's ?page= in sync with in-app navigation, so the browser back/forward
-  // buttons move between Harbor's own pages instead of leaving the app, and refreshing
+  // buttons move between Pronext's own pages instead of leaving the app, and refreshing
   // reloads the page the person was on instead of bouncing to Overview.
   const routeSkipPush = React.useRef(true); // true on first run: URL already matches, don't push a duplicate entry
   React.useEffect(() => {
@@ -6515,7 +6515,7 @@ export default function App() {
   if (status === "pending") return <AwaitingAccess onSignOut={signOut} />;
   if (status === "error") return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
-      <div className="max-w-sm"><div className="text-sm mb-4" style={{ color: C.dangerFg }}>Could not load Harbor: {errMsg}</div><div className="flex gap-2 justify-center flex-wrap"><Btn kind="primary" onClick={retry}>Try again</Btn><Btn onClick={signOut}>Sign out</Btn></div></div>
+      <div className="max-w-sm"><div className="text-sm mb-4" style={{ color: C.dangerFg }}>Could not load Pronext: {errMsg}</div><div className="flex gap-2 justify-center flex-wrap"><Btn kind="primary" onClick={retry}>Try again</Btn><Btn onClick={signOut}>Sign out</Btn></div></div>
     </div>
   );
 
@@ -6529,7 +6529,7 @@ export default function App() {
     const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
     const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
   };
-  // Interviews (interviews Edge Function): ivCall refreshes Harbor's data after a change; ivQuiet
+  // Interviews (interviews Edge Function): ivCall refreshes Pronext's data after a change; ivQuiet
   // is for lookups (Google status, busy times) that change nothing.
   const ivQuiet = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/interviews", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
@@ -6926,7 +6926,7 @@ export default function App() {
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
       <Modal open={idleLeft != null} onClose={() => { idleStore.touch(Date.now()); setIdleLeft(null); }} title="Are you still there?">
-        <div className="text-sm mb-5" style={{ color: C.ink2 }}>For security, Harbor signs you out after {idleStore.label()} without activity. You'll be signed out in <span className="font-semibold" style={{ color: C.ink }}>{idleLeft != null ? Math.floor(idleLeft / 60) + ":" + String(idleLeft % 60).padStart(2, "0") : ""}</span>.</div>
+        <div className="text-sm mb-5" style={{ color: C.ink2 }}>For security, Pronext signs you out after {idleStore.label()} without activity. You'll be signed out in <span className="font-semibold" style={{ color: C.ink }}>{idleLeft != null ? Math.floor(idleLeft / 60) + ":" + String(idleLeft % 60).padStart(2, "0") : ""}</span>.</div>
         <div className="flex gap-2 justify-end"><Btn onClick={() => signOut()}>Sign out now</Btn><Btn kind="primary" onClick={() => { idleStore.touch(Date.now()); setIdleLeft(null); }}>Stay signed in</Btn></div>
       </Modal>
     </div>
