@@ -14,13 +14,23 @@ Deno.serve(async (req: Request) => {
       ? await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle()
       : { data: null };
     if (!tok) return json({ error: "Not allowed" }, 403);
+    const body = await req.json();
+
+    // The ProNext logo for email headers: stored in the public avatars bucket so mail clients can load it.
+    if (body.action === "upload_logo") {
+      const bytes = Uint8Array.from(atob(String(body.png || "")), (c) => c.charCodeAt(0));
+      if (bytes.length < 100 || bytes.length > 500000) return json({ error: "Logo missing or too large" }, 400);
+      const path = "brand/" + String(body.name || "logo.png").replace(/[^a-z0-9._-]/gi, "");
+      const { error } = await admin.storage.from("avatars").upload(path, bytes, { contentType: "image/png", upsert: true });
+      if (error) return json({ error: error.message }, 400);
+      return json({ ok: true, url: admin.storage.from("avatars").getPublicUrl(path).data.publicUrl });
+    }
 
     const key = Deno.env.get("BREVO_API_KEY"), sender = Deno.env.get("BREVO_SENDER_EMAIL");
     if (!key) return json({ error: "BREVO_API_KEY is not set" }, 400);
     const { data: s } = await admin.from("agency_settings").select("agency_name").limit(1).maybeSingle();
     const senderName = String(s?.agency_name || "Pronext").trim() || "Pronext";
 
-    const body = await req.json();
     const templates: { name: string; subject: string; html: string }[] = Array.isArray(body.templates) ? body.templates : [];
     const h = { "api-key": key, "Content-Type": "application/json", accept: "application/json" };
     let listRes: Response;
