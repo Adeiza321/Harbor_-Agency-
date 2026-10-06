@@ -36,14 +36,14 @@ function clean(body: any) {
 
 async function info(admin: any, iv: any): Promise<{ i: Info; cand: any }> {
   const [{ data: cand }, { data: job }, { data: rec }] = await Promise.all([
-    admin.from("candidates").select("id,name,email,portal_token,recruiter_id,status").eq("id", iv.candidate_id).single(),
+    admin.from("candidates").select("id,name,email,portal_token,recruiter_id,status,email_opt_out").eq("id", iv.candidate_id).single(),
     iv.job_id ? admin.from("jobs").select("role_title,client").eq("id", iv.job_id).maybeSingle() : Promise.resolve({ data: null }),
     iv.recruiter_id ? admin.from("profiles").select("full_name").eq("id", iv.recruiter_id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   return {
     cand,
     i: {
-      candidateName: cand?.name || "", candidateEmail: cand?.email || "", portalToken: cand?.portal_token || "",
+      candidateName: cand?.name || "", candidateEmail: cand?.email || "", portalToken: cand?.portal_token || "", optedOut: !!cand?.email_opt_out,
       role: job?.role_title || "the role", company: job?.client || "", round: iv.round || ROUND_DEFAULT,
       startsAt: iv.starts_at, durationMin: iv.duration_min, tz: iv.candidate_tz, locationType: iv.location_type,
       location: iv.location, joinUrl: iv.location_type === "meet" ? iv.meet_url : iv.location_type === "link" ? iv.location : null,
@@ -64,7 +64,7 @@ const seqOf = (_iv: any) => Math.floor((Date.now() - Date.UTC(2026, 0, 1)) / 600
 
 async function mailCandidate(admin: any, iv: any, kind: "invite" | "changed" | "cancel" | "noshow" | "day" | "hour") {
   const { i } = await info(admin, iv);
-  if (!i.candidateEmail) return false;
+  if (!i.candidateEmail || i.optedOut) return false;
   const b = await loadBrand(admin);
   const m = kind === "invite" ? inviteEmail(b, i) : kind === "changed" ? inviteEmail(b, i, true) : kind === "cancel" ? cancelEmail(b, i)
     : kind === "noshow" ? noShowEmail(b, i) : reminderEmail(b, i, kind);

@@ -196,7 +196,7 @@ function mapAll(d) {
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
-    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, profileReadAt: c.profile_read_at || null,
+    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
@@ -1940,6 +1940,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <Pill tone="em">Verified, opened {candidate.opens}x</Pill>
               {candidate.recruiter && <Pill tone="neutral">Sourced by {candidate.recruiter}</Pill>}
               <span title="Whether they agreed, on their candidate page, to be presented anonymously to other employers"><Pill tone={candidate.pitchConsent ? "em" : "neutral"}>{candidate.pitchConsent ? "Open to anonymous pitches" : candidate.pitchAnswered ? "Declined pitches" : "Not asked about pitches yet"}</Pill></span>
+              {candidate.emailOptOut && <span title="They clicked unsubscribe in one of our emails. ProNext no longer emails them; contact them another way."><Pill tone="danger">Unsubscribed from emails</Pill></span>}
             </div>
             {reassign && (
               <div className="rounded-xl p-4 mb-4" style={{ background: C.emTint }}>
@@ -2482,7 +2483,7 @@ function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose,
     if (!reason) { toast("Pick the main reason"); return; }
     setBusy("save");
     S.rejectCandidate({ linkId: linkId || undefined, candidateId: candidate.id, kind, reason, feedback, message, notify })
-      .then((r) => { toast((kind === "client" ? "Recorded as rejected by the client" : "Candidate rejected") + (r.emailed ? ". " + first + " has been emailed why." : notify && !r.emailed ? ". The email couldn't be sent." : ".") + (r.movedToActiveFile ? " Moved to Active file." : "")); onDone && onDone(r); onClose(); })
+      .then((r) => { toast((kind === "client" ? "Recorded as rejected by the client" : "Candidate rejected") + (r.emailed ? ". " + first + " has been emailed why." : notify && r.unsubscribed ? ". Not emailed: " + first + " has unsubscribed from emails." : notify && !r.emailed ? ". The email couldn't be sent." : ".") + (r.movedToActiveFile ? " Moved to Active file." : "")); onDone && onDone(r); onClose(); })
       .catch(() => {}).finally(() => setBusy(""));
   };
   const ta = "w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none";
@@ -4989,6 +4990,49 @@ function PitchConsentCard({ token, on, onChanged }) {
   );
 }
 
+// Candidate page: the "click here" unsubscribe link at the bottom of every candidate email lands
+// here with &unsub=1. Unsubscribing stops all ProNext emails to them; they can turn them back on.
+function EmailPrefsCard({ token }) {
+  const [pre] = useState(() => new URLSearchParams(window.location.search).get("unsub") === "1");
+  const [out, setOut] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [justDone, setJustDone] = useState(false);
+  const ref = React.useRef(null);
+  const call = (v) => sbFetch("/rest/v1/rpc/candidate_email_prefs", { method: "POST", body: { p_token: token, p_out: v } });
+  useEffect(() => { call(null).then((r) => setOut(!!(r && r.optedOut))).catch(() => setOut(false)); }, [token]);
+  useEffect(() => { if (pre && out !== null && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "center" }); }, [pre, out]);
+  const set = async (v) => {
+    setBusy(true); setErr("");
+    try { const r = await call(v); setOut(!!(r && r.optedOut)); setJustDone(true); } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  if (out === null) return null;
+  if (pre && !out && !justDone) return (
+    <div ref={ref}>
+      <Card className="border-2" style={{ borderColor: C.em }}>
+        <SectionTitle title="Unsubscribe from our emails?" sub="You won't get any more emails from us, including updates on your applications and interviews. You can still check everything on this page, and turn emails back on any time." size="text-xl" />
+        <div className="flex flex-wrap gap-2 mt-4">
+          <Btn kind="primary" onClick={() => set(true)} disabled={busy}>{busy ? "Unsubscribing…" : "Unsubscribe"}</Btn>
+          <Btn kind="ghost" onClick={() => { const u = new URL(window.location.href); u.searchParams.delete("unsub"); window.history.replaceState({}, "", u.toString()); window.location.reload(); }} disabled={busy}>Keep my emails</Btn>
+        </div>
+        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
+      </Card>
+    </div>
+  );
+  return (
+    <div ref={ref}>
+      <Card>
+        <SectionTitle title="Email updates" size="text-xl" />
+        {justDone && <div className="text-sm mt-2 font-medium" style={{ color: C.em }}>{out ? "You've been unsubscribed. We won't email you again." : "Emails are back on."}</div>}
+        <div className="text-sm mt-2" style={{ color: C.ink2 }}>{out ? "You're unsubscribed, so we don't email you. Updates still appear on this page." : "We email you about your applications, interviews and messages from your recruiter."}</div>
+        <div className="mt-3"><Btn kind="ghost" onClick={() => set(!out)} disabled={busy}>{out ? "Turn emails back on" : "Unsubscribe"}</Btn></div>
+        {err && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{err}</div>}
+      </Card>
+    </div>
+  );
+}
+
 // Public page behind the links in outreach emails: /?u=<token>&k=p|l&a=interested|unsubscribe|delete
 function OutreachLinkPage({ token, kind, action }) {
   const [info, setInfo] = useState(null);
@@ -6246,6 +6290,7 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
             ))}
           </Card>
         )}
+        {token && <EmailPrefsCard token={token} />}
       </div>
     </div>
   );

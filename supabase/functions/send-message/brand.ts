@@ -16,7 +16,8 @@ export function esc(s: unknown) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as any)[c] || c);
 }
 
-export function emailShell(b: Brand, preheader: string, bodyHtml: string, footer?: string) {
+// Candidate emails leave `footer` empty and pass their unsubscribe link; staff emails pass their own footer line.
+export function emailShell(b: Brand, preheader: string, bodyHtml: string, footer?: string, unsubscribeUrl?: string) {
   const mark = b.logo
     ? `<img src="${esc(b.logo)}" alt="${esc(b.name)}" height="32" style="height:32px;max-width:180px;display:block;">`
     : `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="width:32px;height:32px;border-radius:8px;background:#12241D;color:#C8F169;text-align:center;font-family:Georgia,serif;font-size:18px;line-height:32px;">${esc(b.name.charAt(0).toUpperCase())}</td><td style="padding-left:10px;font-family:Georgia,'Times New Roman',serif;font-size:18px;color:#14201B;">${esc(b.name)}</td></tr></table>`;
@@ -27,10 +28,10 @@ export function emailShell(b: Brand, preheader: string, bodyHtml: string, footer
 <div style="background:#ffffff;border:1px solid #E6E1D6;border-radius:16px;padding:28px;">
 ${bodyHtml}
 </div>
-<div style="padding:16px 4px 0;font-size:12px;line-height:1.6;color:#56605A;font-family:Arial,sans-serif;">
+<div style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#56605A;font-family:Arial,sans-serif;text-align:center;">
 <div style="font-weight:700;color:#14201B;">${esc(b.name)}</div>
 ${b.address ? `<div>${esc(b.address)}</div>` : ""}
-<div style="margin-top:6px;">${footer ? esc(footer) : "You're receiving this because you're working with " + esc(b.name) + " on your job search. You can reach your recruiter any time from your candidate page."}</div>
+<div style="margin-top:6px;">${footer ? esc(footer) : "You are receiving this email because you signed up as a candidate on " + esc(b.name) + "." + (unsubscribeUrl ? ` If you wish to unsubscribe, <a href="${esc(unsubscribeUrl)}" style="color:#56605A;text-decoration:underline;">click here</a>.` : "")}</div>
 <div style="margin-top:6px;color:#8A8578;">&copy; ${new Date().getFullYear()} ${esc(b.name)}</div>
 </div>
 </div></body></html>`;

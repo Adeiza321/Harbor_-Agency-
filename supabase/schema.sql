@@ -1742,3 +1742,28 @@ select cron.schedule('harbor-screen-sweep', '*/2 * * * *', $$select public.scree
 -- migration: candidate_linkedin
 -- LinkedIn profile URL read from the resume (or typed in by staff).
 alter table public.candidates add column if not exists linkedin_url text;
+
+-- migration: candidate_email_opt_out
+-- The "click here" unsubscribe link at the bottom of every candidate email. Once a candidate
+-- unsubscribes, ProNext sends them no more emails (status updates, messages, interviews).
+alter table public.candidates add column if not exists email_opt_out boolean not null default false;
+alter table public.candidates add column if not exists email_opt_out_at timestamptz;
+
+-- Candidate page: read (p_out null) or change the email setting, by the candidate's page token.
+create or replace function public.candidate_email_prefs(p_token text, p_out boolean default null)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare cand_id uuid; cur boolean;
+begin
+  if length(coalesce(p_token, '')) < 16 then raise exception 'Invalid link'; end if;
+  select id, email_opt_out into cand_id, cur from candidates where portal_token = p_token;
+  if cand_id is null then raise exception 'Invalid link'; end if;
+  if p_out is not null and p_out is distinct from cur then
+    update candidates set email_opt_out = p_out, email_opt_out_at = now() where id = cand_id;
+    insert into candidate_timeline (candidate_id, title, done)
+      values (cand_id, case when p_out then 'Unsubscribed from ProNext emails' else 'Turned ProNext emails back on' end, true);
+    cur := p_out;
+  end if;
+  return jsonb_build_object('ok', true, 'optedOut', coalesce(cur, false));
+end $$;
+revoke all on function public.candidate_email_prefs(text, boolean) from public;
+grant execute on function public.candidate_email_prefs(text, boolean) to anon, authenticated;

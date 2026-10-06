@@ -23,7 +23,7 @@ export function whenText(startsAt: string, minutes: number, tz?: string | null) 
 }
 
 export type Info = {
-  candidateName: string; candidateEmail: string; portalToken: string; role: string; company: string; round: string;
+  candidateName: string; candidateEmail: string; portalToken: string; optedOut?: boolean; role: string; company: string; round: string;
   startsAt: string; durationMin: number; tz?: string | null; locationType: string; location?: string | null; joinUrl?: string | null; recruiter: string;
 };
 
@@ -34,6 +34,7 @@ function whereHtml(i: Info) {
 }
 const roleLine = (i: Info) => `${esc(i.round)} for <b>${esc(i.role || "the role")}</b>${i.company ? ` at <b>${esc(i.company)}</b>` : ""}`;
 const portal = (i: Info) => `${PORTAL_BASE()}/?c=${i.portalToken}`;
+const unsub = (i: Info) => portal(i) + "&unsub=1";
 
 // Calendar file the candidate can add to any calendar app.
 export function ics(i: Info & { id: string; seq: number; cancelled?: boolean }) {
@@ -57,7 +58,7 @@ export function inviteEmail(b: Brand, i: Info, changed = false) {
     p(changed ? `The time of your ${roleLine(i)} has changed.` : `Your ${roleLine(i)} is booked.`) +
     p(`<b>${esc(whenText(i.startsAt, i.durationMin, i.tz))}</b><br>${whereHtml(i)}`) +
     p(`Please confirm you'll be there on your candidate page. The attached file adds it to your calendar.`) +
-    brandButton(b, portal(i), "Confirm I'll be there"));
+    brandButton(b, portal(i), "Confirm I'll be there"), undefined, unsub(i));
   return { subject, html };
 }
 
@@ -67,7 +68,7 @@ export function reminderEmail(b: Brand, i: Info, kind: "day" | "hour") {
     p(kind === "day" ? `A reminder about your ${roleLine(i)} tomorrow.` : `Your ${roleLine(i)} starts in about an hour.`) +
     p(`<b>${esc(whenText(i.startsAt, i.durationMin, i.tz))}</b><br>${whereHtml(i)}`) +
     p(`Good luck. ${esc(i.recruiter || "Your recruiter")} is here if you need anything.`) +
-    brandButton(b, portal(i), "Open your candidate page"));
+    brandButton(b, portal(i), "Open your candidate page"), undefined, unsub(i));
   return { subject, html };
 }
 
@@ -77,7 +78,7 @@ export function noShowEmail(b: Brand, i: Info) {
   const html = emailShell(b, subject, hi(i.candidateName) +
     p(`About your ${roleLine(i)} on ${esc(whenText(i.startsAt, i.durationMin, i.tz))}:`) +
     p(esc(NOSHOW_TEXT)) +
-    brandButton(b, portal(i), `Message ${i.recruiter || "your recruiter"}`));
+    brandButton(b, portal(i), `Message ${i.recruiter || "your recruiter"}`), undefined, unsub(i));
   return { subject, html };
 }
 
@@ -86,6 +87,6 @@ export function cancelEmail(b: Brand, i: Info) {
   const html = emailShell(b, subject, hi(i.candidateName) +
     p(`Your ${roleLine(i)} on ${esc(whenText(i.startsAt, i.durationMin, i.tz))} has been cancelled.`) +
     p(`${esc(i.recruiter || "Your recruiter")} will be in touch about next steps.`) +
-    brandButton(b, portal(i), "Open your candidate page"));
+    brandButton(b, portal(i), "Open your candidate page"), undefined, unsub(i));
   return { subject, html };
 }

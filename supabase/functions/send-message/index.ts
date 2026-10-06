@@ -72,7 +72,7 @@ function rejectEmail(b: Brand, o: { name: string; role: string; company: string;
      <div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;line-height:1.55;"><div style="font-family:Arial,sans-serif;font-size:11px;letter-spacing:.06em;color:#56605A;margin-bottom:6px;">WHY</div>${esc(o.message).replace(/\n/g, "<br>")}</div>
      <div style="font-size:15px;line-height:1.6;margin-top:14px;">This decision is about this one role, not about you. Your profile stays active with us, and ${esc(o.recruiter || "your recruiter")} will reach out when a role that fits comes up.</div>
      ${button(b, o.portalUrl, "See roles that fit you")}
-     ${o.askPitch ? pitchYesNo(b, o.portalUrl) : ""}`);
+     ${o.askPitch ? pitchYesNo(b, o.portalUrl) : ""}`, undefined, o.portalUrl + "&unsub=1");
   return { subject, html };
 }
 
@@ -113,7 +113,7 @@ Deno.serve(async (req: Request) => {
     } else if (action === "invite" || action === "reply") return json({ error: "linkId is required" }, 400);
     const candidateId = link ? link.candidate_id : String(body.candidateId || "");
     if (!candidateId) return json({ error: "candidateId is required" }, 400);
-    const { data: cand } = await admin.from("candidates").select("id,name,email,recruiter_id,portal_token,status,pitch_consent,pitch_consent_at").eq("id", candidateId).single();
+    const { data: cand } = await admin.from("candidates").select("id,name,email,recruiter_id,portal_token,status,pitch_consent,pitch_consent_at,email_opt_out").eq("id", candidateId).single();
     if (!cand) return json({ error: "Candidate not found" }, 404);
     const { data: job } = link ? await admin.from("jobs").select("role_title,client").eq("id", link.job_id).maybeSingle() : { data: null };
     if (!isStaff && cand.recruiter_id !== me.id) {
@@ -124,11 +124,15 @@ Deno.serve(async (req: Request) => {
     const portalUrl = `${PORTAL_BASE}/?c=${cand.portal_token}`;
     const recruiterName = me.full_name || "your recruiter";
     const firstName = esc(String(cand.name || "there").split(" ")[0]);
+    // Every candidate email carries an unsubscribe link; once they use it, ProNext stops emailing them.
+    const unsubUrl = portalUrl + "&unsub=1";
+    const optedOut = !!cand.email_opt_out;
 
     // First email when a recruiter registers a candidate for a role. It also asks the same Yes / No
     // pitching question as the rejection email, until they've answered it on their candidate page.
     if (action === "invite") {
       if (!cand.email) return json({ ok: true, skipped: "No email on file for this candidate" });
+      if (optedOut) return json({ ok: true, sent: false, skipped: "This candidate unsubscribed from ProNext emails" });
       // The candidate's own recruiter (whoever added them may be Rec Ops or an Admin).
       const { data: rec } = cand.recruiter_id ? await admin.from("profiles").select("full_name").eq("id", cand.recruiter_id).maybeSingle() : { data: null };
       const recruiterFirst = String(rec?.full_name || me.full_name || "").trim().split(" ")[0] || "your recruiter";
@@ -139,7 +143,7 @@ Deno.serve(async (req: Request) => {
          <div style="font-size:15px;line-height:1.6;">Your recruiter <b>${esc(recruiterFirst)}</b> has submitted your profile for ${roleHtml}, and your application is currently under review. Once a decision is made, you'll get another email updating you on its status.</div>
          <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message your recruiter if you need any help or want to stay connected.</div>
          ${button(brand, portalUrl, "Message your recruiter")}
-         ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`);
+         ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);
       const sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, subject, html);
       return json({ ok: true, sent });
     }
@@ -152,16 +156,16 @@ Deno.serve(async (req: Request) => {
         .select().single();
       if (error) return json({ error: error.message }, 400);
       let sent = false;
-      if (cand.email) {
+      if (cand.email && !optedOut) {
         const preview = text.length > 160 ? text.slice(0, 160) + "…" : text;
         const html = emailShell(brand, "You have a message from your recruiter",
           `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
            <div style="font-size:15px;line-height:1.6;">${esc(recruiterName)} sent you a message about <b>${esc(roleLabel)}</b>:</div>
            <div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;font-style:italic;line-height:1.5;">&ldquo;${esc(preview)}&rdquo;</div>
-           ${button(brand, portalUrl, "Reply")}`);
+           ${button(brand, portalUrl, "Reply")}`, undefined, unsubUrl);
         sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, "You have a message from your recruiter", html);
       }
-      return json({ ok: true, message: row, sent });
+      return json({ ok: true, message: row, sent, unsubscribed: optedOut });
     }
 
     // ---- Rejection ----
@@ -184,7 +188,7 @@ Deno.serve(async (req: Request) => {
 
     if (action === "preview_reject") {
       const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message: String(body.message || defaultReasonText(reason || "other", kind)), recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
-      return json({ ok: true, subject: m.subject, html: m.html, to: cand.email || "" });
+      return json({ ok: true, subject: m.subject, html: m.html, to: cand.email || "", unsubscribed: optedOut });
     }
 
     if (action === "reject") {
@@ -204,12 +208,12 @@ Deno.serve(async (req: Request) => {
       let emailed = false;
       if (notify) {
         if (link) await admin.from("candidate_job_messages").insert({ link_id: link.id, sender: "recruiter", author_id: me.id, body: (kind === "client" ? "The client has decided not to move forward with your profile for this role. " : "We've decided not to put you forward for this role. ") + message, recruiter_read_at: now });
-        if (cand.email) {
+        if (cand.email && !optedOut) {
           const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
           emailed = await sendBrevo(brand, { email: cand.email, name: cand.name }, m.subject, m.html);
         }
       }
-      return json({ ok: true, emailed, movedToActiveFile: !others?.length });
+      return json({ ok: true, emailed, unsubscribed: optedOut, movedToActiveFile: !others?.length });
     }
 
     return json({ error: "Unknown action" }, 400);
