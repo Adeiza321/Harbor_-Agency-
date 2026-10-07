@@ -1916,3 +1916,5 @@ grant execute on function public.client_view(text) to anon, authenticated;
 -- (candidate_job_messages attachment_* and email_* columns, chat-files bucket, cron harbor-email-status).
 -- Chat delete / clear, recruiter titles, Inbox statuses and the public apply page:
 -- supabase/migrations/20261007d_chat_delete_clear_inbox.sql
+-- Referrals (applications.referrer), the job-briefs bucket for PDF role summaries and the footer name:
+-- supabase/migrations/20261007e_referrals_role_summary.sql

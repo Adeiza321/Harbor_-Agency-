@@ -8,6 +8,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // This is deliberately the ONLY writer of unauthenticated data: it validates, rate-limits
 // by simple dedupe, and uses the service role to get past RLS (applications is staff-only
 // otherwise) so no other part of the surface area needs to be opened up.
+// Sources: career_page (apply page), outreach (apply button in an outreach email), referral
+// (someone referring a friend, with `referrer`), and the job-board / manual ones below.
 // A CV, when sent, is stored privately at resumes/applications/<application id>/<file>.
 
 const cors = {
@@ -18,7 +20,7 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-const SOURCES = ["career_page", "linkedin", "indeed", "google_jobs", "facebook", "referral", "manual"];
+const SOURCES = ["career_page", "outreach", "linkedin", "indeed", "google_jobs", "facebook", "referral", "manual"];
 const CV_TYPES: Record<string, string> = {
   pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
@@ -45,6 +47,17 @@ Deno.serve(async (req: Request) => {
     const linkSlug = body.link_slug ? String(body.link_slug).trim() : null;
     const linkedinRaw = String(body.linkedin || "").trim();
     const linkedin = /linkedin\.com\//i.test(linkedinRaw) ? linkedinRaw.slice(0, 300) : null;
+
+    // Referrals: someone recommending a friend from the apply page. The friend is the applicant;
+    // who referred them is kept with the application ({name, email, note}).
+    let referrer: { name: string; email: string; note: string } | null = null;
+    if (source === "referral" && body.referrer && typeof body.referrer === "object") {
+      const rn = String(body.referrer.name || "").trim().slice(0, 200), re = String(body.referrer.email || "").trim().toLowerCase().slice(0, 320);
+      if (!rn) return json({ error: "Enter your name" }, 400);
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(re)) return json({ error: "Enter a valid email for yourself" }, 400);
+      if (re === email) return json({ error: "Use your friend's email address, not your own" }, 400);
+      referrer = { name: rn, email: re, note: String(body.referrer.note || "").trim().slice(0, 1000) };
+    }
 
     if (!name || name.length > 200) return json({ error: "Enter a valid name" }, 400);
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 320) return json({ error: "Enter a valid email" }, 400);
@@ -106,6 +119,7 @@ Deno.serve(async (req: Request) => {
       job_id: resolvedJobId,
       linkedin,
       answers,
+      referrer,
       status: "new",
     }).select("id").single();
     if (error) return json({ error: error.message }, 500);

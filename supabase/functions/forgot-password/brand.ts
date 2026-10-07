@@ -1,6 +1,6 @@
 // Email branding: your agency's name (and logo, if set) from Agency settings, in your green.
 // The same file is copied into every function that sends email, so all emails look alike.
-export type Brand = { name: string; logo: string | null; color: string; address?: string };
+export type Brand = { name: string; logo: string | null; color: string; address?: string; legal?: string };
 
 export async function loadBrand(admin: any): Promise<Brand> {
   try {
@@ -8,7 +8,10 @@ export async function loadBrand(admin: any): Promise<Brand> {
     const company = (data?.company && typeof data.company === "object") ? data.company : {};
     const logo = String(company.logoUrl || "").trim();
     const address = String(company.address || data?.outreach?.businessAddress || "").trim();
-    return { name: String(data?.agency_name || company.name || "Pronext").trim() || "Pronext", logo: /^https:\/\//.test(logo) ? logo : null, color: "#1F6F54", address };
+    const name = String(data?.agency_name || company.name || "Pronext").trim() || "Pronext";
+    // Footers use the full company name when one is set in Agency settings ("Pronext Outsourcing Agency").
+    const legal = String(company.legalName || "").trim() || name;
+    return { name, logo: /^https:\/\//.test(logo) ? logo : null, color: "#1F6F54", address, legal };
   } catch { return { name: "Pronext", logo: null, color: "#1F6F54" }; }
 }
 
@@ -29,8 +32,8 @@ export function emailShell(b: Brand, preheader: string, bodyHtml: string, footer
 ${bodyHtml}
 </div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr><td align="center" style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#56605A;font-family:Arial,sans-serif;text-align:center;">
-<div style="text-align:center;">${footer ? esc(footer) : "You are receiving this email because you signed up as a candidate on " + esc(b.name) + "." + (unsubscribeUrl ? ` If you wish to unsubscribe, <a href="${esc(unsubscribeUrl)}" style="color:#56605A;text-decoration:underline;">click here</a>.` : "")}</div>
-<div style="margin-top:6px;color:#8A8578;text-align:center;">&copy; ${new Date().getFullYear()} ${esc(b.name)}</div>
+<div style="text-align:center;">${footer ? esc(footer) : "You are receiving this email because you are a candidate with " + esc(b.legal || b.name) + "." + (unsubscribeUrl ? ` If you wish to unsubscribe, <a href="${esc(unsubscribeUrl)}" style="color:#56605A;text-decoration:underline;">click here</a>.` : "")}</div>
+<div style="margin-top:6px;color:#8A8578;text-align:center;">&copy; ${new Date().getFullYear()} ${esc(b.legal || b.name)}</div>
 </td></tr></table>
 </div></body></html>`;
 }

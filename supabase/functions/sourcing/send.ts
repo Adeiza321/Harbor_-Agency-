@@ -28,10 +28,34 @@ export async function emailHash(e: string) {
 }
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as any)[c]);
-// Plain text -> simple HTML with clickable links and line breaks.
-export const toHtml = (text: string) => esc(text).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, "<br>");
+const linkify = (h: string) => h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>');
 
-export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; firstName: string; lastName: string; company: string; subject: string; body: string; unsubUrl: string };
+// Lines queue.ts adds to first candidate emails; in HTML they become buttons / a download link.
+export const BRIEF_PREFIX = "Role summary (PDF): ";
+const ACTION_LINE = /^(Apply now|Know someone who'd fit\? Refer them|Role summary \(PDF\)): (https?:\/\/\S+)$/;
+function actionHtml(kind: string, url: string) {
+  const u = esc(url);
+  if (kind === "Apply now") return `<a href="${u}" style="display:inline-block;margin:4px 8px 4px 0;padding:11px 22px;background:#1F6F54;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;">Apply now</a>`;
+  if (kind.startsWith("Know someone")) return `<a href="${u}" style="display:inline-block;margin:4px 8px 4px 0;padding:10px 20px;background:#ffffff;color:#1F6F54;text-decoration:none;border-radius:10px;border:1px solid #1F6F54;font-weight:600;">Refer someone</a>`;
+  return `<div style="margin-top:8px;font-size:13px;"><a href="${u}" style="color:#1F6F54;">Download the role summary (PDF)</a></div>`;
+}
+// Plain text -> simple HTML with clickable links and line breaks.
+export const toHtml = (text: string) => {
+  const out: string[] = [];
+  let row: string[] = [];
+  const flush = () => { if (row.length) { out.push(`<div style="margin:6px 0 10px;">${row.join("")}</div>`); row = []; } };
+  for (const line of String(text || "").split("\n")) {
+    const m = line.trim().match(ACTION_LINE);
+    if (m) { row.push(actionHtml(m[1], m[2])); continue; }
+    flush();
+    out.push(linkify(esc(line)) + "<br>");
+  }
+  flush();
+  return out.join("");
+};
+
+export type Attachment = { name: string; type: string; bytes: Uint8Array };
+export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; firstName: string; lastName: string; company: string; subject: string; body: string; unsubUrl: string; attachment?: Attachment };
 
 async function sendInstantly(m: OutMail): Promise<string> {
   const campaign = m.kind === "client" ? (Deno.env.get("INSTANTLY_CLIENT_CAMPAIGN_ID") || Deno.env.get("INSTANTLY_CAMPAIGN_ID")) : Deno.env.get("INSTANTLY_CAMPAIGN_ID");
@@ -64,23 +88,44 @@ async function gmailToken(): Promise<string> {
 }
 
 const b64url = (s: string) => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function bytesB64(b: Uint8Array) {
+  let bin = "";
+  for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
 const encWord = (s: string) => "=?UTF-8?B?" + btoa(unescape(encodeURIComponent(s))) + "?=";
 
 async function sendGmail(m: OutMail, fromName: string): Promise<string> {
   const token = await gmailToken();
   const sender = Deno.env.get("GMAIL_SENDER")!;
   const boundary = "hb" + crypto.randomUUID().replace(/-/g, "");
+  const alt = [
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`, "Content-Type: text/plain; charset=UTF-8", "", m.body,
+    `--${boundary}`, "Content-Type: text/html; charset=UTF-8", "", `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">${toHtml(m.body)}</div>`,
+    `--${boundary}--`,
+  ];
+  // With an attachment: multipart/mixed around the text + HTML versions and the file.
+  let content = alt;
+  if (m.attachment) {
+    const mixed = "hm" + crypto.randomUUID().replace(/-/g, "");
+    const fileName = m.attachment.name.replace(/["\\\r\n]/g, "");
+    content = [
+      `Content-Type: multipart/mixed; boundary="${mixed}"`, "",
+      `--${mixed}`, ...alt,
+      `--${mixed}`, `Content-Type: ${m.attachment.type}; name="${fileName}"`, `Content-Disposition: attachment; filename="${fileName}"`, "Content-Transfer-Encoding: base64", "",
+      (bytesB64(m.attachment.bytes).match(/.{1,76}/g) || []).join("\r\n"),
+      `--${mixed}--`,
+    ];
+  }
   const raw = [
     `From: ${encWord(fromName || sender)} <${sender}>`,
     `To: ${m.toName ? encWord(m.toName) + " " : ""}<${m.to}>`,
     `Subject: ${encWord(m.subject)}`,
     `List-Unsubscribe: <${m.unsubUrl}>`,
     "MIME-Version: 1.0",
-    `Content-Type: multipart/alternative; boundary="${boundary}"`,
-    "",
-    `--${boundary}`, "Content-Type: text/plain; charset=UTF-8", "", m.body,
-    `--${boundary}`, "Content-Type: text/html; charset=UTF-8", "", `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">${toHtml(m.body)}</div>`,
-    `--${boundary}--`,
+    ...content,
   ].join("\r\n");
   const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
     method: "POST",

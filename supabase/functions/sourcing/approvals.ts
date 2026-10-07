@@ -23,7 +23,7 @@ async function alertAdmins(admin: any, req: any) {
   const { data: admins } = await admin.from("profiles").select("email,full_name").eq("role", "admin").eq("status", "Active");
   const to = (admins || []).filter((a: any) => a.email).map((a: any) => ({ email: a.email, name: a.full_name || undefined }));
   if (!to.length) return;
-  const link = (Deno.env.get("PORTAL_BASE_URL") || "https://harbor.link") + "/?page=campaigns&tab=approvals";
+  const link = (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com") + "/?page=campaigns&tab=approvals";
   const b = await loadBrand(admin);
   const html = emailShell(b, "Approval needed: " + req.title,
     `<div style="font-size:20px;margin-bottom:10px;">Your approval is needed</div>

@@ -5,7 +5,7 @@ import {
   Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
-  Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2,
+  Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
 } from "./lucide-shim.js";
 
 /* Design tokens */
@@ -228,7 +228,7 @@ function mapAll(d) {
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), at: new Date(a.created_at).getTime(),
     status: a.status || (a.candidate_id || a.assigned_to ? "assigned" : "new"), jobId: a.job_id, candidateId: a.candidate_id, linkedin: a.linkedin || "", hasCv: !!a.resume_path, cvName: a.resume_name || "",
-    answers: Array.isArray(a.answers) ? a.answers : [], note: a.note || "", handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
+    answers: Array.isArray(a.answers) ? a.answers : [], note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null, handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
     handledBy: a.handled_by ? pname(a.handled_by) : "", assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, assignedName: a.assigned_to ? pname(a.assigned_to) : "" }));
   const today = new Date();
   const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
@@ -3429,6 +3429,7 @@ function InboxRow({ x, S, toast, canAct }) {
               {x.email && <span>{x.email}</span>}{x.phone && <span>{x.phone}</span>}
               {x.linkedin && <a href={/^https?:/.test(x.linkedin) ? x.linkedin : "https://" + x.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn</a>}
             </div>
+            {x.referrer && <div className="text-xs mt-1.5 rounded-lg px-2.5 py-1.5" style={{ background: C.emTint, color: C.ink2 }}>Referred by <b style={{ color: C.ink }}>{x.referrer.name}</b>{x.referrer.email ? " (" + x.referrer.email + ")" : ""}{x.referrer.note ? ": “" + x.referrer.note + "”" : ""}</div>}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 md:justify-end">
@@ -5065,6 +5066,11 @@ function ManualSend({ kind, id, S, toast, onDone, label }) {
             <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.to, toast, "Address copied")}>Copy</button></div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.subject, toast, "Subject copied")}>Copy</button></div>
+            {mail.brief && <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm" style={{ background: C.canvas }}>
+              <FileText size={18} color={C.em} className="shrink-0" />
+              <div className="flex-1 min-w-0"><div className="font-medium truncate">{mail.brief.name}</div><div className="text-xs" style={{ color: C.ink2 }}>One-page summary with the must-have requirements. Attach it, or leave the link in the email.</div></div>
+              <a href={mail.brief.url} target="_blank" rel="noreferrer" download={mail.brief.name}><Btn icon={Download} className="!px-3 !py-1.5 text-xs">Download</Btn></a>
+            </div>}
             <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
             <div className="flex flex-wrap gap-2">
               <a href={gmail} target="_blank" rel="noreferrer"><Btn kind="primary">Open in Gmail</Btn></a>
@@ -6258,6 +6264,7 @@ function AgencyTab({ toast, S }) {
   return (
     <Card className="flex flex-col gap-4 md:max-w-xl">
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Name in email footers (e.g. your full company name)</label><input value={company.legalName || ""} onChange={(e) => setCompany({ ...company, legalName: e.target.value })} placeholder={name} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
       <div>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Logo (shown at the top of every email; your agency name is used when there's no logo)</label>
         <div className="flex items-center gap-3 mt-1.5">
@@ -6652,6 +6659,7 @@ function appSteps(a) {
   const steps = APP_STEPS.slice(0, ended ? reached + 1 : APP_STEPS.length).map((label, i) => ({
     label, date: i <= reached ? dates[i] : null, state: i < reached || (i === reached && (ended || a.stage === "Placed")) ? "done" : i === reached ? "current" : "todo",
   }));
+  if (steps[1] && steps[1].state === "current") steps[1].note = "You've been assigned a recruiter and your application is under review.";
   if (a.response === "pending") steps[0] = { label: "Your recruiter put you forward for this role", date: a.createdAt, state: "current" };
   if (ended) steps.push({ label: a.response === "declined" ? "You declined this role" : a.stage === "Withdrawn" ? "Withdrawn" : "Not selected", date: a.outcomeAt || a.respondedAt, state: "ended" });
   return steps;
@@ -6679,6 +6687,7 @@ function ProgressSteps({ steps }) {
             </div>
             <div className={"flex-1 min-w-0 " + (last ? "" : "pb-3")}>
               <div className="text-sm" style={{ color: s.state === "todo" ? C.ink3 : C.ink, fontWeight: s.state === "current" ? 600 : 400 }}>{s.label}</div>
+              {s.note && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{s.note}</div>}
               {s.date && <div className="text-xs" style={{ color: C.ink3 }}>{fdate(s.date)}{s.state === "current" && s.label === "Interview" && new Date(s.date) > new Date() ? " · upcoming" : ""}</div>}
             </div>
           </div>
@@ -6975,57 +6984,81 @@ function CandidatePortal({ data, token, onChanged }) {
 
 /* Public apply page for one job (/?apply=<job link_slug>). No login. The client is never named
    (public_job() swaps their name for "our client"). Sends the application and CV to
-   submit-application, which puts it in the Inbox as New. */
+   submit-application, which puts it in the Inbox as New.
+   Extra URL options: &src=outreach (came from an outreach email), &go=apply (open the form
+   straight away), &refer=1 (open the "refer someone" form).
+   On a phone the job description comes first and the form only opens when they tap Apply;
+   on a computer the form sits under the description. */
 function ApplyPage({ slug }) {
+  const params = React.useMemo(() => new URLSearchParams(window.location.search), []);
+  const source = params.get("src") === "outreach" ? "outreach" : "career_page";
+  const desktop = useDesktop();
+  const [mode, setMode] = useState(() => params.get("refer") ? "refer" : params.get("go") === "apply" ? "apply" : "view");
   const [job, setJob] = useState(null);       // null = loading, false = not found
   const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
+  const [ref, setRef] = useState({ name: "", email: "", note: "" });   // the person referring
   const [answers, setAnswers] = useState([]);
   const [cv, setCv] = useState(null);         // { name, data, size }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState(null);     // "apply" | "refer"
   const [more, setMore] = useState(false);
   const fileRef = React.useRef(null);
   useEffect(() => {
     sbFetch("/rest/v1/rpc/public_job", { method: "POST", body: { p_slug: slug } }).then((j) => setJob(j || false)).catch(() => setJob(false));
   }, [slug]);
+  const open = (m) => { setMode(m); setErr(""); window.scrollTo(0, 0); };
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const setR = (k) => (e) => setRef((f) => ({ ...f, [k]: e.target.value }));
   const pickCv = (e) => {
     const f = e.target.files && e.target.files[0]; e.target.value = "";
     if (!f) return;
-    if (!/\.(pdf|docx?)$/i.test(f.name)) { setErr("Upload your CV as a PDF or Word document."); return; }
-    if (f.size > 8 * 1024 * 1024) { setErr("Your CV can be up to 8 MB."); return; }
+    if (!/\.(pdf|docx?)$/i.test(f.name)) { setErr("Upload the CV as a PDF or Word document."); return; }
+    if (f.size > 8 * 1024 * 1024) { setErr("The CV can be up to 8 MB."); return; }
     const r = new FileReader();
     r.onload = () => { setCv({ name: f.name, data: String(r.result).split(",")[1], size: f.size }); setErr(""); };
     r.onerror = () => setErr("That file couldn't be read. Try another one.");
     r.readAsDataURL(f);
   };
   const questions = job && Array.isArray(job.questions) ? job.questions : [];
-  const valid = form.name.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim()) && cv && questions.every((_, i) => (answers[i] || "").trim());
+  const okEmail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v).trim());
+  const referring = mode === "refer";
+  const valid = referring
+    ? ref.name.trim() && okEmail(ref.email) && form.name.trim() && okEmail(form.email) && form.email.trim().toLowerCase() !== ref.email.trim().toLowerCase()
+    : form.name.trim() && okEmail(form.email) && cv && questions.every((_, i) => (answers[i] || "").trim());
   const submit = async (e) => {
     e.preventDefault();
-    if (!valid) { setErr(!cv ? "Please attach your CV." : "Please fill in your name, a valid email and every question."); return; }
+    if (!valid) {
+      setErr(referring
+        ? (okEmail(form.email) && form.email.trim().toLowerCase() === ref.email.trim().toLowerCase() ? "Use your friend's email address, not your own." : "Please fill in your name and email, and your friend's name and email.")
+        : !cv ? "Please attach your CV." : "Please fill in your name, a valid email and every question.");
+      return;
+    }
     setBusy(true); setErr("");
     try {
-      const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ link_slug: slug, source: "career_page", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, answers, cv: { name: cv.name, data: cv.data } }) });
+      const payload = { link_slug: slug, source: referring ? "referral" : source, name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
+        answers: referring ? [] : answers, ...(cv ? { cv: { name: cv.name, data: cv.data } } : {}),
+        ...(referring ? { referrer: { name: ref.name.trim(), email: ref.email.trim(), note: ref.note.trim() } } : {}) };
+      const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || "Something went wrong. Please try again.");
-      setDone(true); window.scrollTo(0, 0);
+      setDone(referring ? "refer" : "apply"); window.scrollTo(0, 0);
     } catch (x) { setErr(x.message); }
     setBusy(false);
   };
+  const referAnother = () => { setForm({ name: "", email: "", phone: "", linkedin: "", website: "" }); setCv(null); setRef((r) => ({ ...r, note: "" })); setDone(null); setMode("refer"); };
   const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
   const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
   const money = (n, cur) => { try { return new Intl.NumberFormat("en-US", { style: "currency", currency: cur || "USD", maximumFractionDigits: 0 }).format(n); } catch (e) { return String(n); } };
   const payText = job && job.pay ? [job.pay.min, job.pay.max].filter((n) => n != null).map((n) => money(n, job.pay.currency)).join(" – ") + " " + ({ Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" }[job.pay.period] || "") : "";
   const desc = job ? String(job.description || "") : "";
-  const shell = (children) => (
+  const shell = (children, bar) => (
     <div className="min-h-screen" style={{ background: C.canvas }}>
-      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+      <div className={"max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4" + (bar ? " pb-28" : "")}>
         <div className="mb-1"><BrandLogo height={30} /></div>
         {children}
       </div>
+      {bar}
     </div>
   );
   if (job === null) return shell(<div className="py-16 text-center"><InlineDots /></div>);
@@ -7035,60 +7068,135 @@ function ApplyPage({ slug }) {
   if (done) return shell(
     <Card>
       <div className="w-12 h-12 rounded-full flex items-center justify-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} strokeWidth={3} /></div>
-      <div className="text-2xl" style={SERIF}>Thanks, {form.name.trim().split(" ")[0]}!</div>
-      <div className="text-sm mt-1.5" style={{ color: C.ink2 }}>Your application for <b style={{ color: C.ink }}>{job.title}</b> has reached the {job.agency} team. A recruiter will review it and get back to you by email.</div>
+      {done === "refer" ? (
+        <>
+          <div className="text-2xl" style={SERIF}>Thank you, {ref.name.trim().split(" ")[0]}!</div>
+          <div className="text-sm mt-1.5" style={{ color: C.ink2 }}>We've received your referral of <b style={{ color: C.ink }}>{form.name.trim()}</b> for <b style={{ color: C.ink }}>{job.title}</b>. A recruiter from {job.agency} will reach out to them.</div>
+          <div className="flex flex-wrap gap-2 mt-4"><Btn onClick={referAnother}>Refer someone else</Btn></div>
+        </>
+      ) : (
+        <>
+          <div className="text-2xl" style={SERIF}>Thanks, {form.name.trim().split(" ")[0]}!</div>
+          <div className="text-sm mt-1.5" style={{ color: C.ink2 }}>Your application for <b style={{ color: C.ink }}>{job.title}</b> has reached the {job.agency} team. A recruiter will review it and get back to you by email.</div>
+          <div className="mt-4 rounded-xl px-4 py-3 text-sm" style={{ background: C.canvas, color: C.ink2 }}>Know someone else who'd be great for this role? <button className="font-medium underline" style={{ color: C.em }} onClick={() => { setRef({ name: form.name.trim(), email: form.email.trim(), note: "" }); referAnother(); }}>Refer them</button></div>
+        </>
+      )}
     </Card>);
-  return shell(
-    <>
-      <Card>
-        <div className="text-xs font-semibold tracking-wider mb-1.5" style={{ color: C.em }}>NOW HIRING</div>
-        <div className="text-3xl leading-tight" style={SERIF}>{job.title}</div>
-        <div className="flex flex-wrap gap-2 mt-3">
-          {job.location && <Pill tone="neutral"><MapPin size={11} className="mr-1" />{job.location}</Pill>}
-          {job.workSetup && <Pill tone="info">{job.workSetup}</Pill>}
-          {job.employmentType && <Pill tone="neutral">{job.employmentType}</Pill>}
-          {payText && <Pill tone="em">{payText}</Pill>}
-          {job.commissionOnly && <Pill tone="warn">Commission only</Pill>}
-          {job.headcount > 1 && <Pill tone="neutral">{job.headcount} openings</Pill>}
-        </div>
-        {desc && (
-          <div className="mt-4">
-            <div className="text-[15px] leading-relaxed" style={{ whiteSpace: "pre-wrap", color: C.ink }}>{more || desc.length <= 700 ? desc : desc.slice(0, 700).replace(/\s+\S*$/, "") + "…"}</div>
-            {desc.length > 700 && <button onClick={() => setMore((v) => !v)} className="text-sm font-medium mt-2" style={{ color: C.em }}>{more ? "Show less" : "Read the full description"}</button>}
-          </div>
-        )}
-      </Card>
-      <Card>
-        <SectionTitle title="Apply" sub={"Takes about two minutes. " + job.agency + " never shares your details without asking you."} size="text-xl" />
-        <form onSubmit={submit} className="flex flex-col gap-3.5 mt-4">
-          <div><label className="text-sm font-medium">Full name *</label><input value={form.name} onChange={set("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
-          <div className="grid sm:grid-cols-2 gap-3.5">
-            <div><label className="text-sm font-medium">Email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
-            <div><label className="text-sm font-medium">Phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" className={inp} style={inpStyle} /></div>
-          </div>
-          <div><label className="text-sm font-medium">LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
-          {/* Honeypot for bots: hidden from people, ignored by the server when filled. */}
-          <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
-          <div>
-            <label className="text-sm font-medium">CV *</label>
-            <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="w-full mt-1.5 rounded-xl border-2 border-dashed px-4 py-4 text-sm flex items-center gap-3 text-left" style={{ borderColor: cv ? C.em : C.line, background: "#FAF8F3" }}>
-              <Upload size={18} color={cv ? C.em : C.ink3} />
-              <span className="flex-1 min-w-0 truncate" style={{ color: cv ? C.ink : C.ink3 }}>{cv ? cv.name : "Upload a PDF or Word file (up to 8 MB)"}</span>
-              {cv && <span className="text-xs shrink-0" style={{ color: C.em }}>Change</span>}
-            </button>
-            <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={pickCv} />
-          </div>
-          {questions.map((q, i) => (
-            <div key={i}><label className="text-sm font-medium">{q} *</label>
-              <textarea rows={3} value={answers[i] || ""} onChange={(e) => setAnswers((a) => { const n = a.slice(); n[i] = e.target.value; return n; })} className={inp} style={inpStyle} />
-            </div>
-          ))}
-          {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
-          <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send application"}</Btn>
-        </form>
-      </Card>
-    </>
+
+  const pills = (
+    <div className="flex flex-wrap gap-2 mt-3">
+      {job.location && <Pill tone="neutral"><MapPin size={11} className="mr-1" />{job.location}</Pill>}
+      {job.workSetup && <Pill tone="info">{job.workSetup}</Pill>}
+      {job.employmentType && <Pill tone="neutral">{job.employmentType}</Pill>}
+      {payText && <Pill tone="em">{payText}</Pill>}
+      {job.commissionOnly && <Pill tone="warn">Commission only</Pill>}
+      {job.headcount > 1 && <Pill tone="neutral">{job.headcount} openings</Pill>}
+    </div>
   );
+  const jobCard = (
+    <Card>
+      <div className="text-xs font-semibold tracking-wider mb-1.5" style={{ color: C.em }}>NOW HIRING</div>
+      <div className="text-3xl leading-tight" style={SERIF}>{job.title}</div>
+      {pills}
+      {desc && (
+        <div className="mt-4">
+          <div className="text-[15px] leading-relaxed" style={{ whiteSpace: "pre-wrap", color: C.ink }}>{more || desc.length <= 700 ? desc : desc.slice(0, 700).replace(/\s+\S*$/, "") + "…"}</div>
+          {desc.length > 700 && <button onClick={() => setMore((v) => !v)} className="text-sm font-medium mt-2" style={{ color: C.em }}>{more ? "Show less" : "Read the full description"}</button>}
+        </div>
+      )}
+      {desktop && (
+        <div className="mt-5 pt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm" style={{ borderTop: `1px solid ${C.line}`, color: C.ink2 }}>
+          <span>{referring ? "Want this role yourself?" : "Not for you, but know someone who'd fit?"}</span>
+          <button className="font-medium underline" style={{ color: C.em }} onClick={() => open(referring ? "apply" : "refer")}>{referring ? "Apply yourself instead" : "Refer someone"}</button>
+        </div>
+      )}
+    </Card>
+  );
+  const cvPicker = (label, hint) => (
+    <div>
+      <label className="text-sm font-medium">{label}</label>
+      <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="w-full mt-1.5 rounded-xl border-2 border-dashed px-4 py-4 text-sm flex items-center gap-3 text-left" style={{ borderColor: cv ? C.em : C.line, background: "#FAF8F3" }}>
+        <Upload size={18} color={cv ? C.em : C.ink3} />
+        <span className="flex-1 min-w-0 truncate" style={{ color: cv ? C.ink : C.ink3 }}>{cv ? cv.name : hint}</span>
+        {cv && <span className="text-xs shrink-0" style={{ color: C.em }}>Change</span>}
+      </button>
+      <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={pickCv} />
+    </div>
+  );
+  const honeypot = <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />;
+  const errBox = err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>;
+  const applyForm = (
+    <Card>
+      <SectionTitle title="Apply" sub={"Takes about two minutes. " + job.agency + " never shares your details without asking you."} size="text-xl" />
+      <form onSubmit={submit} className="flex flex-col gap-3.5 mt-4">
+        <div><label className="text-sm font-medium">Full name *</label><input value={form.name} onChange={set("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
+        <div className="grid sm:grid-cols-2 gap-3.5">
+          <div><label className="text-sm font-medium">Email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
+          <div><label className="text-sm font-medium">Phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" className={inp} style={inpStyle} /></div>
+        </div>
+        <div><label className="text-sm font-medium">LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
+        {/* Honeypot for bots: hidden from people, ignored by the server when filled. */}
+        {honeypot}
+        {cvPicker("CV *", "Upload a PDF or Word file (up to 8 MB)")}
+        {questions.map((q, i) => (
+          <div key={i}><label className="text-sm font-medium">{q} *</label>
+            <textarea rows={3} value={answers[i] || ""} onChange={(e) => setAnswers((a) => { const n = a.slice(); n[i] = e.target.value; return n; })} className={inp} style={inpStyle} />
+          </div>
+        ))}
+        {errBox}
+        <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send application"}</Btn>
+      </form>
+    </Card>
+  );
+  const referForm = (
+    <Card>
+      <SectionTitle title="Refer someone" sub={"Know someone who'd be great for this role? Tell us who they are and a recruiter from " + job.agency + " will get in touch with them."} size="text-xl" />
+      <form onSubmit={submit} className="flex flex-col gap-3.5 mt-4">
+        <div className="text-xs font-semibold tracking-wider" style={{ color: C.ink3 }}>ABOUT YOU</div>
+        <div className="grid sm:grid-cols-2 gap-3.5">
+          <div><label className="text-sm font-medium">Your name *</label><input value={ref.name} onChange={setR("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
+          <div><label className="text-sm font-medium">Your email *</label><input type="email" value={ref.email} onChange={setR("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
+        </div>
+        <div className="text-xs font-semibold tracking-wider mt-2" style={{ color: C.ink3 }}>THE PERSON YOU'RE REFERRING</div>
+        <div><label className="text-sm font-medium">Their full name *</label><input value={form.name} onChange={set("name")} autoComplete="off" className={inp} style={inpStyle} /></div>
+        <div className="grid sm:grid-cols-2 gap-3.5">
+          <div><label className="text-sm font-medium">Their email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="off" className={inp} style={inpStyle} /></div>
+          <div><label className="text-sm font-medium">Their phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="off" className={inp} style={inpStyle} /></div>
+        </div>
+        <div><label className="text-sm font-medium">Their LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
+        {honeypot}
+        <div><label className="text-sm font-medium">Why would they be a good fit?</label><textarea rows={3} value={ref.note} onChange={setR("note")} placeholder="Optional" className={inp} style={inpStyle} /></div>
+        {cvPicker("Their CV", "Optional: PDF or Word file (up to 8 MB)")}
+        <div className="text-xs" style={{ color: C.ink3 }}>Please only refer people who'd be happy to hear from us.</div>
+        {errBox}
+        <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send referral"}</Btn>
+      </form>
+    </Card>
+  );
+
+  // Computer: description with the form under it.
+  if (desktop) return shell(<>{jobCard}{referring ? referForm : applyForm}</>);
+
+  // Phone, form open: a compact job header, then the form.
+  if (mode !== "view") return shell(
+    <>
+      <button onClick={() => open("view")} className="self-start flex items-center gap-1.5 text-sm font-medium" style={{ color: C.em }}><ArrowLeft size={16} /> Back to the job</button>
+      <div className="px-1">
+        <div className="text-2xl leading-tight" style={SERIF}>{job.title}</div>
+        {pills}
+      </div>
+      {referring ? referForm : applyForm}
+      {referring
+        ? <button onClick={() => open("apply")} className="text-sm underline self-center" style={{ color: C.ink2 }}>Want this role yourself? Apply instead</button>
+        : <button onClick={() => open("refer")} className="text-sm underline self-center" style={{ color: C.ink2 }}>Not for you? Refer someone instead</button>}
+    </>);
+
+  // Phone, reading the job: Apply and Refer stay pinned to the bottom of the screen.
+  return shell(jobCard,
+    <div className="fixed left-0 right-0 bottom-0 z-20 px-4 pt-3 flex gap-2" style={{ background: "#FFFFFF", borderTop: `1px solid ${C.line}`, paddingBottom: "max(12px, env(safe-area-inset-bottom))", boxShadow: "0 -6px 20px rgba(20,32,27,0.06)" }}>
+      <Btn kind="primary" onClick={() => open("apply")} className="flex-1">Apply for this role</Btn>
+      <Btn onClick={() => open("refer")}>Refer someone</Btn>
+    </div>);
 }
 
 /* ---------------------------------------------------------------------- */

@@ -18,7 +18,7 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 // The candidate's page (?c=<token>) is served by the same app as the dashboard.
-const PORTAL_BASE = Deno.env.get("PORTAL_BASE_URL") || "https://harbor.link";
+const PORTAL_BASE = Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com";
 
 export const REJECT_REASONS: Record<string, string> = {
   experience: "Not enough experience",
@@ -156,13 +156,13 @@ Deno.serve(async (req: Request) => {
       if (optedOut) return json({ ok: true, sent: false, skipped: "This candidate unsubscribed from ProNext emails" });
       // The candidate's own recruiter (whoever added them may be Rec Ops or an Admin).
       const { data: rec } = cand.recruiter_id ? await admin.from("profiles").select("full_name").eq("id", cand.recruiter_id).maybeSingle() : { data: null };
-      const recruiterFirst = String(rec?.full_name || me.full_name || "").trim().split(" ")[0] || "your recruiter";
+      const recruiterName = String(rec?.full_name || me.full_name || "").trim() || "one of our recruiters";
       const roleHtml = job ? `the <b>${esc(job.role_title)}</b> role${job.client ? ` at <b>${esc(job.client)}</b>` : ""}` : "the role";
       const subject = job ? `Your application for ${job.role_title} is under review` : "Your application is under review";
       const html = emailShell(brand, subject,
         `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
-         <div style="font-size:15px;line-height:1.6;">Your recruiter <b>${esc(recruiterFirst)}</b> has submitted your profile for ${roleHtml}, and your application is currently under review. Once a decision is made, you'll get another email updating you on its status.</div>
-         <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message your recruiter if you need any help or want to stay connected.</div>
+         <div style="font-size:15px;line-height:1.6;">Good news: you've been assigned a recruiter, <b>${esc(recruiterName)}</b>, for ${roleHtml}, and your application is now under review. Once a decision is made, you'll get another email updating you on its status.</div>
+         <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message ${rec?.full_name || me.full_name ? esc(recruiterName.split(" ")[0]) : "your recruiter"} any time if you have questions or want to stay connected.</div>
          ${button(brand, portalUrl, "Message your recruiter")}
          ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);
       const sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, subject, html);

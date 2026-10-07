@@ -2,7 +2,7 @@
 // the agency name from Agency settings. Best effort: a failed or unconfigured send never fails
 // the action, it is reported back as sent:false.
 
-export const PORTAL_BASE = () => Deno.env.get("PORTAL_BASE_URL") || "https://harbor.link";
+export const PORTAL_BASE = () => Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com";
 
 import { Brand, button as brandButton, emailShell, esc } from "./brand.ts";
 export { esc };

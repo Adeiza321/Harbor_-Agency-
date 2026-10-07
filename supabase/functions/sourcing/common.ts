@@ -8,6 +8,7 @@ export type Settings = {
   prospectsPerJob: number;             // most emails revealed (Apollo credits) per job
   dailyCap: number;                    // most outreach emails sent per day
   senderName: string; senderTitle: string; businessAddress: string;
+  footerName: string;                  // company name in footers: Agency settings' full name, else the agency name
   includePay: boolean;                 // mention the pay range in candidate outreach
   leads: { enabled: boolean; postingsPerDay: number; maxAgeDays: number };
   retentionDays: number;               // delete prospects nobody engaged with after this long
@@ -19,8 +20,9 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
   const company = (data?.company && typeof data.company === "object") ? data.company : {};
   const num = (v: unknown, d: number, lo: number, hi: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : d; };
   const addr = String(o.businessAddress || company.address || "").trim();
+  const agencyName = String(data?.agency_name || company.name || "").trim();
   return {
-    agencyName: String(data?.agency_name || company.name || "").trim(),
+    agencyName,
     s: {
       approval: o.approval === "auto" ? "auto" : "manual",
       regions: Array.isArray(o.regions) && o.regions.length ? o.regions : ["US", "EU", "MY"],
@@ -30,6 +32,7 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
       senderName: String(o.senderName || "").trim(),
       senderTitle: String(o.senderTitle || "").trim(),
       businessAddress: addr,
+      footerName: String(company.legalName || "").trim() || agencyName,
       includePay: o.includePay !== false,
       leads: {
         enabled: !!o.leads?.enabled,

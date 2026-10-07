@@ -100,8 +100,10 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    const sourceLabel = app.source === "career_page" ? "the apply page" : app.source === "outreach" ? "an outreach email" : (app.source || "the Inbox");
-    await admin.from("candidate_timeline").insert({ candidate_id: candId, title: "Applied via " + sourceLabel + (app.role_title ? " for " + app.role_title : "") + ", assigned to " + (rec.full_name || "a recruiter") + " by " + (me.full_name || "Rec Ops"), done: true });
+    const refBy = app.referrer && typeof app.referrer === "object" && app.referrer.name ? app.referrer : null;
+    const sourceLabel = app.source === "career_page" ? "the apply page" : app.source === "outreach" ? "an outreach email"
+      : app.source === "referral" ? "a referral" + (refBy ? " from " + refBy.name + (refBy.email ? " (" + refBy.email + ")" : "") : "") : (app.source || "the Inbox");
+    await admin.from("candidate_timeline").insert({ candidate_id: candId, title: (app.source === "referral" ? "Came in via " : "Applied via ") + sourceLabel + (app.role_title ? " for " + app.role_title : "") + ", assigned to " + (rec.full_name || "a recruiter") + " by " + (me.full_name || "Rec Ops"), done: true });
     await admin.from("applications").update({ status: "assigned", assigned_to: rec.id, candidate_id: candId, handled_at: now, handled_by: me.id }).eq("id", app.id);
     return json({ ok: true, candidateId: candId, linkId, reused });
   } catch (e) {
