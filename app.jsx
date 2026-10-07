@@ -5,7 +5,7 @@ import {
   Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
-  Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal,
+  Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip,
 } from "lucide-react";
 
 /* Design tokens */
@@ -201,7 +201,7 @@ function mapAll(d) {
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
-      messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at })) })),
+      messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at, emailStatus: m.email_status, emailError: m.email_error, file: m.attachment_path ? { name: m.attachment_name, type: m.attachment_type, size: m.attachment_size } : null })) })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ id: e.id, company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
@@ -1604,24 +1604,28 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
 }
 
 /* ---------------------------------------------------------------------- */
-/* Chat (WhatsApp-style), shared by the candidate page and the dashboard     */
+/* Chat, shared by the candidate page and the dashboard                     */
 /* ---------------------------------------------------------------------- */
 /* One conversation per candidate_jobs row. Each side loads it through its own RPC
    (candidate_chat with the portal token, staff_chat when signed in), which also marks the
-   other side's messages delivered and, while the chat is on screen, read. Ticks on your own
-   messages: clock = sending, one grey tick = sent, two grey ticks = delivered (their app has
-   fetched it), two blue ticks = read (they opened the chat).
-   "typing…" travels two ways: a Supabase Realtime broadcast on chat-<linkId> (instant), and a
-   chat_typing heartbeat in the database that the 3-second poll reads (works even when the
-   realtime socket can't connect). New messages and read receipts also nudge the other side
-   over the broadcast so they refresh straight away instead of waiting for the next poll. */
+   other side's messages delivered and, while the chat is on screen, read.
+   Ticks on your own messages:
+     recruiter messages (also emailed to the candidate, see send-message / email-status)
+       clock      sending, or the email's delivery isn't confirmed yet
+       two ticks  the email reached the candidate's inbox; lime once they've read it on their page
+       one tick   the email bounced or was rejected (red), or wasn't sent (no address / unsubscribed)
+     candidate messages (in-app only)
+       one tick = sent, two ticks = it reached the recruiter's dashboard, lime = read
+   "typing…" travels over a Supabase Realtime broadcast on chat-<linkId> (instant) and a
+   chat_typing heartbeat the 3-second poll reads (works even if the socket can't connect).
+   Files and pictures go through the chat-file function into the private chat-files bucket. */
 
 // Minimal Supabase Realtime (Phoenix) client: broadcast only, reconnects on its own.
 function rtChannel(topic, onEvent) {
   let ws = null, ref = 0, hb = null, retry = null, closed = false;
   const t = "realtime:" + topic;
   const url = SB_URL.replace(/^http/, "ws") + "/realtime/v1/websocket?apikey=" + SB_KEY + "&vsn=1.0.0";
-  const push = (event, payload, tpc) => { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ topic: tpc || t, event, payload, ref: String(++ref) })); } catch (e) {} };
+  const push = (event, payload, tpc) => { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ topic: tpc || t, event, payload, ref: String(++ref) })); } catch (e) { /* socket gone */ } };
   const connect = () => {
     if (closed || typeof WebSocket === "undefined") return;
     try { ws = new WebSocket(url); } catch (e) { return; }
@@ -1630,15 +1634,15 @@ function rtChannel(topic, onEvent) {
       hb = setInterval(() => push("heartbeat", {}, "phoenix"), 25000);
     };
     ws.onmessage = (e) => {
-      try { const m = JSON.parse(e.data); if (m.topic === t && m.event === "broadcast" && m.payload) onEvent(m.payload.event, m.payload.payload || {}); } catch (err) {}
+      try { const m = JSON.parse(e.data); if (m.topic === t && m.event === "broadcast" && m.payload) onEvent(m.payload.event, m.payload.payload || {}); } catch (err) { /* not ours */ }
     };
     ws.onclose = () => { clearInterval(hb); if (!closed) retry = setTimeout(connect, 5000); };
-    ws.onerror = () => { try { ws.close(); } catch (e) {} };
+    ws.onerror = () => { try { ws.close(); } catch (e) { /* already closed */ } };
   };
   connect();
   return {
     send: (event, payload) => push("broadcast", { type: "broadcast", event, payload: payload || {} }),
-    close: () => { closed = true; clearInterval(hb); clearTimeout(retry); try { if (ws) ws.close(); } catch (e) {} },
+    close: () => { closed = true; clearInterval(hb); clearTimeout(retry); try { if (ws) ws.close(); } catch (e) { /* already closed */ } },
   };
 }
 
@@ -1652,34 +1656,111 @@ const chatDay = (d) => {
   if (diff < 7) return x.toLocaleDateString("en-GB", { weekday: "long" });
   return x.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: x.getFullYear() === today.getFullYear() ? undefined : "numeric" });
 };
-const WA = { wall: "#EFEAE2", mine: "#D9FDD3", theirs: "#FFFFFF", bar: "#F0F2F5", tick: "#8696A0", read: "#53BDEB" };
+const fileSize = (n) => (!n ? "" : n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB");
+const isImage = (type) => /^image\/(jpeg|png|webp|gif)$/.test(type || "");
+const filePreview = (m) => (m && (m.body || (m.file ? "📎 " + (m.file.name || "File") : ""))) || "";
 
-function MsgTicks({ m }) {
-  if (m.failed) return <AlertTriangle size={13} color={C.dangerFg} />;
-  if (m.pending) return <Clock size={12} color={WA.tick} />;
-  if (m.readAt) return <CheckCheck size={15} color={WA.read} />;
-  if (m.deliveredAt) return <CheckCheck size={15} color={WA.tick} />;
-  return <Check size={15} color={WA.tick} />;
+// Brand look: deep green for your own messages, white cards for theirs, on the canvas colour.
+const CHAT = { mine: C.side, mineMeta: "rgba(255,255,255,0.62)", theirs: "#FFFFFF", wall: C.canvas, read: C.lime, bad: "#FF9B85" };
+
+// What the ticks on one of your own messages mean (icon + plain-English label for the tooltip).
+function tickState(m) {
+  if (m.failed) return { icon: "fail", label: "Not sent" };
+  if (m.pending) return { icon: "clock", label: "Sending" };
+  if (m.sender === "recruiter") {
+    if (m.emailStatus === "bounced") return { icon: "one", bad: true, label: "Email bounced" + (m.emailError ? ": " + m.emailError : "") };
+    if (m.emailStatus === "not_sent") return { icon: "one", bad: true, label: "Not emailed" + (m.emailError ? ": " + m.emailError : "") };
+    if (m.readAt) return { icon: "two", read: true, label: "Read on their candidate page" };
+    if (m.emailStatus === "sent") return { icon: "clock", label: "Emailed, waiting for delivery" };
+    if (m.emailStatus === "delivered") return { icon: "two", label: "Delivered to their email" };
+    return { icon: "none", label: "Sent before email tracking started" };
+  }
+  if (m.readAt) return { icon: "two", read: true, label: "Read" };
+  if (m.deliveredAt) return { icon: "two", label: "Delivered" };
+  return { icon: "one", label: "Sent" };
 }
-
-function TypingBubble() {
+function MsgTicks({ m }) {
+  const s = tickState(m);
+  const color = s.bad ? CHAT.bad : s.read ? CHAT.read : CHAT.mineMeta;
+  if (s.icon === "none") return null;
   return (
-    <div className="flex justify-start">
-      <div className="rounded-lg px-3.5 py-3 shadow-sm" style={{ background: WA.theirs }}><InlineDots color={WA.tick} /></div>
-    </div>
+    <span title={s.label} aria-label={s.label} className="inline-flex">
+      {s.icon === "fail" ? <AlertTriangle size={13} color={CHAT.bad} />
+        : s.icon === "clock" ? <Clock size={12} color={color} />
+        : s.icon === "two" ? <CheckCheck size={15} color={color} />
+        : <Check size={15} color={color} />}
+    </span>
   );
 }
 
+// Same ticks on a light background (conversation lists).
+function ListTicks({ m }) {
+  const s = tickState({ ...m, readAt: m.readAt || m.candidateReadAt });
+  const color = s.bad ? C.dangerFg : s.read ? C.em : C.ink3;
+  if (s.icon === "none") return null;
+  return <span title={s.label} className="inline-flex shrink-0">{s.icon === "two" ? <CheckCheck size={13} color={color} /> : s.icon === "clock" ? <Clock size={11} color={color} /> : <Check size={13} color={color} />}</span>;
+}
+
+function ChatAttachment({ file, url, mine, onLoad }) {
+  if (isImage(file.type)) {
+    return url
+      ? <a href={url} target="_blank" rel="noreferrer" className="block -mx-1 -mt-0.5 mb-1"><img src={url} alt={file.name} onLoad={onLoad} className="rounded-xl block max-h-72 w-auto max-w-full object-cover" /></a>
+      : <div className="-mx-1 -mt-0.5 mb-1 rounded-xl flex items-center justify-center" style={{ width: 220, height: 160, background: mine ? "rgba(255,255,255,0.08)" : C.canvas }}><InlineDots color={mine ? "#fff" : C.ink3} /></div>;
+  }
+  const ext = (String(file.name || "").split(".").pop() || "file").slice(0, 4).toUpperCase();
+  const inner = (
+    <div className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 mb-1" style={{ background: mine ? "rgba(255,255,255,0.1)" : C.canvas, minWidth: 200 }}>
+      <span className="w-9 h-10 rounded-md flex items-center justify-center text-[10px] font-bold shrink-0" style={{ background: mine ? C.lime : C.emTint, color: mine ? C.side : C.em }}>{ext}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-sm font-medium truncate">{file.name}</span>
+        <span className="block text-[11px]" style={{ opacity: 0.7 }}>{fileSize(file.size)}{url ? " · Open" : ""}</span>
+      </span>
+      <Download size={16} style={{ opacity: url ? 0.8 : 0.3 }} />
+    </div>
+  );
+  return url ? <a href={url} target="_blank" rel="noreferrer" style={{ color: "inherit" }}>{inner}</a> : inner;
+}
+
+// Reads a picked file for upload. Large photos are shrunk to 1600px so they send quickly.
+const FILE_TYPES = { pdf: "application/pdf", txt: "text/plain", csv: "text/csv", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ppt: "application/vnd.ms-powerpoint", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", gif: "image/gif", heic: "image/heic", heif: "image/heif" };
+const MAX_CHAT_FILE = 8 * 1024 * 1024;
+const readChatFile = (file) => new Promise((resolve, reject) => {
+  const type = file.type || FILE_TYPES[(file.name.split(".").pop() || "").toLowerCase()] || "";
+  if (!Object.values(FILE_TYPES).includes(type)) { reject(new Error("That kind of file can't be sent. Try a picture, PDF, Word, Excel, PowerPoint or text file.")); return; }
+  const shrink = /^image\/(jpeg|png|webp)$/.test(type) && file.size > 1.5 * 1024 * 1024;
+  if (!shrink && file.size > MAX_CHAT_FILE) { reject(new Error("Files can be up to 8 MB.")); return; }
+  if (shrink) {
+    const img = new Image(), u = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas"); cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height); URL.revokeObjectURL(u);
+      resolve({ name: file.name.replace(/\.[^.]+$/, "") + ".jpg", type: "image/jpeg", data: cv.toDataURL("image/jpeg", 0.85).split(",")[1], size: Math.round(file.size) });
+    };
+    img.onerror = () => { URL.revokeObjectURL(u); reject(new Error("That picture couldn't be opened.")); };
+    img.src = u;
+    return;
+  }
+  const r = new FileReader();
+  r.onload = () => resolve({ name: file.name, type, data: String(r.result).split(",")[1], size: file.size });
+  r.onerror = () => reject(new Error("That file couldn't be read."));
+  r.readAsDataURL(file);
+});
+
 /* props:
-   linkId, mine ("candidate" | "recruiter"), api: { load(read) -> payload, send(text), typing() }
-   title, subtitle, avatarSrc, avatarInit, onBack (shows the back arrow), onClose (called on unmount
-   so the parent can refresh unread counts), headerExtra (node under the header), emptyText */
-function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, onBack, onClose, headerExtra, emptyText, className = "", style }) {
+   linkId, mine ("candidate" | "recruiter"),
+   api: { load(read) -> payload, send(text), sendFile(file, caption), urls(ids) -> { id: url }, typing() }
+   title, subtitle, avatarSrc, avatarInit, onBack (shows the back arrow), onProfile (makes the
+   header open the person's profile), onClose (called on unmount so the parent can refresh
+   unread counts), headerExtra (node under the header), emptyText, peerName */
+function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, onBack, onProfile, onClose, headerExtra, emptyText, peerName, className = "", style }) {
   const [msgs, setMsgs] = useState(null);
   const [pending, setPending] = useState([]);
   const [peerTypingAt, setPeerTypingAt] = useState(0);
   const [err, setErr] = useState("");
   const [text, setText] = useState("");
+  const [attach, setAttach] = useState(null); // { name, type, data, size } waiting to be sent
+  const [urls, setUrls] = useState({});
   const [, setTick] = useState(0);
   const apiRef = React.useRef(api); apiRef.current = api;
   const closeRef = React.useRef(onClose); closeRef.current = onClose;
@@ -1688,7 +1769,9 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
   const rt = React.useRef(null);
   const lastTypingSent = React.useRef(0);
   const lastSeenPeer = React.useRef("");
+  const asked = React.useRef(new Set());
   const inputRef = React.useRef(null);
+  const fileRef = React.useRef(null);
 
   const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
   const load = React.useCallback(async () => {
@@ -1699,17 +1782,24 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
       setMsgs(list);
       if (p.peerTypingAt) setPeerTypingAt((t) => Math.max(t, new Date(p.peerTypingAt).getTime()));
       setErr("");
-      // Newest message from the other side, now read by us: tell them (blue ticks right away).
+      // Newest message from the other side, now read by us: tell them straight away.
       const lastPeer = list.filter((m) => m.sender !== mine).slice(-1)[0];
       if (lastPeer && visible() && lastPeer.id !== lastSeenPeer.current) {
         lastSeenPeer.current = lastPeer.id;
         if (rt.current) rt.current.send("seen", { who: mine });
       }
+      // Short-lived links for any files we haven't fetched yet.
+      const need = list.filter((m) => m.file && !asked.current.has(m.id)).map((m) => m.id);
+      if (need.length && apiRef.current.urls) {
+        need.forEach((id) => asked.current.add(id));
+        apiRef.current.urls(need).then((u) => setUrls((x) => ({ ...x, ...(u || {}) }))).catch(() => need.forEach((id) => asked.current.delete(id)));
+      }
     } catch (e) { setErr(e.message || "Couldn't load messages"); }
   }, [linkId, mine]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    setMsgs(null); setPending([]); setPeerTypingAt(0); lastSeenPeer.current = ""; atBottom.current = true;
+    setMsgs(null); setPending([]); setPeerTypingAt(0); setUrls({}); setAttach(null);
+    lastSeenPeer.current = ""; asked.current = new Set(); atBottom.current = true;
     load();
     const poll = setInterval(() => { if (visible()) load(); }, 3000);
     const tick = setInterval(() => setTick((n) => n + 1), 1000);
@@ -1723,21 +1813,24 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
     });
     return () => {
       clearInterval(poll); clearInterval(tick); document.removeEventListener("visibilitychange", onVis);
-      if (rt.current) rt.current.close(); rt.current = null;
+      if (rt.current) rt.current.close();
+      rt.current = null;
       if (closeRef.current) closeRef.current();
     };
   }, [linkId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const all = [...(msgs || []), ...pending];
   const lastPeerAt = (msgs || []).filter((m) => m.sender !== mine).reduce((a, m) => Math.max(a, new Date(m.createdAt).getTime()), 0);
-  const peerTyping = peerTypingAt && Date.now() - peerTypingAt < 6000 && peerTypingAt > lastPeerAt;
+  const peerTyping = peerTypingAt > 0 && Date.now() - peerTypingAt < 6000 && peerTypingAt > lastPeerAt;
 
-  // Stay pinned to the newest message unless they've scrolled up to read older ones.
+  // Stay on the newest message unless they've scrolled up to read older ones.
   React.useLayoutEffect(() => {
     const el = scrollRef.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [all.length, peerTyping, msgs === null]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [all.length, peerTyping, msgs === null, Object.keys(urls).length]); // eslint-disable-line react-hooks/exhaustive-deps
   const onScroll = () => { const el = scrollRef.current; if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; };
+  // A picture finishing loading makes the list taller: keep the newest message in view.
+  const stick = () => { const el = scrollRef.current; if (el && atBottom.current) el.scrollTop = el.scrollHeight; };
 
   const onType = (v) => {
     setText(v);
@@ -1748,93 +1841,152 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
       Promise.resolve(apiRef.current.typing && apiRef.current.typing()).catch(() => {});
     }
   };
-  const send = async (body, retryId) => {
-    const t = (body || "").trim();
-    if (!t) return;
-    const id = retryId || "tmp" + Date.now() + Math.random().toString(36).slice(2, 6);
-    setPending((p) => retryId ? p.map((m) => (m.id === id ? { ...m, failed: false, pending: true } : m)) : [...p, { id, sender: mine, body: t, createdAt: new Date().toISOString(), pending: true }]);
-    if (!retryId) setText("");
+  const pickFile = async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    try { setAttach(await readChatFile(f)); setErr(""); } catch (x) { setErr(x.message); }
+    if (inputRef.current) inputRef.current.focus();
+  };
+  // Sends the typed text and/or the picked file; a failed send stays in the list with a retry.
+  const send = async (retry) => {
+    const item = retry || { id: "tmp" + Date.now() + Math.random().toString(36).slice(2, 6), sender: mine, body: text.trim(), file: attach, createdAt: new Date().toISOString() };
+    if (!item.body && !item.file) return;
+    setPending((p) => (retry ? p.map((m) => (m.id === item.id ? { ...m, failed: false, pending: true } : m)) : [...p, { ...item, pending: true }]));
+    if (!retry) { setText(""); setAttach(null); if (inputRef.current) inputRef.current.style.height = "auto"; }
     atBottom.current = true;
     lastTypingSent.current = 0;
     try {
-      await apiRef.current.send(t);
+      if (item.file) await apiRef.current.sendFile(item.file, item.body);
+      else await apiRef.current.send(item.body);
       await load();
-      setPending((p) => p.filter((m) => m.id !== id));
+      setPending((p) => p.filter((m) => m.id !== item.id));
       if (rt.current) rt.current.send("msg", { who: mine });
     } catch (e) {
-      setPending((p) => p.map((m) => (m.id === id ? { ...m, pending: false, failed: true, error: e.message } : m)));
+      setPending((p) => p.map((m) => (m.id === item.id ? { ...m, pending: false, failed: true, error: e.message } : m)));
     }
     if (inputRef.current) inputRef.current.focus();
   };
 
-  let lastDay = "";
-  return (
-    <div className={"flex flex-col min-h-0 " + className} style={{ background: WA.wall, ...(style || {}) }}>
-      <div className="flex items-center gap-2.5 px-3 py-2.5 shrink-0" style={{ background: C.side, color: "#fff" }}>
-        {onBack && <button onClick={onBack} aria-label="Back" className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center shrink-0" style={{ color: "#fff" }}><ArrowLeft size={20} /></button>}
-        <Avatar init={avatarInit || "?"} tone="em" size={38} src={avatarSrc || undefined} />
-        <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-semibold truncate">{title}</div>
-          <div className="text-xs truncate" style={{ color: peerTyping ? C.lime : "rgba(255,255,255,0.7)" }}>{peerTyping ? "typing…" : subtitle}</div>
+  const canSend = !!(text.trim() || attach);
+  const headerMain = (
+    <>
+      <Avatar init={avatarInit || "?"} tone="em" size={40} src={avatarSrc || undefined} />
+      <div className="min-w-0 flex-1 text-left">
+        <div className="text-[17px] leading-tight truncate" style={{ ...SERIF, color: C.ink }}>{title}</div>
+        <div className="text-xs truncate mt-0.5" style={{ color: peerTyping ? C.em : C.ink2, fontWeight: peerTyping ? 600 : 400 }}>
+          {peerTyping ? "typing…" : subtitle}
         </div>
       </div>
+      {onProfile && <span className="hidden sm:inline-flex items-center gap-1 text-xs font-medium shrink-0 rounded-full px-2.5 py-1" style={{ background: C.emTint, color: C.em }}>View profile <ChevronRight size={13} /></span>}
+    </>
+  );
+  let lastDay = "";
+  return (
+    <div className={"flex flex-col min-h-0 " + className}
+      style={{ background: CHAT.wall, backgroundImage: "radial-gradient(rgba(20,32,27,0.05) 1px, transparent 1px)", backgroundSize: "18px 18px", ...(style || {}) }}>
+      <div className="flex items-center gap-2 px-3 py-2.5 shrink-0" style={{ background: "#fff", borderBottom: `1px solid ${C.line}` }}>
+        {onBack && <button onClick={onBack} aria-label="Back" className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink }}><ArrowLeft size={20} /></button>}
+        {onProfile
+          ? <button onClick={onProfile} title="Open full profile" className="flex items-center gap-3 min-w-0 flex-1 rounded-xl -my-1 py-1 pr-1">{headerMain}</button>
+          : <div className="flex items-center gap-3 min-w-0 flex-1">{headerMain}</div>}
+      </div>
       {headerExtra}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto px-3 md:px-6 py-3 flex flex-col gap-1">
-        {msgs === null && !err && <div className="m-auto"><InlineDots color={WA.tick} /></div>}
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto px-3 md:px-6 py-4 flex flex-col gap-1">
+        {msgs === null && !err && <div className="m-auto"><InlineDots color={C.ink3} /></div>}
         {err && msgs === null && <div className="m-auto text-sm text-center px-6" style={{ color: C.dangerFg }}>{err}</div>}
         {msgs !== null && all.length === 0 && (
-          <div className="m-auto text-xs text-center rounded-lg px-3 py-2 max-w-xs" style={{ background: "#FFF5C4", color: "#54656F" }}>{emptyText || "No messages yet. Say hello!"}</div>
+          <div className="m-auto text-sm text-center rounded-2xl px-4 py-3 max-w-xs" style={{ background: "#fff", color: C.ink2, border: `1px dashed ${C.line}` }}>{emptyText || "No messages yet. Say hello!"}</div>
         )}
         {all.map((m, i) => {
           const day = chatDay(m.createdAt);
           const showDay = day !== lastDay; lastDay = day;
           const isMine = m.sender === mine;
-          const prev = all[i - 1];
-          const firstOfGroup = showDay || !prev || prev.sender !== m.sender;
+          const next = all[i + 1];
+          const lastOfGroup = !next || next.sender !== m.sender || chatDay(next.createdAt) !== day;
+          const st = isMine ? tickState(m) : null;
           return (
             <React.Fragment key={m.id || i}>
-              {showDay && <div className="self-center text-[11px] rounded-md px-2.5 py-1 my-2 shadow-sm" style={{ background: "#fff", color: "#54656F" }}>{day}</div>}
-              <div className={"flex " + (firstOfGroup ? "mt-1.5" : "")} style={{ justifyContent: isMine ? "flex-end" : "flex-start" }}>
-                <div className="relative max-w-[82%] md:max-w-[65%] px-2.5 pt-1.5 pb-1 text-[14.5px] leading-snug shadow-sm"
-                  style={{ background: isMine ? WA.mine : WA.theirs, color: "#111B21", borderRadius: 10,
-                    ...(firstOfGroup ? (isMine ? { borderTopRightRadius: 2 } : { borderTopLeftRadius: 2 }) : {}) }}>
-                  <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body}</span>
-                  <span className="inline-flex items-center gap-1 float-right ml-2 mt-1.5 text-[11px]" style={{ color: "#667781", lineHeight: 1 }}>
-                    {chatTime(m.createdAt)}{isMine && <MsgTicks m={m} />}
-                  </span>
-                  {m.failed && (
-                    <button onClick={() => send(m.body, m.id)} className="block clear-both text-[11px] font-medium mt-1" style={{ color: C.dangerFg }}>Not sent. Tap to retry</button>
-                  )}
+              {showDay && (
+                <div className="flex items-center gap-3 my-3 text-[11px] font-medium uppercase tracking-wider" style={{ color: C.ink3 }}>
+                  <span className="flex-1 h-px" style={{ background: C.line }} />{day}<span className="flex-1 h-px" style={{ background: C.line }} />
                 </div>
+              )}
+              <div className={"flex flex-col " + (lastOfGroup ? "mb-2" : "")} style={{ alignItems: isMine ? "flex-end" : "flex-start" }}>
+                <div className="max-w-[82%] md:max-w-[62%] px-3.5 pt-2 pb-1.5 text-[14.5px] leading-snug"
+                  style={{ background: isMine ? CHAT.mine : CHAT.theirs, color: isMine ? "#fff" : C.ink, borderRadius: 18,
+                    border: isMine ? "none" : `1px solid ${C.line}`, boxShadow: "0 1px 2px rgba(20,32,27,0.06)",
+                    ...(lastOfGroup ? (isMine ? { borderBottomRightRadius: 6 } : { borderBottomLeftRadius: 6 }) : {}) }}>
+                  {m.file && <ChatAttachment file={m.file} url={urls[m.id]} mine={isMine} onLoad={stick} />}
+                  {m.body && <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body}</div>}
+                  <div className="flex items-center justify-end gap-1 mt-0.5 text-[10.5px]" style={{ color: isMine ? CHAT.mineMeta : C.ink3 }}>
+                    {chatTime(m.createdAt)}{isMine && <MsgTicks m={m} />}
+                  </div>
+                </div>
+                {isMine && st && st.bad && lastOfGroup && <div className="text-[11px] mt-1 mr-1" style={{ color: C.dangerFg }}>{st.label}</div>}
+                {m.failed && <button onClick={() => send(m)} className="text-[11px] font-medium mt-1 mr-1" style={{ color: C.dangerFg }}>Not sent. Tap to try again</button>}
               </div>
             </React.Fragment>
           );
         })}
-        {peerTyping && <div className="mt-1.5"><TypingBubble /></div>}
+        {peerTyping && (
+          <div className="flex items-center gap-2 text-xs mt-1" style={{ color: C.ink3 }}>
+            <span className="rounded-full px-3 py-2 inline-flex" style={{ background: "#fff", border: `1px solid ${C.line}` }}><InlineDots color={C.em} /></span>
+            {(peerName || title || "They").split(" ")[0]} is typing
+          </div>
+        )}
       </div>
-      <div className="flex items-end gap-2 px-2.5 py-2 shrink-0" style={{ background: WA.bar }}>
-        <textarea ref={inputRef} value={text} rows={1} onChange={(e) => onType(e.target.value)} placeholder="Type a message"
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(text); } }}
-          onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }}
-          className="flex-1 resize-none rounded-3xl px-4 py-2.5 text-[15px] outline-none" style={{ background: "#fff", color: "#111B21", maxHeight: 120 }} />
-        <button onClick={() => send(text)} disabled={!text.trim()} aria-label="Send"
-          className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff", opacity: text.trim() ? 1 : 0.55 }}>
-          <SendHorizontal size={19} />
-        </button>
+      {err && msgs !== null && <div className="text-xs px-4 py-1.5 shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+      <div className="px-3 pt-2 pb-3 shrink-0" style={{ background: "#fff", borderTop: `1px solid ${C.line}` }}>
+        {attach && (
+          <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2 text-sm" style={{ background: C.canvas }}>
+            <Paperclip size={15} color={C.em} />
+            <span className="truncate flex-1">{attach.name}</span>
+            <span className="text-xs shrink-0" style={{ color: C.ink3 }}>{fileSize(attach.size)}</span>
+            <button onClick={() => setAttach(null)} aria-label="Remove file" className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2 }}><X size={14} /></button>
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <button onClick={() => fileRef.current && fileRef.current.click()} aria-label="Attach a file or picture" title="Attach a file or picture"
+            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: C.canvas, color: C.ink2 }}><Paperclip size={18} /></button>
+          <input ref={fileRef} type="file" className="hidden" onChange={pickFile}
+            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" />
+          <textarea ref={inputRef} value={text} rows={1} onChange={(e) => onType(e.target.value)} placeholder={attach ? "Add a caption (optional)" : "Write a message"}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
+            onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }}
+            className="flex-1 resize-none rounded-2xl border px-4 py-2.5 text-[15px] outline-none" style={{ borderColor: C.line, background: "#FAF8F3", color: C.ink, maxHeight: 120 }} />
+          <button onClick={() => send()} disabled={!canSend} aria-label="Send"
+            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: canSend ? C.em : C.line, color: "#fff" }}>
+            <SendHorizontal size={18} />
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 // Data access for each side of a conversation.
+const chatFileCall = async (body) => {
+  const r = await fetch(SB_URL + "/functions/v1/chat-file", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "Couldn't send the file. Please try again.");
+  return j;
+};
 const candidateChatApi = (token, linkId) => ({
   load: (read) => sbFetch("/rest/v1/rpc/candidate_chat", { method: "POST", body: { p_token: token, p_link_id: linkId, p_read: !!read } }),
   send: (text) => sbFetch("/rest/v1/rpc/candidate_send_message", { method: "POST", body: { p_token: token, p_link_id: linkId, p_body: text } }),
+  sendFile: (file, caption) => chatFileCall({ action: "send", token, linkId, name: file.name, type: file.type, data: file.data, caption }),
+  urls: (ids) => chatFileCall({ action: "urls", token, linkId, ids }).then((j) => j.urls || {}),
   typing: () => sbFetch("/rest/v1/rpc/candidate_typing", { method: "POST", body: { p_token: token, p_link_id: linkId } }),
 });
 const staffChatApi = (S, linkId) => ({
   load: (read) => S.sb("/rest/v1/rpc/staff_chat", { method: "POST", body: { p_link_id: linkId, p_read: !!read } }),
   send: (text) => S.sendMessageQuiet(linkId, text),
+  // Upload first, then post through send-message so the candidate is emailed too.
+  sendFile: async (file, caption) => {
+    const up = await S.sb("/functions/v1/chat-file", { method: "POST", body: { action: "upload", linkId, name: file.name, type: file.type, data: file.data }, timeout: 60000 });
+    return S.sendMessageQuiet(linkId, caption, up.file);
+  },
+  urls: (ids) => S.sb("/functions/v1/chat-file", { method: "POST", body: { action: "urls", linkId, ids } }).then((j) => j.urls || {}),
   typing: () => S.sb("/rest/v1/rpc/staff_typing", { method: "POST", body: { p_link_id: linkId } }),
 });
 
@@ -1996,9 +2148,10 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               title={candidate.name} avatarSrc={candidate.photoUrl} avatarInit={initialsOf(candidate.name)}
               subtitle={(() => { const j = S.jobs.find((x) => x.id === msgLink.jobId); return j ? j.role + " · " + j.client : "Role"; })()}
               onBack={() => setPanel(null)} onClose={() => S.reload && S.reload()}
+              onProfile={() => setPanel(null)} peerName={candidate.name}
               emptyText={"No messages yet. " + candidate.name.split(" ")[0] + " also gets an email for each message you send."}
               headerExtra={liveLinks.length > 1 ? (
-                <div className="px-3 py-2 shrink-0" style={{ background: WA.bar, borderBottom: `1px solid ${C.line}` }}>
+                <div className="px-3 py-2 shrink-0" style={{ background: "#fff", borderBottom: `1px solid ${C.line}` }}>
                   <select value={msgLink.id} onChange={(e) => setMsgLinkId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#fff" }}>
                     {liveLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
                   </select>
@@ -3170,6 +3323,8 @@ function InboxPage({ toast, S }) {
 /* Every job-linked candidate is a possible thread, whether or not anyone has said anything
    yet — that's what lets a recruiter start a conversation, not just answer one. */
 function MessagesPage({ toast, S }) {
+  // On phones an open conversation takes the whole screen (above the bottom navigation).
+  const desktop = useDesktop();
   const [jobFilter, setJobFilter] = useState("");
   const [openId, setOpenId] = useState(null);
   const [search, setSearch] = useState("");
@@ -3187,7 +3342,7 @@ function MessagesPage({ toast, S }) {
   const q = search.trim().toLowerCase();
   const matches = (t) => !q || t.cand.name.toLowerCase().includes(q)
     || (t.job && (t.job.role.toLowerCase().includes(q) || t.job.client.toLowerCase().includes(q)))
-    || (t.last && t.last.body.toLowerCase().includes(q));
+    || (t.last && filePreview(t.last).toLowerCase().includes(q));
   const threads = allThreads
     .filter((t) => t.hasMsgs)
     .filter((t) => !jobFilter || (t.job && t.job.id === jobFilter))
@@ -3239,15 +3394,15 @@ function MessagesPage({ toast, S }) {
                   </div>
                   <div className="text-xs truncate" style={{ color: C.ink2 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
                   <div className="text-xs truncate mt-0.5 flex items-center gap-1" style={{ color: C.ink3 }}>
-                    {t.last && t.last.sender === "recruiter" && (t.last.candidateReadAt || t.last.deliveredAt ? <CheckCheck size={13} color={t.last.candidateReadAt ? WA.read : WA.tick} className="shrink-0" /> : <Check size={13} color={WA.tick} className="shrink-0" />)}
-                    <span className="truncate">{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + t.last.body : "No messages yet"}</span>
+                    {t.last && t.last.sender === "recruiter" && <ListTicks m={t.last} />}
+                    <span className="truncate">{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + filePreview(t.last) : "No messages yet"}</span>
                   </div>
                 </div>
               </button>
             ))}
           </div>
         </Card>
-        <Card className={(openId ? "flex flex-col md:-mb-24 !p-0 overflow-hidden " : "hidden md:block ") + "flex-1"} style={openId ? fullHeightStyle : {}}>
+        <Card className={(openId ? "flex flex-col md:-mb-24 !p-0 overflow-hidden " : "hidden md:block ") + "flex-1"} style={openId ? (desktop ? fullHeightStyle : { position: "fixed", inset: 0, zIndex: 50, height: "100dvh", borderRadius: 0, border: "none" }) : {}}>
           {!openThread ? (
             <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left, or tap + to start one.</div>
           ) : (
@@ -3255,6 +3410,7 @@ function MessagesPage({ toast, S }) {
               title={openThread.cand.name} avatarSrc={openThread.cand.photoUrl} avatarInit={initialsOf(openThread.cand.name)}
               subtitle={openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}
               onBack={() => setOpenId(null)} onClose={() => S.reload && S.reload()}
+              onProfile={() => S.openCandidate(openThread.cand.id)} peerName={openThread.cand.name}
               emptyText={"No messages yet. " + openThread.cand.name.split(" ")[0] + " also gets an email for each message you send."} />
           )}
         </Card>
@@ -6418,7 +6574,7 @@ function PortalChat({ token, convos, recruiter, startId, onClose }) {
           <ChatRoom key={open.linkId} linkId={open.linkId} mine="candidate" api={candidateChatApi(token, open.linkId)} className="flex-1"
             title={recName} subtitle={open.role + (open.company ? " · " + open.company : "")}
             avatarSrc={recruiter && recruiter.photo} avatarInit={initialsOf(recName)}
-            onBack={() => (convos.length > 1 && !startId ? setOpenId(null) : onClose())}
+            onBack={() => (convos.length > 1 && !startId ? setOpenId(null) : onClose())} peerName={recName}
             emptyText={"Send " + recName + " a message about " + open.role + ". They'll get it straight away."} />
         ) : (
           <>
@@ -6436,7 +6592,7 @@ function PortalChat({ token, convos, recruiter, startId, onClose }) {
                       {c.lastMessage && <span className="text-xs shrink-0" style={{ color: c.unread ? C.em : C.ink3 }}>{chatDay(c.lastMessage.createdAt) === "Today" ? chatTime(c.lastMessage.createdAt) : chatDay(c.lastMessage.createdAt)}</span>}
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + c.lastMessage.body : c.company + " · with " + recName}</span>
+                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + (c.lastMessage.body || "📎 Sent a file") : c.company + " · with " + recName}</span>
                       {c.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}>{c.unread}</span>}
                     </div>
                   </div>
@@ -7239,7 +7395,7 @@ export default function App() {
     // Recruiter's side of candidate messaging (see msgCall above).
     sendMessage: (linkId, body) => msgCall("reply", { linkId, body }),
     // The chat screen refreshes itself, so it sends without reloading the whole workspace.
-    sendMessageQuiet: (linkId, body) => msgQuiet("reply", { linkId, body }),
+    sendMessageQuiet: (linkId, body, attachment) => msgQuiet("reply", { linkId, body: body || "", ...(attachment ? { attachment } : {}) }),
     // Rejections: draft/preview change nothing; reject records it and tells the candidate.
     msgQuiet: msgQuiet,
     rejectCandidate: (payload) => msgCall("reject", payload),

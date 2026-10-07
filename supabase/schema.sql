@@ -1912,3 +1912,5 @@ grant execute on function public.client_view(text) to anon, authenticated;
 -- candidate_job_messages.delivered_at, chat_typing, candidate_chat / candidate_typing /
 -- candidate_mark_delivered, staff_chat / staff_typing / staff_mark_delivered, and the
 -- candidate_portal version that returns photo, recruiter and applications).
+-- Chat email delivery status and attachments: supabase/migrations/20261007c_chat_email_status_files.sql
+-- (candidate_job_messages attachment_* and email_* columns, chat-files bucket, cron harbor-email-status).

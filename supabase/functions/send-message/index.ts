@@ -76,6 +76,27 @@ function rejectEmail(b: Brand, o: { name: string; role: string; company: string;
   return { subject, html };
 }
 
+// Like brand.ts sendBrevo, but keeps Brevo's message id so the email-status function can later
+// find out whether the email was delivered or bounced (the chat's one / two ticks).
+async function sendTracked(b: Brand, to: { email: string; name?: string }, subject: string, html: string): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+  const key = Deno.env.get("BREVO_API_KEY"), senderEmail = Deno.env.get("BREVO_SENDER_EMAIL");
+  if (!key || !senderEmail || !to.email) return { ok: false, error: "Email isn't set up" };
+  try {
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { accept: "application/json", "content-type": "application/json", "api-key": key },
+      body: JSON.stringify({ sender: { email: senderEmail, name: b.name }, to: [to], subject, htmlContent: html }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { console.error("brevo send failed", res.status, JSON.stringify(j).slice(0, 300)); return { ok: false, error: String(j?.message || "Brevo refused the email (" + res.status + ")").slice(0, 300) }; }
+    return { ok: true, messageId: j?.messageId ? String(j.messageId) : undefined };
+  } catch (e) { return { ok: false, error: String((e as Error)?.message || e).slice(0, 300) }; }
+}
+// Email outcome stored on the chat message: 'sent' (waiting for Brevo's result) or 'not_sent'.
+const emailFields = (r: { ok: boolean; messageId?: string; error?: string } | null, why?: string) => r && r.ok
+  ? { email_status: "sent", email_message_id: r.messageId || null, email_status_at: new Date().toISOString(), email_error: null }
+  : { email_status: "not_sent", email_status_at: new Date().toISOString(), email_error: (r && r.error) || why || "Not emailed" };
+
 async function askClaude(system: string, text: string): Promise<string> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) throw new Error("AI isn't configured (ANTHROPIC_API_KEY)");
@@ -150,22 +171,34 @@ Deno.serve(async (req: Request) => {
 
     if (action === "reply") {
       const text = String(body.body || "").trim().slice(0, 4000);
-      if (!text) return json({ error: "Write a message first" }, 400);
+      // An attachment was uploaded first by the chat-file function, into this conversation's folder.
+      const f = body.attachment && typeof body.attachment === "object" ? body.attachment : null;
+      const file = f && typeof f.path === "string" && f.path.startsWith(linkId + "/") && !f.path.includes("..")
+        ? { attachment_path: f.path, attachment_name: String(f.name || "file").slice(0, 120), attachment_type: String(f.type || "").slice(0, 120), attachment_size: Number(f.size) || null }
+        : null;
+      if (!text && !file) return json({ error: "Write a message first" }, 400);
       const { data: row, error } = await admin.from("candidate_job_messages")
-        .insert({ link_id: linkId, sender: "recruiter", author_id: me.id, body: text, recruiter_read_at: new Date().toISOString() })
+        .insert({ link_id: linkId, sender: "recruiter", author_id: me.id, body: text, recruiter_read_at: new Date().toISOString(), ...(file || {}) })
         .select().single();
       if (error) return json({ error: error.message }, 400);
-      let sent = false;
-      if (cand.email && !optedOut) {
+      let result: { ok: boolean; messageId?: string; error?: string } | null = null;
+      let why = "";
+      if (!cand.email) why = "No email address on file";
+      else if (optedOut) why = "The candidate unsubscribed from emails";
+      else {
         const preview = text.length > 160 ? text.slice(0, 160) + "…" : text;
+        const what = file ? (text ? "a message and a file" : "a file") : "a message";
         const html = emailShell(brand, "You have a message from your recruiter",
           `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
-           <div style="font-size:15px;line-height:1.6;">${esc(recruiterName)} sent you a message about <b>${esc(roleLabel)}</b>:</div>
-           <div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;font-style:italic;line-height:1.5;">&ldquo;${esc(preview)}&rdquo;</div>
+           <div style="font-size:15px;line-height:1.6;">${esc(recruiterName)} sent you ${what} about <b>${esc(roleLabel)}</b>:</div>
+           ${text ? `<div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;font-style:italic;line-height:1.5;">&ldquo;${esc(preview)}&rdquo;</div>` : ""}
+           ${file ? `<div style="margin-top:10px;font-size:14px;line-height:1.5;">&#128206; ${esc(file.attachment_name)} <span style="color:#8A8578;">(open it on your candidate page)</span></div>` : ""}
            ${button(brand, portalUrl, "Reply")}`, undefined, unsubUrl);
-        sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, "You have a message from your recruiter", html);
+        result = await sendTracked(brand, { email: cand.email, name: cand.name }, "You have a message from your recruiter", html);
       }
-      return json({ ok: true, message: row, sent, unsubscribed: optedOut });
+      const ef = emailFields(result, why);
+      await admin.from("candidate_job_messages").update(ef).eq("id", row.id);
+      return json({ ok: true, message: { ...row, ...ef }, sent: !!result?.ok, unsubscribed: optedOut });
     }
 
     // ---- Rejection ----
@@ -207,11 +240,14 @@ Deno.serve(async (req: Request) => {
       await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: (kind === "client" ? "Rejected by the client" : "Rejected") + (job ? " for " + job.role_title + ", " + job.client : "") + ": " + label + (others?.length ? "" : " — moved to Active file"), done: true });
       let emailed = false;
       if (notify) {
-        if (link) await admin.from("candidate_job_messages").insert({ link_id: link.id, sender: "recruiter", author_id: me.id, body: (kind === "client" ? "The client has decided not to move forward with your profile for this role. " : "We've decided not to put you forward for this role. ") + message, recruiter_read_at: now });
+        const { data: msgRow } = link ? await admin.from("candidate_job_messages").insert({ link_id: link.id, sender: "recruiter", author_id: me.id, body: (kind === "client" ? "The client has decided not to move forward with your profile for this role. " : "We've decided not to put you forward for this role. ") + message, recruiter_read_at: now }).select("id").single() : { data: null };
+        let result: { ok: boolean; messageId?: string; error?: string } | null = null;
         if (cand.email && !optedOut) {
           const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
-          emailed = await sendBrevo(brand, { email: cand.email, name: cand.name }, m.subject, m.html);
+          result = await sendTracked(brand, { email: cand.email, name: cand.name }, m.subject, m.html);
+          emailed = result.ok;
         }
+        if (msgRow) await admin.from("candidate_job_messages").update(emailFields(result, !cand.email ? "No email address on file" : "The candidate unsubscribed from emails")).eq("id", msgRow.id);
       }
       return json({ ok: true, emailed, unsubscribed: optedOut, movedToActiveFile: !others?.length });
     }

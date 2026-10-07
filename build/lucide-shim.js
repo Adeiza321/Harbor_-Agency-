@@ -8,5 +8,5 @@ export {
   LuSparkles as Sparkles, LuTriangleAlert as AlertTriangle, LuMail as Mail, LuMapPin as MapPin, LuClock as Clock,
   LuSettings as Settings, LuShield as Shield, LuPhone as Phone, LuCircleCheck as CheckCircle2,
   LuEllipsis as MoreHorizontal, LuUserPlus as UserPlus, LuPencil as Pencil, LuInfo as Info, LuCalendar as Calendar,
-  LuCamera as Camera, LuUserRound as UserRound, LuMessageCircle as MessageCircle, LuArrowLeft as ArrowLeft, LuSendHorizontal as SendHorizontal,
+  LuCamera as Camera, LuUserRound as UserRound, LuMessageCircle as MessageCircle, LuArrowLeft as ArrowLeft, LuSendHorizontal as SendHorizontal, LuPaperclip as Paperclip,
 } from "react-icons/lu";
