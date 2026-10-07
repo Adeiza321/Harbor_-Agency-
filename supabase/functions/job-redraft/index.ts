@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
 
 // Two things live here, both invoked from "Post a job":
@@ -196,6 +197,17 @@ Deno.serve(async (req) => {
 
   const keys: Keys = { gemini: Deno.env.get("GEMINI_API_KEY"), anthropic: Deno.env.get("ANTHROPIC_API_KEY") };
   if (!keys.gemini && !keys.anthropic) return json({ error: "AI is not set up yet: add a GEMINI_API_KEY or ANTHROPIC_API_KEY secret to this Supabase project." }, 503);
+
+  // Only signed-in, active Pronext users may use the AI here (the anon key is public, so
+  // verify_jwt alone would let anyone call this and spend the AI budget).
+  try {
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
+    const { data: caller } = await admin.auth.getUser(token);
+    if (!caller?.user) return json({ error: "Not signed in" }, 401);
+    const { data: me } = await admin.from("profiles").select("status").eq("id", caller.user.id).maybeSingle();
+    if (!me || me.status !== "Active") return json({ error: "Your account is not active" }, 403);
+  } catch (_) { return json({ error: "Could not check your sign-in" }, 401); }
 
   let input: Record<string, unknown>;
   try { input = await req.json(); } catch { return json({ error: "Invalid request" }, 400); }

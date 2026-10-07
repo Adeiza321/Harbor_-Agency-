@@ -40,7 +40,15 @@ Deno.serve(async (req: Request) => {
     const linkSlug = body.link_slug ? String(body.link_slug).trim() : null;
 
     if (!name || name.length > 200) return json({ error: "Enter a valid name" }, 400);
-    if (!email || !email.includes("@") || email.length > 320) return json({ error: "Enter a valid email" }, 400);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || email.length > 320) return json({ error: "Enter a valid email" }, 400);
+    if (phone.length > 40 || roleTitle.length > 200) return json({ error: "Some details are too long" }, 400);
+    // ilike treats % and _ as wildcards; escape them so "a_b@x.com" only matches itself.
+    const emailPattern = email.replace(/[\\%_]/g, (c) => "\\" + c);
+
+    // Rate limit: the same address can't flood the Inbox (5 applications a day across all roles).
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { count: recent } = await admin.from("applications").select("id", { count: "exact", head: true }).ilike("email", emailPattern).gte("created_at", dayAgo);
+    if ((recent || 0) >= 5) return json({ error: "We've already received several applications from this email today. Please try again tomorrow." }, 429);
 
     // Resolve the job either by id or by its public link_slug (what a job page URL carries).
     let resolvedJobId: string | null = null;
@@ -58,12 +66,10 @@ Deno.serve(async (req: Request) => {
 
     // Dedupe: the same person applying twice to the same role (double form submit, a
     // platform resending the same lead) should not create a second Inbox row. Keyed on
-    // email when we have it (more reliable than name), name otherwise.
+    // email (always required above).
     if (resolvedJobId) {
       const dupeQuery = admin.from("applications").select("id").eq("job_id", resolvedJobId).limit(1);
-      const { data: existing } = email
-        ? await dupeQuery.ilike("email", email)
-        : await dupeQuery.ilike("name", name);
+      const { data: existing } = await dupeQuery.ilike("email", emailPattern);
       if (existing && existing.length) return json({ ok: true, duplicate: true });
     }
 

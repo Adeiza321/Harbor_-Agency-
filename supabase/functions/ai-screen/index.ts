@@ -274,7 +274,8 @@ Deno.serve(async (req: Request) => {
     // ---------------------------------------------------------------
     if (body.action === "portal_respond" || body.action === "portal_answer") {
       const portalToken = String(body.token || "");
-      if (portalToken.length < 16) return json({ error: "Invalid link" }, 403);
+      // Older candidates have 12-character tokens (links already emailed); newer ones have 32.
+      if (portalToken.length < 12) return json({ error: "Invalid link" }, 403);
       const { data: cand } = await admin.from("candidates").select("id,name").eq("portal_token", portalToken).maybeSingle();
       if (!cand) return json({ error: "Invalid link" }, 403);
       const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", body.linkId).eq("candidate_id", cand.id).maybeSingle();

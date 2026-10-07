@@ -4,8 +4,10 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 
 ## Structure
 
-- `app.jsx` — the canonical React source for the whole app (single file). Built into a self-contained `harbor.html`.
-- `build/` — the build: `build.mjs` (esbuild bundle → `harbor.html`), `main.jsx` (entry), `lucide-shim.js` (maps the `lucide-react` icon names to `react-icons/lu`).
+- `app.jsx` — the canonical React source for the whole app (single file). Built into the self-contained `index.html`.
+- `build/` — the build: `main.jsx` (entry), `lucide-shim.js` (maps the `lucide-react` icon names to `react-icons/lu`), and the generated `app.jsx` / `bundle.js`.
+- `supabase/migrations/` — changes applied to the live database after `schema.sql` was written, in date order.
+- `supabase/functions/` — every Edge Function deployed to the live project (`client-view` and `record-login` were added on 7 Oct 2026; `backfill-phones` and `check-secret` are disabled one-offs that only exist live and can be deleted from the dashboard).
 - `supabase/schema.sql` — the database schema (tables, RLS policies, storage bucket, candidate-portal function). Already applied to the live project; kept here as the source of truth.
 - `supabase/functions/ai-screen/` — AI screening. `screening.ts`: one **company card** per job a candidate is on (`candidate_jobs.ai`): summary, strengths, gaps, score and verdict (Perfect fit / Possible fit / Reject) from the resume plus every answer the candidate has given for any job; drafts follow-up questions it has never asked before (Rec Ops/Admins approve them); the candidate answers on their candidate page and the card is rescreened and replaced. Salary expectation found in answers goes to the profile. Routed roles (`candidate_response = pending`) only get a card once the candidate accepts. `resume.ts` reads PDF, Word, ODT, RTF, text and photo resumes.
 - `supabase/functions/job-redraft/index.ts` — the "AI redraft for SEO" button on Post a job: rewrites the job ad, snippet and search keywords.
@@ -19,7 +21,6 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 
 ## Building
 
-```
 Entry point `build/main.jsx`; `lucide-react` imports in `app.jsx` resolve to `build/lucide-shim.js` (react-icons/lu). Any bundler works, e.g. with bun:
 
 ```
@@ -27,10 +28,9 @@ sed 's#from "lucide-react";#from "./lucide-shim.js";#' app.jsx > build/app.jsx
 bun build build/main.jsx --minify --target=browser --format=iife --define 'process.env.NODE_ENV="production"' --outfile=build/bundle.js
 ```
 
-then inline the bundle into the page (escape `</script` as `<\/script`).
-```
+Then inline the bundle into `index.html` (escape `</script` as `<\/script`).
 
-`index.html` in this repo is the latest build (same as `harbor.html`). Open it directly in a browser. Only the Tailwind CDN script loads from the internet.
+`index.html` is the latest build and is what GitHub Pages serves at the custom domain in `CNAME`. Open it directly in a browser; only the Tailwind CDN script loads from the internet. Any loose `harbor.html` copies outside the repo are older builds.
 
 ## Backend
 

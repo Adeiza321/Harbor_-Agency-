@@ -68,7 +68,7 @@ create table public.candidates (
   screening jsonb not null default '{"state":"pending"}',
   matches jsonb not null default '[]',
   source text,
-  portal_token text unique not null default substr(replace(gen_random_uuid()::text,'-',''),1,12),
+  portal_token text unique not null default replace(gen_random_uuid()::text,'-',''),  -- 32 chars (older rows: 12)
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -1216,7 +1216,7 @@ create or replace function public.candidate_set_pitch_consent(p_token text, p_co
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare cand_id uuid;
 begin
-  if length(coalesce(p_token, '')) < 16 then raise exception 'Invalid link'; end if;
+  if length(coalesce(p_token, '')) < 12 then raise exception 'Invalid link'; end if;
   update candidates set pitch_consent = coalesce(p_consent, false), pitch_consent_at = now()
     where portal_token = p_token returning id into cand_id;
   if cand_id is null then raise exception 'Invalid link'; end if;
@@ -1754,7 +1754,7 @@ create or replace function public.candidate_email_prefs(p_token text, p_out bool
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare cand_id uuid; cur boolean;
 begin
-  if length(coalesce(p_token, '')) < 16 then raise exception 'Invalid link'; end if;
+  if length(coalesce(p_token, '')) < 12 then raise exception 'Invalid link'; end if;
   select id, email_opt_out into cand_id, cur from candidates where portal_token = p_token;
   if cand_id is null then raise exception 'Invalid link'; end if;
   if p_out is not null and p_out is distinct from cur then
@@ -1767,3 +1767,142 @@ begin
 end $$;
 revoke all on function public.candidate_email_prefs(text, boolean) from public;
 grant execute on function public.candidate_email_prefs(text, boolean) to anon, authenticated;
+
+-- =====================================================================
+-- Objects that were live in the database but missing from this file
+-- (captured from the live project on 7 Oct 2026).
+-- =====================================================================
+
+-- Password reset codes (forgot-password Edge Function only; service role, no policies).
+create table if not exists public.password_resets (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  email text not null,
+  otp_code text not null,
+  expires_at timestamptz not null,
+  used boolean not null default false,
+  attempts integer not null default 0,
+  requested_ip text,
+  created_at timestamptz not null default now()
+);
+create index if not exists password_resets_user_id_idx on public.password_resets (user_id, created_at desc);
+alter table public.password_resets enable row level security;
+
+-- Last sign-in IP / location per user (record-login Edge Function). Admins or the user can read.
+create table if not exists public.profile_security (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  last_ip text,
+  last_location text,
+  last_login_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+alter table public.profile_security enable row level security;
+create policy "admin or self can read profile_security" on public.profile_security for select using (
+  user_id = auth.uid() or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin' and p.status = 'Active'));
+
+-- Recruiter <-> candidate messages, one thread per candidate_jobs row.
+create table if not exists public.candidate_job_messages (
+  id uuid primary key default gen_random_uuid(),
+  link_id uuid not null references public.candidate_jobs(id) on delete cascade,
+  sender text not null check (sender in ('candidate', 'recruiter')),
+  author_id uuid references public.profiles(id),
+  body text not null check (length(trim(body)) > 0 and length(body) <= 4000),
+  created_at timestamptz not null default now(),
+  recruiter_read_at timestamptz,
+  candidate_read_at timestamptz
+);
+create index if not exists candidate_job_messages_link_idx on public.candidate_job_messages (link_id, created_at);
+alter table public.candidate_job_messages enable row level security;
+create policy cjmsg_read on public.candidate_job_messages for select using (
+  is_staff() or exists (select 1 from candidate_jobs cj join candidates c on c.id = cj.candidate_id
+    where cj.id = candidate_job_messages.link_id and (c.recruiter_id = auth.uid()
+      or exists (select 1 from job_recruiters jr where jr.job_id = cj.job_id and jr.recruiter_id = auth.uid()))));
+create policy cjmsg_insert on public.candidate_job_messages for insert with check (
+  sender = 'recruiter' and author_id = auth.uid() and (is_staff() or exists (select 1 from candidate_jobs cj join candidates c on c.id = cj.candidate_id
+    where cj.id = candidate_job_messages.link_id and (c.recruiter_id = auth.uid()
+      or exists (select 1 from job_recruiters jr where jr.job_id = cj.job_id and jr.recruiter_id = auth.uid())))));
+create policy cjmsg_update on public.candidate_job_messages for update using (
+  is_staff() or exists (select 1 from candidate_jobs cj join candidates c on c.id = cj.candidate_id
+    where cj.id = candidate_job_messages.link_id and (c.recruiter_id = auth.uid()
+      or exists (select 1 from job_recruiters jr where jr.job_id = cj.job_id and jr.recruiter_id = auth.uid()))))
+  with check (
+  is_staff() or exists (select 1 from candidate_jobs cj join candidates c on c.id = cj.candidate_id
+    where cj.id = candidate_job_messages.link_id and (c.recruiter_id = auth.uid()
+      or exists (select 1 from job_recruiters jr where jr.job_id = cj.job_id and jr.recruiter_id = auth.uid()))));
+
+create or replace function public.candidate_send_message(p_token text, p_link_id uuid, p_body text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  cand_id uuid;
+  link_ok boolean;
+  body_clean text := left(trim(coalesce(p_body, '')), 4000);
+begin
+  if length(coalesce(p_token, '')) < 12 then raise exception 'Invalid link'; end if;
+  select id into cand_id from candidates where portal_token = p_token;
+  if cand_id is null then raise exception 'Invalid link'; end if;
+  if body_clean = '' then raise exception 'Write a message first'; end if;
+  select true into link_ok from candidate_jobs where id = p_link_id and candidate_id = cand_id;
+  if not link_ok then raise exception 'This conversation is no longer available'; end if;
+  insert into candidate_job_messages (link_id, sender, body, candidate_read_at, recruiter_read_at)
+    values (p_link_id, 'candidate', body_clean, now(), null);
+  return jsonb_build_object('ok', true);
+end $$;
+grant execute on function public.candidate_send_message(text, uuid, text) to anon, authenticated;
+
+create or replace function public.candidate_mark_read(p_token text, p_link_id uuid)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare cand_id uuid;
+begin
+  if length(coalesce(p_token, '')) < 12 then raise exception 'Invalid link'; end if;
+  select id into cand_id from candidates where portal_token = p_token;
+  if cand_id is null then raise exception 'Invalid link'; end if;
+  update candidate_job_messages set candidate_read_at = now()
+    where link_id = p_link_id and sender = 'recruiter' and candidate_read_at is null
+      and exists (select 1 from candidate_jobs l where l.id = p_link_id and l.candidate_id = cand_id);
+  return jsonb_build_object('ok', true);
+end $$;
+grant execute on function public.candidate_mark_read(text, uuid) to anon, authenticated;
+
+-- Blind, anonymized candidate profile shared with a client (/?t=<client_token>).
+alter table public.candidate_jobs
+  add column if not exists client_token text default replace(gen_random_uuid()::text, '-', ''),
+  add column if not exists client_revealed boolean not null default false,
+  add column if not exists client_revealed_at timestamptz,
+  add column if not exists client_viewed_at timestamptz;
+
+create or replace function public.client_view(p_token text)
+returns jsonb language plpgsql security definer set search_path = public as $$
+declare
+  result jsonb;
+begin
+  update public.candidate_jobs set client_viewed_at = now()
+    where client_token = p_token and client_viewed_at is null;
+
+  select jsonb_build_object(
+    'role', j.role_title, 'client', j.client, 'stage', cj.stage,
+    'revealed', cj.client_revealed,
+    'score', (cj.ai->>'score')::int, 'verdict', cj.ai->>'verdict', 'summary', cj.ai->>'summary',
+    'experience', c.experience, 'location', c.location, 'notice', c.notice,
+    'skills', coalesce(c.skills, '{}'), 'strengths', coalesce(c.strengths, '{}'),
+    'industries', coalesce((select jsonb_agg(x->>'industry') from jsonb_array_elements(coalesce(c.industries,'[]'::jsonb)) x where x->>'confidence' = 'confirmed'), '[]'::jsonb),
+    'parallelTitles', coalesce(c.parallel_titles, '[]'::jsonb),
+    'currentTitle', c.current_title,
+    'name', case when cj.client_revealed then c.name else null end,
+    'email', case when cj.client_revealed then c.email else null end,
+    'phone', case when cj.client_revealed then c.phone else null end,
+    'linkedin', case when cj.client_revealed then c.linkedin_url else null end,
+    'currentCompany', case when cj.client_revealed then c.current_company else null end,
+    'hasResume', (c.resume_path is not null or c.cv_path is not null)
+  ) into result
+  from public.candidate_jobs cj
+  join public.candidates c on c.id = cj.candidate_id
+  join public.jobs j on j.id = cj.job_id
+  where cj.client_token = p_token;
+
+  return result;
+end; $$;
+grant execute on function public.client_view(text) to anon, authenticated;
+
+-- 7 Oct 2026 review fixes: see supabase/migrations/20261007_security_fixes.sql
+-- (token checks accept 12+ characters, 32-character tokens for new rows, internal
+-- functions no longer callable by anon, password-reset rate-limit index).

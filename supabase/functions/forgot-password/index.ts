@@ -19,7 +19,12 @@ const sendBrevo = (to: { email: string; name?: string }, subject: string, html: 
 const emailShell = (preheader: string, bodyHtml: string) => brandShell(brand, preheader, bodyHtml, brand.name + " account security");
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const genOtp = () => String(Math.floor(100000 + Math.random() * 900000));
+// Codes come from the secure random generator, not Math.random().
+const genOtp = () => String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+// Limits: each code allows 5 guesses, so capping how often codes can be requested is what stops
+// someone guessing their way in (and stops the reset emails being used to flood inboxes).
+const MAX_CODES_PER_USER_PER_HOUR = 3;
+const MAX_CODES_PER_IP_PER_HOUR = 10;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -38,6 +43,17 @@ Deno.serve(async (req: Request) => {
 
       const { data: profile } = await admin.from("profiles").select("id,email,full_name,status").ilike("email", email).maybeSingle();
       if (!profile || profile.status !== "Active") return json(genericOk);
+
+      const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { count: userCount } = await admin.from("password_resets").select("id", { count: "exact", head: true }).eq("user_id", profile.id).gte("created_at", hourAgo);
+      const { count: ipCount } = ip
+        ? await admin.from("password_resets").select("id", { count: "exact", head: true }).eq("requested_ip", ip).gte("created_at", hourAgo)
+        : { count: 0 };
+      // Over the limit: same generic reply, nothing sent, so the limit can't be used to probe accounts.
+      if ((userCount || 0) >= MAX_CODES_PER_USER_PER_HOUR || (ipCount || 0) >= MAX_CODES_PER_IP_PER_HOUR) {
+        console.warn("password reset rate-limited", profile.id, ip);
+        return json(genericOk);
+      }
 
       const otp = genOtp();
       const expires_at = new Date(Date.now() + OTP_TTL_MS).toISOString();
