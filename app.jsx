@@ -5,6 +5,7 @@ import {
   Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
+  Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal,
 } from "lucide-react";
 
 /* Design tokens */
@@ -192,7 +193,7 @@ function mapAll(d) {
     recruiter: c.recruiter_id ? pname(c.recruiter_id) : null, recruiterInit: c.recruiter_id ? initialsOf(pname(c.recruiter_id)) : "",
     status: c.status, ai: c.ai_score || 0, email: c.email_verified ? "Verified" : "Unverified", emailAddr: c.email || "", phone: c.phone || "", opens: c.opens,
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
-    skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
+    skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, photoUrl: c.photo_url || null, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
@@ -200,7 +201,7 @@ function mapAll(d) {
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
-      messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at })) })),
+      messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at })) })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ id: e.id, company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
@@ -1602,48 +1603,242 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   );
 }
 
-/* Candidate detail */
-/* Shared chat thread: message history + composer. Used by the candidate detail page and the
-   Messages page (recruiter side) alike — both just hand it a list of {sender,body,at} and a
-   send callback. sender is "recruiter" or "candidate"; recruiter's own messages sit on the
-   right, the candidate's on the left.
-   Delivery/read ticks (WhatsApp-style, on "mine" bubbles only): a message that exists here has
-   been delivered (there's no offline queue in this app, so sent === delivered), shown as a dim
-   double check; once the other side's read timestamp is set, the ticks turn blue. Messages
-   without recruiterReadAt/candidateReadAt on them (e.g. an older shape) just render as delivered. */
-function MessageThread({ messages, onSend, busy, placeholder, emptyText, mineSender = "recruiter", scrollClass = "max-h-72", fill = false }) {
-  const [text, setText] = useState("");
-  const send = () => { const t = text.trim(); if (!t) return; onSend(t); setText(""); };
-  const readAtFor = (m) => (mineSender === "recruiter" ? m.candidateReadAt : m.recruiterReadAt);
+/* ---------------------------------------------------------------------- */
+/* Chat (WhatsApp-style), shared by the candidate page and the dashboard     */
+/* ---------------------------------------------------------------------- */
+/* One conversation per candidate_jobs row. Each side loads it through its own RPC
+   (candidate_chat with the portal token, staff_chat when signed in), which also marks the
+   other side's messages delivered and, while the chat is on screen, read. Ticks on your own
+   messages: clock = sending, one grey tick = sent, two grey ticks = delivered (their app has
+   fetched it), two blue ticks = read (they opened the chat).
+   "typing…" travels two ways: a Supabase Realtime broadcast on chat-<linkId> (instant), and a
+   chat_typing heartbeat in the database that the 3-second poll reads (works even when the
+   realtime socket can't connect). New messages and read receipts also nudge the other side
+   over the broadcast so they refresh straight away instead of waiting for the next poll. */
+
+// Minimal Supabase Realtime (Phoenix) client: broadcast only, reconnects on its own.
+function rtChannel(topic, onEvent) {
+  let ws = null, ref = 0, hb = null, retry = null, closed = false;
+  const t = "realtime:" + topic;
+  const url = SB_URL.replace(/^http/, "ws") + "/realtime/v1/websocket?apikey=" + SB_KEY + "&vsn=1.0.0";
+  const push = (event, payload, tpc) => { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ topic: tpc || t, event, payload, ref: String(++ref) })); } catch (e) {} };
+  const connect = () => {
+    if (closed || typeof WebSocket === "undefined") return;
+    try { ws = new WebSocket(url); } catch (e) { return; }
+    ws.onopen = () => {
+      push("phx_join", { config: { broadcast: { self: false, ack: false }, presence: { key: "" }, postgres_changes: [], private: false }, access_token: SB_KEY });
+      hb = setInterval(() => push("heartbeat", {}, "phoenix"), 25000);
+    };
+    ws.onmessage = (e) => {
+      try { const m = JSON.parse(e.data); if (m.topic === t && m.event === "broadcast" && m.payload) onEvent(m.payload.event, m.payload.payload || {}); } catch (err) {}
+    };
+    ws.onclose = () => { clearInterval(hb); if (!closed) retry = setTimeout(connect, 5000); };
+    ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  };
+  connect();
+  return {
+    send: (event, payload) => push("broadcast", { type: "broadcast", event, payload: payload || {} }),
+    close: () => { closed = true; clearInterval(hb); clearTimeout(retry); try { if (ws) ws.close(); } catch (e) {} },
+  };
+}
+
+const chatTime = (d) => new Date(d).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const chatDay = (d) => {
+  const x = new Date(d), today = new Date(); today.setHours(0, 0, 0, 0);
+  const day = new Date(x); day.setHours(0, 0, 0, 0);
+  const diff = Math.round((today - day) / 864e5);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff < 7) return x.toLocaleDateString("en-GB", { weekday: "long" });
+  return x.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: x.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+};
+const WA = { wall: "#EFEAE2", mine: "#D9FDD3", theirs: "#FFFFFF", bar: "#F0F2F5", tick: "#8696A0", read: "#53BDEB" };
+
+function MsgTicks({ m }) {
+  if (m.failed) return <AlertTriangle size={13} color={C.dangerFg} />;
+  if (m.pending) return <Clock size={12} color={WA.tick} />;
+  if (m.readAt) return <CheckCheck size={15} color={WA.read} />;
+  if (m.deliveredAt) return <CheckCheck size={15} color={WA.tick} />;
+  return <Check size={15} color={WA.tick} />;
+}
+
+function TypingBubble() {
   return (
-    <div className={"flex flex-col gap-3" + (fill ? " h-full min-h-0" : "")}>
-      <div className={"flex flex-col gap-2 overflow-y-auto pr-1 " + (fill ? "flex-1 min-h-0" : scrollClass)}>
-        {messages.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{emptyText || "No messages yet."}</div>}
-        {messages.map((m, i) => {
-          const mine = m.sender === mineSender;
-          const read = mine && !!readAtFor(m);
+    <div className="flex justify-start">
+      <div className="rounded-lg px-3.5 py-3 shadow-sm" style={{ background: WA.theirs }}><InlineDots color={WA.tick} /></div>
+    </div>
+  );
+}
+
+/* props:
+   linkId, mine ("candidate" | "recruiter"), api: { load(read) -> payload, send(text), typing() }
+   title, subtitle, avatarSrc, avatarInit, onBack (shows the back arrow), onClose (called on unmount
+   so the parent can refresh unread counts), headerExtra (node under the header), emptyText */
+function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, onBack, onClose, headerExtra, emptyText, className = "", style }) {
+  const [msgs, setMsgs] = useState(null);
+  const [pending, setPending] = useState([]);
+  const [peerTypingAt, setPeerTypingAt] = useState(0);
+  const [err, setErr] = useState("");
+  const [text, setText] = useState("");
+  const [, setTick] = useState(0);
+  const apiRef = React.useRef(api); apiRef.current = api;
+  const closeRef = React.useRef(onClose); closeRef.current = onClose;
+  const scrollRef = React.useRef(null);
+  const atBottom = React.useRef(true);
+  const rt = React.useRef(null);
+  const lastTypingSent = React.useRef(0);
+  const lastSeenPeer = React.useRef("");
+  const inputRef = React.useRef(null);
+
+  const visible = () => typeof document === "undefined" || document.visibilityState === "visible";
+  const load = React.useCallback(async () => {
+    try {
+      const p = await apiRef.current.load(visible());
+      if (!p) return;
+      const list = Array.isArray(p.messages) ? p.messages : [];
+      setMsgs(list);
+      if (p.peerTypingAt) setPeerTypingAt((t) => Math.max(t, new Date(p.peerTypingAt).getTime()));
+      setErr("");
+      // Newest message from the other side, now read by us: tell them (blue ticks right away).
+      const lastPeer = list.filter((m) => m.sender !== mine).slice(-1)[0];
+      if (lastPeer && visible() && lastPeer.id !== lastSeenPeer.current) {
+        lastSeenPeer.current = lastPeer.id;
+        if (rt.current) rt.current.send("seen", { who: mine });
+      }
+    } catch (e) { setErr(e.message || "Couldn't load messages"); }
+  }, [linkId, mine]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setMsgs(null); setPending([]); setPeerTypingAt(0); lastSeenPeer.current = ""; atBottom.current = true;
+    load();
+    const poll = setInterval(() => { if (visible()) load(); }, 3000);
+    const tick = setInterval(() => setTick((n) => n + 1), 1000);
+    const onVis = () => { if (visible()) load(); };
+    document.addEventListener("visibilitychange", onVis);
+    rt.current = rtChannel("chat-" + linkId, (event, payload) => {
+      if (payload && payload.who === mine) return;
+      if (event === "typing") setPeerTypingAt(Date.now());
+      else if (event === "msg") { setPeerTypingAt(0); load(); }
+      else if (event === "seen") load();
+    });
+    return () => {
+      clearInterval(poll); clearInterval(tick); document.removeEventListener("visibilitychange", onVis);
+      if (rt.current) rt.current.close(); rt.current = null;
+      if (closeRef.current) closeRef.current();
+    };
+  }, [linkId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const all = [...(msgs || []), ...pending];
+  const lastPeerAt = (msgs || []).filter((m) => m.sender !== mine).reduce((a, m) => Math.max(a, new Date(m.createdAt).getTime()), 0);
+  const peerTyping = peerTypingAt && Date.now() - peerTypingAt < 6000 && peerTypingAt > lastPeerAt;
+
+  // Stay pinned to the newest message unless they've scrolled up to read older ones.
+  React.useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+  }, [all.length, peerTyping, msgs === null]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onScroll = () => { const el = scrollRef.current; if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; };
+
+  const onType = (v) => {
+    setText(v);
+    const now = Date.now();
+    if (v.trim() && now - lastTypingSent.current > 2500) {
+      lastTypingSent.current = now;
+      if (rt.current) rt.current.send("typing", { who: mine });
+      Promise.resolve(apiRef.current.typing && apiRef.current.typing()).catch(() => {});
+    }
+  };
+  const send = async (body, retryId) => {
+    const t = (body || "").trim();
+    if (!t) return;
+    const id = retryId || "tmp" + Date.now() + Math.random().toString(36).slice(2, 6);
+    setPending((p) => retryId ? p.map((m) => (m.id === id ? { ...m, failed: false, pending: true } : m)) : [...p, { id, sender: mine, body: t, createdAt: new Date().toISOString(), pending: true }]);
+    if (!retryId) setText("");
+    atBottom.current = true;
+    lastTypingSent.current = 0;
+    try {
+      await apiRef.current.send(t);
+      await load();
+      setPending((p) => p.filter((m) => m.id !== id));
+      if (rt.current) rt.current.send("msg", { who: mine });
+    } catch (e) {
+      setPending((p) => p.map((m) => (m.id === id ? { ...m, pending: false, failed: true, error: e.message } : m)));
+    }
+    if (inputRef.current) inputRef.current.focus();
+  };
+
+  let lastDay = "";
+  return (
+    <div className={"flex flex-col min-h-0 " + className} style={{ background: WA.wall, ...(style || {}) }}>
+      <div className="flex items-center gap-2.5 px-3 py-2.5 shrink-0" style={{ background: C.side, color: "#fff" }}>
+        {onBack && <button onClick={onBack} aria-label="Back" className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center shrink-0" style={{ color: "#fff" }}><ArrowLeft size={20} /></button>}
+        <Avatar init={avatarInit || "?"} tone="em" size={38} src={avatarSrc || undefined} />
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-semibold truncate">{title}</div>
+          <div className="text-xs truncate" style={{ color: peerTyping ? C.lime : "rgba(255,255,255,0.7)" }}>{peerTyping ? "typing…" : subtitle}</div>
+        </div>
+      </div>
+      {headerExtra}
+      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto px-3 md:px-6 py-3 flex flex-col gap-1">
+        {msgs === null && !err && <div className="m-auto"><InlineDots color={WA.tick} /></div>}
+        {err && msgs === null && <div className="m-auto text-sm text-center px-6" style={{ color: C.dangerFg }}>{err}</div>}
+        {msgs !== null && all.length === 0 && (
+          <div className="m-auto text-xs text-center rounded-lg px-3 py-2 max-w-xs" style={{ background: "#FFF5C4", color: "#54656F" }}>{emptyText || "No messages yet. Say hello!"}</div>
+        )}
+        {all.map((m, i) => {
+          const day = chatDay(m.createdAt);
+          const showDay = day !== lastDay; lastDay = day;
+          const isMine = m.sender === mine;
+          const prev = all[i - 1];
+          const firstOfGroup = showDay || !prev || prev.sender !== m.sender;
           return (
-            <div key={m.id || i} className="flex" style={{ justifyContent: mine ? "flex-end" : "flex-start" }}>
-              <div className="max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm" style={{ background: mine ? C.side : C.canvas, color: mine ? "#fff" : C.ink, border: mine ? "none" : `1px solid ${C.line}` }}>
-                <div style={{ whiteSpace: "pre-wrap" }}>{m.body}</div>
-                <div className="text-[10px] mt-1 flex items-center justify-end gap-1">
-                  <span style={{ opacity: 0.65 }}>{ago(m.at)}</span>
-                  {mine && <CheckCheck size={13} color={read ? "#53BDEB" : "rgba(255,255,255,0.65)"} title={read ? "Read" : "Delivered"} />}
+            <React.Fragment key={m.id || i}>
+              {showDay && <div className="self-center text-[11px] rounded-md px-2.5 py-1 my-2 shadow-sm" style={{ background: "#fff", color: "#54656F" }}>{day}</div>}
+              <div className={"flex " + (firstOfGroup ? "mt-1.5" : "")} style={{ justifyContent: isMine ? "flex-end" : "flex-start" }}>
+                <div className="relative max-w-[82%] md:max-w-[65%] px-2.5 pt-1.5 pb-1 text-[14.5px] leading-snug shadow-sm"
+                  style={{ background: isMine ? WA.mine : WA.theirs, color: "#111B21", borderRadius: 10,
+                    ...(firstOfGroup ? (isMine ? { borderTopRightRadius: 2 } : { borderTopLeftRadius: 2 }) : {}) }}>
+                  <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body}</span>
+                  <span className="inline-flex items-center gap-1 float-right ml-2 mt-1.5 text-[11px]" style={{ color: "#667781", lineHeight: 1 }}>
+                    {chatTime(m.createdAt)}{isMine && <MsgTicks m={m} />}
+                  </span>
+                  {m.failed && (
+                    <button onClick={() => send(m.body, m.id)} className="block clear-both text-[11px] font-medium mt-1" style={{ color: C.dangerFg }}>Not sent. Tap to retry</button>
+                  )}
                 </div>
               </div>
-            </div>
+            </React.Fragment>
           );
         })}
+        {peerTyping && <div className="mt-1.5"><TypingBubble /></div>}
       </div>
-      <div className="flex gap-2 items-end shrink-0 sticky bottom-0 pt-2" style={{ background: "#fff" }}>
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder={placeholder || "Write your message"}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          className="flex-1 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        <Btn kind="primary" disabled={!!busy || !text.trim()} onClick={send}>{busy ? <InlineDots /> : "Send"}</Btn>
+      <div className="flex items-end gap-2 px-2.5 py-2 shrink-0" style={{ background: WA.bar }}>
+        <textarea ref={inputRef} value={text} rows={1} onChange={(e) => onType(e.target.value)} placeholder="Type a message"
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(text); } }}
+          onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }}
+          className="flex-1 resize-none rounded-3xl px-4 py-2.5 text-[15px] outline-none" style={{ background: "#fff", color: "#111B21", maxHeight: 120 }} />
+        <button onClick={() => send(text)} disabled={!text.trim()} aria-label="Send"
+          className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff", opacity: text.trim() ? 1 : 0.55 }}>
+          <SendHorizontal size={19} />
+        </button>
       </div>
     </div>
   );
 }
+
+// Data access for each side of a conversation.
+const candidateChatApi = (token, linkId) => ({
+  load: (read) => sbFetch("/rest/v1/rpc/candidate_chat", { method: "POST", body: { p_token: token, p_link_id: linkId, p_read: !!read } }),
+  send: (text) => sbFetch("/rest/v1/rpc/candidate_send_message", { method: "POST", body: { p_token: token, p_link_id: linkId, p_body: text } }),
+  typing: () => sbFetch("/rest/v1/rpc/candidate_typing", { method: "POST", body: { p_token: token, p_link_id: linkId } }),
+});
+const staffChatApi = (S, linkId) => ({
+  load: (read) => S.sb("/rest/v1/rpc/staff_chat", { method: "POST", body: { p_link_id: linkId, p_read: !!read } }),
+  send: (text) => S.sendMessageQuiet(linkId, text),
+  typing: () => S.sb("/rest/v1/rpc/staff_typing", { method: "POST", body: { p_link_id: linkId } }),
+});
+
+/* Candidate detail */
 
 function CandidateDetail({ candidate, onBack, toast, S }) {
   const [tab, setTab] = useState("companies");
@@ -1661,13 +1856,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   // link); defaults to the most recently created one that isn't declined.
   const liveLinks = candidate.jobLinks.filter((l) => l.response !== "declined").sort((a, b) => b.createdAt - a.createdAt);
   const [msgLinkId, setMsgLinkId] = useState(null);
-  const [msgBusy, setMsgBusy] = useState(false);
   const msgLink = candidate.jobLinks.find((l) => l.id === (msgLinkId || (liveLinks[0] && liveLinks[0].id))) || null;
-  const sendMsg = (text) => {
-    if (!msgLink) { toast("Attach this candidate to a job before messaging them"); return; }
-    setMsgBusy(true);
-    S.sendMessage(msgLink.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => S.error(e.message)).finally(() => setMsgBusy(false));
-  };
   const [reply, setReply] = useState("");
   const placementJobs = S.jobs.filter((j) => candidate.jobLinks.some((l) => l.jobId === j.id) || candidate.endorsed.some((e) => e.role === j.role && e.company === j.client));
   const [placeJobId, setPlaceJobId] = useState("");
@@ -1797,20 +1986,27 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Candidates</button>
-      <Modal open={panel === "msg"} onClose={() => setPanel(null)} title={"Message " + candidate.name.split(" ")[0]}>
-        {liveLinks.length === 0 ? (
-          <div className="text-sm" style={{ color: C.ink3 }}>Attach {candidate.name.split(" ")[0]} to a job first — messages are tied to a specific role.</div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {liveLinks.length > 1 && (
-              <select value={msgLink ? msgLink.id : ""} onChange={(e) => setMsgLinkId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
-                {liveLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
-              </select>
-            )}
-            <MessageThread messages={msgLink ? msgLink.messages || [] : []} busy={msgBusy} onSend={sendMsg} placeholder={"Message " + candidate.name.split(" ")[0] + "…"} />
-          </div>
-        )}
+      <Modal open={panel === "msg" && liveLinks.length === 0} onClose={() => setPanel(null)} title={"Message " + candidate.name.split(" ")[0]}>
+        <div className="text-sm" style={{ color: C.ink3 }}>Attach {candidate.name.split(" ")[0]} to a job first — messages are tied to a specific role.</div>
       </Modal>
+      {panel === "msg" && msgLink && (
+        <div className="fixed inset-0 z-50 flex justify-center" style={{ background: "rgba(20,32,27,0.45)" }} onClick={(e) => { if (e.target === e.currentTarget) setPanel(null); }}>
+          <div className="w-full md:max-w-2xl flex flex-col" style={{ height: "100dvh" }}>
+            <ChatRoom key={msgLink.id} linkId={msgLink.id} mine="recruiter" api={staffChatApi(S, msgLink.id)} className="flex-1"
+              title={candidate.name} avatarSrc={candidate.photoUrl} avatarInit={initialsOf(candidate.name)}
+              subtitle={(() => { const j = S.jobs.find((x) => x.id === msgLink.jobId); return j ? j.role + " · " + j.client : "Role"; })()}
+              onBack={() => setPanel(null)} onClose={() => S.reload && S.reload()}
+              emptyText={"No messages yet. " + candidate.name.split(" ")[0] + " also gets an email for each message you send."}
+              headerExtra={liveLinks.length > 1 ? (
+                <div className="px-3 py-2 shrink-0" style={{ background: WA.bar, borderBottom: `1px solid ${C.line}` }}>
+                  <select value={msgLink.id} onChange={(e) => setMsgLinkId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#fff" }}>
+                    {liveLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
+                  </select>
+                </div>
+              ) : null} />
+          </div>
+        </div>
+      )}
       <Modal open={!!editForm} onClose={() => setEditForm(null)} title="Edit candidate details">
         {editForm && (
           <div className="flex flex-col gap-3">
@@ -1896,7 +2092,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         <div className="md:col-span-2 flex flex-col gap-4">
           <Card>
             <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
-              <Avatar init={candidate.name.split(" ").map((x) => x[0]).join("")} tone="em" size={64} />
+              <Avatar init={candidate.name.split(" ").map((x) => x[0]).join("")} tone="em" size={64} src={candidate.photoUrl || undefined} />
               <div className="flex-1 min-w-0">
                 <div className="text-2xl md:text-3xl" style={{ ...SERIF }}>{candidate.name}</div>
                 {candidate.currentTitle
@@ -2976,7 +3172,6 @@ function InboxPage({ toast, S }) {
 function MessagesPage({ toast, S }) {
   const [jobFilter, setJobFilter] = useState("");
   const [openId, setOpenId] = useState(null);
-  const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeSearch, setComposeSearch] = useState("");
@@ -3001,11 +3196,6 @@ function MessagesPage({ toast, S }) {
 
   const openThread = allThreads.find((t) => t.link.id === openId) || null;
   const open = (t) => { setOpenId(t.link.id); if (t.unread) S.markThreadRead(t.link.id).catch(() => {}); };
-  const send = (text) => {
-    if (!openThread) return;
-    setBusy(true);
-    S.sendMessage(openThread.link.id, text).then((r) => toast(r.sent ? "Message sent" : "Message saved, but the email couldn't be sent")).catch((e) => S.error(e.message)).finally(() => setBusy(false));
-  };
 
   const cq = composeSearch.trim().toLowerCase();
   const composeList = allThreads
@@ -3041,7 +3231,7 @@ function MessagesPage({ toast, S }) {
             {threads.map((t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
                 style={{ borderBottom: `1px solid ${C.line}`, background: openId === t.link.id ? C.canvas : "transparent" }}>
-                <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} />
+                <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} src={t.cand.photoUrl || undefined} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium truncate">{t.cand.name}</span>
@@ -3049,7 +3239,7 @@ function MessagesPage({ toast, S }) {
                   </div>
                   <div className="text-xs truncate" style={{ color: C.ink2 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
                   <div className="text-xs truncate mt-0.5 flex items-center gap-1" style={{ color: C.ink3 }}>
-                    {t.last && t.last.sender === "recruiter" && <CheckCheck size={12} color={t.last.candidateReadAt ? "#2FA6D6" : C.ink3} className="shrink-0" />}
+                    {t.last && t.last.sender === "recruiter" && (t.last.candidateReadAt || t.last.deliveredAt ? <CheckCheck size={13} color={t.last.candidateReadAt ? WA.read : WA.tick} className="shrink-0" /> : <Check size={13} color={WA.tick} className="shrink-0" />)}
                     <span className="truncate">{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + t.last.body : "No messages yet"}</span>
                   </div>
                 </div>
@@ -3057,21 +3247,15 @@ function MessagesPage({ toast, S }) {
             ))}
           </div>
         </Card>
-        <Card className={(openId ? "flex flex-col md:-mb-24 " : "hidden md:block ") + "flex-1"} style={openId ? fullHeightStyle : {}}>
+        <Card className={(openId ? "flex flex-col md:-mb-24 !p-0 overflow-hidden " : "hidden md:block ") + "flex-1"} style={openId ? fullHeightStyle : {}}>
           {!openThread ? (
             <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left, or tap + to start one.</div>
           ) : (
-            <div className="flex flex-col gap-3 h-full min-h-0">
-              <div className="flex items-center gap-2 shrink-0">
-                <button onClick={() => setOpenId(null)} className="md:hidden w-8 h-8 -ml-1 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2 }}><ChevronLeft size={18} /></button>
-                <Avatar init={initialsOf(openThread.cand.name)} tone="em" size={34} />
-                <div className="min-w-0">
-                  <div className="text-base font-semibold truncate">{openThread.cand.name}</div>
-                  <div className="text-xs truncate" style={{ color: C.ink2 }}>{openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}</div>
-                </div>
-              </div>
-              <MessageThread messages={openThread.link.messages || []} busy={busy} onSend={send} placeholder={"Message " + openThread.cand.name.split(" ")[0] + "…"} fill />
-            </div>
+            <ChatRoom key={openThread.link.id} linkId={openThread.link.id} mine="recruiter" api={staffChatApi(S, openThread.link.id)} className="h-full"
+              title={openThread.cand.name} avatarSrc={openThread.cand.photoUrl} avatarInit={initialsOf(openThread.cand.name)}
+              subtitle={openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}
+              onBack={() => setOpenId(null)} onClose={() => S.reload && S.reload()}
+              emptyText={"No messages yet. " + openThread.cand.name.split(" ")[0] + " also gets an email for each message you send."} />
           )}
         </Card>
       </div>
@@ -3083,7 +3267,7 @@ function MessagesPage({ toast, S }) {
             {composeList.map((t) => (
               <button key={t.link.id} onClick={() => startNew(t)} className="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-2.5" style={{ background: "transparent" }}
                 onMouseEnter={(e) => e.currentTarget.style.background = C.canvas} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
-                <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} />
+                <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} src={t.cand.photoUrl || undefined} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{t.cand.name}</div>
                   <div className="text-xs truncate" style={{ color: C.ink3 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
@@ -6099,15 +6283,181 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   );
 }
 
-/* Candidate page (secure link, no login). Shows roles they've been routed to (accept or decline),
-   approved follow-up questions to answer, their applications and roles that fit them.
-   Accepting and answering go straight to the ai-screen function, which rescreens them. */
-function CandidatePortal({ onBack, data, token, onChanged }) {
-  const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], threads: [], ...(data || {}) };
+/* Candidate page (secure link /?c=<portal token>, no login and no dashboard behind it).
+   Top to bottom: their photo and name with a Message button (opens the full-screen chat),
+   anything waiting on them (interviews, roles to accept, questions to answer), every role
+   they've applied for with its progress, and other roles they might fit. Accepting and
+   answering go straight to the ai-screen function, which rescreens them. */
+
+// Candidate-facing progress for one application.
+const APP_STEPS = ["Applied", "In review", "Sent to employer", "Interview", "Offer", "Hired"];
+const STAGE_STEP = { Sourced: 0, "In review": 1, Screening: 1, Submitted: 2, Interview: 3, Offer: 4, Placed: 5 };
+function appStatus(a) {
+  if (a.response === "pending") return { label: "Awaiting your reply", tone: "warn" };
+  if (a.response === "declined") return { label: "You declined", tone: "neutral" };
+  if (a.stage === "Withdrawn") return { label: "Withdrawn", tone: "neutral" };
+  if (a.stage === "Rejected") return { label: "Not selected", tone: "danger" };
+  if (a.stage === "Placed") return { label: "Hired", tone: "em" };
+  if (a.stage === "Offer") return { label: "Offer", tone: "em" };
+  if (a.stage === "Interview") return { label: "Interviewing", tone: "info" };
+  if (a.stage === "Submitted") return { label: "With the employer", tone: "info" };
+  return { label: "In review", tone: "warn" };
+}
+function appSteps(a) {
+  const iv = (a.interviews || [])[0];
+  const dates = [a.createdAt, a.respondedAt || null, a.submittedAt, iv ? iv.startsAt : null, null, a.stage === "Placed" ? a.outcomeAt : null];
+  const ended = a.stage === "Rejected" || a.stage === "Withdrawn" || a.response === "declined";
+  let reached = a.response === "pending" ? 0 : STAGE_STEP[a.stage] != null ? STAGE_STEP[a.stage] : 1;
+  if (ended) reached = a.response === "declined" ? 0 : (a.interviews || []).length ? 3 : a.submittedAt ? 2 : 1;
+  const steps = APP_STEPS.slice(0, ended ? reached + 1 : APP_STEPS.length).map((label, i) => ({
+    label, date: i <= reached ? dates[i] : null, state: i < reached || (i === reached && (ended || a.stage === "Placed")) ? "done" : i === reached ? "current" : "todo",
+  }));
+  if (a.response === "pending") steps[0] = { label: "Your recruiter put you forward for this role", date: a.createdAt, state: "current" };
+  if (ended) steps.push({ label: a.response === "declined" ? "You declined this role" : a.stage === "Withdrawn" ? "Withdrawn" : "Not selected", date: a.outcomeAt || a.respondedAt, state: "ended" });
+  return steps;
+}
+
+// "Company · Lagos · Hybrid", without repeating "Remote" when the location already says it.
+const placeLine = (x) => [x.company, x.location, x.workSetup && !String(x.location || "").toLowerCase().includes(String(x.workSetup).toLowerCase()) ? x.workSetup : ""].filter(Boolean).join(" · ");
+
+function ProgressSteps({ steps }) {
+  return (
+    <div className="flex flex-col">
+      {steps.map((s, i) => {
+        const last = i === steps.length - 1;
+        const color = s.state === "done" ? C.em : s.state === "current" ? C.warnFg : s.state === "ended" ? C.dangerFg : C.line;
+        return (
+          <div key={i} className="flex gap-3">
+            <div className="flex flex-col items-center" style={{ width: 18 }}>
+              <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0"
+                style={{ background: s.state === "todo" ? "#fff" : color, border: `2px solid ${color}` }}>
+                {s.state === "done" && <Check size={11} color="#fff" strokeWidth={3} />}
+                {s.state === "ended" && <X size={11} color="#fff" strokeWidth={3} />}
+                {s.state === "current" && <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#fff" }} />}
+              </div>
+              {!last && <div className="flex-1 w-0.5 my-0.5" style={{ background: s.state === "done" ? C.em : C.line, minHeight: 18 }} />}
+            </div>
+            <div className={"flex-1 min-w-0 " + (last ? "" : "pb-3")}>
+              <div className="text-sm" style={{ color: s.state === "todo" ? C.ink3 : C.ink, fontWeight: s.state === "current" ? 600 : 400 }}>{s.label}</div>
+              {s.date && <div className="text-xs" style={{ color: C.ink3 }}>{fdate(s.date)}{s.state === "current" && s.label === "Interview" && new Date(s.date) > new Date() ? " · upcoming" : ""}</div>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Resize in the browser (max 512px, JPEG) so uploads are small and quick on mobile data.
+const shrinkImage = (file) => new Promise((resolve, reject) => {
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const max = 512, s = Math.min(1, max / Math.max(img.width, img.height));
+    const cv = document.createElement("canvas");
+    cv.width = Math.round(img.width * s); cv.height = Math.round(img.height * s);
+    cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+    URL.revokeObjectURL(url);
+    resolve(cv.toDataURL("image/jpeg", 0.85));
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That file isn't a picture we can open. Try a JPG or PNG.")); };
+  img.src = url;
+});
+
+function PortalPhoto({ src, name, token, onChanged, onError }) {
+  const [busy, setBusy] = useState(false);
+  const fileRef = React.useRef(null);
+  const call = async (body) => {
+    setBusy(true); onError("");
+    try {
+      const r = await fetch(SB_URL + "/functions/v1/candidate-photo", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Couldn't save your photo. Please try again.");
+      if (onChanged) await onChanged();
+    } catch (e) { onError(e.message); }
+    setBusy(false);
+  };
+  const pick = async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    try { await call({ action: "set", image: await shrinkImage(f) }); } catch (err) { onError(err.message); }
+  };
+  return (
+    <div className="flex flex-col items-center gap-1.5 shrink-0">
+      <button onClick={() => fileRef.current && fileRef.current.click()} disabled={busy} aria-label={src ? "Change photo" : "Add photo"}
+        className="relative w-24 h-24 rounded-full" style={{ background: C.neutralBg }}>
+        {src
+          ? <img src={src} alt={name} className="w-24 h-24 rounded-full object-cover" />
+          : <span className="w-24 h-24 rounded-full flex items-center justify-center" style={{ color: C.ink3 }}><UserRound size={44} /></span>}
+        <span className="absolute bottom-0 right-0 w-8 h-8 rounded-full flex items-center justify-center border-2" style={{ background: C.em, color: "#fff", borderColor: "#fff" }}>
+          {busy ? <InlineDots color="#fff" /> : <Camera size={15} />}
+        </span>
+      </button>
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pick} />
+      <div className="flex items-center gap-2 text-xs">
+        <button onClick={() => fileRef.current && fileRef.current.click()} disabled={busy} className="font-medium" style={{ color: C.em }}>{src ? "Change photo" : "Add photo"}</button>
+        {src && <><span style={{ color: C.line }}>|</span><button onClick={() => call({ action: "remove" })} disabled={busy} style={{ color: C.ink3 }}>Remove</button></>}
+      </div>
+    </div>
+  );
+}
+
+// Full-screen messages: the list of conversations (one per role), then the chat itself.
+function PortalChat({ token, convos, recruiter, startId, onClose }) {
+  const [openId, setOpenId] = useState(startId || (convos.length === 1 ? convos[0].linkId : null));
+  const open = convos.find((c) => c.linkId === openId) || null;
+  const recName = (recruiter && recruiter.name) || "Your recruiter";
+  useEffect(() => {
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex justify-center" style={{ background: "rgba(20,32,27,0.45)" }}>
+      <div className="w-full md:max-w-2xl flex flex-col" style={{ height: "100dvh", background: "#fff" }}>
+        {open ? (
+          <ChatRoom key={open.linkId} linkId={open.linkId} mine="candidate" api={candidateChatApi(token, open.linkId)} className="flex-1"
+            title={recName} subtitle={open.role + (open.company ? " · " + open.company : "")}
+            avatarSrc={recruiter && recruiter.photo} avatarInit={initialsOf(recName)}
+            onBack={() => (convos.length > 1 && !startId ? setOpenId(null) : onClose())}
+            emptyText={"Send " + recName + " a message about " + open.role + ". They'll get it straight away."} />
+        ) : (
+          <>
+            <div className="flex items-center gap-2.5 px-3 py-3 shrink-0" style={{ background: C.side, color: "#fff" }}>
+              <button onClick={onClose} aria-label="Close" className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center"><ArrowLeft size={20} /></button>
+              <div className="text-base font-semibold">Messages</div>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {convos.map((c) => (
+                <button key={c.linkId} onClick={() => setOpenId(c.linkId)} className="w-full text-left px-4 py-3 flex items-center gap-3" style={{ borderBottom: `1px solid ${C.line}` }}>
+                  <Avatar init={initialsOf(recName)} tone="em" size={46} src={(recruiter && recruiter.photo) || undefined} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[15px] font-medium truncate">{c.role}</span>
+                      {c.lastMessage && <span className="text-xs shrink-0" style={{ color: c.unread ? C.em : C.ink3 }}>{chatDay(c.lastMessage.createdAt) === "Today" ? chatTime(c.lastMessage.createdAt) : chatDay(c.lastMessage.createdAt)}</span>}
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + c.lastMessage.body : c.company + " · with " + recName}</span>
+                      {c.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}>{c.unread}</span>}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CandidatePortal({ data, token, onChanged }) {
+  const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], applications: [], ...(data || {}) };
   const [answers, setAnswers] = useState({});
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
+  const [chat, setChat] = useState(null); // null | { startId }
+  const [openApps, setOpenApps] = useState({});
   const act = async (key, body, done) => {
     setBusy(key); setErr(""); setNote("");
     try {
@@ -6120,25 +6470,52 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
   };
   const setA = (linkId, i, v) => setAnswers((m) => { const arr = (m[linkId] || []).slice(); arr[i] = v; return { ...m, [linkId]: arr }; });
   const inputStyle = { borderColor: C.line, background: "#FAF8F3" };
-  const [msgBusy, setMsgBusy] = useState(null);
-  const sendThreadMsg = async (linkId, text) => {
-    setMsgBusy(linkId);
-    try {
-      const r = await sbFetch("/rest/v1/rpc/candidate_send_message", { method: "POST", body: { p_token: token, p_link_id: linkId, p_body: text } });
-      if (r && r.error) throw new Error(r.error);
-      if (onChanged) await onChanged();
-    } catch (e) { setErr(e.message || "Could not send. Please try again."); }
-    setMsgBusy(null);
-  };
-  const openThread = (linkId) => sbFetch("/rest/v1/rpc/candidate_mark_read", { method: "POST", body: { p_token: token, p_link_id: linkId } }).then(() => onChanged && onChanged()).catch(() => {});
+
+  // Opening the page counts as delivery of messages waiting for them; the page refreshes
+  // itself every 20 seconds so new messages and progress show up without a reload.
+  useEffect(() => {
+    if (!token) return;
+    sbFetch("/rest/v1/rpc/candidate_mark_delivered", { method: "POST", body: { p_token: token } }).catch(() => {});
+    const t = setInterval(() => { if (document.visibilityState === "visible" && onChanged) onChanged(); }, 20000);
+    return () => clearInterval(t);
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const apps = c.applications || [];
+  // Older applications recorded before roles were linked, shown if they aren't already listed.
+  const pastOnly = (c.endorsements || []).filter((e) => !apps.some((a) => a.role === e.role && a.company === e.company));
+  const convos = apps.filter((a) => a.response !== "declined");
+  const unread = convos.reduce((n, a) => n + (a.unread || 0), 0);
+  const recName = c.recruiter && c.recruiter.name;
+
   return (
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
-        {onBack && <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back to dashboard</button>}
-        <div className="mb-2"><BrandLogo height={30} /></div>
+        <div className="mb-1"><BrandLogo height={30} /></div>
         {token && <EmailChoiceNote token={token} onChanged={onChanged} />}
-        <div className="text-3xl md:text-4xl" style={{ ...SERIF }}>Hi {(c.name || "there").split(" ")[0]}</div>
-        <div className="text-sm" style={{ color: C.ink2 }}>{c.routed.length || c.questions.length ? "Your recruiter has something for you below. Your answers go straight into your application." : "Here is where your applications stand."}</div>
+
+        <Card>
+          <div className="flex flex-col sm:flex-row items-center sm:items-center gap-4 sm:gap-5 text-center sm:text-left">
+            {token
+              ? <PortalPhoto src={c.photoUrl} name={c.name} token={token} onChanged={onChanged} onError={setErr} />
+              : <span className="w-24 h-24 rounded-full flex items-center justify-center shrink-0" style={{ background: C.neutralBg, color: C.ink3 }}><UserRound size={44} /></span>}
+            <div className="flex-1 min-w-0">
+              <div className="text-3xl md:text-4xl leading-tight" style={{ ...SERIF }}>{c.name || "Welcome"}</div>
+              <div className="text-sm mt-1" style={{ color: C.ink2 }}>
+                {recName ? <>Your recruiter is <b style={{ color: C.ink }}>{recName}</b>.</> : "Here is where your applications stand."}
+              </div>
+              <div className="mt-3 flex justify-center sm:justify-start">
+                <button onClick={() => convos.length && setChat({})} disabled={!convos.length}
+                  className="relative inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold"
+                  style={{ background: C.em, color: "#fff", opacity: convos.length ? 1 : 0.55 }}>
+                  <MessageCircle size={17} /> Message{recName ? " " + recName : " your recruiter"}
+                  {unread > 0 && <span className="absolute -top-2 -right-2 min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center" style={{ background: C.dangerFg, color: "#fff" }}>{unread}</span>}
+                </button>
+              </div>
+              {!convos.length && <div className="text-xs mt-2" style={{ color: C.ink3 }}>You can message your recruiter once you're on a role.</div>}
+            </div>
+          </div>
+        </Card>
+
         {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
 
@@ -6179,51 +6556,77 @@ function CandidatePortal({ onBack, data, token, onChanged }) {
           );
         })}
 
-        {(c.threads || []).length > 0 && (
-          <Card>
-            <SectionTitle title="Messages" sub="One thread per role — your recruiter sees these right away." size="text-xl" />
-            <div className="flex flex-col gap-3 mt-1">
-              {c.threads.map((t) => (
-                <details key={t.linkId} id={"thread-" + t.linkId} className="rounded-xl border" style={{ borderColor: C.line }} onToggle={(e) => { if (e.target.open && t.unread) openThread(t.linkId); }}>
-                  <summary className="flex items-center justify-between gap-2 px-3.5 py-3 cursor-pointer select-none">
-                    <div>
-                      <div className="text-sm font-medium">{t.role}</div>
-                      <div className="text-xs" style={{ color: C.ink2 }}>{t.company}</div>
-                    </div>
-                    {t.unread > 0 && <span className="text-[10px] rounded-full px-1.5 py-0.5 shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}>{t.unread} new</span>}
-                  </summary>
-                  <div className="px-3.5 pb-3.5">
-                    <MessageThread mineSender="candidate" busy={msgBusy === t.linkId} onSend={(text) => sendThreadMsg(t.linkId, text)} placeholder="Message your recruiter…" emptyText="No messages yet. Say hello!"
-                      messages={(t.messages || []).map((m) => ({ sender: m.sender, body: m.body, at: new Date(m.createdAt).getTime() }))} />
-                  </div>
-                </details>
-              ))}
-            </div>
-          </Card>
-        )}
-
         <Card>
-          <SectionTitle title="Your applications" size="text-xl" />
-          {c.endorsements.length === 0 && <div className="text-sm py-4" style={{ color: C.ink3 }}>No applications yet.</div>}
-          {c.endorsements.map((e, i) => (
-            <div key={i} className="flex items-center gap-3 py-3" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
-              <div className="flex-1 min-w-0"><div className="text-sm font-medium">{e.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.company}</div></div>
-              <StatusPill status={e.status} />
-            </div>
-          ))}
-        </Card>
-        {c.matches.length > 0 && (
-          <Card>
-            <SectionTitle title="Roles that fit you" sub="Shown at 70% match or higher." size="text-xl" />
-            {c.matches.map((m, i) => (
-              <div key={i} className="flex items-center justify-between py-3 gap-2" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
-                <div><div className="text-sm font-medium">{m.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{m.company}</div></div>
-                <Pill tone="em">{m.fit}%</Pill>
+          <SectionTitle title="Your applications" sub={apps.length + pastOnly.length ? "Tap a role to see where it's at." : ""} size="text-xl" />
+          {apps.length + pastOnly.length === 0 && <div className="text-sm py-4" style={{ color: C.ink3 }}>You haven't applied for any roles yet.</div>}
+          <div className="flex flex-col gap-2.5 mt-3">
+            {apps.map((a) => {
+              const st = appStatus(a);
+              const isOpen = !!openApps[a.linkId];
+              return (
+                <div key={a.linkId} className="rounded-xl border" style={{ borderColor: isOpen ? C.em : C.line }}>
+                  <button onClick={() => setOpenApps((m) => ({ ...m, [a.linkId]: !m[a.linkId] }))} aria-expanded={isOpen}
+                    className="w-full text-left flex items-center gap-3 px-3.5 py-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[15px] font-semibold leading-snug">{a.role}</div>
+                      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{placeLine(a)}</div>
+                    </div>
+                    <Pill tone={st.tone}>{st.label}</Pill>
+                    {a.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center" style={{ background: C.dangerFg, color: "#fff" }} title="Unread messages">{a.unread}</span>}
+                    <ChevronDown size={18} color={C.ink3} style={{ transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                  </button>
+                  {isOpen && (
+                    <div className="px-3.5 pb-3.5 pt-1" style={{ borderTop: `1px solid ${C.line}` }}>
+                      <div className="pt-3"><ProgressSteps steps={appSteps(a)} /></div>
+                      {a.jobStatus === "On hold" && !["Rejected", "Withdrawn", "Placed"].includes(a.stage) && (
+                        <div className="text-xs rounded-lg px-3 py-2 mt-3" style={{ background: C.warnBg, color: C.warnFg }}>The employer has paused this role for now. We'll update you when it moves again.</div>
+                      )}
+                      {a.stage === "Rejected" && a.rejectMessage && (
+                        <div className="text-sm rounded-lg px-3 py-2.5 mt-3" style={{ background: C.canvas, color: C.ink2 }}>{a.rejectMessage}</div>
+                      )}
+                      {a.response !== "declined" && (
+                        <button onClick={() => setChat({ startId: a.linkId })} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: C.em }}>
+                          <MessageCircle size={15} /> Message {recName || "your recruiter"} about this role
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {pastOnly.map((e, i) => (
+              <div key={"p" + i} className="rounded-xl border flex items-center gap-3 px-3.5 py-3" style={{ borderColor: C.line }}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[15px] font-semibold leading-snug">{e.role}</div>
+                  <div className="text-xs truncate" style={{ color: C.ink2 }}>{e.company}{e.createdAt ? " · " + fdate(e.createdAt) : ""}</div>
+                </div>
+                <StatusPill status={e.status} />
               </div>
             ))}
-          </Card>
-        )}
+          </div>
+        </Card>
+
+        <Card>
+          <SectionTitle title="Other roles you might be a good fit for" size="text-xl" />
+          {c.matches.length === 0 ? (
+            <div className="text-sm py-4" style={{ color: C.ink3 }}>No other roles at the moment. We'll let you know when one comes up.</div>
+          ) : (
+            <div className="mt-2">
+              {c.matches.map((m, i) => (
+                <div key={i} className="flex items-center justify-between py-3 gap-3" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium">{m.role}</div>
+                    <div className="text-xs" style={{ color: C.ink2 }}>{placeLine(m)}</div>
+                  </div>
+                  <Pill tone="em">{m.fit}% match</Pill>
+                </div>
+              ))}
+              {convos.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Interested in one of these? Message {recName || "your recruiter"}.</div>}
+            </div>
+          )}
+        </Card>
       </div>
+      {chat && token && <PortalChat token={token} convos={convos} recruiter={c.recruiter} startId={chat.startId} onClose={() => { setChat(null); if (onChanged) onChanged(); }} />}
     </div>
   );
 }
@@ -6359,6 +6762,8 @@ function AwaitingAccess({ onSignOut }) {
 
 const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candidate_comments(*),candidate_timeline(*),candidate_jobs(*,candidate_job_messages(*))&order=created_at.desc";
 async function loadAll(token) {
+  // Reaching a recruiter's app is what "delivered" means for candidate messages (two grey ticks).
+  await sbFetch("/rest/v1/rpc/staff_mark_delivered", { method: "POST", token }).catch(() => {});
   const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
@@ -6396,7 +6801,6 @@ export default function App() {
   const [toastText, setToastText] = useState("");
   const [errorModalMsg, setErrorModalMsg] = useState("");
   const [promote, setPromote] = useState({ open: false, job: "" });
-  const [portal, setPortal] = useState(false);
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [portalToken] = useState(() => new URLSearchParams(window.location.search).get("c"));
   const [outreachLink] = useState(() => { const q = new URLSearchParams(window.location.search); return q.get("u") ? { token: q.get("u"), kind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" } : null; });
@@ -6488,7 +6892,7 @@ export default function App() {
   if (portalToken) {
     if (!portalData) return <div className="min-h-screen flex items-center justify-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>Loading&hellip;</div></div>;
     if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
-    return <CandidatePortal data={portalData} token={portalToken} onChanged={loadPortal} onBack={() => { window.history.replaceState({}, "", window.location.pathname); window.location.reload(); }} />;
+    return <CandidatePortal data={portalData} token={portalToken} onChanged={loadPortal} />;
   }
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
@@ -6834,6 +7238,8 @@ export default function App() {
     reload,
     // Recruiter's side of candidate messaging (see msgCall above).
     sendMessage: (linkId, body) => msgCall("reply", { linkId, body }),
+    // The chat screen refreshes itself, so it sends without reloading the whole workspace.
+    sendMessageQuiet: (linkId, body) => msgQuiet("reply", { linkId, body }),
     // Rejections: draft/preview change nothing; reject records it and tells the candidate.
     msgQuiet: msgQuiet,
     rejectCandidate: (payload) => msgCall("reject", payload),
@@ -6868,7 +7274,6 @@ export default function App() {
   const onPromote = (job) => setPromote({ open: true, job });
   const pendingQ = countFollowups(data.cands, "draft");
 
-  if (portal) return <CandidatePortal onBack={() => setPortal(false)} data={null} />;
 
   const scope = role === "recruiter" ? "recruiter" : "all";
   const candData = role === "recruiter" ? data.cands.filter((c) => c.recruiterId === session.uid) : data.cands;

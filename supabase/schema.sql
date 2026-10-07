@@ -1906,3 +1906,9 @@ grant execute on function public.client_view(text) to anon, authenticated;
 -- 7 Oct 2026 review fixes: see supabase/migrations/20261007_security_fixes.sql
 -- (token checks accept 12+ characters, 32-character tokens for new rows, internal
 -- functions no longer callable by anon, password-reset rate-limit index).
+
+-- 7 Oct 2026 candidate page + WhatsApp-style chat: see
+-- supabase/migrations/20261007b_candidate_page_chat.sql (candidates.photo_url,
+-- candidate_job_messages.delivered_at, chat_typing, candidate_chat / candidate_typing /
+-- candidate_mark_delivered, staff_chat / staff_typing / staff_mark_delivered, and the
+-- candidate_portal version that returns photo, recruiter and applications).
