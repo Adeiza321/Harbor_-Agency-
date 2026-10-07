@@ -1914,3 +1914,5 @@ grant execute on function public.client_view(text) to anon, authenticated;
 -- candidate_portal version that returns photo, recruiter and applications).
 -- Chat email delivery status and attachments: supabase/migrations/20261007c_chat_email_status_files.sql
 -- (candidate_job_messages attachment_* and email_* columns, chat-files bucket, cron harbor-email-status).
+-- Chat delete / clear, recruiter titles, Inbox statuses and the public apply page:
+-- supabase/migrations/20261007d_chat_delete_clear_inbox.sql

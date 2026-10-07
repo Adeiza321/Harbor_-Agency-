@@ -9,6 +9,8 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 - `supabase/migrations/` — changes applied to the live database after `schema.sql` was written, in date order.
 - `supabase/functions/candidate-photo/` — saves the photo a candidate adds on their candidate page.
 - `supabase/functions/chat-file/` — files and pictures in chats (private `chat-files` bucket).
+- `supabase/functions/inbox/` — Inbox actions for Rec Ops / Admins: assign an application to a recruiter (creates the candidate, copies the CV, puts them on the job), dismiss, restore, open the CV.
+- Public apply page: `/?apply=<job link_slug>` (each job's apply link) posts to `submit-application`, which files the application and CV in the Inbox.
 - `supabase/functions/email-status/` — every minute, asks Brevo whether chat emails were delivered or bounced (the chat ticks).
 - `supabase/functions/` — every Edge Function deployed to the live project (`client-view` and `record-login` were added on 7 Oct 2026; `backfill-phones` and `check-secret` are disabled one-offs that only exist live and can be deleted from the dashboard).
 - `supabase/schema.sql` — the database schema (tables, RLS policies, storage bucket, candidate-portal function). Already applied to the live project; kept here as the source of truth.

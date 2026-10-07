@@ -5,7 +5,7 @@ import {
   Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
-  Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip,
+  Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2,
 } from "./lucide-shim.js";
 
 /* Design tokens */
@@ -201,7 +201,7 @@ function mapAll(d) {
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
-      messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at, emailStatus: m.email_status, emailError: m.email_error, file: m.attachment_path ? { name: m.attachment_name, type: m.attachment_type, size: m.attachment_size } : null })) })),
+      messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at, emailStatus: m.email_status, emailError: m.email_error, deleted: !!m.deleted_at, file: m.attachment_path && !m.deleted_at ? { name: m.attachment_name, type: m.attachment_type, size: m.attachment_size } : null })) })),
     endorsed: (c.candidate_endorsements || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((e) => ({ id: e.id, company: e.company, role: e.role_title, by: fdate(e.created_at) + " by " + pname(e.endorsed_by).split(" ")[0], status: e.status, next: e.next_step || "" })),
     comments: (c.candidate_comments || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).map((m) => ({ who: pname(m.author_id).split(" ")[0], role: ROLE_KEY_LABEL[(pm[m.author_id] || {}).role] || "", init: initialsOf(pname(m.author_id)), tone: "info", when: fdate(m.created_at), text: m.body })),
     timeline: (c.candidate_timeline || []).sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((t) => ({ t: t.title, d: fdate(t.created_at), done: t.done, at: new Date(t.created_at).getTime() })),
@@ -225,8 +225,11 @@ function mapAll(d) {
       engagedIds: (j.job_recruiters || []).map((r) => r.recruiter_id), engagedNames: (j.job_recruiters || []).map((r) => pname(r.recruiter_id)),
       holdReason: j.hold_reason || "", holdUntil: j.hold_until || null, heldAt: j.held_at ? new Date(j.held_at).getTime() : null, heldBy: j.held_by ? pname(j.held_by) : "",
       submitted: new Set([...en.map((e) => e.candidate_id), ...submittedLinks.map((l) => l.candidate_id)]).size,
-      interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, link: "harbor.link/j/" + j.link_slug }; });
-  const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, candidateId: a.candidate_id }));
+      interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
+  const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), at: new Date(a.created_at).getTime(),
+    status: a.status || (a.candidate_id || a.assigned_to ? "assigned" : "new"), jobId: a.job_id, candidateId: a.candidate_id, linkedin: a.linkedin || "", hasCv: !!a.resume_path, cvName: a.resume_name || "",
+    answers: Array.isArray(a.answers) ? a.answers : [], note: a.note || "", handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
+    handledBy: a.handled_by ? pname(a.handled_by) : "", assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, assignedName: a.assigned_to ? pname(a.assigned_to) : "" }));
   const today = new Date();
   const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
     startDate: p.start_date || null, guaranteeDays: p.guarantee_days != null ? p.guarantee_days : null, guaranteeEnds: p.guarantee_ends || null,
@@ -256,7 +259,9 @@ function mapAll(d) {
       status: i.status, decision: i.decision, feedback: i.feedback || "", confirmed: !!i.candidate_confirmed_at, googleEventId: i.google_event_id, googleError: i.google_error || "",
       sendReminders: i.send_reminders !== false, noshowSent: i.noshow_followup_sent_at || null };
   });
-  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews,
+  // Conversations you cleared: messages up to that moment are hidden on your screen only.
+  const chatClears = Object.fromEntries((d.chatClears || []).map((x) => [x.link_id, new Date(x.cleared_at).getTime()]));
+  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears,
     settings: { name: set.agency_name || "ProNext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
       integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30 } };
@@ -1449,7 +1454,7 @@ function OverviewRecOps({ S }) {
         <AttentionList title="Needs attention" S={S} items={(() => {
           const drafts = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "draft");
           const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
-          const unassigned = S.inbox.filter((x) => !x.assigned).map((x) => ({ id: x.candidateId || null, name: x.name, sub: x.role }));
+          const unassigned = S.inbox.filter((x) => x.status === "new").map((x) => ({ id: null, name: x.name, sub: x.role, go: "inbox" }));
           const guarantee = S.placements.filter((p) => p.status === "Guarantee").map((p) => ({ id: p.candidateId || null, name: p.name, sub: p.guarantee }));
           const toBill = awaitingBilling(S).map((c) => ({ id: c.id, name: c.name, sub: c.status, onOpen: () => S.startBilling(c.id) }));
           return [
@@ -1658,7 +1663,7 @@ const chatDay = (d) => {
 };
 const fileSize = (n) => (!n ? "" : n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB");
 const isImage = (type) => /^image\/(jpeg|png|webp|gif)$/.test(type || "");
-const filePreview = (m) => (m && (m.body || (m.file ? "📎 " + (m.file.name || "File") : ""))) || "";
+const filePreview = (m) => (!m ? "" : m.deleted ? "Message deleted" : m.body || (m.file ? "📎 " + (m.file.name || "File") : ""));
 
 // Brand look: deep green for your own messages, white cards for theirs, on the canvas colour.
 const CHAT = { mine: C.side, mineMeta: "rgba(255,255,255,0.62)", theirs: "#FFFFFF", wall: C.canvas, read: C.lime, bad: "#FF9B85" };
@@ -1699,6 +1704,18 @@ function ListTicks({ m }) {
   const color = s.bad ? C.dangerFg : s.read ? C.em : C.ink3;
   if (s.icon === "none") return null;
   return <span title={s.label} className="inline-flex shrink-0">{s.icon === "two" ? <CheckCheck size={13} color={color} /> : s.icon === "clock" ? <Clock size={11} color={color} /> : <Check size={13} color={color} />}</span>;
+}
+
+// Message text with web links. Links are only clickable on the candidate's side; on the
+// dashboard they show as plain text (still selectable and copyable).
+const URL_RE = /((?:https?:\/\/|www\.)[^\s<]+[^\s<.,;:!?)\]'"])/gi;
+function MsgText({ text, clickable, mine }) {
+  const parts = String(text || "").split(URL_RE);
+  return parts.map((p, i) => (i % 2 === 1
+    ? (clickable
+        ? <a key={i} href={/^https?:/i.test(p) ? p : "https://" + p} target="_blank" rel="noopener noreferrer nofollow" style={{ color: mine ? C.lime : C.em, textDecoration: "underline" }}>{p}</a>
+        : <span key={i} style={{ textDecoration: "underline", textDecorationStyle: "dotted" }} title="Links open only on the candidate's side">{p}</span>)
+    : <React.Fragment key={i}>{p}</React.Fragment>));
 }
 
 function ChatAttachment({ file, url, mine, onLoad }) {
@@ -1753,7 +1770,12 @@ const readChatFile = (file) => new Promise((resolve, reject) => {
    title, subtitle, avatarSrc, avatarInit, onBack (shows the back arrow), onProfile (makes the
    header open the person's profile), onClose (called on unmount so the parent can refresh
    unread counts), headerExtra (node under the header), emptyText, peerName */
-function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, onBack, onProfile, onClose, headerExtra, emptyText, peerName, className = "", style }) {
+function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, onBack, onProfile, onClose, headerExtra, emptyText, peerName, linksClickable = false, className = "", style }) {
+  const [actionsFor, setActionsFor] = useState(null);  // message whose Copy / Delete row is open
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);     // header menu (Clear chat)
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [flash, setFlash] = useState("");
   const [msgs, setMsgs] = useState(null);
   const [pending, setPending] = useState([]);
   const [peerTypingAt, setPeerTypingAt] = useState(0);
@@ -1868,6 +1890,23 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
   };
 
   const canSend = !!(text.trim() || attach);
+  const notify = (t) => { setFlash(t); setTimeout(() => setFlash(""), 1800); };
+  const copyMsg = async (m) => {
+    const t = m.body || (m.file ? m.file.name : "");
+    try { await navigator.clipboard.writeText(t); notify("Copied"); }
+    catch (e) { notify("Couldn't copy. Select the text and copy it instead."); }
+    setActionsFor(null);
+  };
+  const deleteMsg = async (m) => {
+    setConfirmDel(null); setActionsFor(null);
+    try { await apiRef.current.del(m.id); await load(); if (rt.current) rt.current.send("msg", { who: mine }); notify("Message deleted"); }
+    catch (e) { setErr(e.message || "Couldn't delete the message"); }
+  };
+  const clearChat = async () => {
+    setConfirmClear(false); setMenuOpen(false);
+    try { await apiRef.current.clear(); setPending([]); await load(); notify("Chat cleared on your screen"); }
+    catch (e) { setErr(e.message || "Couldn't clear the chat"); }
+  };
   const headerMain = (
     <>
       <Avatar init={avatarInit || "?"} tone="em" size={40} src={avatarSrc || undefined} />
@@ -1889,6 +1928,27 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
         {onProfile
           ? <button onClick={onProfile} title="Open full profile" className="flex items-center gap-3 min-w-0 flex-1 rounded-xl -my-1 py-1 pr-1">{headerMain}</button>
           : <div className="flex items-center gap-3 min-w-0 flex-1">{headerMain}</div>}
+        {api.clear && (
+          <div className="relative shrink-0">
+            <button onClick={() => { setMenuOpen((o) => !o); setConfirmClear(false); }} aria-label="Chat options" className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: C.ink2 }}><MoreHorizontal size={20} /></button>
+            {menuOpen && (
+              <div className="absolute right-0 top-10 z-20 w-64 rounded-xl p-1.5 shadow-lg" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+                {!confirmClear ? (
+                  <button onClick={() => setConfirmClear(true)} className="w-full text-left text-sm rounded-lg px-3 py-2 flex items-center gap-2" style={{ color: C.dangerFg }}><Trash2 size={15} /> Clear chat</button>
+                ) : (
+                  <div className="p-2">
+                    <div className="text-sm font-medium">Clear this chat?</div>
+                    <div className="text-xs mt-1 mb-2.5" style={{ color: C.ink2 }}>Messages disappear from your screen only. {(peerName || "They").split(" ")[0]} still sees them.</div>
+                    <div className="flex gap-2">
+                      <button onClick={clearChat} className="flex-1 rounded-lg px-3 py-1.5 text-sm font-medium" style={{ background: C.dangerFg, color: "#fff" }}>Clear</button>
+                      <button onClick={() => { setConfirmClear(false); setMenuOpen(false); }} className="flex-1 rounded-lg px-3 py-1.5 text-sm" style={{ border: `1px solid ${C.line}` }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       {headerExtra}
       <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto px-3 md:px-6 py-4 flex flex-col gap-1">
@@ -1912,16 +1972,40 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
                 </div>
               )}
               <div className={"flex flex-col " + (lastOfGroup ? "mb-2" : "")} style={{ alignItems: isMine ? "flex-end" : "flex-start" }}>
-                <div className="max-w-[82%] md:max-w-[62%] px-3.5 pt-2 pb-1.5 text-[14.5px] leading-snug"
-                  style={{ background: isMine ? CHAT.mine : CHAT.theirs, color: isMine ? "#fff" : C.ink, borderRadius: 18,
-                    border: isMine ? "none" : `1px solid ${C.line}`, boxShadow: "0 1px 2px rgba(20,32,27,0.06)",
+                <div className="max-w-[82%] md:max-w-[62%] px-3.5 pt-2 pb-1.5 text-[14.5px] leading-snug cursor-pointer select-text"
+                  onClick={(e) => { if (m.deleted || m.pending || e.target.closest("a") || (window.getSelection && String(window.getSelection()).length)) return; setActionsFor((x) => (x === m.id ? null : m.id)); setConfirmDel(null); }}
+                  style={{ background: m.deleted ? "transparent" : isMine ? CHAT.mine : CHAT.theirs, color: m.deleted ? C.ink3 : isMine ? "#fff" : C.ink, borderRadius: 18,
+                    border: m.deleted ? `1px dashed ${C.line}` : isMine ? "none" : `1px solid ${C.line}`, boxShadow: m.deleted ? "none" : "0 1px 2px rgba(20,32,27,0.06)",
+                    outline: actionsFor === m.id ? `2px solid ${C.lime}` : "none",
                     ...(lastOfGroup ? (isMine ? { borderBottomRightRadius: 6 } : { borderBottomLeftRadius: 6 }) : {}) }}>
-                  {m.file && <ChatAttachment file={m.file} url={urls[m.id]} mine={isMine} onLoad={stick} />}
-                  {m.body && <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body}</div>}
-                  <div className="flex items-center justify-end gap-1 mt-0.5 text-[10.5px]" style={{ color: isMine ? CHAT.mineMeta : C.ink3 }}>
-                    {chatTime(m.createdAt)}{isMine && <MsgTicks m={m} />}
+                  {m.deleted ? (
+                    <div className="italic text-sm flex items-center gap-1.5"><X size={13} /> {isMine ? "You deleted this message" : "This message was deleted"}</div>
+                  ) : (
+                    <>
+                      {m.file && <ChatAttachment file={m.file} url={urls[m.id]} mine={isMine} onLoad={stick} />}
+                      {m.body && <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}><MsgText text={m.body} clickable={linksClickable} mine={isMine} /></div>}
+                    </>
+                  )}
+                  <div className="flex items-center justify-end gap-1 mt-0.5 text-[10.5px]" style={{ color: m.deleted ? C.ink3 : isMine ? CHAT.mineMeta : C.ink3 }}>
+                    {chatTime(m.createdAt)}{isMine && !m.deleted && <MsgTicks m={m} />}
                   </div>
                 </div>
+                {actionsFor === m.id && !m.deleted && (
+                  <div className="flex items-center gap-1 mt-1 text-xs">
+                    {confirmDel === m.id ? (
+                      <>
+                        <span className="mr-1" style={{ color: C.ink2 }}>Delete for everyone?</span>
+                        <button onClick={() => deleteMsg(m)} className="rounded-full px-3 py-1 font-medium" style={{ background: C.dangerFg, color: "#fff" }}>Delete</button>
+                        <button onClick={() => setConfirmDel(null)} className="rounded-full px-3 py-1" style={{ background: "#fff", border: `1px solid ${C.line}` }}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <button onClick={() => copyMsg(m)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: "#fff", border: `1px solid ${C.line}` }}><Copy size={12} /> Copy</button>
+                        {isMine && !m.failed && !String(m.id).startsWith("tmp") && api.del && <button onClick={() => setConfirmDel(m.id)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.dangerFg }}><Trash2 size={12} /> Delete</button>}
+                      </>
+                    )}
+                  </div>
+                )}
                 {isMine && st && st.bad && lastOfGroup && <div className="text-[11px] mt-1 mr-1" style={{ color: C.dangerFg }}>{st.label}</div>}
                 {m.failed && <button onClick={() => send(m)} className="text-[11px] font-medium mt-1 mr-1" style={{ color: C.dangerFg }}>Not sent. Tap to try again</button>}
               </div>
@@ -1936,6 +2020,7 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
         )}
       </div>
       {err && msgs !== null && <div className="text-xs px-4 py-1.5 shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+      {flash && <div className="text-xs px-4 py-1.5 shrink-0 text-center" style={{ background: C.side, color: "#fff" }}>{flash}</div>}
       <div className="px-3 pt-2 pb-3 shrink-0" style={{ background: "#fff", borderTop: `1px solid ${C.line}` }}>
         {attach && (
           <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2 text-sm" style={{ background: C.canvas }}>
@@ -1976,6 +2061,8 @@ const candidateChatApi = (token, linkId) => ({
   send: (text) => sbFetch("/rest/v1/rpc/candidate_send_message", { method: "POST", body: { p_token: token, p_link_id: linkId, p_body: text } }),
   sendFile: (file, caption) => chatFileCall({ action: "send", token, linkId, name: file.name, type: file.type, data: file.data, caption }),
   urls: (ids) => chatFileCall({ action: "urls", token, linkId, ids }).then((j) => j.urls || {}),
+  del: (id) => sbFetch("/rest/v1/rpc/candidate_delete_message", { method: "POST", body: { p_token: token, p_message_id: id } }),
+  clear: () => sbFetch("/rest/v1/rpc/candidate_clear_chat", { method: "POST", body: { p_token: token, p_link_id: linkId } }),
   typing: () => sbFetch("/rest/v1/rpc/candidate_typing", { method: "POST", body: { p_token: token, p_link_id: linkId } }),
 });
 const staffChatApi = (S, linkId) => ({
@@ -1987,6 +2074,8 @@ const staffChatApi = (S, linkId) => ({
     return S.sendMessageQuiet(linkId, caption, up.file);
   },
   urls: (ids) => S.sb("/functions/v1/chat-file", { method: "POST", body: { action: "urls", linkId, ids } }).then((j) => j.urls || {}),
+  del: (id) => S.sb("/rest/v1/rpc/staff_delete_message", { method: "POST", body: { p_message_id: id } }),
+  clear: () => S.sb("/rest/v1/rpc/staff_clear_chat", { method: "POST", body: { p_link_id: linkId } }),
   typing: () => S.sb("/rest/v1/rpc/staff_typing", { method: "POST", body: { p_link_id: linkId } }),
 });
 
@@ -3286,36 +3375,123 @@ function CandidateJobsCard({ candidate, S, toast }) {
   );
 }
 
+/* Inbox: applications from the public apply page (/?apply=<job link>) and outreach "interested"
+   clicks. New ones wait here until Rec Ops or an Admin assigns them to a recruiter (which creates
+   the candidate, puts them on the job and starts the AI screening) or dismisses them. */
+const SOURCE_LABEL = { career_page: "Apply page", outreach: "Outreach email", linkedin: "LinkedIn", indeed: "Indeed", google_jobs: "Google for Jobs", facebook: "Facebook", referral: "Referral", manual: "Added by hand" };
+const applyUrl = (slug) => window.location.origin + window.location.pathname + "?apply=" + slug;
+
+function ApplyLinks({ S, toast }) {
+  const jobs = S.jobs.filter((j) => j.status === "Open" && j.slug);
+  const copy = (j) => { try { navigator.clipboard.writeText(applyUrl(j.slug)); toast("Apply link copied for " + j.role); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  if (!jobs.length) return <div className="text-sm" style={{ color: C.ink3 }}>No open jobs yet. Open a job to get its apply link.</div>;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="text-sm mb-1" style={{ color: C.ink2 }}>Share these on LinkedIn, job boards or social posts. Everyone who applies lands in this Inbox with their CV.</div>
+      {jobs.map((j) => (
+        <div key={j.id} className="rounded-xl border px-3 py-2.5 flex items-center gap-3" style={{ borderColor: C.line }}>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium truncate">{j.role} <span style={{ color: C.ink3, fontWeight: 400 }}>· {j.client}</span></div>
+            <div className="text-xs truncate" style={{ color: C.ink3 }}>{applyUrl(j.slug)}</div>
+          </div>
+          <Btn icon={Copy} onClick={() => copy(j)} className="shrink-0 !px-3 !py-1.5 text-xs">Copy</Btn>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InboxRow({ x, S, toast, canAct }) {
+  const [rec, setRec] = useState(x.assignedId || "");
+  const [busy, setBusy] = useState("");
+  const [showAnswers, setShowAnswers] = useState(false);
+  const job = S.jobs.find((j) => j.id === x.jobId);
+  const run = async (key, fn) => { setBusy(key); try { await fn(); } catch (e) { S.error(e.message || "Something went wrong"); } setBusy(""); };
+  const openCv = () => run("cv", async () => { const r = await S.inboxCall("cv", { applicationId: x.id }); window.open(r.url, "_blank", "noopener"); });
+  const assign = () => run("assign", async () => {
+    if (!rec) { toast("Pick a recruiter first"); return; }
+    const r = await S.inboxCall("assign", { applicationId: x.id, recruiterId: rec });
+    if (r.linkId) S.inviteToMessage(r.linkId);
+    toast((r.reused ? "Added to their existing profile and " : "Candidate created and ") + "assigned to " + ((S.team.find((t) => t.id === rec) || {}).name || "the recruiter"));
+  });
+  const dismiss = () => run("dismiss", async () => { await S.inboxCall("dismiss", { applicationId: x.id }); toast("Dismissed " + x.name); });
+  const restore = () => run("restore", async () => { await S.inboxCall("restore", { applicationId: x.id }); toast("Moved back to New"); });
+  return (
+    <div className="py-4 flex flex-col gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
+      <div className="flex flex-col md:flex-row md:items-start gap-3">
+        <div className="flex items-start gap-3 flex-1 min-w-0">
+          <Avatar init={initialsOf(x.name)} tone="em" size={38} />
+          <div className="min-w-0">
+            <div className="font-medium">{x.name}</div>
+            <div className="text-xs" style={{ color: C.ink2 }}>{job ? job.role + " · " + job.client : x.role}</div>
+            <div className="text-xs mt-1 flex flex-wrap gap-x-3 gap-y-1" style={{ color: C.ink3 }}>
+              <span>{SOURCE_LABEL[x.source] || x.source}</span><span>{x.when}</span>
+              {x.email && <span>{x.email}</span>}{x.phone && <span>{x.phone}</span>}
+              {x.linkedin && <a href={/^https?:/.test(x.linkedin) ? x.linkedin : "https://" + x.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn</a>}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          {x.hasCv && <Btn icon={Download} onClick={openCv} disabled={!!busy} className="!px-3 !py-1.5 text-xs">{busy === "cv" ? <InlineDots /> : "CV"}</Btn>}
+          {x.answers.length > 0 && <Btn onClick={() => setShowAnswers((v) => !v)} className="!px-3 !py-1.5 text-xs">{showAnswers ? "Hide answers" : x.answers.length + " answer" + (x.answers.length > 1 ? "s" : "")}</Btn>}
+          {x.status === "new" && canAct && (
+            <>
+              <select value={rec} onChange={(e) => setRec(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+                <option value="">Assign to…</option>
+                {S.team.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+              </select>
+              <Btn kind="primary" onClick={assign} disabled={!!busy || !rec} className="!px-3 !py-1.5 text-xs">{busy === "assign" ? <InlineDots color="#fff" /> : "Assign"}</Btn>
+              <Btn onClick={dismiss} disabled={!!busy} className="!px-3 !py-1.5 text-xs">{busy === "dismiss" ? <InlineDots /> : "Dismiss"}</Btn>
+            </>
+          )}
+          {x.status === "assigned" && (
+            <>
+              <Pill tone="em">Assigned{x.assignedName ? " to " + x.assignedName.split(" ")[0] : ""}</Pill>
+              {x.candidateId && <Btn onClick={() => S.openCandidate(x.candidateId)} className="!px-3 !py-1.5 text-xs">Open candidate</Btn>}
+            </>
+          )}
+          {x.status === "dismissed" && (
+            <>
+              <Pill tone="neutral">Dismissed{x.handledBy ? " by " + x.handledBy.split(" ")[0] : ""}</Pill>
+              {canAct && <Btn onClick={restore} disabled={!!busy} className="!px-3 !py-1.5 text-xs">{busy === "restore" ? <InlineDots /> : "Restore"}</Btn>}
+            </>
+          )}
+        </div>
+      </div>
+      {showAnswers && (
+        <div className="rounded-xl px-3.5 py-3 flex flex-col gap-2.5 md:ml-12" style={{ background: C.canvas }}>
+          {x.answers.map((a, i) => <div key={i}><div className="text-xs font-medium" style={{ color: C.ink2 }}>{a.q}</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{a.a}</div></div>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InboxPage({ toast, S }) {
-  const items = S.inbox;
-  const assign = (id, init) => {
-    const x = items.find((i) => i.id === id);
-    const r = S.team.find((y) => y.init === init);
-    if (!r) { toast("That recruiter is not available"); return; }
-    S.setInbox((l) => l.map((i) => (i.id === id ? { ...i, assigned: init, assignedId: r.id } : i)));
-    S.setCands((l) => [newCandidate({ name: x.name, role: x.role, recruiter: r.name, recruiterId: r.id, recruiterInit: init, ai: x.ai, emailAddr: x.email || "", phone: x.phone || "", source: x.source, timeline: [{ t: "Applied via " + x.source + ", assigned to " + r.name, d: fdate(new Date()), done: true }] }), ...l]);
-    toast("Assigned to " + r.name);
-  };
-  const open = items.filter((x) => !x.assigned).length;
+  const [tab, setTab] = useState("new");
+  const [linksOpen, setLinksOpen] = useState(false);
+  const canAct = S.me.roleKey === "admin" || S.me.roleKey === "recops";
+  const fresh = S.inbox.filter((x) => x.status === "new").sort((a, b) => b.at - a.at);
+  const handled = S.inbox.filter((x) => x.status !== "new").sort((a, b) => (b.handledAt || b.at) - (a.handledAt || a.at));
+  const list = tab === "new" ? fresh : handled;
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      <SectionTitle size="text-3xl md:text-4xl" title="Inbox" sub={open ? `${open} applications need a recruiter.` : "Every application has a recruiter."} />
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+        <SectionTitle size="text-3xl md:text-4xl" title="Inbox"
+          sub={fresh.length ? `${fresh.length} new application${fresh.length > 1 ? "s" : ""} waiting for a recruiter.` : "No new applications. Share a job's apply link to get some."} />
+        <Btn icon={Send} onClick={() => setLinksOpen(true)}>Apply links</Btn>
+      </div>
       <Card>
-        <DataTable
-          rows={items}
-          empty="No applications yet."
-          columns={[
-            { key: "name", label: "APPLICANT", render: (x) => <div><div className="font-medium">{x.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{x.role}</div></div> },
-            { key: "source", label: "SOURCE", render: (x) => <span className="text-xs" style={{ color: C.ink2 }}>{x.source}</span> },
-            { key: "email", label: "CONTACT", render: (x) => <span className="text-xs" style={{ color: C.ink2 }}>{x.email || x.phone || "-"}</span> },
-            { key: "ai", label: "AI", render: (x) => { const c = x.candidateId ? S.cands.find((y) => y.id === x.candidateId) : null; const v = c && c.ai ? c.ai : x.ai; return <span title={c && c.ai ? "Their current score" : "Score when they applied"}><Pill tone={scoreTone(v)}>{v ? v + "%" : "-"}</Pill></span>; } },
-            { key: "when", label: "RECEIVED", render: (x) => <span className="text-xs" style={{ color: C.ink2 }}>{x.when}</span> },
-            { key: "assign", label: "RECRUITER", render: (x) => x.assigned
-              ? <div className="flex items-center gap-2"><Avatar init={x.assigned} tone={PEOPLE_TONE[x.assigned] || "em"} size={24} /><span className="text-xs">Assigned</span></div>
-              : (S.team.length === 0 ? <span className="text-xs" style={{ color: C.ink3 }}>No recruiters yet</span> : <div className="flex gap-1.5 flex-wrap">{S.team.map((r) => <button key={r.id} onClick={(e) => { e.stopPropagation(); assign(x.id, r.init); }} className="rounded-full" title={r.name}><Avatar init={r.init} tone={PEOPLE_TONE[r.init] || "em"} size={28} /></button>)}</div>) },
-          ]}
-        />
+        <Tabs tabs={[{ key: "new", label: "New (" + fresh.length + ")" }, { key: "handled", label: "Handled (" + handled.length + ")" }]} active={tab} setActive={setTab} />
+        {!canAct && tab === "new" && fresh.length > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>Rec Ops or an Admin assigns new applications.</div>}
+        <div className="mt-2">
+          {list.length === 0 && <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>{tab === "new" ? "Nothing new. Applications from the apply page arrive here." : "Nothing handled yet."}</div>}
+          {list.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />)}
+        </div>
       </Card>
+      <Modal open={linksOpen} onClose={() => setLinksOpen(false)} title="Apply links">
+        <ApplyLinks S={S} toast={toast} />
+      </Modal>
     </div>
   );
 }
@@ -3333,10 +3509,12 @@ function MessagesPage({ toast, S }) {
 
   const allThreads = S.cands.flatMap((c) => c.jobLinks.filter((l) => l.response !== "declined").map((l) => {
     const j = S.jobs.find((x) => x.id === l.jobId);
-    const msgs = l.messages || [];
+    const all = l.messages || [];
+    const clearedAt = (S.chatClears || {})[l.id] || 0;
+    const msgs = all.filter((m) => m.at > clearedAt);
     const last = msgs[msgs.length - 1] || null;
     const unread = msgs.filter((m) => m.sender === "candidate" && !m.recruiterReadAt).length;
-    return { cand: c, link: l, job: j, last, unread, at: last ? last.at : l.createdAt, hasMsgs: msgs.length > 0 };
+    return { cand: c, link: l, job: j, last, unread, at: last ? last.at : clearedAt || l.createdAt, hasMsgs: all.length > 0 };
   }));
 
   const q = search.trim().toLowerCase();
@@ -3395,7 +3573,7 @@ function MessagesPage({ toast, S }) {
                   <div className="text-xs truncate" style={{ color: C.ink2 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
                   <div className="text-xs truncate mt-0.5 flex items-center gap-1" style={{ color: C.ink3 }}>
                     {t.last && t.last.sender === "recruiter" && <ListTicks m={t.last} />}
-                    <span className="truncate">{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + filePreview(t.last) : "No messages yet"}</span>
+                    <span className="truncate">{t.last ? (t.last.sender === "recruiter" ? "You: " : "") + filePreview(t.last) : S.chatClears[t.link.id] ? "Chat cleared" : "No messages yet"}</span>
                   </div>
                 </div>
               </button>
@@ -3461,7 +3639,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   const [hold, setHold] = useState(null);
   const saveHold = () => { setBusy(true); S.setJobStatus(job.id, "On hold", hold).then(() => { setHold(null); toast("Role on hold. No new candidates until it's reopened."); }).catch(() => {}).finally(() => setBusy(false)); };
   const engagedPeople = (job.engagedNames || []).filter(Boolean);
-  const copyLink = () => { try { navigator.clipboard.writeText("https://" + job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const copyLink = () => { try { navigator.clipboard.writeText(job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const fits = benchFitsFor(job, S);
   const lastBench = Math.max(0, ...S.cands.flatMap((c) => (c.matches || []).filter((m) => m.job_id === job.id && m.reviewedAt).map((m) => new Date(m.reviewedAt).getTime())));
   const checkBench = () => {
@@ -3573,7 +3751,12 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             </div>
           </div>
         )}
-        <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{job.link}</span></div>
+        {job.link && (
+          <div>
+            <div className="text-xs mb-1.5" style={{ color: C.ink3 }}>Apply link (applications land in the Inbox)</div>
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Send size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate flex-1">{job.link}</span><Copy size={15} color={C.ink2} className="cursor-pointer shrink-0" onClick={copyLink} /></div>
+          </div>
+        )}
       </Card>
       {(job.screeningQuestions || []).length > 0 && (
         <Card>
@@ -3825,19 +4008,20 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const publish = (status) => {
     if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
     const id = uid();
-    const slug = (client[0] + title.split(" ").map((w) => w[0]).join("")).toLowerCase() + "-" + String(S.jobs.length + 1).padStart(2, "0");
-    const link = "harbor.link/j/" + slug;
+    // The job's public apply page (/?apply=<slug>); applications from it land in the Inbox.
+    const slug = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+    const link = applyUrl(slug);
     S.setJobs((l) => [{ id, role: title, client, location, workSetup, employmentType, headcount: num(headcount) || 1,
       salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
       billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency, billingMonths: billingFrequency === "Monthly" ? (num(billingMonths) || null) : null,
       incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" ? (num(incentiveMonths) || null) : null,
       screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
-      recruiters: [], submitted: 0, interview: 0, days: 0, status, link }, ...l]);
+      recruiters: [], submitted: 0, interview: 0, days: 0, status, slug, link }, ...l]);
     setDone({ link, id, status, title, client });
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
   const reset = () => { setDone(null); setTitle(""); setClient(""); setWorkSetup(""); setEmploymentType(""); setHeadcount("1"); setSalaryPeriod("Yearly"); setCommissionOnly(false); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setBillingFrequency("One-off"); setBillingMonths(""); setIncentiveAmount(""); setIncentiveFrequency("One-off"); setIncentiveMonths(""); setQuestions([""]); };
-  const copyLink = () => { try { navigator.clipboard.writeText("https://" + done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const copyLink = () => { try { navigator.clipboard.writeText(done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const saveEdit = () => {
     if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
     setBusy(true);
@@ -6563,6 +6747,8 @@ function PortalChat({ token, convos, recruiter, startId, onClose }) {
   const [openId, setOpenId] = useState(startId || (convos.length === 1 ? convos[0].linkId : null));
   const open = convos.find((c) => c.linkId === openId) || null;
   const recName = (recruiter && recruiter.name) || "Your recruiter";
+  // "Recruiter" for a recruiter, "TA manager" for Rec Ops and Admins.
+  const recTitle = (recruiter && recruiter.title) || "Recruiter";
   useEffect(() => {
     const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
@@ -6572,7 +6758,7 @@ function PortalChat({ token, convos, recruiter, startId, onClose }) {
       <div className="w-full md:max-w-2xl flex flex-col" style={{ height: "100dvh", background: "#fff" }}>
         {open ? (
           <ChatRoom key={open.linkId} linkId={open.linkId} mine="candidate" api={candidateChatApi(token, open.linkId)} className="flex-1"
-            title={recName} subtitle={open.role + (open.company ? " · " + open.company : "")}
+            title={recName} subtitle={recTitle} linksClickable
             avatarSrc={recruiter && recruiter.photo} avatarInit={initialsOf(recName)}
             onBack={() => (convos.length > 1 && !startId ? setOpenId(null) : onClose())} peerName={recName}
             emptyText={"Send " + recName + " a message about " + open.role + ". They'll get it straight away."} />
@@ -6592,7 +6778,7 @@ function PortalChat({ token, convos, recruiter, startId, onClose }) {
                       {c.lastMessage && <span className="text-xs shrink-0" style={{ color: c.unread ? C.em : C.ink3 }}>{chatDay(c.lastMessage.createdAt) === "Today" ? chatTime(c.lastMessage.createdAt) : chatDay(c.lastMessage.createdAt)}</span>}
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + (c.lastMessage.body || "📎 Sent a file") : c.company + " · with " + recName}</span>
+                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + (c.lastMessage.deleted ? "Message deleted" : c.lastMessage.body || "📎 " + (c.lastMessage.file || "File")) : c.company + " · with " + recName}</span>
                       {c.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}>{c.unread}</span>}
                     </div>
                   </div>
@@ -6657,7 +6843,7 @@ function CandidatePortal({ data, token, onChanged }) {
             <div className="flex-1 min-w-0">
               <div className="text-3xl md:text-4xl leading-tight" style={{ ...SERIF }}>{c.name || "Welcome"}</div>
               <div className="text-sm mt-1" style={{ color: C.ink2 }}>
-                {recName ? <>Your recruiter is <b style={{ color: C.ink }}>{recName}</b>.</> : "Here is where your applications stand."}
+                {recName ? <>Your {((c.recruiter && c.recruiter.title) || "Recruiter") === "TA manager" ? "TA manager" : "recruiter"} is <b style={{ color: C.ink }}>{recName}</b>.</> : "Here is where your applications stand."}
               </div>
               <div className="mt-3 flex justify-center sm:justify-start">
                 <button onClick={() => convos.length && setChat({})} disabled={!convos.length}
@@ -6784,6 +6970,124 @@ function CandidatePortal({ data, token, onChanged }) {
       </div>
       {chat && token && <PortalChat token={token} convos={convos} recruiter={c.recruiter} startId={chat.startId} onClose={() => { setChat(null); if (onChanged) onChanged(); }} />}
     </div>
+  );
+}
+
+/* Public apply page for one job (/?apply=<job link_slug>). No login. The client is never named
+   (public_job() swaps their name for "our client"). Sends the application and CV to
+   submit-application, which puts it in the Inbox as New. */
+function ApplyPage({ slug }) {
+  const [job, setJob] = useState(null);       // null = loading, false = not found
+  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
+  const [answers, setAnswers] = useState([]);
+  const [cv, setCv] = useState(null);         // { name, data, size }
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  const [more, setMore] = useState(false);
+  const fileRef = React.useRef(null);
+  useEffect(() => {
+    sbFetch("/rest/v1/rpc/public_job", { method: "POST", body: { p_slug: slug } }).then((j) => setJob(j || false)).catch(() => setJob(false));
+  }, [slug]);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const pickCv = (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    if (!/\.(pdf|docx?)$/i.test(f.name)) { setErr("Upload your CV as a PDF or Word document."); return; }
+    if (f.size > 8 * 1024 * 1024) { setErr("Your CV can be up to 8 MB."); return; }
+    const r = new FileReader();
+    r.onload = () => { setCv({ name: f.name, data: String(r.result).split(",")[1], size: f.size }); setErr(""); };
+    r.onerror = () => setErr("That file couldn't be read. Try another one.");
+    r.readAsDataURL(f);
+  };
+  const questions = job && Array.isArray(job.questions) ? job.questions : [];
+  const valid = form.name.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim()) && cv && questions.every((_, i) => (answers[i] || "").trim());
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!valid) { setErr(!cv ? "Please attach your CV." : "Please fill in your name, a valid email and every question."); return; }
+    setBusy(true); setErr("");
+    try {
+      const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ link_slug: slug, source: "career_page", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, answers, cv: { name: cv.name, data: cv.data } }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Something went wrong. Please try again.");
+      setDone(true); window.scrollTo(0, 0);
+    } catch (x) { setErr(x.message); }
+    setBusy(false);
+  };
+  const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
+  const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
+  const money = (n, cur) => { try { return new Intl.NumberFormat("en-US", { style: "currency", currency: cur || "USD", maximumFractionDigits: 0 }).format(n); } catch (e) { return String(n); } };
+  const payText = job && job.pay ? [job.pay.min, job.pay.max].filter((n) => n != null).map((n) => money(n, job.pay.currency)).join(" – ") + " " + ({ Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" }[job.pay.period] || "") : "";
+  const desc = job ? String(job.description || "") : "";
+  const shell = (children) => (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        {children}
+      </div>
+    </div>
+  );
+  if (job === null) return shell(<div className="py-16 text-center"><InlineDots /></div>);
+  if (job === false) return shell(<Card><div className="text-xl" style={SERIF}>This job link isn't valid</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>Check the link you were sent, or ask the recruiter for a new one.</div></Card>);
+  if (job.status === "Closed" || job.status === "On hold") return shell(
+    <Card><div className="text-xl" style={SERIF}>{job.title}</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>{job.status === "Closed" ? "This role is no longer taking applications." : "This role is paused for now. Please check back soon."}</div></Card>);
+  if (done) return shell(
+    <Card>
+      <div className="w-12 h-12 rounded-full flex items-center justify-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} strokeWidth={3} /></div>
+      <div className="text-2xl" style={SERIF}>Thanks, {form.name.trim().split(" ")[0]}!</div>
+      <div className="text-sm mt-1.5" style={{ color: C.ink2 }}>Your application for <b style={{ color: C.ink }}>{job.title}</b> has reached the {job.agency} team. A recruiter will review it and get back to you by email.</div>
+    </Card>);
+  return shell(
+    <>
+      <Card>
+        <div className="text-xs font-semibold tracking-wider mb-1.5" style={{ color: C.em }}>NOW HIRING</div>
+        <div className="text-3xl leading-tight" style={SERIF}>{job.title}</div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          {job.location && <Pill tone="neutral"><MapPin size={11} className="mr-1" />{job.location}</Pill>}
+          {job.workSetup && <Pill tone="info">{job.workSetup}</Pill>}
+          {job.employmentType && <Pill tone="neutral">{job.employmentType}</Pill>}
+          {payText && <Pill tone="em">{payText}</Pill>}
+          {job.commissionOnly && <Pill tone="warn">Commission only</Pill>}
+          {job.headcount > 1 && <Pill tone="neutral">{job.headcount} openings</Pill>}
+        </div>
+        {desc && (
+          <div className="mt-4">
+            <div className="text-[15px] leading-relaxed" style={{ whiteSpace: "pre-wrap", color: C.ink }}>{more || desc.length <= 700 ? desc : desc.slice(0, 700).replace(/\s+\S*$/, "") + "…"}</div>
+            {desc.length > 700 && <button onClick={() => setMore((v) => !v)} className="text-sm font-medium mt-2" style={{ color: C.em }}>{more ? "Show less" : "Read the full description"}</button>}
+          </div>
+        )}
+      </Card>
+      <Card>
+        <SectionTitle title="Apply" sub={"Takes about two minutes. " + job.agency + " never shares your details without asking you."} size="text-xl" />
+        <form onSubmit={submit} className="flex flex-col gap-3.5 mt-4">
+          <div><label className="text-sm font-medium">Full name *</label><input value={form.name} onChange={set("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
+          <div className="grid sm:grid-cols-2 gap-3.5">
+            <div><label className="text-sm font-medium">Email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
+            <div><label className="text-sm font-medium">Phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" className={inp} style={inpStyle} /></div>
+          </div>
+          <div><label className="text-sm font-medium">LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
+          {/* Honeypot for bots: hidden from people, ignored by the server when filled. */}
+          <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
+          <div>
+            <label className="text-sm font-medium">CV *</label>
+            <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="w-full mt-1.5 rounded-xl border-2 border-dashed px-4 py-4 text-sm flex items-center gap-3 text-left" style={{ borderColor: cv ? C.em : C.line, background: "#FAF8F3" }}>
+              <Upload size={18} color={cv ? C.em : C.ink3} />
+              <span className="flex-1 min-w-0 truncate" style={{ color: cv ? C.ink : C.ink3 }}>{cv ? cv.name : "Upload a PDF or Word file (up to 8 MB)"}</span>
+              {cv && <span className="text-xs shrink-0" style={{ color: C.em }}>Change</span>}
+            </button>
+            <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={pickCv} />
+          </div>
+          {questions.map((q, i) => (
+            <div key={i}><label className="text-sm font-medium">{q} *</label>
+              <textarea rows={3} value={answers[i] || ""} onChange={(e) => setAnswers((a) => { const n = a.slice(); n[i] = e.target.value; return n; })} className={inp} style={inpStyle} />
+            </div>
+          ))}
+          {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+          <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send application"}</Btn>
+        </form>
+      </Card>
+    </>
   );
 }
 
@@ -6920,7 +7224,7 @@ const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candi
 async function loadAll(token) {
   // Reaching a recruiter's app is what "delivered" means for candidate messages (two grey ticks).
   await sbFetch("/rest/v1/rpc/staff_mark_delivered", { method: "POST", token }).catch(() => {});
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -6933,8 +7237,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/audit_log?select=*&order=created_at.desc&limit=200", { token }).catch(() => []), // empty for non-admins (RLS), never fatal
     sbFetch("/rest/v1/profile_security?select=*", { token }).catch(() => []), // admin-or-self only (RLS); IP/location per user
     sbFetch("/rest/v1/interviews?select=*&order=starts_at.asc", { token }).catch(() => []), // RLS: same reach as candidates
+    sbFetch("/rest/v1/chat_clears?select=link_id,cleared_at", { token }).catch(() => []), // RLS: your own "clear chat" marks only
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews });
+  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears });
 }
 
 export default function App() {
@@ -6961,6 +7266,7 @@ export default function App() {
   const [portalToken] = useState(() => new URLSearchParams(window.location.search).get("c"));
   const [outreachLink] = useState(() => { const q = new URLSearchParams(window.location.search); return q.get("u") ? { token: q.get("u"), kind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" } : null; });
   const [clientToken] = useState(() => new URLSearchParams(window.location.search).get("t"));
+  const [applySlug] = useState(() => new URLSearchParams(window.location.search).get("apply"));
   const [portalData, setPortalData] = useState(null);
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
@@ -7043,6 +7349,7 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  if (applySlug) return <ApplyPage slug={applySlug} />;
   if (outreachLink) return <OutreachLinkPage {...outreachLink} />;
   if (clientToken) return <ClientViewPage token={clientToken} />;
   if (portalToken) {
@@ -7161,10 +7468,15 @@ export default function App() {
         incentive_type: j.incentiveType || "percent", incentive_amount: j.incentiveAmount || null, incentive_currency: j.incentiveCurrency || j.currency || "NGN",
         incentive_frequency: j.incentiveFrequency || "One-off", incentive_months: j.incentiveFrequency === "Monthly" ? (j.incentiveMonths || null) : null,
         screening_questions: j.screeningQuestions || [],
-        status: j.status, created_by: session.uid } }); },
+        status: j.status, created_by: session.uid, ...(j.slug ? { link_slug: j.slug } : {}) } }); },
     inbox: data.inbox,
-    setInbox: (fn) => { const list = typeof fn === "function" ? fn(data.inbox) : fn;
-      setData((d) => ({ ...d, inbox: list })); const x = list.find((i) => i.assignedId); if (x) call("/rest/v1/applications?id=eq." + x.id, { method: "PATCH", body: { assigned_to: x.assignedId } }); },
+    // Inbox actions (assign / dismiss / restore / cv) run in the inbox function; the list reloads after.
+    inboxCall: async (action, payload) => {
+      const j = await sbFetch("/functions/v1/inbox", { method: "POST", token: session.token, body: { action, ...payload }, timeout: 60000 });
+      if (action !== "cv") reload();
+      return j;
+    },
+    chatClears: data.chatClears || {},
     placements: data.placements,
     /* p: { name, role, candidateId, jobId, recruiterId, recruiterInit, fee, feeCurrency, incentive, incentiveCurrency } */
     insertPlacement: async (p) => {
