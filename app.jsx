@@ -7056,8 +7056,7 @@ function ApplyPage({ slug }) {
   const referAnother = () => { setForm({ name: "", email: "", phone: "", linkedin: "", website: "" }); setCv(null); setRef((r) => ({ ...r, note: "" })); setDone(null); setMode("refer"); };
   const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
   const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
-  const money = (n, cur) => { try { return new Intl.NumberFormat("en-US", { style: "currency", currency: cur || "USD", maximumFractionDigits: 0 }).format(n); } catch (e) { return String(n); } };
-  const payText = job && job.pay ? [job.pay.min, job.pay.max].filter((n) => n != null).map((n) => money(n, job.pay.currency)).join(" – ") + " " + ({ Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" }[job.pay.period] || "") : "";
+  const payText = job ? payLabel(job.pay) : "";
   const desc = job ? String(job.description || "") : "";
   const shell = (children) => (
     <div className="min-h-screen" style={{ background: C.canvas }}>
@@ -7539,6 +7538,8 @@ export default function App() {
   const routeSkipPush = React.useRef(true); // true on first run: URL already matches, don't push a duplicate entry
   React.useEffect(() => {
     const url = new URL(window.location.href);
+    // Public pages (jobs board, a job's page, candidate page, outreach links) keep their own URL.
+    if (["apply", "jobs", "careers", "c", "u"].some((k) => url.searchParams.has(k))) return;
     if (url.searchParams.get("page") === page) return;
     url.searchParams.set("page", page);
     if (routeSkipPush.current) { routeSkipPush.current = false; window.history.replaceState({ page }, "", url); }
