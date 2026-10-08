@@ -56,7 +56,7 @@ export async function jobPack(admin: any, jobId: string | null, s: Settings, age
         if (error) slug = "";
       }
       if (slug) {
-        const base = `${portalBase()}/?apply=${encodeURIComponent(slug)}&src=outreach`;
+        const base = `${portalBase()}/jobs/${encodeURIComponent(slug)}/?src=outreach`;
         const applyUrl = base + "&go=apply", referUrl = base + "&refer=1";
         const brief = await ensureBrief(admin, job, { agency: s.footerName || agencyName, address: s.businessAddress, includePay: s.includePay, applyUrl, referUrl });
         pack = { applyUrl, referUrl, brief };

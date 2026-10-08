@@ -26,7 +26,8 @@ async function hashOf(s: string) {
 function payLine(job: any, includePay: boolean) {
   if (!includePay || job.commission_only || !(job.min_pay || job.max_pay)) return "";
   const fmt = (n: unknown) => Number(n) ? Number(n).toLocaleString("en-US") : "";
-  const range = [fmt(job.min_pay), fmt(job.max_pay)].filter(Boolean).join(" - ");
+  const nums = [fmt(job.min_pay), fmt(job.max_pay)].filter(Boolean);
+  const range = nums.length === 2 && nums[0] === nums[1] ? nums[0] : nums.join(" - ");
   const per = ({ Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" } as any)[job.salary_period || "Yearly"] || "";
   return `${job.currency || ""} ${range} ${per}`.replace(/\s+/g, " ").trim();
 }
