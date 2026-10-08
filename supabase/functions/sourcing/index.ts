@@ -3,7 +3,7 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { COUNTRY_NAMES, targetCodes } from "./regions.ts";
 import { fetchLeads, processLead } from "./leads.ts";
-import { manualCompose, markManualSent, processQueue, queueLeads, queueProspects } from "./queue.ts";
+import { manualCompose, markManualSent, processQueue, queueLeads, queueProspects, sendTest } from "./queue.ts";
 import { apolloKey } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
@@ -139,6 +139,10 @@ Deno.serve(async (req: Request) => {
         const { request, created } = await requestSpend(admin, "leads_fetch", s, { title: "Fetch today's new job postings for client leads" });
         return json({ ok: true, awaitingApproval: request.id, created });
       }
+      // A preview copy of a prospect's first email to a given address (Brevo); nothing is queued.
+      if (body.action === "test_email" && body.prospectId && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(body.to || ""))) {
+        return json(await sendTest(admin, String(body.prospectId), String(body.to), s, agencyName));
+      }
       return json({ error: "Unknown scheduled action" }, 400);
     }
 
@@ -146,7 +150,7 @@ Deno.serve(async (req: Request) => {
     const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
     const { data: caller } = await admin.auth.getUser(token);
     if (!caller?.user) return json({ error: "Not signed in" }, 401);
-    const { data: me } = await admin.from("profiles").select("id,role,status,full_name").eq("id", caller.user.id).single();
+    const { data: me } = await admin.from("profiles").select("id,role,status,full_name,email").eq("id", caller.user.id).single();
     if (!me || me.status !== "Active") return json({ error: "Your account is not active" }, 403);
     if (!(me.role === "admin" || me.role === "recops")) return json({ error: "Only Rec Ops or Admins can run sourcing and outreach" }, 403);
     const { action } = body;
@@ -239,6 +243,12 @@ Deno.serve(async (req: Request) => {
       if (!id) return json({ error: "id is required" }, 400);
       if (action === "manual_compose") return json({ ok: true, ...(await manualCompose(admin, kind, id, s, agencyName)) });
       return json(await markManualSent(admin, kind, id));
+    }
+    // "Email me a test": the prospect's first email, sent to your own address.
+    if (action === "test_email") {
+      const to = String(me.email || caller.user.email || "");
+      if (!to) return json({ error: "Your profile has no email address" }, 400);
+      return json(await sendTest(admin, String(body.id || ""), to, s, agencyName));
     }
     if (action === "retry_failed") {
       await admin.from("outreach_messages").update({ status: "queued", error: null }).eq("status", "failed");

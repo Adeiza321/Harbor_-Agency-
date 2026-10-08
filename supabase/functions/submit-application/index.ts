@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
 // Public, unauthenticated endpoint: the front door for every inbound source (the public apply
 // page at /?apply=<job link_slug>, a paste-in from Indeed/LinkedIn, a manual entry tool, a webhook
@@ -11,6 +12,12 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // Sources: career_page (apply page), outreach (apply button in an outreach email), referral
 // (someone referring a friend, with `referrer`), and the job-board / manual ones below.
 // A CV, when sent, is stored privately at resumes/applications/<application id>/<file>.
+// A referral also emails the person referred (once, through Brevo): who referred them, for which
+// role, and a link to the job page. Someone can refer at most 10 people a day.
+// An application from an outreach email's "I'm interested" button carries the prospect's token
+// (pt), which marks that prospect as interested.
+
+const PORTAL_BASE = () => (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com").replace(/\/+$/, "");
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -57,6 +64,9 @@ Deno.serve(async (req: Request) => {
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(re)) return json({ error: "Enter a valid email for yourself" }, 400);
       if (re === email) return json({ error: "Use your friend's email address, not your own" }, 400);
       referrer = { name: rn, email: re, note: String(body.referrer.note || "").trim().slice(0, 1000) };
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { count: byReferrer } = await admin.from("applications").select("id", { count: "exact", head: true }).eq("referrer->>email", re).gte("created_at", since);
+      if ((byReferrer || 0) >= 10) return json({ error: "You've already sent several referrals today. Please try again tomorrow." }, 429);
     }
 
     if (!name || name.length > 200) return json({ error: "Enter a valid name" }, 400);
@@ -88,14 +98,16 @@ Deno.serve(async (req: Request) => {
     let resolvedJobId: string | null = null;
     let resolvedRoleTitle = roleTitle;
     let questions: string[] = [];
+    let slug: string | null = null;
     if (jobId || linkSlug) {
-      const q = admin.from("jobs").select("id,role_title,status,screening_questions").limit(1);
+      const q = admin.from("jobs").select("id,role_title,status,screening_questions,link_slug").limit(1);
       const { data: job } = jobId ? await q.eq("id", jobId).single() : await q.eq("link_slug", linkSlug).single();
       if (!job) return json({ error: "That role could not be found" }, 404);
       if (job.status === "Closed") return json({ error: "This role is no longer accepting applications" }, 400);
       if (job.status === "On hold") return json({ error: "This role is paused and isn't taking applications right now. Please check back soon." }, 400);
       resolvedJobId = job.id;
       resolvedRoleTitle = job.role_title;
+      slug = job.link_slug || null;
       questions = Array.isArray(job.screening_questions) ? job.screening_questions.map(String) : [];
     }
     if (!resolvedRoleTitle) return json({ error: "Missing role" }, 400);
@@ -104,35 +116,72 @@ Deno.serve(async (req: Request) => {
     const answers = questions.map((q, i) => ({ q, a: String(given[i] ?? "").trim().slice(0, 3000) })).filter((x) => x.a);
 
     // Dedupe: the same person applying twice to the same role (double form submit, a
-    // platform resending the same lead) should not create a second Inbox row.
+    // platform resending the same lead) should not create a second Inbox row. The one exception:
+    // someone who was referred and now applies themselves fills in the referral's row (their
+    // CV, phone, answers), keeping who referred them.
+    let data: { id: string } | null = null;
     if (resolvedJobId) {
-      const { data: existing } = await admin.from("applications").select("id").eq("job_id", resolvedJobId).ilike("email", emailPattern).limit(1);
-      if (existing && existing.length) return json({ ok: true, duplicate: true });
+      const { data: existing } = await admin.from("applications").select("id,source,status,resume_path").eq("job_id", resolvedJobId).ilike("email", emailPattern).limit(1);
+      const ex = existing && existing[0];
+      if (ex) {
+        if (!(ex.source === "referral" && !referrer && ex.status === "new")) return json({ ok: true, duplicate: true });
+        await admin.from("applications").update({ name, phone: phone || undefined, linkedin: linkedin || undefined, ...(answers.length ? { answers } : {}) }).eq("id", ex.id);
+        data = { id: ex.id };
+      }
     }
 
-    const { data, error } = await admin.from("applications").insert({
-      name,
-      email: email || null,
-      phone: phone || null,
-      role_title: resolvedRoleTitle,
-      source,
-      job_id: resolvedJobId,
-      linkedin,
-      answers,
-      referrer,
-      status: "new",
-    }).select("id").single();
-    if (error) return json({ error: error.message }, 500);
-
+    if (!data) {
+      const { data: row, error } = await admin.from("applications").insert({
+        name,
+        email: email || null,
+        phone: phone || null,
+        role_title: resolvedRoleTitle,
+        source,
+        job_id: resolvedJobId,
+        linkedin,
+        answers,
+        referrer,
+        status: "new",
+      }).select("id").single();
+      if (error) return json({ error: error.message }, 500);
+      data = row;
+    }
+    const appId = data!.id;
     if (cv) {
       const safe = cv.name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(-80) || "CV";
-      const path = `applications/${data.id}/${Date.now()}-${safe}`;
+      const path = `applications/${appId}/${Date.now()}-${safe}`;
       const { error: upErr } = await admin.storage.from("resumes").upload(path, cv.bytes, { contentType: cv.type, upsert: false });
-      if (upErr) console.error("cv upload", data.id, upErr.message);
-      else await admin.from("applications").update({ resume_path: path, resume_name: cv.name }).eq("id", data.id);
+      if (upErr) console.error("cv upload", appId, upErr.message);
+      else await admin.from("applications").update({ resume_path: path, resume_name: cv.name }).eq("id", appId);
     }
 
-    return json({ ok: true, id: data.id });
+    // Outreach "I'm interested": that prospect is now interested.
+    const pt = String(body.pt || "").trim();
+    if (source === "outreach" && /^[A-Za-z0-9_-]{8,64}$/.test(pt)) {
+      await admin.from("prospects").update({ status: "interested" }).eq("unsub_token", pt).in("status", ["found", "approved", "queued", "contacted"]);
+    }
+
+    // Referral: let the person know who referred them and where to read about the role.
+    if (referrer) {
+      try {
+        const b = await loadBrand(admin);
+        const agency = b.legal || b.name;
+        const page = slug ? `${PORTAL_BASE()}/jobs/${encodeURIComponent(slug)}/` : `${PORTAL_BASE()}/jobs/`;
+        const first = esc(name.split(" ")[0] || "there");
+        const subject = `${referrer.name.split(" ")[0]} referred you for a ${resolvedRoleTitle} role`;
+        const html = emailShell(b, subject,
+          `<div style="font-size:20px;margin-bottom:8px;">Hi ${first},</div>
+           <div style="font-size:15px;line-height:1.6;"><b>${esc(referrer.name)}</b> thinks you'd be a great fit for the <b>${esc(resolvedRoleTitle)}</b> role we're recruiting for, and referred you to ${esc(agency)}.</div>
+           <div style="font-size:15px;line-height:1.6;margin-top:12px;">Have a look at the job description. If it interests you, you can apply in about two minutes.</div>
+           ${button(b, page, "Review the job description")}
+           <div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Or go straight to the <a href="${esc(page)}?go=apply&amp;src=referral" style="color:${b.color};">application form</a>. Not interested? No problem, you don't need to do anything.</div>`,
+          `You're receiving this one-time email because ${referrer.name} referred you to ${agency}. We won't email you again about it unless you apply or reply.`);
+        const sent = await sendBrevo(b, { email, name }, subject, html);
+        if (!sent) console.error("referral email not sent", appId);
+      } catch (e) { console.error("referral email", appId, String((e as Error)?.message || e)); }
+    }
+
+    return json({ ok: true, id: appId });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }

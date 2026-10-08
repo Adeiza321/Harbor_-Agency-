@@ -5061,6 +5061,9 @@ function ManualSend({ kind, id, S, toast, onDone, label }) {
   const [busy, setBusy] = useState(false);
   const open = () => { setBusy(true); S.sourcing("manual_compose", { kind, id }).then(setMail).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
   const done = () => { setBusy(true); S.sourcing("manual_sent", { kind, id }).then(() => { setMail(null); toast("Marked as sent"); onDone && onDone(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  const [testing, setTesting] = useState(false);
+  // A copy of this email in its finished design, sent through Brevo to your own address.
+  const sendTest = () => { setTesting(true); S.sourcing("test_email", { id }).then((r) => toast("Test sent to " + r.to)).catch((e) => S.error(e.message)).finally(() => setTesting(false)); };
   const enc = encodeURIComponent;
   const gmail = mail ? "https://mail.google.com/mail/?view=cm&fs=1&to=" + enc(mail.to) + "&su=" + enc(mail.subject) + "&body=" + enc(mail.body) : "";
   const outlook = mail ? "https://outlook.office.com/mail/deeplink/compose?to=" + enc(mail.to) + "&subject=" + enc(mail.subject) + "&body=" + enc(mail.body) : "";
@@ -5074,17 +5077,13 @@ function ManualSend({ kind, id, S, toast, onDone, label }) {
             <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.to, toast, "Address copied")}>Copy</button></div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.subject, toast, "Subject copied")}>Copy</button></div>
-            {mail.brief && <div className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm" style={{ background: C.canvas }}>
-              <FileText size={18} color={C.em} className="shrink-0" />
-              <div className="flex-1 min-w-0"><div className="font-medium truncate">{mail.brief.name}</div><div className="text-xs" style={{ color: C.ink2 }}>One-page summary with the must-have requirements. Attach it, or leave the link in the email.</div></div>
-              <a href={mail.brief.url} target="_blank" rel="noreferrer" download={mail.brief.name}><Btn icon={Download} className="!px-3 !py-1.5 text-xs">Download</Btn></a>
-            </div>}
             <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
             <div className="flex flex-wrap gap-2">
               <a href={gmail} target="_blank" rel="noreferrer"><Btn kind="primary">Open in Gmail</Btn></a>
               <a href={outlook} target="_blank" rel="noreferrer"><Btn>Open in Outlook</Btn></a>
               <a href={mailto}><Btn>Mail app</Btn></a>
               <Btn onClick={() => copyText(mail.body, toast, "Email copied")}>Copy email</Btn>
+              {kind === "p" && <Btn onClick={sendTest} disabled={testing}>{testing ? "Sending…" : "Email me a test"}</Btn>}
             </div>
             {mail.body.length > 6000 && <div className="text-xs" style={{ color: C.warnFg }}>This email is long, so some mail apps may cut it short when opening. If that happens, use Copy email and paste it in.</div>}
             <div className="pt-3 flex justify-end" style={{ borderTop: `1px solid ${C.line}` }}><Btn kind="primary" onClick={done} disabled={busy}>{busy ? "Saving…" : "I've sent it"}</Btn></div>
@@ -7043,7 +7042,7 @@ function ApplyPage({ slug }) {
     }
     setBusy(true); setErr("");
     try {
-      const payload = { link_slug: slug, source: referring ? "referral" : source, name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
+      const payload = { link_slug: slug, source: referring ? "referral" : source, pt: !referring && source === "outreach" ? params.get("pt") || "" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
         answers: referring ? [] : answers, ...(cv ? { cv: { name: cv.name, data: cv.data } } : {}),
         ...(referring ? { referrer: { name: ref.name.trim(), email: ref.email.trim(), note: ref.note.trim() } } : {}) };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });

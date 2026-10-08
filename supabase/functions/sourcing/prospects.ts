@@ -172,15 +172,13 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
 
   // 5. Draft a short, personal email for each.
   const mailSys = "You write short, honest recruiting emails to professionals who have not heard from us before. Reply with STRICT JSON only: " +
-    "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 90-140 words, plain text, in this order: " +
+    "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 60-110 words, plain text, in this order: " +
     "(1) 'Hi <first name>,' " +
     "(2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given (e.g. 'I'm Ahmed, a recruiter at Pronext.'). " +
-    "(3) say we're recruiting for the role (title, seniority, location or remote, and pay if given) and came across their profile in a professional-contacts database while searching for people with their experience (never claim we met, were referred, or saw them on LinkedIn). " +
-    "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. " +
+    "(3) say we're recruiting for the role (title and seniority) and came across their profile in a professional-contacts database while searching for people with their experience (never claim we met, were referred, or saw them on LinkedIn). " +
+    "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. Don't list the location, pay or requirements: they're shown under your note. " +
     "(4) say we think they'd be a good fit because ... and give the specific reasons from their title, employer and work history (one or two sentences). " +
-    "(5) the line 'Here's the full job description:' and, on the next line, exactly {{JOB_DESCRIPTION}} (it is replaced with the description; don't summarise it yourself). " +
-    "(6) the line: 'If it feels like a good fit, click here to let me know you're interested: {{INTERESTED_LINK}} (or just reply to this email).' " +
-    "(7) a sign-off line with only the sender's first name. No postscript, no footer, no unsubscribe text (added separately). Keep {{JOB_DESCRIPTION}} and {{INTERESTED_LINK}} exactly as written. The 90-140 words don't include the job description.";
+    "(5) a sign-off line with only the sender's first name. No links, no job description, no postscript, no footer, no unsubscribe text (all added separately).";
   const who = keep.map((p) => `id=${p.id} | first name: ${p.first_name} | ${p.title} at ${p.company} | ${p.history.slice(0, 300)}`).join("\n");
   const { data: ag } = await admin.from("agency_settings").select("agency_name").limit(1).maybeSingle();
   const sender = `Sender first name: ${(s.senderName || "").split(" ")[0] || "the recruiter"}\nSender title: ${s.senderTitle || "(not given)"}\nAgency name: ${String(ag?.agency_name || "").trim() || "(not given)"}`;
@@ -198,8 +196,9 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
       linkedin_url: p.linkedin_url, email: p.email, email_status: p.email_status,
       fit: Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0))), verdict: String(r.verdict || ""), fit_reason: String(r.reason || "").slice(0, 300),
       subject: String(m.subject || `${job.role_title} opportunity`).slice(0, 120),
-      // The full description goes in the email itself, with the client's name taken out.
-      body: String(m.body || "").slice(0, 3000).replace("{{JOB_DESCRIPTION}}", anonymizeJd(job.description, job.client).slice(0, 6000) || "(see the link below)"),
+      // The client's name is taken out if the AI slipped it in; the role overview and must-haves
+      // are added under this note when the email is built (outreach.ts).
+      body: anonymizeJd(String(m.body || "").slice(0, 3000), job.client),
       status: "found", data: { history: p.history, domain: p.domain },
     };
   });

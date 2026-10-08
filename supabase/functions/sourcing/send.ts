@@ -30,14 +30,13 @@ export async function emailHash(e: string) {
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as any)[c]);
 const linkify = (h: string) => h.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>');
 
-// Lines queue.ts adds to first candidate emails; in HTML they become buttons / a download link.
-export const BRIEF_PREFIX = "Role summary (PDF): ";
-const ACTION_LINE = /^(Apply now|Know someone who'd fit\? Refer them|Role summary \(PDF\)): (https?:\/\/\S+)$/;
+// "Apply now: <url>" / "Know someone who'd fit? Refer them: <url>" lines become buttons in HTML.
+const ACTION_LINE = /^(Apply now|Know someone who'd fit\? Refer them): (https?:\/\/\S+)$/;
 function actionHtml(kind: string, url: string) {
   const u = esc(url);
   if (kind === "Apply now") return `<a href="${u}" style="display:inline-block;margin:4px 8px 4px 0;padding:11px 22px;background:#1F6F54;color:#ffffff;text-decoration:none;border-radius:10px;font-weight:600;">Apply now</a>`;
   if (kind.startsWith("Know someone")) return `<a href="${u}" style="display:inline-block;margin:4px 8px 4px 0;padding:10px 20px;background:#ffffff;color:#1F6F54;text-decoration:none;border-radius:10px;border:1px solid #1F6F54;font-weight:600;">Refer someone</a>`;
-  return `<div style="margin-top:8px;font-size:13px;"><a href="${u}" style="color:#1F6F54;">Download the role summary (PDF)</a></div>`;
+  return `<a href="${u}">${u}</a>`;
 }
 // Plain text -> simple HTML with clickable links and line breaks.
 export const toHtml = (text: string) => {
@@ -55,7 +54,7 @@ export const toHtml = (text: string) => {
 };
 
 export type Attachment = { name: string; type: string; bytes: Uint8Array };
-export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; firstName: string; lastName: string; company: string; subject: string; body: string; unsubUrl: string; attachment?: Attachment };
+export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; firstName: string; lastName: string; company: string; subject: string; body: string; html?: string; unsubUrl: string; attachment?: Attachment };
 
 async function sendInstantly(m: OutMail): Promise<string> {
   const campaign = m.kind === "client" ? (Deno.env.get("INSTANTLY_CLIENT_CAMPAIGN_ID") || Deno.env.get("INSTANTLY_CAMPAIGN_ID")) : Deno.env.get("INSTANTLY_CAMPAIGN_ID");
@@ -64,7 +63,7 @@ async function sendInstantly(m: OutMail): Promise<string> {
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + Deno.env.get("INSTANTLY_API_KEY") },
     body: JSON.stringify({
       campaign, email: m.to, first_name: m.firstName, last_name: m.lastName, company_name: m.company,
-      custom_variables: { subject: m.subject, body: toHtml(m.body) },
+      custom_variables: { subject: m.subject, body: m.html || toHtml(m.body) },
       skip_if_in_campaign: true,
     }),
   });
@@ -103,7 +102,7 @@ async function sendGmail(m: OutMail, fromName: string): Promise<string> {
     `Content-Type: multipart/alternative; boundary="${boundary}"`,
     "",
     `--${boundary}`, "Content-Type: text/plain; charset=UTF-8", "", m.body,
-    `--${boundary}`, "Content-Type: text/html; charset=UTF-8", "", `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">${toHtml(m.body)}</div>`,
+    `--${boundary}`, "Content-Type: text/html; charset=UTF-8", "", m.html || `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5">${toHtml(m.body)}</div>`,
     `--${boundary}--`,
   ];
   // With an attachment: multipart/mixed around the text + HTML versions and the file.
