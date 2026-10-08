@@ -5,6 +5,7 @@
 //
 // Writes:
 //   index.html, 404.html, CNAME      the app (404.html lets any /jobs/... address open the app)
+//   assets/                           its CSS, scripts and icon
 //   jobs/index.html                   the jobs board, with every job linked in the page itself
 //   jobs/<code>/index.html            one per open job: title, description, canonical link,
 //                                     social preview tags and JobPosting structured data
@@ -14,7 +15,7 @@
 // jobs reach Google within the hour. Needs no secrets: it reads the same public list as the
 // jobs board (public_jobs(), client names already removed) with the app's public key.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync } from "node:fs";
 import { join } from "node:path";
 
 const OUT = process.argv[2] || "_site";
@@ -167,6 +168,8 @@ if (existsSync(OUT)) rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "jobs"), { recursive: true });
 writeFileSync(join(OUT, "index.html"), shell);
 writeFileSync(join(OUT, "404.html"), shell);
+// The app's styles, scripts and icon (built by scripts/build-app.mjs).
+if (existsSync("assets")) cpSync("assets", join(OUT, "assets"), { recursive: true });
 if (domain) writeFileSync(join(OUT, "CNAME"), domain + "\n");
 
 for (const j of jobs) {

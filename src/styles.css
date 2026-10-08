@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { margin: 0; padding: 0; background: #F3EFE7; }
+
+/* Loading placeholders (skeletons) */
+.harbor-skel { background: linear-gradient(90deg, #ECE7DC 0%, #F6F2EA 40%, #ECE7DC 80%); background-size: 300% 100%; animation: harbor-skel 1.3s ease-in-out infinite; }
+@keyframes harbor-skel { 0% { background-position: 100% 0; } 100% { background-position: -50% 0; } }
+@media (prefers-reduced-motion: reduce) { .harbor-skel { animation: none; } }

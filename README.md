@@ -4,8 +4,9 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 
 ## Structure
 
-- `app.jsx` — the canonical React source for the whole app (single file). Built into the self-contained `index.html`.
-- `build/` — the build: `main.jsx` (entry), `lucide-shim.js` (maps the `lucide-react` icon names to `react-icons/lu`), and the generated `app.jsx` / `bundle.js`.
+- `app.jsx` — the canonical React source for the whole app (single file).
+- `src/` — build entries (`main.jsx` dashboard, `public.jsx` public pages), `styles.css` (Tailwind) and `lucide-shim.js` (maps the `lucide-react` icon names to `react-icons/lu`).
+- `assets/` — the built CSS and JavaScript (hashed file names), logo and icon. `build/` is scratch space for the build and isn't committed.
 - `supabase/migrations/` — changes applied to the live database after `schema.sql` was written, in date order.
 - `supabase/functions/candidate-photo/` — saves the photo a candidate adds on their candidate page.
 - `supabase/functions/chat-file/` — files and pictures in chats (private `chat-files` bucket).
@@ -27,16 +28,19 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 
 ## Building
 
-Entry point `build/main.jsx`; `lucide-react` imports in `app.jsx` resolve to `build/lucide-shim.js` (react-icons/lu). Any bundler works, e.g. with bun:
-
 ```
-sed 's#from "lucide-react";#from "./lucide-shim.js";#' app.jsx > build/app.jsx
-bun build build/main.jsx --minify --target=browser --format=iife --define 'process.env.NODE_ENV="production"' --outfile=build/bundle.js
+npm install
+node scripts/build-app.mjs      # needs bun
 ```
 
-Then inline the bundle into `index.html` (escape `</script` as `<\/script`).
+This writes:
 
-`index.html` is the latest build and is what GitHub Pages serves at the custom domain in `CNAME`. Open it directly in a browser; only the Tailwind CDN script loads from the internet. Any loose `harbor.html` copies outside the repo are older builds.
+- `assets/style-<hash>.css`: Tailwind built ahead of time from the classes in `app.jsx` (no in-browser Tailwind).
+- `assets/app-<hash>.js`: the recruiter dashboard (React).
+- `assets/public-<hash>.js`: the public pages only (jobs board, job pages, apply/refer, candidate page, outreach and client links), on Preact, about a third of the size.
+- `index.html` / `404.html`: a small page that loads the CSS and picks the right bundle from the address.
+
+File names change when their content does, so browsers can reuse them between visits. `.github/workflows/pages.yml` publishes `index.html`, `404.html` and `assets/` together with the job pages; commit all of them after building.
 
 ## Backend
 
@@ -49,4 +53,4 @@ ChatGPT/OpenAI is not used. Use a Gemini key on a billed project for live candid
 
 ## Working across two workspaces
 
-`app.jsx` is the single source of truth. Pull before you start editing in either workspace, push when you're done, and rebuild `harbor.html` after pulling so the two stay in sync. Database changes go in `supabase/schema.sql` in the same commit that uses them.
+`app.jsx` is the single source of truth. Pull before you start editing in either workspace, push when you're done, and run `node scripts/build-app.mjs` after pulling so the build matches the source. Database changes go in `supabase/schema.sql` in the same commit that uses them.
