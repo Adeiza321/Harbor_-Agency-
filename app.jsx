@@ -3388,6 +3388,14 @@ function ApplyLinks({ S, toast }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="text-sm mb-1" style={{ color: C.ink2 }}>Share these on LinkedIn, job boards or social posts. Everyone who applies lands in this Inbox with their CV.</div>
+      <div className="rounded-xl px-3 py-2.5 flex items-center gap-3" style={{ background: C.emTint }}>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">All jobs page</div>
+          <div className="text-xs truncate" style={{ color: C.ink2 }}>{JOBS_URL()}</div>
+        </div>
+        <a href={JOBS_URL()} target="_blank" rel="noreferrer" className="text-xs underline shrink-0" style={{ color: C.em }}>Open</a>
+        <Btn icon={Copy} onClick={() => { try { navigator.clipboard.writeText(JOBS_URL()); toast("Jobs page link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} className="shrink-0 !px-3 !py-1.5 text-xs">Copy</Btn>
+      </div>
       {jobs.map((j) => (
         <div key={j.id} className="rounded-xl border px-3 py-2.5 flex items-center gap-3" style={{ borderColor: C.line }}>
           <div className="min-w-0 flex-1">
@@ -6987,12 +6995,11 @@ function CandidatePortal({ data, token, onChanged }) {
    submit-application, which puts it in the Inbox as New.
    Extra URL options: &src=outreach (came from an outreach email), &go=apply (open the form
    straight away), &refer=1 (open the "refer someone" form).
-   On a phone the job description comes first and the form only opens when they tap Apply;
-   on a computer the form sits under the description. */
+   The job description comes first, with Apply and Refer someone at the top; the form only
+   opens when they click one (phone and computer alike). */
 function ApplyPage({ slug }) {
   const params = React.useMemo(() => new URLSearchParams(window.location.search), []);
   const source = params.get("src") === "outreach" ? "outreach" : "career_page";
-  const desktop = useDesktop();
   const [mode, setMode] = useState(() => params.get("refer") ? "refer" : params.get("go") === "apply" ? "apply" : "view");
   const [job, setJob] = useState(null);       // null = loading, false = not found
   const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
@@ -7052,13 +7059,15 @@ function ApplyPage({ slug }) {
   const money = (n, cur) => { try { return new Intl.NumberFormat("en-US", { style: "currency", currency: cur || "USD", maximumFractionDigits: 0 }).format(n); } catch (e) { return String(n); } };
   const payText = job && job.pay ? [job.pay.min, job.pay.max].filter((n) => n != null).map((n) => money(n, job.pay.currency)).join(" – ") + " " + ({ Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" }[job.pay.period] || "") : "";
   const desc = job ? String(job.description || "") : "";
-  const shell = (children, bar) => (
+  const shell = (children) => (
     <div className="min-h-screen" style={{ background: C.canvas }}>
-      <div className={"max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4" + (bar ? " pb-28" : "")}>
-        <div className="mb-1"><BrandLogo height={30} /></div>
+      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <a href={JOBS_URL()} aria-label="All jobs"><BrandLogo height={30} /></a>
+          <a href={JOBS_URL()} className="text-sm font-medium" style={{ color: C.em }}>All jobs</a>
+        </div>
         {children}
       </div>
-      {bar}
     </div>
   );
   if (job === null) return shell(<div className="py-16 text-center"><InlineDots /></div>);
@@ -7098,16 +7107,14 @@ function ApplyPage({ slug }) {
       <div className="text-xs font-semibold tracking-wider mb-1.5" style={{ color: C.em }}>NOW HIRING</div>
       <div className="text-3xl leading-tight" style={SERIF}>{job.title}</div>
       {pills}
+      <div className="flex flex-wrap gap-2 mt-5">
+        <Btn kind="primary" onClick={() => open("apply")} className="flex-1 sm:flex-none sm:px-6">Apply for this role</Btn>
+        <Btn onClick={() => open("refer")} className="sm:px-5">Refer someone</Btn>
+      </div>
       {desc && (
         <div className="mt-4">
           <div className="text-[15px] leading-relaxed" style={{ whiteSpace: "pre-wrap", color: C.ink }}>{more || desc.length <= 700 ? desc : desc.slice(0, 700).replace(/\s+\S*$/, "") + "…"}</div>
           {desc.length > 700 && <button onClick={() => setMore((v) => !v)} className="text-sm font-medium mt-2" style={{ color: C.em }}>{more ? "Show less" : "Read the full description"}</button>}
-        </div>
-      )}
-      {desktop && (
-        <div className="mt-5 pt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm" style={{ borderTop: `1px solid ${C.line}`, color: C.ink2 }}>
-          <span>{referring ? "Want this role yourself?" : "Not for you, but know someone who'd fit?"}</span>
-          <button className="font-medium underline" style={{ color: C.em }} onClick={() => open(referring ? "apply" : "refer")}>{referring ? "Apply yourself instead" : "Refer someone"}</button>
         </div>
       )}
     </Card>
@@ -7174,10 +7181,7 @@ function ApplyPage({ slug }) {
     </Card>
   );
 
-  // Computer: description with the form under it.
-  if (desktop) return shell(<>{jobCard}{referring ? referForm : applyForm}</>);
-
-  // Phone, form open: a compact job header, then the form.
+  // Form open: a compact job header, then the form.
   if (mode !== "view") return shell(
     <>
       <button onClick={() => open("view")} className="self-start flex items-center gap-1.5 text-sm font-medium" style={{ color: C.em }}><ArrowLeft size={16} /> Back to the job</button>
@@ -7191,12 +7195,100 @@ function ApplyPage({ slug }) {
         : <button onClick={() => open("refer")} className="text-sm underline self-center" style={{ color: C.ink2 }}>Not for you? Refer someone instead</button>}
     </>);
 
-  // Phone, reading the job: Apply and Refer stay pinned to the bottom of the screen.
-  return shell(jobCard,
-    <div className="fixed left-0 right-0 bottom-0 z-20 px-4 pt-3 flex gap-2" style={{ background: "#FFFFFF", borderTop: `1px solid ${C.line}`, paddingBottom: "max(12px, env(safe-area-inset-bottom))", boxShadow: "0 -6px 20px rgba(20,32,27,0.06)" }}>
-      <Btn kind="primary" onClick={() => open("apply")} className="flex-1">Apply for this role</Btn>
-      <Btn onClick={() => open("refer")}>Refer someone</Btn>
-    </div>);
+  // Reading the job.
+  return shell(jobCard);
+}
+
+/* Public jobs board (/?jobs or /?careers): every open role with an apply link, searchable and
+   filterable by work setup. Each card opens that job's page (/?apply=<code>). */
+const JOBS_URL = () => window.location.origin + window.location.pathname + "?jobs";
+const PAY_PER = { Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" };
+function payLabel(pay) {
+  if (!pay) return "";
+  const money = (n) => { try { return new Intl.NumberFormat("en-US", { style: "currency", currency: pay.currency || "USD", maximumFractionDigits: 0 }).format(n); } catch (e) { return String(n); } };
+  const nums = [pay.min, pay.max].filter((n) => n != null);
+  const range = nums.length === 2 && Number(nums[0]) === Number(nums[1]) ? money(nums[0]) : nums.map(money).join(" – ");
+  return range + (PAY_PER[pay.period] ? " " + PAY_PER[pay.period] : "");
+}
+function JobsBoard() {
+  const [data, setData] = useState(null);   // null = loading, false = failed
+  const [q, setQ] = useState("");
+  const [setup, setSetup] = useState("All");
+  useEffect(() => {
+    sbFetch("/rest/v1/rpc/public_jobs", { method: "POST", body: {} }).then((d) => setData(d || false)).catch(() => setData(false));
+  }, []);
+  const jobs = data && Array.isArray(data.jobs) ? data.jobs : [];
+  const setups = ["All", ...["Remote", "Hybrid", "Onsite"].filter((x) => jobs.some((j) => String(j.workSetup || "").toLowerCase() === x.toLowerCase()))];
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = jobs.filter((j) => (setup === "All" || String(j.workSetup || "").toLowerCase() === setup.toLowerCase())
+    && words.every((w) => [j.title, j.location, j.employmentType, j.workSetup, j.summary].join(" ").toLowerCase().includes(w)));
+  const agency = (data && data.agency) || "Pronext";
+  const ago = (iso) => { const d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5); return d <= 0 ? "Posted today" : d === 1 ? "Posted yesterday" : d < 30 ? `Posted ${d} days ago` : "Posted " + fdate(iso); };
+  const link = (slug, extra) => window.location.origin + window.location.pathname + "?apply=" + encodeURIComponent(slug) + (extra || "");
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-3xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        <div className="rounded-2xl px-5 py-7 md:px-8 md:py-9" style={{ background: C.side, color: "#fff" }}>
+          <div className="text-xs font-semibold tracking-wider mb-2" style={{ color: C.lime }}>CAREERS WITH {agency.toUpperCase()}</div>
+          <div className="text-3xl md:text-4xl leading-tight" style={SERIF}>Find your next role</div>
+          <div className="text-sm mt-2 max-w-lg" style={{ color: "rgba(255,255,255,0.75)" }}>Roles we're recruiting for right now. Apply in about two minutes, or refer someone you know.</div>
+          <div className="mt-5 flex items-center gap-2 rounded-xl px-3.5" style={{ background: "#fff" }}>
+            <Search size={17} color={C.ink3} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by title, skill or location" aria-label="Search jobs" className="flex-1 py-3 text-[15px] outline-none bg-transparent" style={{ color: C.ink }} />
+            {q && <button onClick={() => setQ("")} aria-label="Clear search"><X size={16} color={C.ink3} /></button>}
+          </div>
+        </div>
+        {data === null && <div className="py-16 text-center"><InlineDots /></div>}
+        {data === false && <Card><div className="text-xl" style={SERIF}>Couldn't load the jobs</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>Please refresh the page to try again.</div></Card>}
+        {data && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm" style={{ color: C.ink2 }}>{shown.length} {shown.length === 1 ? "open role" : "open roles"}{words.length || setup !== "All" ? ` of ${jobs.length}` : ""}</div>
+              {setups.length > 2 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {setups.map((x) => (
+                    <button key={x} onClick={() => setSetup(x)} className="rounded-full px-3 py-1.5 text-xs font-medium border"
+                      style={setup === x ? { background: C.ink, color: "#fff", borderColor: C.ink } : { background: "#fff", color: C.ink2, borderColor: C.line }}>{x}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {shown.length === 0 && (
+              <Card>
+                <div className="text-lg" style={SERIF}>{jobs.length ? "No roles match your search" : "No open roles right now"}</div>
+                <div className="text-sm mt-1" style={{ color: C.ink2 }}>{jobs.length ? "Try different words or clear the filter." : "New roles are added often. Please check back soon."}</div>
+              </Card>
+            )}
+            {shown.map((j) => {
+              const pay = payLabel(j.pay);
+              return (
+                <Card key={j.slug} className="flex flex-col gap-3">
+                  <a href={link(j.slug)} className="block">
+                    <div className="text-xl md:text-2xl leading-snug" style={SERIF}>{j.title}</div>
+                    <div className="flex flex-wrap gap-2 mt-2.5">
+                      {j.location && <Pill tone="neutral"><MapPin size={11} className="mr-1" />{j.location}</Pill>}
+                      {j.workSetup && <Pill tone="info">{j.workSetup}</Pill>}
+                      {j.employmentType && <Pill tone="neutral">{j.employmentType}</Pill>}
+                      {pay && <Pill tone="em">{pay}</Pill>}
+                      {j.commissionOnly && <Pill tone="warn">Commission only</Pill>}
+                      {j.headcount > 1 && <Pill tone="neutral">{j.headcount} openings</Pill>}
+                    </div>
+                    {j.summary && <div className="text-sm leading-relaxed mt-3 line-clamp-2" style={{ color: C.ink2 }}>{j.summary}</div>}
+                  </a>
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <a href={link(j.slug)}><Btn kind="primary" className="!py-2">View role</Btn></a>
+                    <a href={link(j.slug, "&refer=1")}><Btn className="!py-2">Refer someone</Btn></a>
+                    {j.postedAt && <span className="text-xs ml-auto" style={{ color: C.ink3 }}>{ago(j.postedAt)}</span>}
+                  </div>
+                </Card>
+              );
+            })}
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /* ---------------------------------------------------------------------- */
@@ -7375,6 +7467,7 @@ export default function App() {
   const [outreachLink] = useState(() => { const q = new URLSearchParams(window.location.search); return q.get("u") ? { token: q.get("u"), kind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" } : null; });
   const [clientToken] = useState(() => new URLSearchParams(window.location.search).get("t"));
   const [applySlug] = useState(() => new URLSearchParams(window.location.search).get("apply"));
+  const [jobsBoard] = useState(() => { const q = new URLSearchParams(window.location.search); return q.has("jobs") || q.has("careers"); });
   const [portalData, setPortalData] = useState(null);
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
@@ -7458,6 +7551,7 @@ export default function App() {
   }, []);
 
   if (applySlug) return <ApplyPage slug={applySlug} />;
+  if (jobsBoard) return <JobsBoard />;
   if (outreachLink) return <OutreachLinkPage {...outreachLink} />;
   if (clientToken) return <ClientViewPage token={clientToken} />;
   if (portalToken) {
