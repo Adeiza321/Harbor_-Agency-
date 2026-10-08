@@ -228,7 +228,8 @@ function mapAll(d) {
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), at: new Date(a.created_at).getTime(),
     status: a.status || (a.candidate_id || a.assigned_to ? "assigned" : "new"), jobId: a.job_id, candidateId: a.candidate_id, linkedin: a.linkedin || "", hasCv: !!a.resume_path, cvName: a.resume_name || "",
-    answers: Array.isArray(a.answers) ? a.answers : [], note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null, handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
+    answers: Array.isArray(a.answers) ? a.answers : [], note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null,
+    interestAt: a.interest_at ? new Date(a.interest_at).getTime() : null, followups: a.followups || 0, lastFollowupAt: a.last_followup_at ? new Date(a.last_followup_at).getTime() : null, handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
     handledBy: a.handled_by ? pname(a.handled_by) : "", assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, assignedName: a.assigned_to ? pname(a.assigned_to) : "" }));
   const today = new Date();
   const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
@@ -3409,67 +3410,127 @@ function ApplyLinks({ S, toast }) {
   );
 }
 
+// Everyone who can take a candidate: recruiters, Rec Ops and Admins.
+const assignableStaff = (S) => (S.users || []).filter((u) => u.status === "Active" && ["recruiter", "recops", "admin"].includes(u.roleKey))
+  .sort((a, b) => a.name.localeCompare(b.name));
+const STAFF_ROLE = { recruiter: "Recruiter", recops: "Rec Ops", admin: "Admin" };
+function StaffSelect({ S, value, onChange, placeholder, exclude }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+      <option value="">{placeholder}</option>
+      {assignableStaff(S).filter((u) => u.id !== exclude).map((u) => <option key={u.id} value={u.id}>{u.name} · {STAFF_ROLE[u.roleKey] || u.role}</option>)}
+    </select>
+  );
+}
+
 function InboxRow({ x, S, toast, canAct }) {
-  const [rec, setRec] = useState(x.assignedId || "");
+  const [rec, setRec] = useState("");
   const [busy, setBusy] = useState("");
-  const [showAnswers, setShowAnswers] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
   const job = S.jobs.find((j) => j.id === x.jobId);
+  const staffName = (id) => ((S.users || []).find((u) => u.id === id) || {}).name || "the recruiter";
   const run = async (key, fn) => { setBusy(key); try { await fn(); } catch (e) { S.error(e.message || "Something went wrong"); } setBusy(""); };
   const openCv = () => run("cv", async () => { const r = await S.inboxCall("cv", { applicationId: x.id }); window.open(r.url, "_blank", "noopener"); });
   const assign = () => run("assign", async () => {
-    if (!rec) { toast("Pick a recruiter first"); return; }
+    if (!rec) { toast("Pick someone first"); return; }
     const r = await S.inboxCall("assign", { applicationId: x.id, recruiterId: rec });
     if (r.linkId) S.inviteToMessage(r.linkId);
-    toast((r.reused ? "Added to their existing profile and " : "Candidate created and ") + "assigned to " + ((S.team.find((t) => t.id === rec) || {}).name || "the recruiter"));
+    toast((r.reused ? "Added to their existing profile and " : "Candidate created and ") + "assigned to " + staffName(rec));
+    setRec("");
   });
+  const reassign = () => run("reassign", async () => {
+    if (!rec) { toast("Pick someone first"); return; }
+    await S.inboxCall("reassign", { applicationId: x.id, recruiterId: rec });
+    toast("Reassigned to " + staffName(rec)); setRec(""); setMoving(false);
+  });
+  const unassign = () => run("unassign", async () => { await S.inboxCall("unassign", { applicationId: x.id }); toast(x.name + " is back in New"); });
+  const followup = () => run("followup", async () => { const r = await S.inboxCall("followup", { applicationId: x.id }); toast("Follow-up sent to " + x.name.split(" ")[0] + (r.followups >= 2 ? " (that was the last one)" : "")); });
   const dismiss = () => run("dismiss", async () => { await S.inboxCall("dismiss", { applicationId: x.id }); toast("Dismissed " + x.name); });
   const restore = () => run("restore", async () => { await S.inboxCall("restore", { applicationId: x.id }); toast("Moved back to New"); });
+  // A referral is view-only until the person referred says they're interested.
+  const waiting = x.source === "referral" && !x.interestAt && x.status === "new";
+  const nextFollowupAt = (x.lastFollowupAt || x.at) + 864e5;
+  const canFollowUp = waiting && x.followups < 2 && Date.now() >= nextFollowupAt;
+  const small = "!px-3 !py-1.5 text-xs";
+  const detail = (label, value) => value ? <div><div className="text-xs" style={{ color: C.ink3 }}>{label}</div><div className="text-sm break-words">{value}</div></div> : null;
   return (
     <div className="py-4 flex flex-col gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
       <div className="flex flex-col md:flex-row md:items-start gap-3">
-        <div className="flex items-start gap-3 flex-1 min-w-0">
+        <button className="flex items-start gap-3 flex-1 min-w-0 text-left" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
           <Avatar init={initialsOf(x.name)} tone="em" size={38} />
           <div className="min-w-0">
-            <div className="font-medium">{x.name}</div>
+            <div className="font-medium flex items-center gap-1.5">{x.name}<ChevronDown size={14} color={C.ink3} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} /></div>
             <div className="text-xs" style={{ color: C.ink2 }}>{job ? job.role + " · " + job.client : x.role}</div>
             <div className="text-xs mt-1 flex flex-wrap gap-x-3 gap-y-1" style={{ color: C.ink3 }}>
               <span>{SOURCE_LABEL[x.source] || x.source}</span><span>{x.when}</span>
-              {x.email && <span>{x.email}</span>}{x.phone && <span>{x.phone}</span>}
-              {x.linkedin && <a href={/^https?:/.test(x.linkedin) ? x.linkedin : "https://" + x.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn</a>}
+              {x.email && <span>{x.email}</span>}
             </div>
-            {x.referrer && <div className="text-xs mt-1.5 rounded-lg px-2.5 py-1.5" style={{ background: C.emTint, color: C.ink2 }}>Referred by <b style={{ color: C.ink }}>{x.referrer.name}</b>{x.referrer.email ? " (" + x.referrer.email + ")" : ""}{x.referrer.note ? ": “" + x.referrer.note + "”" : ""}</div>}
+            {x.referrer && <div className="text-xs mt-1.5 rounded-lg px-2.5 py-1.5" style={{ background: C.emTint, color: C.ink2 }}>Referred by <b style={{ color: C.ink }}>{x.referrer.name}</b>{x.referrer.email ? " (" + x.referrer.email + ")" : ""}</div>}
           </div>
-        </div>
+        </button>
         <div className="flex flex-wrap items-center gap-2 md:justify-end">
-          {x.hasCv && <Btn icon={Download} onClick={openCv} disabled={!!busy} className="!px-3 !py-1.5 text-xs">{busy === "cv" ? <InlineDots /> : "CV"}</Btn>}
-          {x.answers.length > 0 && <Btn onClick={() => setShowAnswers((v) => !v)} className="!px-3 !py-1.5 text-xs">{showAnswers ? "Hide answers" : x.answers.length + " answer" + (x.answers.length > 1 ? "s" : "")}</Btn>}
-          {x.status === "new" && canAct && (
+          {x.hasCv && <Btn icon={Download} onClick={openCv} disabled={!!busy} className={small}>{busy === "cv" ? <InlineDots /> : "CV"}</Btn>}
+          {waiting && (
             <>
-              <select value={rec} onChange={(e) => setRec(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
-                <option value="">Assign to…</option>
-                {S.team.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-              <Btn kind="primary" onClick={assign} disabled={!!busy || !rec} className="!px-3 !py-1.5 text-xs">{busy === "assign" ? <InlineDots color="#fff" /> : "Assign"}</Btn>
-              <Btn onClick={dismiss} disabled={!!busy} className="!px-3 !py-1.5 text-xs">{busy === "dismiss" ? <InlineDots /> : "Dismiss"}</Btn>
+              <Pill tone="warn">Waiting for {x.name.split(" ")[0]} to confirm interest</Pill>
+              {canAct && <Btn onClick={followup} disabled={!!busy || !canFollowUp} title={x.followups >= 2 ? "Two follow-ups already sent" : !canFollowUp ? "You can follow up a day after the last email" : ""} className={small}>{busy === "followup" ? <InlineDots /> : x.followups ? "Follow up again" : "Send follow-up"}</Btn>}
+              {canAct && <Btn onClick={dismiss} disabled={!!busy} className={small}>{busy === "dismiss" ? <InlineDots /> : "Dismiss"}</Btn>}
+            </>
+          )}
+          {x.status === "new" && !waiting && canAct && (
+            <>
+              {x.source === "referral" && <Pill tone="em">Interested</Pill>}
+              <StaffSelect S={S} value={rec} onChange={setRec} placeholder="Assign to…" />
+              <Btn kind="primary" onClick={assign} disabled={!!busy || !rec} className={small}>{busy === "assign" ? <InlineDots color="#fff" /> : "Assign"}</Btn>
+              <Btn onClick={dismiss} disabled={!!busy} className={small}>{busy === "dismiss" ? <InlineDots /> : "Dismiss"}</Btn>
             </>
           )}
           {x.status === "assigned" && (
             <>
               <Pill tone="em">Assigned{x.assignedName ? " to " + x.assignedName.split(" ")[0] : ""}</Pill>
-              {x.candidateId && <Btn onClick={() => S.openCandidate(x.candidateId)} className="!px-3 !py-1.5 text-xs">Open candidate</Btn>}
+              {x.candidateId && <Btn onClick={() => S.openCandidate(x.candidateId)} className={small}>Open candidate</Btn>}
+              {canAct && !moving && <Btn onClick={() => { setMoving(true); setRec(""); }} disabled={!!busy} className={small}>Reassign</Btn>}
+              {canAct && !moving && <Btn onClick={unassign} disabled={!!busy} className={small}>{busy === "unassign" ? <InlineDots /> : "Unassign"}</Btn>}
+              {canAct && moving && (
+                <>
+                  <StaffSelect S={S} value={rec} onChange={setRec} placeholder="Reassign to…" exclude={x.assignedId} />
+                  <Btn kind="primary" onClick={reassign} disabled={!!busy || !rec} className={small}>{busy === "reassign" ? <InlineDots color="#fff" /> : "Save"}</Btn>
+                  <Btn onClick={() => setMoving(false)} className={small}>Cancel</Btn>
+                </>
+              )}
             </>
           )}
           {x.status === "dismissed" && (
             <>
               <Pill tone="neutral">Dismissed{x.handledBy ? " by " + x.handledBy.split(" ")[0] : ""}</Pill>
-              {canAct && <Btn onClick={restore} disabled={!!busy} className="!px-3 !py-1.5 text-xs">{busy === "restore" ? <InlineDots /> : "Restore"}</Btn>}
+              {canAct && <Btn onClick={restore} disabled={!!busy} className={small}>{busy === "restore" ? <InlineDots /> : "Restore"}</Btn>}
             </>
           )}
         </div>
       </div>
-      {showAnswers && (
-        <div className="rounded-xl px-3.5 py-3 flex flex-col gap-2.5 md:ml-12" style={{ background: C.canvas }}>
-          {x.answers.map((a, i) => <div key={i}><div className="text-xs font-medium" style={{ color: C.ink2 }}>{a.q}</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{a.a}</div></div>)}
+      {open && (
+        <div className="rounded-xl px-4 py-3.5 flex flex-col gap-3 md:ml-12" style={{ background: C.canvas }}>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {detail("Email", x.email)}
+            {detail("Phone", x.phone)}
+            {detail("LinkedIn", x.linkedin && <a href={/^https?:/.test(x.linkedin) ? x.linkedin : "https://" + x.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>{x.linkedin.replace(/^https?:\/\/(www\.)?/, "")}</a>)}
+            {detail("Role", job ? job.role + " · " + job.client : x.role)}
+            {detail("Came in", (SOURCE_LABEL[x.source] || x.source) + " · " + x.when)}
+            {detail("CV", x.hasCv ? x.cvName || "Uploaded" : "Not uploaded yet")}
+            {x.referrer && detail("Referred by", x.referrer.name + (x.referrer.email ? " · " + x.referrer.email : ""))}
+            {x.source === "referral" && detail("Interest", x.interestAt ? "Said they're interested, " + fdate(x.interestAt) : "Not confirmed yet" + (x.followups ? " · " + x.followups + " follow-up" + (x.followups > 1 ? "s" : "") + " sent" + (x.lastFollowupAt ? ", last " + fdate(x.lastFollowupAt) : "") : ""))}
+            {x.status === "assigned" && detail("Assigned", (x.assignedName || "") + (x.handledBy ? " · by " + x.handledBy : "") + (x.handledAt ? ", " + fdate(x.handledAt) : ""))}
+            {x.status === "dismissed" && detail("Dismissed", (x.handledBy ? "By " + x.handledBy : "") + (x.handledAt ? ", " + fdate(x.handledAt) : "") + (x.note ? ": " + x.note : ""))}
+          </div>
+          {x.referrer && x.referrer.note && <div><div className="text-xs" style={{ color: C.ink3 }}>Why {x.referrer.name.split(" ")[0]} thinks they'd fit</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{x.referrer.note}</div></div>}
+          {x.answers.length > 0 && (
+            <div className="flex flex-col gap-2.5 pt-1" style={{ borderTop: `1px solid ${C.line}` }}>
+              <div className="text-xs font-semibold pt-2" style={{ color: C.ink2 }}>Answers to the job's questions</div>
+              {x.answers.map((a, i) => <div key={i}><div className="text-xs font-medium" style={{ color: C.ink2 }}>{a.q}</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{a.a}</div></div>)}
+            </div>
+          )}
+          {waiting && <div className="text-xs" style={{ color: C.ink3 }}>This referral can be viewed but not assigned until {x.name.split(" ")[0]} clicks "I'm interested" in the email we sent (or applies). You can send up to two follow-ups, a day apart.</div>}
         </div>
       )}
     </div>
@@ -7013,6 +7074,14 @@ function ApplyPage({ slug }) {
   useEffect(() => {
     sbFetch("/rest/v1/rpc/public_job", { method: "POST", body: { p_slug: slug } }).then((j) => setJob(j || false)).catch(() => setJob(false));
   }, [slug]);
+  // From a referral email: who referred them, and "I'm interested" (recorded here, on the page,
+  // rather than by the email link itself, so mail scanners opening links can't say yes for them).
+  const rt = params.get("rt") || "";
+  const [referral, setReferral] = useState(null);   // { name, email, referrer, interested }
+  const [interestBusy, setInterestBusy] = useState(false);
+  const sayInterested = (confirm) => sbFetch("/rest/v1/rpc/referral_interest", { method: "POST", body: { p_token: rt, p_confirm: confirm } })
+    .then((r) => { if (r) { setReferral(r); setForm((f) => ({ ...f, name: f.name || r.name || "", email: f.email || r.email || "" })); } }).catch(() => {});
+  useEffect(() => { if (rt) sayInterested(params.get("interested") === "1"); }, [rt]); // eslint-disable-line
   const open = (m) => { setMode(m); setErr(""); window.scrollTo(0, 0); };
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setR = (k) => (e) => setRef((f) => ({ ...f, [k]: e.target.value }));
@@ -7105,6 +7174,14 @@ function ApplyPage({ slug }) {
       <div className="text-xs font-semibold tracking-wider mb-1.5" style={{ color: C.em }}>NOW HIRING</div>
       <div className="text-3xl leading-tight" style={SERIF}>{job.title}</div>
       {pills}
+      {referral && (
+        <div className="mt-4 rounded-xl px-4 py-3 text-sm" style={{ background: C.emTint, color: C.ink }}>
+          {referral.interested
+            ? <>Thanks{referral.name ? ", " + referral.name.split(" ")[0] : ""}! We've let the recruiter know you're interested{referral.referrer ? " (referred by " + referral.referrer + ")" : ""}. Apply below to add your CV and speed things up.</>
+            : <>{referral.referrer || "A friend"} referred you for this role. Interested? <button className="font-semibold underline" style={{ color: C.em }} disabled={interestBusy}
+                onClick={() => { setInterestBusy(true); sayInterested(true).finally(() => setInterestBusy(false)); }}>{interestBusy ? "Saving…" : "Yes, I'm interested"}</button></>}
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 mt-5">
         <Btn kind="primary" onClick={() => open("apply")} className="flex-1 sm:flex-none sm:px-6">Apply for this role</Btn>
         <Btn onClick={() => open("refer")} className="sm:px-5">Refer someone</Btn>

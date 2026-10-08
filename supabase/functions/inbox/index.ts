@@ -1,4 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { loadBrand, sendBrevo } from "./brand.ts";
+import { referralEmail } from "./referral.ts";
 
 // Inbox: applications that came in through the apply page (or outreach "interested" clicks).
 // Rec Ops and Admins only.
@@ -7,6 +9,10 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 //            same email if there is one, copy the CV over, put them on the job (which starts the
 //            automatic AI screening) and record it on their timeline
 //   dismiss  not suitable / spam; restore puts it back in New
+//   reassign give an assigned application (and its candidate) to someone else
+//   unassign put an assigned application back in New (the candidate is kept, without a recruiter)
+//   followup remind someone who was referred (at most 2 reminders, a day apart). A referral
+//            can't be assigned until they've said they're interested.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -51,10 +57,50 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true });
     }
 
+    const timeline = (candidateId: string, title: string) => admin.from("candidate_timeline").insert({ candidate_id: candidateId, title, done: true }).then(() => {}, () => {});
+
+    if (body.action === "followup") {
+      if (app.source !== "referral" || !app.referral_token) return json({ error: "Only referrals get follow-ups" }, 400);
+      if (app.interest_at) return json({ error: "They've already said they're interested" }, 409);
+      if (app.status !== "new") return json({ error: "This referral was already handled" }, 409);
+      if ((app.followups || 0) >= 2) return json({ error: "Two follow-ups have already been sent" }, 409);
+      const lastAt = new Date(app.last_followup_at || app.created_at).getTime();
+      if (Date.now() - lastAt < 24 * 3600e3) return json({ error: "Wait a day after the last email before following up" }, 409);
+      const { data: job } = app.job_id ? await admin.from("jobs").select("link_slug,role_title").eq("id", app.job_id).maybeSingle() : { data: null };
+      const b = await loadBrand(admin);
+      const m = referralEmail(b, { name: app.name, referrer: app.referrer?.name || "A friend", role: job?.role_title || app.role_title, slug: job?.link_slug || null, token: app.referral_token, followup: true });
+      if (!(await sendBrevo(b, { email: app.email, name: app.name }, m.subject, m.html))) return json({ error: "The email couldn't be sent. Please try again." }, 502);
+      await admin.from("applications").update({ followups: (app.followups || 0) + 1, last_followup_at: now }).eq("id", app.id);
+      return json({ ok: true, followups: (app.followups || 0) + 1 });
+    }
+
+    if (body.action === "unassign") {
+      if (app.status !== "assigned") return json({ error: "This application isn't assigned" }, 409);
+      if (app.candidate_id) {
+        await admin.from("candidates").update({ recruiter_id: null }).eq("id", app.candidate_id).eq("recruiter_id", app.assigned_to);
+        await timeline(app.candidate_id, "Unassigned from the Inbox by " + (me.full_name || "Rec Ops"));
+      }
+      await admin.from("applications").update({ status: "new", assigned_to: null, handled_at: null, handled_by: null }).eq("id", app.id);
+      return json({ ok: true });
+    }
+
+    const { data: rec } = await admin.from("profiles").select("id,full_name,status").eq("id", String(body.recruiterId || "")).maybeSingle();
+    if (!rec || rec.status !== "Active") return json({ error: "Pick an active team member" }, 400);
+
+    if (body.action === "reassign") {
+      if (app.status !== "assigned") return json({ error: "Only assigned applications can be reassigned" }, 409);
+      if (app.assigned_to === rec.id) return json({ error: "It's already assigned to " + (rec.full_name || "them") }, 409);
+      if (app.candidate_id) {
+        await admin.from("candidates").update({ recruiter_id: rec.id }).eq("id", app.candidate_id);
+        await timeline(app.candidate_id, "Reassigned to " + (rec.full_name || "a recruiter") + " by " + (me.full_name || "Rec Ops"));
+      }
+      await admin.from("applications").update({ assigned_to: rec.id, handled_at: now, handled_by: me.id }).eq("id", app.id);
+      return json({ ok: true, candidateId: app.candidate_id });
+    }
+
     if (body.action !== "assign") return json({ error: "Unknown action" }, 400);
     if (app.status !== "new") return json({ error: "This application was already handled" }, 409);
-    const { data: rec } = await admin.from("profiles").select("id,full_name,status").eq("id", String(body.recruiterId || "")).maybeSingle();
-    if (!rec || rec.status !== "Active") return json({ error: "Pick an active recruiter" }, 400);
+    if (app.source === "referral" && !app.interest_at) return json({ error: "Waiting for them to say they're interested. Send a follow-up, or wait for their reply." }, 409);
 
     // Same person already in Pronext? Reuse them instead of creating a duplicate.
     let candId: string | null = null, reused = false;
@@ -62,7 +108,11 @@ Deno.serve(async (req: Request) => {
     if (em) {
       const { data: same } = await admin.from("candidates").select("id,email,resume_path,is_draft").eq("is_draft", false).ilike("email", "%@" + em.split("@")[1]);
       const hit = (same || []).find((c: any) => normEmail(c.email) === em);
-      if (hit) { candId = hit.id; reused = true; }
+      if (hit) {
+        candId = hit.id; reused = true;
+        // Back from being unassigned: they get the new recruiter.
+        await admin.from("candidates").update({ recruiter_id: rec.id }).eq("id", hit.id).is("recruiter_id", null);
+      }
     }
     if (!candId) {
       const { data: c, error } = await admin.from("candidates").insert({

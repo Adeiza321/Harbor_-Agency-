@@ -1921,3 +1921,4 @@ grant execute on function public.client_view(text) to anon, authenticated;
 -- Public jobs board (/?jobs): supabase/migrations/20261008_public_jobs_board.sql (public_jobs()).
 -- Jobs board details and Google for Jobs data: supabase/migrations/20261008b_jobs_board_google.sql (anon_client(), public_jobs() with description).
 -- Outreach email redesign (outreach_messages.html, jobs.outreach_brief): supabase/migrations/20261008c_outreach_email_redesign.sql
+-- Referral interest, follow-ups and Inbox reassign/unassign: supabase/migrations/20261008d_referral_interest.sql

@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
+import { loadBrand, sendBrevo } from "./brand.ts";
+import { newReferralToken, referralEmail } from "./referral.ts";
 
 // Public, unauthenticated endpoint: the front door for every inbound source (the public apply
 // page at /?apply=<job link_slug>, a paste-in from Indeed/LinkedIn, a manual entry tool, a webhook
@@ -12,12 +13,11 @@ import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 // Sources: career_page (apply page), outreach (apply button in an outreach email), referral
 // (someone referring a friend, with `referrer`), and the job-board / manual ones below.
 // A CV, when sent, is stored privately at resumes/applications/<application id>/<file>.
-// A referral also emails the person referred (once, through Brevo): who referred them, for which
-// role, and a link to the job page. Someone can refer at most 10 people a day.
+// A referral also emails the person referred (through Brevo): who referred them, for which role,
+// and "I'm interested" (referral.ts). Until they say yes, the Inbox can only view the referral.
+// Someone can refer at most 10 people a day.
 // An application from an outreach email's "I'm interested" button carries the prospect's token
 // (pt), which marks that prospect as interested.
-
-const PORTAL_BASE = () => (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com").replace(/\/+$/, "");
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -119,13 +119,15 @@ Deno.serve(async (req: Request) => {
     // platform resending the same lead) should not create a second Inbox row. The one exception:
     // someone who was referred and now applies themselves fills in the referral's row (their
     // CV, phone, answers), keeping who referred them.
-    let data: { id: string } | null = null;
+    let data: { id: string; referral_token?: string | null } | null = null;
     if (resolvedJobId) {
       const { data: existing } = await admin.from("applications").select("id,source,status,resume_path").eq("job_id", resolvedJobId).ilike("email", emailPattern).limit(1);
       const ex = existing && existing[0];
       if (ex) {
         if (!(ex.source === "referral" && !referrer && ex.status === "new")) return json({ ok: true, duplicate: true });
         await admin.from("applications").update({ name, phone: phone || undefined, linkedin: linkedin || undefined, ...(answers.length ? { answers } : {}) }).eq("id", ex.id);
+        // Applying themselves is the clearest "I'm interested".
+        await admin.from("applications").update({ interest_at: new Date().toISOString() }).eq("id", ex.id).is("interest_at", null);
         data = { id: ex.id };
       }
     }
@@ -141,8 +143,9 @@ Deno.serve(async (req: Request) => {
         linkedin,
         answers,
         referrer,
+        referral_token: referrer ? newReferralToken() : null,
         status: "new",
-      }).select("id").single();
+      }).select("id,referral_token").single();
       if (error) return json({ error: error.message }, 500);
       data = row;
     }
@@ -161,22 +164,12 @@ Deno.serve(async (req: Request) => {
       await admin.from("prospects").update({ status: "interested" }).eq("unsub_token", pt).in("status", ["found", "approved", "queued", "contacted"]);
     }
 
-    // Referral: let the person know who referred them and where to read about the role.
-    if (referrer) {
+    // Referral: let the person know who referred them and ask if they're interested.
+    if (referrer && data?.referral_token) {
       try {
         const b = await loadBrand(admin);
-        const agency = b.legal || b.name;
-        const page = slug ? `${PORTAL_BASE()}/jobs/${encodeURIComponent(slug)}/` : `${PORTAL_BASE()}/jobs/`;
-        const first = esc(name.split(" ")[0] || "there");
-        const subject = `${referrer.name.split(" ")[0]} referred you for a ${resolvedRoleTitle} role`;
-        const html = emailShell(b, subject,
-          `<div style="font-size:20px;margin-bottom:8px;">Hi ${first},</div>
-           <div style="font-size:15px;line-height:1.6;"><b>${esc(referrer.name)}</b> thinks you'd be a great fit for the <b>${esc(resolvedRoleTitle)}</b> role we're recruiting for, and referred you to ${esc(agency)}.</div>
-           <div style="font-size:15px;line-height:1.6;margin-top:12px;">Have a look at the job description. If it interests you, you can apply in about two minutes.</div>
-           ${button(b, page, "Review the job description")}
-           <div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Or go straight to the <a href="${esc(page)}?go=apply&amp;src=referral" style="color:${b.color};">application form</a>. Not interested? No problem, you don't need to do anything.</div>`,
-          `You're receiving this one-time email because ${referrer.name} referred you to ${agency}. We won't email you again about it unless you apply or reply.`);
-        const sent = await sendBrevo(b, { email, name }, subject, html);
+        const m = referralEmail(b, { name, referrer: referrer.name, role: resolvedRoleTitle, slug, token: data.referral_token });
+        const sent = await sendBrevo(b, { email, name }, m.subject, m.html);
         if (!sent) console.error("referral email not sent", appId);
       } catch (e) { console.error("referral email", appId, String((e as Error)?.message || e)); }
     }
