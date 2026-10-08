@@ -3379,7 +3379,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
    clicks. New ones wait here until Rec Ops or an Admin assigns them to a recruiter (which creates
    the candidate, puts them on the job and starts the AI screening) or dismisses them. */
 const SOURCE_LABEL = { career_page: "Apply page", outreach: "Outreach email", linkedin: "LinkedIn", indeed: "Indeed", google_jobs: "Google for Jobs", facebook: "Facebook", referral: "Referral", manual: "Added by hand" };
-const applyUrl = (slug) => window.location.origin + window.location.pathname + "?apply=" + slug;
+const applyUrl = (slug) => window.location.origin + "/jobs/" + slug + "/";
 
 function ApplyLinks({ S, toast }) {
   const jobs = S.jobs.filter((j) => j.status === "Open" && j.slug);
@@ -7198,9 +7198,13 @@ function ApplyPage({ slug }) {
   return shell(jobCard);
 }
 
-/* Public jobs board (/?jobs or /?careers): every open role with an apply link, searchable and
-   filterable by work setup. Each card opens that job's page (/?apply=<code>). */
-const JOBS_URL = () => window.location.origin + window.location.pathname + "?jobs";
+/* Public jobs board at /jobs/ (also /?jobs and /?careers), laid out like Indeed: a "what" and
+   "where" search, the list of roles on the left and the selected role in full on the right
+   (on a phone, tapping a role opens its own page). Each job's page is /jobs/<code>/; the hourly
+   page build (scripts/build-job-pages.mjs) writes those as real pages with Google for Jobs data. */
+const SITE_ROOT = () => window.location.origin + "/";
+const JOBS_URL = () => SITE_ROOT() + "jobs/";
+const jobUrl = (slug, extra) => SITE_ROOT() + "jobs/" + encodeURIComponent(slug) + "/" + (extra ? "?" + extra : "");
 const PAY_PER = { Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" };
 function payLabel(pay) {
   if (!pay) return "";
@@ -7209,80 +7213,183 @@ function payLabel(pay) {
   const range = nums.length === 2 && Number(nums[0]) === Number(nums[1]) ? money(nums[0]) : nums.map(money).join(" – ");
   return range + (PAY_PER[pay.period] ? " " + PAY_PER[pay.period] : "");
 }
+const postedAgo = (iso) => {
+  if (!iso) return "";
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5);
+  return d <= 0 ? "Posted today" : d === 1 ? "Posted yesterday" : d < 30 ? `Posted ${d} days ago` : "Posted 30+ days ago";
+};
+const BULLET_RE = /^\s*(?:[•●▪◦*\-–]|\d+[.)])\s+/;
+// Plain-text job description -> headings, paragraphs and bullet lists.
+function descBlocks(text) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  const blocks = [];
+  let list = null, para = [];
+  const flushPara = () => { if (para.length) { blocks.push({ t: "p", text: para.join(" ") }); para = []; } };
+  const flushList = () => { if (list) { blocks.push({ t: "ul", items: list }); list = null; } };
+  lines.forEach((raw, i) => {
+    const line = raw.trim();
+    if (!line) { flushPara(); flushList(); return; }
+    if (BULLET_RE.test(line)) { flushPara(); (list = list || []).push(line.replace(BULLET_RE, "")); return; }
+    const next = (lines.slice(i + 1).find((l) => l.trim()) || "").trim();
+    const heading = line.length <= 60 && !/[.!?,;]$/.test(line) && (line.endsWith(":") || BULLET_RE.test(next) || !next || /^[A-Z]/.test(line) && line.split(" ").length <= 6);
+    if (heading) { flushPara(); flushList(); blocks.push({ t: "h", text: line.replace(/:$/, "") }); return; }
+    flushList(); para.push(line);
+  });
+  flushPara(); flushList();
+  return blocks;
+}
+function JobDescription({ text }) {
+  return (
+    <div className="flex flex-col gap-3 text-[15px] leading-relaxed" style={{ color: C.ink }}>
+      {descBlocks(text).map((b, i) => b.t === "h"
+        ? <div key={i} className="font-semibold mt-2" style={{ color: C.ink }}>{b.text}</div>
+        : b.t === "ul"
+          ? <ul key={i} className="list-disc pl-5 space-y-1">{b.items.map((x, k) => <li key={k}>{x}</li>)}</ul>
+          : <p key={i}>{b.text}</p>)}
+    </div>
+  );
+}
+// Two short lines for a card: the first bullets of the description, else its opening.
+const cardSnippet = (j) => {
+  const bullets = descBlocks(j.description).filter((b) => b.t === "ul").flatMap((b) => b.items).slice(0, 2);
+  return bullets.length ? bullets : [String(j.summary || "").slice(0, 160)].filter(Boolean);
+};
+
 function JobsBoard() {
+  const desktop = useDesktop();
+  const params = React.useMemo(() => new URLSearchParams(window.location.search), []);
   const [data, setData] = useState(null);   // null = loading, false = failed
-  const [q, setQ] = useState("");
+  const [what, setWhat] = useState(params.get("q") || "");
+  const [where, setWhere] = useState(params.get("l") || "");
+  const [applied, setApplied] = useState({ what: params.get("q") || "", where: params.get("l") || "" });
   const [setup, setSetup] = useState("All");
+  const [type, setType] = useState("All");
+  const [sel, setSel] = useState(null);
+  const detailRef = React.useRef(null);
   useEffect(() => {
     sbFetch("/rest/v1/rpc/public_jobs", { method: "POST", body: {} }).then((d) => setData(d || false)).catch(() => setData(false));
   }, []);
   const jobs = data && Array.isArray(data.jobs) ? data.jobs : [];
-  const setups = ["All", ...["Remote", "Hybrid", "Onsite"].filter((x) => jobs.some((j) => String(j.workSetup || "").toLowerCase() === x.toLowerCase()))];
-  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = jobs.filter((j) => (setup === "All" || String(j.workSetup || "").toLowerCase() === setup.toLowerCase())
-    && words.every((w) => [j.title, j.location, j.employmentType, j.workSetup, j.summary].join(" ").toLowerCase().includes(w)));
-  const agency = (data && data.agency) || "Pronext";
-  const ago = (iso) => { const d = Math.floor((Date.now() - new Date(iso).getTime()) / 864e5); return d <= 0 ? "Posted today" : d === 1 ? "Posted yesterday" : d < 30 ? `Posted ${d} days ago` : "Posted " + fdate(iso); };
-  const link = (slug, extra) => window.location.origin + window.location.pathname + "?apply=" + encodeURIComponent(slug) + (extra || "");
+  const agency = (data && (data.legalName || data.agency)) || "Pronext";
+  const norm = (v) => String(v || "").toLowerCase();
+  const setups = ["Remote", "Hybrid", "Onsite"].filter((x) => jobs.some((j) => norm(j.workSetup) === norm(x)));
+  const types = [...new Set(jobs.map((j) => j.employmentType).filter(Boolean))];
+  const wWords = norm(applied.what).split(/\s+/).filter(Boolean);
+  const lWords = norm(applied.where).replace(/,/g, " ").split(/\s+/).filter(Boolean);
+  const shown = jobs.filter((j) => (setup === "All" || norm(j.workSetup) === norm(setup)) && (type === "All" || j.employmentType === type)
+    && wWords.every((w) => norm([j.title, j.employmentType, j.description].join(" ")).includes(w))
+    && lWords.every((w) => norm([j.location, j.country, j.workSetup].join(" ")).includes(w)));
+  const current = shown.find((j) => j.slug === sel) || shown[0] || null;
+  const search = (e) => { e.preventDefault(); setApplied({ what, where }); setSel(null); };
+  const pick = (e, j) => { if (!desktop) return; e.preventDefault(); setSel(j.slug); if (detailRef.current) detailRef.current.scrollTop = 0; };
+  const chip = (label, active, onClick) => (
+    <button key={label} onClick={onClick} className="rounded-lg px-3 py-1.5 text-sm font-medium border"
+      style={active ? { background: C.emTint, color: C.em, borderColor: C.em } : { background: "#fff", color: C.ink, borderColor: C.line }}>{label}</button>
+  );
+  const metaChips = (j) => [payLabel(j.pay), j.employmentType, j.workSetup, j.commissionOnly ? "Commission only" : "", j.headcount > 1 ? j.headcount + " openings" : ""].filter(Boolean);
+  const inputBox = "flex items-center gap-2 flex-1 min-w-0 px-3.5";
+
   return (
-    <div className="min-h-screen" style={{ background: C.canvas }}>
-      <div className="max-w-3xl mx-auto p-4 md:p-8 flex flex-col gap-4">
-        <div className="mb-1"><BrandLogo height={30} /></div>
-        <div className="rounded-2xl px-5 py-7 md:px-8 md:py-9" style={{ background: C.side, color: "#fff" }}>
-          <div className="text-xs font-semibold tracking-wider mb-2" style={{ color: C.lime }}>CAREERS WITH {agency.toUpperCase()}</div>
-          <div className="text-3xl md:text-4xl leading-tight" style={SERIF}>Find your next role</div>
-          <div className="text-sm mt-2 max-w-lg" style={{ color: "rgba(255,255,255,0.75)" }}>Roles we're recruiting for right now. Apply in about two minutes, or refer someone you know.</div>
-          <div className="mt-5 flex items-center gap-2 rounded-xl px-3.5" style={{ background: "#fff" }}>
-            <Search size={17} color={C.ink3} />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by title, skill or location" aria-label="Search jobs" className="flex-1 py-3 text-[15px] outline-none bg-transparent" style={{ color: C.ink }} />
-            {q && <button onClick={() => setQ("")} aria-label="Clear search"><X size={16} color={C.ink3} /></button>}
-          </div>
+    <div className="min-h-screen" style={{ background: "#FFFFFF" }}>
+      <header className="border-b" style={{ borderColor: C.line }}>
+        <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3">
+          <a href={JOBS_URL()} aria-label="All jobs"><BrandLogo height={28} /></a>
+          <span className="text-sm" style={{ color: C.ink2 }}>{agency}</span>
         </div>
-        {data === null && <div className="py-16 text-center"><InlineDots /></div>}
-        {data === false && <Card><div className="text-xl" style={SERIF}>Couldn't load the jobs</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>Please refresh the page to try again.</div></Card>}
+      </header>
+
+      <div className="max-w-6xl mx-auto px-4 md:px-6 pt-6 md:pt-8">
+        <form onSubmit={search} className="flex flex-col md:flex-row md:items-stretch gap-2 md:gap-0 md:rounded-2xl md:border md:shadow-sm md:max-w-4xl md:mx-auto" style={{ borderColor: C.line }}>
+          <label className={inputBox + " rounded-xl md:rounded-none border md:border-0"} style={{ borderColor: C.line, minHeight: desktop ? 56 : 48 }}>
+            <Search size={18} color={C.ink2} />
+            <input value={what} onChange={(e) => setWhat(e.target.value)} placeholder="Job title, keywords" aria-label="Job title or keywords" className="flex-1 min-w-0 text-[15px] outline-none bg-transparent" />
+          </label>
+          <div className="hidden md:block w-px my-3" style={{ background: C.line }} />
+          <label className={inputBox + " rounded-xl md:rounded-none border md:border-0"} style={{ borderColor: C.line, minHeight: desktop ? 56 : 48 }}>
+            <MapPin size={18} color={C.ink2} />
+            <input value={where} onChange={(e) => setWhere(e.target.value)} placeholder='City, state, or "remote"' aria-label="Location" className="flex-1 min-w-0 text-[15px] outline-none bg-transparent" />
+          </label>
+          <div className="md:p-2 md:pl-0"><Btn kind="primary" type="submit" className="w-full md:w-auto h-12 md:h-10 !px-6 md:mt-0">Find jobs</Btn></div>
+        </form>
+
+        {data === null && <div className="py-20 text-center"><InlineDots /></div>}
+        {data === false && <div className="py-16 text-center"><div className="text-lg font-semibold">Couldn't load the jobs</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>Please refresh the page to try again.</div></div>}
         {data && (
           <>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm" style={{ color: C.ink2 }}>{shown.length} {shown.length === 1 ? "open role" : "open roles"}{words.length || setup !== "All" ? ` of ${jobs.length}` : ""}</div>
-              {setups.length > 2 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {setups.map((x) => (
-                    <button key={x} onClick={() => setSetup(x)} className="rounded-full px-3 py-1.5 text-xs font-medium border"
-                      style={setup === x ? { background: C.ink, color: "#fff", borderColor: C.ink } : { background: "#fff", color: C.ink2, borderColor: C.line }}>{x}</button>
-                  ))}
-                </div>
+            <div className="flex flex-wrap items-center gap-2 mt-6 pb-4 border-b" style={{ borderColor: C.line }}>
+              {setups.length > 1 && setups.map((x) => chip(x, setup === x, () => { setSetup(setup === x ? "All" : x); setSel(null); }))}
+              {types.length > 1 && types.map((x) => chip(x, type === x, () => { setType(type === x ? "All" : x); setSel(null); }))}
+              {(setup !== "All" || type !== "All" || applied.what || applied.where) && (
+                <button className="text-sm underline ml-1" style={{ color: C.ink2 }} onClick={() => { setSetup("All"); setType("All"); setWhat(""); setWhere(""); setApplied({ what: "", where: "" }); }}>Clear all</button>
               )}
             </div>
-            {shown.length === 0 && (
-              <Card>
-                <div className="text-lg" style={SERIF}>{jobs.length ? "No roles match your search" : "No open roles right now"}</div>
-                <div className="text-sm mt-1" style={{ color: C.ink2 }}>{jobs.length ? "Try different words or clear the filter." : "New roles are added often. Please check back soon."}</div>
-              </Card>
-            )}
-            {shown.map((j) => {
-              const pay = payLabel(j.pay);
-              return (
-                <Card key={j.slug} className="flex flex-col gap-3">
-                  <a href={link(j.slug)} className="block">
-                    <div className="text-xl md:text-2xl leading-snug" style={SERIF}>{j.title}</div>
-                    <div className="flex flex-wrap gap-2 mt-2.5">
-                      {j.location && <Pill tone="neutral"><MapPin size={11} className="mr-1" />{j.location}</Pill>}
-                      {j.workSetup && <Pill tone="info">{j.workSetup}</Pill>}
-                      {j.employmentType && <Pill tone="neutral">{j.employmentType}</Pill>}
-                      {pay && <Pill tone="em">{pay}</Pill>}
-                      {j.commissionOnly && <Pill tone="warn">Commission only</Pill>}
-                      {j.headcount > 1 && <Pill tone="neutral">{j.headcount} openings</Pill>}
+            <div className="text-sm mt-4 mb-3" style={{ color: C.ink2 }}>
+              {applied.what || applied.where ? <><b style={{ color: C.ink }}>{applied.what || "Jobs"}</b>{applied.where ? " in " + applied.where : ""} · </> : null}{shown.length} {shown.length === 1 ? "job" : "jobs"}
+            </div>
+
+            {shown.length === 0 ? (
+              <div className="py-14 text-center max-w-md mx-auto">
+                <div className="text-lg font-semibold">{jobs.length ? "No jobs match your search" : "No open jobs right now"}</div>
+                <div className="text-sm mt-1" style={{ color: C.ink2 }}>{jobs.length ? "Try other keywords, a wider location, or clear the filters." : "New roles are added often. Please check back soon."}</div>
+              </div>
+            ) : (
+              <div className="flex gap-6 items-start pb-12">
+                <div className="flex flex-col gap-3 w-full md:w-[42%] md:max-w-[460px] shrink-0">
+                  {shown.map((j) => {
+                    const on = desktop && current && current.slug === j.slug;
+                    return (
+                      <a key={j.slug} href={jobUrl(j.slug)} onClick={(e) => pick(e, j)} className="block rounded-xl border p-4 md:p-5 transition-shadow hover:shadow-md"
+                        style={{ borderColor: on ? C.em : C.line, boxShadow: on ? `inset 4px 0 0 ${C.em}` : undefined, background: "#fff" }}>
+                        <div className="text-[17px] font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{j.title}</div>
+                        <div className="text-sm mt-1" style={{ color: C.ink2 }}>{agency}</div>
+                        <div className="text-sm" style={{ color: C.ink2 }}>{j.location || (norm(j.workSetup) === "remote" ? "Remote" + (j.country ? ", " + j.country : "") : j.country || "")}</div>
+                        <div className="flex flex-wrap gap-1.5 mt-2.5">
+                          {metaChips(j).map((m, k) => <span key={k} className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: k === 0 && j.pay ? C.emTint : "#F3F2F1", color: k === 0 && j.pay ? C.em : C.ink2 }}>{m}</span>)}
+                        </div>
+                        <div className="mt-3 text-sm flex flex-col gap-0.5" style={{ color: C.ink2 }}>
+                          {cardSnippet(j).map((s, k) => <div key={k} className="flex gap-2 min-w-0"><span aria-hidden="true">•</span><span className="truncate">{s}</span></div>)}
+                        </div>
+                        <div className="text-xs mt-3" style={{ color: C.ink3 }}>{postedAgo(j.postedAt)}</div>
+                      </a>
+                    );
+                  })}
+                </div>
+
+                {desktop && current && (
+                  <div className="flex-1 min-w-0 sticky top-4 rounded-xl border overflow-hidden flex flex-col" style={{ borderColor: C.line, maxHeight: "calc(100vh - 32px)" }}>
+                    <div className="p-6 border-b" style={{ borderColor: C.line, boxShadow: "0 4px 10px -8px rgba(20,32,27,0.2)" }}>
+                      <a href={jobUrl(current.slug)} className="text-2xl font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{current.title}</a>
+                      <div className="text-sm mt-1.5" style={{ color: C.ink2 }}>{agency}</div>
+                      <div className="text-sm" style={{ color: C.ink2 }}>{current.location || current.country || ""}{current.workSetup ? " · " + current.workSetup : ""}</div>
+                      {(payLabel(current.pay) || current.employmentType) && <div className="text-sm mt-1" style={{ color: C.ink }}>{[payLabel(current.pay), current.employmentType].filter(Boolean).join(" · ")}</div>}
+                      <div className="flex flex-wrap gap-2 mt-4">
+                        <a href={jobUrl(current.slug, "go=apply")}><Btn kind="primary" className="!px-6">Apply now</Btn></a>
+                        <a href={jobUrl(current.slug, "refer=1")}><Btn className="!px-5">Refer someone</Btn></a>
+                      </div>
                     </div>
-                    {j.summary && <div className="text-sm leading-relaxed mt-3 line-clamp-2" style={{ color: C.ink2 }}>{j.summary}</div>}
-                  </a>
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <a href={link(j.slug)}><Btn kind="primary" className="!py-2">View role</Btn></a>
-                    <a href={link(j.slug, "&refer=1")}><Btn className="!py-2">Refer someone</Btn></a>
-                    {j.postedAt && <span className="text-xs ml-auto" style={{ color: C.ink3 }}>{ago(j.postedAt)}</span>}
+                    <div ref={detailRef} className="p-6 overflow-y-auto flex flex-col gap-6">
+                      <div>
+                        <div className="text-lg font-semibold mb-3">Job details</div>
+                        <div className="flex flex-col gap-3 text-sm">
+                          {payLabel(current.pay) && <div><div className="font-semibold mb-1.5">Pay</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: "#F3F2F1", color: C.ink2 }}>{payLabel(current.pay)}</span></div>}
+                          {current.employmentType && <div><div className="font-semibold mb-1.5">Job type</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: "#F3F2F1", color: C.ink2 }}>{current.employmentType}</span></div>}
+                          {current.workSetup && <div><div className="font-semibold mb-1.5">Work setting</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: "#F3F2F1", color: C.ink2 }}>{current.workSetup}</span></div>}
+                        </div>
+                      </div>
+                      <div className="border-t pt-6" style={{ borderColor: C.line }}>
+                        <div className="text-lg font-semibold mb-1">Location</div>
+                        <div className="text-sm flex items-center gap-1.5" style={{ color: C.ink2 }}><MapPin size={14} />{current.location || current.country || "Not specified"}</div>
+                      </div>
+                      <div className="border-t pt-6" style={{ borderColor: C.line }}>
+                        <div className="text-lg font-semibold mb-3">Full job description</div>
+                        <JobDescription text={current.description} />
+                      </div>
+                      <div className="text-xs border-t pt-4" style={{ borderColor: C.line, color: C.ink3 }}>{postedAgo(current.postedAt)} · Recruiting by {agency}</div>
+                    </div>
                   </div>
-                </Card>
-              );
-            })}
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -7465,8 +7572,9 @@ export default function App() {
   const [portalToken] = useState(() => new URLSearchParams(window.location.search).get("c"));
   const [outreachLink] = useState(() => { const q = new URLSearchParams(window.location.search); return q.get("u") ? { token: q.get("u"), kind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" } : null; });
   const [clientToken] = useState(() => new URLSearchParams(window.location.search).get("t"));
-  const [applySlug] = useState(() => new URLSearchParams(window.location.search).get("apply"));
-  const [jobsBoard] = useState(() => { const q = new URLSearchParams(window.location.search); return q.has("jobs") || q.has("careers"); });
+  // Public pages: /jobs/ (board) and /jobs/<code>/ (one job), or the older ?jobs / ?apply=<code>.
+  const [applySlug] = useState(() => { const m = window.location.pathname.match(/^\/jobs\/([A-Za-z0-9_-]+)\/?$/); return m ? m[1] : new URLSearchParams(window.location.search).get("apply"); });
+  const [jobsBoard] = useState(() => { const q = new URLSearchParams(window.location.search); return /^\/(jobs|careers)\/?$/.test(window.location.pathname) || q.has("jobs") || q.has("careers"); });
   const [portalData, setPortalData] = useState(null);
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
@@ -7539,7 +7647,7 @@ export default function App() {
   React.useEffect(() => {
     const url = new URL(window.location.href);
     // Public pages (jobs board, a job's page, candidate page, outreach links) keep their own URL.
-    if (["apply", "jobs", "careers", "c", "u"].some((k) => url.searchParams.has(k))) return;
+    if (/^\/(jobs|careers)(\/|$)/.test(url.pathname) || ["apply", "jobs", "careers", "c", "u"].some((k) => url.searchParams.has(k))) return;
     if (url.searchParams.get("page") === page) return;
     url.searchParams.set("page", page);
     if (routeSkipPush.current) { routeSkipPush.current = false; window.history.replaceState({ page }, "", url); }

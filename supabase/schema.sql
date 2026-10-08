@@ -1919,3 +1919,4 @@ grant execute on function public.client_view(text) to anon, authenticated;
 -- Referrals (applications.referrer), the job-briefs bucket for PDF role summaries and the footer name:
 -- supabase/migrations/20261007e_referrals_role_summary.sql
 -- Public jobs board (/?jobs): supabase/migrations/20261008_public_jobs_board.sql (public_jobs()).
+-- Jobs board details and Google for Jobs data: supabase/migrations/20261008b_jobs_board_google.sql (anon_client(), public_jobs() with description).

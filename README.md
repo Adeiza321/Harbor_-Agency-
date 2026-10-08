@@ -10,6 +10,7 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 - `supabase/functions/candidate-photo/` — saves the photo a candidate adds on their candidate page.
 - `supabase/functions/chat-file/` — files and pictures in chats (private `chat-files` bucket).
 - `supabase/functions/inbox/` — Inbox actions for Rec Ops / Admins: assign an application to a recruiter (creates the candidate, copies the CV, puts them on the job), dismiss, restore, open the CV.
+- Public jobs board: `/jobs/` (Indeed-style list and detail), each job at `/jobs/<link_slug>/`. `.github/workflows/pages.yml` publishes the site every push and every hour with `scripts/build-job-pages.mjs`, which writes a real page per open job with Google for Jobs `JobPosting` data, plus `sitemap.xml` and `robots.txt` (Pages source must be set to "GitHub Actions"). `404.html` is a copy of `index.html` so `/jobs/...` addresses still open the app.
 - Public apply page: `/?apply=<job link_slug>` (each job's apply link) posts to `submit-application`, which files the application and CV in the Inbox.
 - `supabase/functions/email-status/` — every minute, asks Brevo whether chat emails were delivered or bounced (the chat ticks).
 - `supabase/functions/` — every Edge Function deployed to the live project (`client-view` and `record-login` were added on 7 Oct 2026; `backfill-phones` and `check-secret` are disabled one-offs that only exist live and can be deleted from the dashboard).
