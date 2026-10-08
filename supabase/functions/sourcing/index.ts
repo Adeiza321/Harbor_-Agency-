@@ -3,8 +3,8 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { COUNTRY_NAMES, targetCodes } from "./regions.ts";
 import { fetchLeads, processLead } from "./leads.ts";
-import { manualCompose, markManualSent, processQueue, queueLeads, queueProspects, sendTest } from "./queue.ts";
-import { apolloKey } from "./apollo.ts";
+import { composeProspect, manualCompose, markManualSent, processQueue, queueLeads, queueProspects, sendTest } from "./queue.ts";
+import { apolloKey, apolloSendCheck, sendViaApollo } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
@@ -143,6 +143,15 @@ Deno.serve(async (req: Request) => {
       if (body.action === "test_email" && body.prospectId && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(body.to || ""))) {
         return json(await sendTest(admin, String(body.prospectId), String(body.to), s, agencyName));
       }
+      if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
+      // A test send through Apollo: a prospect's email, to a given address, with dummy unsubscribe links.
+      if (body.action === "apollo_test" && body.prospectId && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(body.to || ""))) {
+        const { data: p } = await admin.from("prospects").select("*").eq("id", String(body.prospectId)).maybeSingle();
+        if (!p) return json({ error: "Not found" }, 404);
+        const mail = await composeProspect(admin, { ...p, unsub_token: "test-preview" }, s, agencyName, new Map());
+        const ref = await sendViaApollo({ kind: "candidate", to: String(body.to), firstName: "Test", lastName: "Pronext", company: "", subject: "[TEST] " + (p.subject || "A role that fits your background"), body: mail.text, html: mail.html });
+        return json({ ok: true, contactId: ref });
+      }
       return json({ error: "Unknown scheduled action" }, 400);
     }
 
@@ -250,6 +259,7 @@ Deno.serve(async (req: Request) => {
       if (!to) return json({ error: "Your profile has no email address" }, 400);
       return json(await sendTest(admin, String(body.id || ""), to, s, agencyName));
     }
+    if (action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
     if (action === "retry_failed") {
       await admin.from("outreach_messages").update({ status: "queued", error: null }).eq("status", "failed");
       return json({ ok: true, ...(await processQueue(admin, s, 20)) });

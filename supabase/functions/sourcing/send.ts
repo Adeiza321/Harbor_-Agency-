@@ -1,7 +1,8 @@
 // Sending outreach email. Never through Brevo: Brevo forbids third-party contact lists, and
-// Pronext's own candidate emails must not be put at risk. Two providers, whichever is set up:
+// Pronext's own candidate emails must not be put at risk. Providers, first one set up wins:
 //
-//   Instantly (recommended)  INSTANTLY_API_KEY, INSTANTLY_CAMPAIGN_ID, optional INSTANTLY_CLIENT_CAMPAIGN_ID
+//   Apollo sequences          APOLLO_API_KEY (master), APOLLO_SEQUENCE_ID — see apollo.ts
+//   Instantly  INSTANTLY_API_KEY, INSTANTLY_CAMPAIGN_ID, optional INSTANTLY_CLIENT_CAMPAIGN_ID
 //     Each email becomes a lead in an Instantly campaign whose step uses {{subject}} and {{body}}.
 //     Instantly handles mailbox warm-up, rotation, sending windows and daily limits.
 //   Gmail / Google Workspace  GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_SENDER
@@ -9,9 +10,12 @@
 //
 // With neither set, approved emails wait in the queue ("Waiting for a sender").
 
-export type Provider = "instantly" | "gmail" | "none";
+import { sendViaApollo } from "./apollo.ts";
+
+export type Provider = "apollo" | "instantly" | "gmail" | "none";
 
 export function provider(): Provider {
+  if (Deno.env.get("APOLLO_API_KEY") && Deno.env.get("APOLLO_SEQUENCE_ID")) return "apollo";
   if (Deno.env.get("INSTANTLY_API_KEY") && Deno.env.get("INSTANTLY_CAMPAIGN_ID")) return "instantly";
   if (Deno.env.get("GMAIL_REFRESH_TOKEN") && Deno.env.get("GMAIL_CLIENT_ID") && Deno.env.get("GMAIL_CLIENT_SECRET") && Deno.env.get("GMAIL_SENDER")) return "gmail";
   return "none";
@@ -138,6 +142,7 @@ async function sendGmail(m: OutMail, fromName: string): Promise<string> {
 
 export async function sendMail(m: OutMail, fromName: string): Promise<{ provider: Provider; ref: string }> {
   const p = provider();
+  if (p === "apollo") return { provider: p, ref: await sendViaApollo(m) };
   if (p === "instantly") return { provider: p, ref: await sendInstantly(m) };
   if (p === "gmail") return { provider: p, ref: await sendGmail(m, fromName) };
   throw new Error("No outreach sender is connected yet");

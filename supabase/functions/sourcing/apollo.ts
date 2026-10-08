@@ -77,3 +77,96 @@ export async function matchByName(first: string, last: string, domain: string, c
   const data = await call("/people/match", { first_name: first, last_name: last, domain: domain || undefined, organization_name: domain ? undefined : company, reveal_personal_emails: false, reveal_phone_number: false });
   return toPerson(data?.person);
 }
+
+// ---- Sending through Apollo sequences ----------------------------------------------------
+// Pronext writes each email itself; Apollo sends it from a linked mailbox (on the outreach
+// domain, never pronextglobal.com) through a one-step sequence whose email is just
+// {{Pronext subject}} / {{Pronext email}} — two contact custom fields Pronext fills per person.
+//   APOLLO_SEQUENCE_ID          the sequence to add people to (client pitches: APOLLO_CLIENT_SEQUENCE_ID, optional)
+//   APOLLO_MAILBOX_ID           optional; comma-separated for rotation. Default: every active linked
+//                               mailbox not on pronextglobal.com.
+//   APOLLO_BODY                 "html" (default, the branded email) or "text".
+async function api(method: "GET" | "POST" | "PUT", path: string, body?: Record<string, unknown>, query?: URLSearchParams) {
+  const key = apolloKey();
+  if (!key) throw new Error("Apollo isn't connected yet (APOLLO_API_KEY)");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${BASE}${path}${query ? "?" + query : ""}`, {
+      method,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": key },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.status === 429) { await sleep(attempt === 0 ? 5000 : 20000); continue; }
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 403) throw new Error("Apollo needs a Master API key for sending (Settings > Integrations > API > create a key with 'Set as master key').");
+    if (!res.ok) throw new Error("Apollo " + res.status + ": " + String(data?.error || data?.message || "").slice(0, 200));
+    return data;
+  }
+  throw new Error("Apollo is rate-limiting requests; try again in a minute");
+}
+
+export type ApolloMailbox = { id: string; email: string; active: boolean };
+export async function apolloMailboxes(): Promise<ApolloMailbox[]> {
+  const d = await api("GET", "/email_accounts");
+  return (d?.email_accounts || []).map((a: any) => ({ id: String(a.id), email: String(a.email || ""), active: a.active !== false && !a.revoked_at }));
+}
+export async function apolloSequences(): Promise<{ id: string; name: string; active: boolean }[]> {
+  const d = await api("POST", "/emailer_campaigns/search", { per_page: 100 });
+  return (d?.emailer_campaigns || []).map((c: any) => ({ id: String(c.id), name: String(c.name || ""), active: !!c.active }));
+}
+export async function apolloFields(): Promise<{ id: string; name: string; type: string }[]> {
+  const d = await api("GET", "/typed_custom_fields");
+  return (d?.typed_custom_fields || d?.fields || []).filter((f: any) => !f.modality || f.modality === "contact")
+    .map((f: any) => ({ id: String(f.id), name: String(f.name || f.label || ""), type: String(f.type || "") }));
+}
+
+const isSubjectField = (n: string) => /pronext/i.test(n) && /subject/i.test(n);
+const isBodyField = (n: string) => /pronext/i.test(n) && /(email|body|message)/i.test(n) && !/subject/i.test(n);
+let setupCache: { at: number; subj: string; body: string; mailboxes: string[] } | null = null;
+
+async function sendSetup() {
+  if (setupCache && Date.now() - setupCache.at < 10 * 60000) return setupCache;
+  const fields = await apolloFields();
+  const subj = fields.find((f) => isSubjectField(f.name))?.id || "";
+  const body = fields.find((f) => isBodyField(f.name))?.id || "";
+  if (!subj || !body) throw new Error("In Apollo, create two contact custom fields named 'Pronext subject' and 'Pronext email' (long text).");
+  let mailboxes = String(Deno.env.get("APOLLO_MAILBOX_ID") || "").split(",").map((x) => x.trim()).filter(Boolean);
+  if (!mailboxes.length) mailboxes = (await apolloMailboxes()).filter((m) => m.active && !/@pronextglobal\.com$/i.test(m.email)).map((m) => m.id);
+  if (!mailboxes.length) throw new Error("No mailbox on your outreach domain is linked in Apollo yet (Settings > Mailboxes).");
+  setupCache = { at: Date.now(), subj, body, mailboxes };
+  return setupCache;
+}
+
+// What Pronext can see in Apollo, for the setup screen.
+export async function apolloSendCheck() {
+  const out: Record<string, unknown> = { key: !!apolloKey(), sequenceId: Deno.env.get("APOLLO_SEQUENCE_ID") || "" };
+  try { out.mailboxes = await apolloMailboxes(); } catch (e) { out.mailboxesError = String((e as Error).message); }
+  try { out.sequences = await apolloSequences(); } catch (e) { out.sequencesError = String((e as Error).message); }
+  try {
+    const f = await apolloFields();
+    out.subjectField = f.find((x) => isSubjectField(x.name))?.name || null;
+    out.bodyField = f.find((x) => isBodyField(x.name))?.name || null;
+  } catch (e) { out.fieldsError = String((e as Error).message); }
+  return out;
+}
+
+export async function sendViaApollo(m: { kind: string; to: string; firstName: string; lastName: string; company: string; subject: string; body: string; html?: string }): Promise<string> {
+  const seq = (m.kind === "client" && Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID")) || Deno.env.get("APOLLO_SEQUENCE_ID") || "";
+  if (!seq) throw new Error("APOLLO_SEQUENCE_ID isn't set");
+  const st = await sendSetup();
+  const content = (Deno.env.get("APOLLO_BODY") || "html") === "text" || !m.html ? m.body : m.html;
+  const c = await api("POST", "/contacts", {
+    first_name: m.firstName || undefined, last_name: m.lastName || undefined, organization_name: m.company || undefined,
+    email: m.to, run_dedupe: true, typed_custom_fields: { [st.subj]: m.subject, [st.body]: content },
+  });
+  const contactId = String(c?.contact?.id || c?.id || "");
+  if (!contactId) throw new Error("Apollo didn't return a contact");
+  const q = new URLSearchParams();
+  q.set("emailer_campaign_id", seq);
+  q.append("contact_ids[]", contactId);
+  st.mailboxes.forEach((id) => q.append(st.mailboxes.length > 1 ? "send_email_from_email_account_id[]" : "send_email_from_email_account_id", id));
+  q.set("sequence_unverified_email", "true");
+  const r = await api("POST", `/emailer_campaigns/${encodeURIComponent(seq)}/add_contact_ids`, undefined, q);
+  const skipped = r?.skipped_contact_ids || {};
+  if (skipped && typeof skipped === "object" && contactId in skipped) throw new Error("Apollo skipped this person: " + String((skipped as any)[contactId]).slice(0, 120));
+  return contactId;
+}

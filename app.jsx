@@ -5398,7 +5398,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           <Row ok={conn.anthropic} label="AI (Claude)" hint={conn.anthropic ? "Connected" : "Add ANTHROPIC_API_KEY"} />
           <Row ok={conn.apollo} label="Apollo: finds candidates outside ProNext and hiring managers' emails" hint={conn.apollo ? "Connected" : "Add APOLLO_API_KEY. Until then, jobs only check your own bench."} />
           <Row ok={conn.theirstack} label="TheirStack: daily feed of new job postings" hint={conn.theirstack ? "Connected" : "Add THEIRSTACK_API_KEY. Until then, no client leads are fetched."} />
-          <Row ok={conn.sender && conn.sender !== "none"} label="Email sender" hint={conn.sender === "instantly" ? "Instantly" : conn.sender === "gmail" ? "Gmail (Google Workspace)" : "Not connected. Needs a separate outreach domain and mailboxes, then Instantly or Gmail keys. Approved emails wait in the queue until then."} />
+          <Row ok={conn.sender && conn.sender !== "none"} label="Email sender" hint={conn.sender === "apollo" ? "Apollo sequence (from your outreach mailbox)" : conn.sender === "instantly" ? "Instantly" : conn.sender === "gmail" ? "Gmail (Google Workspace)" : "Not connected. Link your outreach-domain mailbox in Apollo and add APOLLO_SEQUENCE_ID. Approved emails wait in the queue until then."} />
           <Row ok={!(status && status.blockers && status.blockers.length)} label="Sender details" hint={status && status.blockers && status.blockers.length ? "Missing: " + status.blockers.join(", ") + ". Required by anti-spam law in every email." : "Set"} />
         </div>
         <div className="flex items-center justify-between gap-3 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${C.line}` }}>
