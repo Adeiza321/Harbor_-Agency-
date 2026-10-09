@@ -262,7 +262,8 @@ function mapAll(d) {
   });
   // Conversations you cleared: messages up to that moment are hidden on your screen only.
   const chatClears = Object.fromEntries((d.chatClears || []).map((x) => [x.link_id, new Date(x.cleared_at).getTime()]));
-  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears,
+  const jobViews = Object.fromEntries((Array.isArray(d.jobViews) ? d.jobViews : []).map((v) => [v.job_id, v]));
+  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears, jobViews,
     settings: { name: set.agency_name || "ProNext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
       integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30 } };
@@ -3750,6 +3751,8 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   const [hold, setHold] = useState(null);
   const saveHold = () => { setBusy(true); S.setJobStatus(job.id, "On hold", hold).then(() => { setHold(null); toast("Role on hold. No new candidates until it's reopened."); }).catch(() => {}).finally(() => setBusy(false)); };
   const engagedPeople = (job.engagedNames || []).filter(Boolean);
+  const vs = (S.jobViews && S.jobViews[job.id]) || {};
+  const views = { total: Number(vs.views) || 0, week: Number(vs.views_7d) || 0, apps: Number(vs.applications) || 0, referrals: Number(vs.referrals) || 0 };
   const copyLink = () => { try { navigator.clipboard.writeText(job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const fits = benchFitsFor(job, S);
   const lastBench = Math.max(0, ...S.cands.flatMap((c) => (c.matches || []).filter((m) => m.job_id === job.id && m.reviewedAt).map((m) => new Date(m.reviewedAt).getTime())));
@@ -3829,6 +3832,9 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           <div><div className="text-xs" style={{ color: C.ink3 }}>Submitted</div><div className="text-sm font-medium mt-0.5">{job.submitted}</div></div>
           <div><div className="text-xs" style={{ color: C.ink3 }}>Interview</div><div className="text-sm font-medium mt-0.5">{job.interview}</div></div>
           <div><div className="text-xs" style={{ color: C.ink3 }}>Open</div><div className="text-sm font-medium mt-0.5">{job.days}d</div></div>
+          <div title="People who had the job page open for 10 seconds or scrolled halfway down it, counted once a day each"><div className="text-xs" style={{ color: C.ink3 }}>Job views</div><div className="text-sm font-medium mt-0.5">{views.total}{views.week ? <span className="font-normal" style={{ color: C.ink3 }}> · {views.week} this week</span> : null}</div></div>
+          <div><div className="text-xs" style={{ color: C.ink3 }}>Applications</div><div className="text-sm font-medium mt-0.5">{views.apps}{views.referrals ? <span className="font-normal" style={{ color: C.ink3 }}> · {views.referrals} referred</span> : null}</div></div>
+          <div title="Applications as a share of job views"><div className="text-xs" style={{ color: C.ink3 }}>Viewers who applied</div><div className="text-sm font-medium mt-0.5">{views.total ? Math.round((views.apps / views.total) * 100) + "%" : "-"}</div></div>
         </div>
         {(job.location || job.country || job.minPay || job.maxPay || job.commissionOnly || job.employmentType) && (
           <div className="flex flex-wrap gap-4 mb-4 text-sm" style={{ color: C.ink2 }}>
@@ -7116,6 +7122,8 @@ function ApplyPage({ slug }) {
   useEffect(() => {
     sbFetch("/rest/v1/rpc/public_job", { method: "POST", body: { p_slug: slug } }).then((j) => setJob(j || false)).catch(() => setJob(false));
   }, [slug]);
+  const jobLoaded = !!(job && job.title);
+  useEffect(() => (jobLoaded ? trackJobView(slug) : undefined), [jobLoaded, slug]);
   // From a referral email: who referred them, and "I'm interested" (recorded here, on the page,
   // rather than by the email link itself, so mail scanners opening links can't say yes for them).
   const rt = params.get("rt") || "";
@@ -7398,6 +7406,8 @@ function JobsBoard() {
     && wWords.every((w) => norm([j.title, j.employmentType, j.description].join(" ")).includes(w))
     && lWords.every((w) => norm([j.location, j.country, j.workSetup].join(" ")).includes(w)));
   const current = shown.find((j) => j.slug === sel) || shown[0] || null;
+  const currentSlug = desktop && current ? current.slug : "";
+  useEffect(() => (currentSlug ? trackJobView(currentSlug) : undefined), [currentSlug]);
   const search = (e) => { e.preventDefault(); setApplied({ what, where }); setSel(null); };
   const pick = (e, j) => { if (!desktop) return; e.preventDefault(); setSel(j.slug); if (detailRef.current) detailRef.current.scrollTop = 0; };
   const chip = (label, active, onClick) => (
@@ -7660,6 +7670,48 @@ export function publicRoute() {
 }
 export const isPublicRoute = () => !!publicRoute();
 
+// ---- Job views: someone who has a job open for 10 seconds (tab visible) or scrolls halfway
+// down it. One per visitor, per job, per day. The visitor is an anonymous code kept only for this
+// browser tab (sessionStorage): no cookies, nothing personal. Recorded under the job in Pronext.
+let memVisitor = "";
+function visitorId() {
+  const make = () => Array.from(crypto.getRandomValues(new Uint8Array(12))).map((b) => b.toString(16).padStart(2, "0")).join("");
+  try { let v = sessionStorage.getItem("pn.v"); if (!v) { v = make(); sessionStorage.setItem("pn.v", v); } return v; }
+  catch (e) { if (!memVisitor) memVisitor = make(); return memVisitor; }
+}
+function viewSource() {
+  const q = new URLSearchParams(window.location.search);
+  if (q.get("src") === "outreach") return "outreach";
+  if (q.get("rt")) return "referral";
+  const utm = String(q.get("utm_source") || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 30);
+  if (utm) return utm;
+  let host = "", path = "";
+  try { const r = new URL(document.referrer); host = r.hostname.toLowerCase(); path = r.pathname; } catch (e) { /* no referrer */ }
+  if (!host) return "direct";
+  if (host === window.location.hostname) return /^\/jobs\/?$/.test(path) ? "board" : "site";
+  if (/google\./.test(host)) return "google";
+  if (/linkedin\./.test(host)) return "linkedin";
+  if (/indeed\./.test(host)) return "indeed";
+  if (/(facebook|instagram|fb)\./.test(host) || host === "t.co" || /twitter|x\.com/.test(host)) return "social";
+  if (/mail|outlook/.test(host)) return "email";
+  return "other";
+}
+// Starts watching one job; returns a function that stops watching.
+export function trackJobView(slug) {
+  if (!slug) return () => {};
+  let done = false, visibleMs = 0, last = Date.now();
+  const send = () => {
+    if (done) return; done = true; stop();
+    sbFetch("/rest/v1/rpc/record_job_view", { method: "POST", body: { p_slug: slug, p_visitor: visitorId(), p_source: viewSource() } }).catch(() => {});
+  };
+  const tick = () => { const n = Date.now(); if (document.visibilityState === "visible") visibleMs += n - last; last = n; if (visibleMs >= 10000) send(); };
+  const onScroll = () => { const h = document.documentElement; if (h.scrollHeight > window.innerHeight * 1.2 && (window.scrollY + window.innerHeight) / h.scrollHeight >= 0.5) send(); };
+  const timer = setInterval(tick, 1000);
+  window.addEventListener("scroll", onScroll, { passive: true });
+  function stop() { clearInterval(timer); window.removeEventListener("scroll", onScroll); }
+  return stop;
+}
+
 export function PublicRoot() {
   const [r] = useState(publicRoute);
   const [portalData, setPortalData] = useState(null);
@@ -7714,7 +7766,7 @@ async function loadAll(token) {
   // Reaching a recruiter's app is what "delivered" means for candidate messages (two grey ticks).
   // Sent alongside the data, not before it, so it never delays the dashboard.
   sbFetch("/rest/v1/rpc/staff_mark_delivered", { method: "POST", token }).catch(() => {});
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -7728,8 +7780,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/profile_security?select=*", { token }).catch(() => []), // admin-or-self only (RLS); IP/location per user
     sbFetch("/rest/v1/interviews?select=*&order=starts_at.asc", { token }).catch(() => []), // RLS: same reach as candidates
     sbFetch("/rest/v1/chat_clears?select=link_id,cleared_at", { token }).catch(() => []), // RLS: your own "clear chat" marks only
+    sbFetch("/rest/v1/rpc/job_view_stats", { method: "POST", token }).catch(() => []), // views + applications per job
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears });
+  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews });
 }
 
 export default function App() {
@@ -7942,7 +7995,7 @@ export default function App() {
     deleteCandidate: (id) => { const c = data.cands.find((x) => x.id === id); return call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "candidate", id, c ? c.name : "")); },
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
       setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
-    jobs: data.jobs, updateJob,
+    jobs: data.jobs, updateJob, jobViews: data.jobViews || {},
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, work_setup: j.workSetup || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
