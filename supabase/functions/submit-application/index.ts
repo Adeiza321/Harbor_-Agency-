@@ -15,7 +15,8 @@ import { newReferralToken, referralEmail } from "./referral.ts";
 // A CV, when sent, is stored privately at resumes/applications/<application id>/<file>.
 // A referral also emails the person referred (through Brevo): who referred them, for which role,
 // and "I'm interested" (referral.ts). Until they say yes, the Inbox can only view the referral.
-// Someone can refer at most 10 people a day.
+// Someone can refer at most 10 people a day. Bots are kept out by a hidden field, a minimum time
+// on the form, and limits per network (10 an hour, 30 a day) and overall (150 in 10 minutes).
 // An application from an outreach email's "I'm interested" button carries the prospect's token
 // (pt), which marks that prospect as interested.
 
@@ -32,6 +33,10 @@ const CV_TYPES: Record<string, string> = {
   pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };
 const MAX_CV = 8 * 1024 * 1024;
+async function sha256(t: string) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+  return Array.from(new Uint8Array(d)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -44,6 +49,24 @@ Deno.serve(async (req: Request) => {
     // Honeypot: a real browser/candidate never fills this hidden field; a bot filling
     // every input on the form will. Silently pretend success so bots don't learn to skip it.
     if (body.website || body.company_website) return json({ ok: true });
+    // Sent faster than a person could fill in the form (the page reports how long it was open): a bot.
+    const ft = Number(body.ft);
+    if (Number.isFinite(ft) && ft >= 0 && ft < 2500) return json({ ok: true });
+
+    // Limits per network (a hashed IP address, never the address itself) and overall, so a bot
+    // rotating email addresses still can't flood the Inbox or send referral emails in bulk.
+    const ip = (req.headers.get("cf-connecting-ip") || req.headers.get("x-forwarded-for") || "").split(",")[0].trim();
+    const ipHash = ip ? await sha256(ip + "|" + (Deno.env.get("SUPABASE_URL") || "")) : null;
+    const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+    if (ipHash) {
+      const [{ count: lastHour }, { count: lastDay }] = await Promise.all([
+        admin.from("applications").select("id", { count: "exact", head: true }).eq("ip_hash", ipHash).gte("created_at", ago(3600e3)),
+        admin.from("applications").select("id", { count: "exact", head: true }).eq("ip_hash", ipHash).gte("created_at", ago(864e5)),
+      ]);
+      if ((lastHour || 0) >= 10 || (lastDay || 0) >= 30) return json({ error: "We've received a lot of submissions from your network. Please try again later." }, 429);
+    }
+    const { count: allRecent } = await admin.from("applications").select("id", { count: "exact", head: true }).gte("created_at", ago(600e3));
+    if ((allRecent || 0) >= 150) return json({ error: "We're receiving a lot of applications right now. Please try again in a few minutes." }, 429);
 
     const name = String(body.name || "").trim();
     const email = String(body.email || "").trim().toLowerCase();
@@ -144,6 +167,7 @@ Deno.serve(async (req: Request) => {
         answers,
         referrer,
         referral_token: referrer ? newReferralToken() : null,
+        ip_hash: ipHash,
         status: "new",
       }).select("id,referral_token").single();
       if (error) return json({ error: error.message }, 500);

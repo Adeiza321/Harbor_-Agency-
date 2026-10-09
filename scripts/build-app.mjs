@@ -36,11 +36,30 @@ for (const [name, ext] of [["style", "css"], ["app", "js"], ["public", "js"]]) {
 
 // The page itself: styles first, then whichever bundle this address needs (decided before anything downloads).
 const pick = `(function(){var l=location,q=new URLSearchParams(l.search),p=/^\\/(jobs|careers)(\\/|$)/.test(l.pathname)||["apply","jobs","careers","u","t","c"].some(function(k){return q.has(k)});var s=document.createElement("script");s.src=p?"${out.public}":"${out.app}";document.head.appendChild(s)})();`;
+// Content-Security-Policy: the browser only runs this site's own scripts (plus the one-line
+// loader above, allowed by its hash) and only talks to this site and Supabase. If someone ever
+// slipped a script into a page, it couldn't run or send a signed-in session anywhere.
+const SB = "https://acjmsihvvupqiikxckho.supabase.co";
+const csp = [
+  "default-src 'self'",
+  `script-src 'self' 'sha256-${createHash("sha256").update(pick).digest("base64")}'`,
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  `connect-src 'self' ${SB} ${SB.replace("https://", "wss://")}`,
+  `frame-src 'self' blob: ${SB}`,
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
 const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Content-Security-Policy" content="${csp}">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>ProNext</title>
 <link rel="icon" type="image/png" href="/assets/icon.png">
 <link rel="preload" as="image" href="/assets/logo.png">

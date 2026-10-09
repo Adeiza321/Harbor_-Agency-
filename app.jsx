@@ -7104,6 +7104,7 @@ function ApplyPage({ slug }) {
   const [mode, setMode] = useState(() => params.get("refer") ? "refer" : params.get("go") === "apply" ? "apply" : "view");
   const [job, setJob] = useState(null);       // null = loading, false = not found
   const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
+  const formOpenedAt = React.useRef(Date.now());
   const [ref, setRef] = useState({ name: "", email: "", note: "" });   // the person referring
   const [answers, setAnswers] = useState([]);
   const [cv, setCv] = useState(null);         // { name, data, size }
@@ -7123,7 +7124,7 @@ function ApplyPage({ slug }) {
   const sayInterested = (confirm) => sbFetch("/rest/v1/rpc/referral_interest", { method: "POST", body: { p_token: rt, p_confirm: confirm } })
     .then((r) => { if (r) { setReferral(r); setForm((f) => ({ ...f, name: f.name || r.name || "", email: f.email || r.email || "" })); } }).catch(() => {});
   useEffect(() => { if (rt) sayInterested(params.get("interested") === "1"); }, [rt]); // eslint-disable-line
-  const open = (m) => { setMode(m); setErr(""); window.scrollTo(0, 0); };
+  const open = (m) => { formOpenedAt.current = Date.now(); setMode(m); setErr(""); window.scrollTo(0, 0); };
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setR = (k) => (e) => setRef((f) => ({ ...f, [k]: e.target.value }));
   const pickCv = (e) => {
@@ -7152,7 +7153,7 @@ function ApplyPage({ slug }) {
     }
     setBusy(true); setErr("");
     try {
-      const payload = { link_slug: slug, source: referring ? "referral" : source, pt: !referring && source === "outreach" ? params.get("pt") || "" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
+      const payload = { ft: Date.now() - formOpenedAt.current, link_slug: slug, source: referring ? "referral" : source, pt: !referring && source === "outreach" ? params.get("pt") || "" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
         answers: referring ? [] : answers, ...(cv ? { cv: { name: cv.name, data: cv.data } } : {}),
         ...(referring ? { referrer: { name: ref.name.trim(), email: ref.email.trim(), note: ref.note.trim() } } : {}) };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -7162,7 +7163,7 @@ function ApplyPage({ slug }) {
     } catch (x) { setErr(x.message); }
     setBusy(false);
   };
-  const referAnother = () => { setForm({ name: "", email: "", phone: "", linkedin: "", website: "" }); setCv(null); setRef((r) => ({ ...r, note: "" })); setDone(null); setMode("refer"); };
+  const referAnother = () => { setForm({ name: "", email: "", phone: "", linkedin: "", website: "" }); setCv(null); setRef((r) => ({ ...r, note: "" })); setDone(null); formOpenedAt.current = Date.now(); setMode("refer"); };
   const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
   const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
   const payText = job ? payLabel(job.pay) : "";
@@ -7662,9 +7663,24 @@ export const isPublicRoute = () => !!publicRoute();
 export function PublicRoot() {
   const [r] = useState(publicRoute);
   const [portalData, setPortalData] = useState(null);
-  const portalToken = r && r.kind === "portal" ? r.token : null;
+  // Candidate links are 32 characters. A link from before that (12 characters, in older emails)
+  // is swapped for the person's new one first, and the address bar updated to match.
+  const [portalToken, setPortalToken] = useState(r && r.kind === "portal" ? r.token : null);
+  const [tokenReady, setTokenReady] = useState(!(portalToken && portalToken.length < 32));
+  React.useEffect(() => {
+    if (tokenReady) return;
+    sbFetch("/rest/v1/rpc/portal_upgrade_token", { method: "POST", body: { p_token: portalToken } })
+      .then((t) => {
+        if (typeof t === "string" && t.length >= 32) {
+          try { const u = new URL(window.location.href); u.searchParams.set("c", t); window.history.replaceState(null, "", u); } catch (e) { /* keep going */ }
+          setPortalToken(t);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setTokenReady(true));
+  }, []); // eslint-disable-line
   const loadPortal = () => sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then(setPortalData).catch(() => setPortalData({ error: true }));
-  React.useEffect(() => { if (portalToken) loadPortal(); }, [portalToken]); // eslint-disable-line
+  React.useEffect(() => { if (portalToken && tokenReady) loadPortal(); }, [portalToken, tokenReady]); // eslint-disable-line
   if (!r) return null;
   if (r.kind === "apply") return <ApplyPage slug={r.slug} />;
   if (r.kind === "board") return <JobsBoard />;
