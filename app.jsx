@@ -179,7 +179,7 @@ const CITY_STATE_OPTIONS = {
 };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
 const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true };
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner });
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null });
 
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
@@ -6156,7 +6156,6 @@ function UsersPage({ toast, S }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
   const [roleKey, setRoleKey] = useState("recruiter");
   const [busy, setBusy] = useState(false);
   const [roleBusyId, setRoleBusyId] = useState(null);
@@ -6194,13 +6193,26 @@ function UsersPage({ toast, S }) {
     S.deleteUser(delUser.id)
       .then(() => { toast(delUser.name + " deleted"); setDelUser(null); }).catch((e) => S.error(e.message)).finally(() => setDelBusy(false));
   };
+  const [welcomeBusyId, setWelcomeBusyId] = useState(null);
+  // Activating a new (Invited) account also sends their welcome email with a set-your-password link.
+  const activate = async (u) => {
+    try { await S.enableUser(u.id); } catch (e) { S.error(e.message || "Could not activate"); return; }
+    if (u.status !== "Invited") { toast("Account re-enabled"); return; }
+    try { const j = await S.sendWelcome(u.id); toast("Account activated · welcome email sent to " + (j.to || u.email)); }
+    catch (e) { S.error("Account activated, but the welcome email didn't send: " + (e.message || "unknown error") + ". Use Send welcome email on their row to try again."); }
+  };
+  const resendWelcome = async (u) => {
+    setWelcomeBusyId(u.id);
+    try { const j = await S.sendWelcome(u.id); toast("Welcome email sent to " + (j.to || u.email) + " — any earlier link stops working"); }
+    catch (e) { S.error(e.message || "Could not send the welcome email"); }
+    setWelcomeBusyId(null);
+  };
   const invite = async () => {
     if (!name.trim()) { toast("Enter their name"); return; }
     if (!email.includes("@")) { toast("Enter a valid email"); return; }
     if (users.some((u) => u.email.toLowerCase() === email.toLowerCase())) { toast("That email already has an account"); return; }
-    if (pass.length < 8) { toast("Password must be at least 8 characters"); return; }
     setBusy(true);
-    try { await S.createAccount({ email, password: pass, full_name: name, role: roleKey }); setName(""); setEmail(""); setPass(""); setOpen(false); toast("Account created for " + name + " — activate it so they can sign in"); }
+    try { await S.createAccount({ email, full_name: name, role: roleKey }); setName(""); setEmail(""); setOpen(false); toast("Account created for " + name + " — click Activate to send their welcome email"); }
     catch (e) { S.error(e.message || "Could not create account"); }
     setBusy(false);
   };
@@ -6249,8 +6261,9 @@ function UsersPage({ toast, S }) {
                 <div className="flex items-center gap-2.5 flex-wrap justify-end">
                   <button onClick={() => openEdit(u)} className="text-xs" style={{ color: C.em }}>Edit</button>
                   <button onClick={() => { setPwUser(u); setPwValue(""); }} className="text-xs" style={{ color: C.em }}>Set password</button>
+                  {u.status === "Active" && u.id !== S.me.id && <button onClick={() => resendWelcome(u)} disabled={welcomeBusyId === u.id} className="text-xs" style={{ color: C.em }} title={u.welcomeSentAt ? "Last sent " + new Date(u.welcomeSentAt).toLocaleDateString() : "Not sent yet"}>{welcomeBusyId === u.id ? "Sending…" : u.welcomeSentAt ? "Resend welcome" : "Send welcome email"}</button>}
                   {u.status === "Disabled" || u.status === "Invited"
-                    ? <button onClick={() => S.enableUser(u.id).then(() => toast(u.status === "Invited" ? "Account activated" : "Account re-enabled"))} className="text-xs" style={{ color: C.em }}>{u.status === "Invited" ? "Activate" : "Enable"}</button>
+                    ? <button onClick={() => activate(u)} className="text-xs" style={{ color: C.em }}>{u.status === "Invited" ? "Activate" : "Enable"}</button>
                     : !lastAdmin && u.roleKey !== "admin" && <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button>}
                   {!lastAdmin && <button onClick={() => setDelUser(u)} className="text-xs" style={{ color: C.dangerFg }}>Delete</button>}
                 </div>
@@ -6285,8 +6298,6 @@ function UsersPage({ toast, S }) {
         <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Work email</label>
         <input value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Temporary password (8+ characters)</label>
-        <input type="text" value={pass} onChange={(e) => setPass(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         <div className="text-xs font-medium mb-2" style={{ color: C.ink2 }}>Role</div>
         <div className="grid grid-cols-3 gap-2 mb-5">
           {ROLE_OPTIONS.map(([k, l]) => (
@@ -6294,7 +6305,7 @@ function UsersPage({ toast, S }) {
           ))}
         </div>
         <Btn kind="primary" full onClick={invite}>{busy ? "Creating\u2026" : "Create account"}</Btn>
-        <div className="text-xs mt-2" style={{ color: C.ink3 }}>Share this email and password with them directly. The account starts as "Invited" — use Activate on their row here before they can sign in and use their profile.</div>
+        <div className="text-xs mt-2" style={{ color: C.ink3 }}>The account starts as "Invited". When you click Activate on their row, they get a welcome email with a link to set their own password (it works once and expires in 72 hours).</div>
       </Modal>
       <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="Transfer ownership">
         <div className="text-sm mb-3" style={{ color: C.ink2 }}>The new owner becomes an admin who can't be demoted or disabled by anyone but themselves. You'll lose that protection.</div>
@@ -7605,6 +7616,64 @@ function ForgotPassword({ onDone, initialEmail }) {
   );
 }
 
+// The page behind the welcome email's "Set your password" button (/?setup=<code>).
+function AccountSetup({ token, onDone }) {
+  const [state, setState] = useState("checking"); // checking | form | done | invalid
+  const [info, setInfo] = useState({ name: "", email: "" });
+  const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const call = async (body) => {
+    const r = await fetch(SB_URL + "/functions/v1/account-setup", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) throw new Error(j.error || "Something went wrong");
+    return j;
+  };
+  React.useEffect(() => {
+    call({ action: "check" }).then((j) => { setInfo({ name: j.name || "", email: j.email || "" }); setState("form"); }, (e) => { setErr(e.message); setState("invalid"); });
+  }, []); // eslint-disable-line
+  const submit = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (busy) return;
+    if (password.length < 8) { setErr("Use at least 8 characters"); return; }
+    if (password !== password2) { setErr("Passwords don't match"); return; }
+    setBusy(true); setErr("");
+    try { await call({ action: "set", password }); setState("done"); }
+    catch (e) { setErr(e.message); if (/expired|already been used|isn't active/i.test(e.message)) setState("invalid"); }
+    setBusy(false);
+  };
+  const first = (info.name || "").trim().split(/\s+/)[0];
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
+      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+        <div className="flex items-center gap-2.5 mb-6"><BrandLogo height={34} /></div>
+        {state === "checking" && <div className="text-sm py-6 text-center" style={{ color: C.ink2 }}>Checking your link <InlineDots /></div>}
+        {state === "form" && (<>
+          <div className="text-lg mb-1" style={{ ...SERIF }}>{first ? "Welcome, " + first : "Welcome"}</div>
+          <div className="text-xs mb-4" style={{ color: C.ink2 }}>Choose a password for <b style={{ color: C.ink }}>{info.email}</b>. You'll use it with this email to sign in.</div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>New password (8+ characters)</label>
+          <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Confirm password</label>
+          <input type="password" autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
+          <Btn type="submit" kind="primary" full className="mt-2" onClick={submit}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Set password"}</Btn>
+        </>)}
+        {state === "done" && (<>
+          <div className="text-lg mb-1" style={{ ...SERIF }}>You're all set</div>
+          <div className="text-xs mb-4" style={{ color: C.ink2 }}>Your password is saved. Sign in with <b style={{ color: C.ink }}>{info.email}</b> and your new password.</div>
+          <Btn kind="primary" full onClick={onDone}>Sign in</Btn>
+        </>)}
+        {state === "invalid" && (<>
+          <div className="text-lg mb-1" style={{ ...SERIF }}>This link can't be used</div>
+          <div className="text-xs mb-4" style={{ color: C.ink2 }}>{err || "This link has expired or has already been used. Ask your admin to send a new welcome email."}</div>
+          <Btn full onClick={onDone}>Go to sign in</Btn>
+        </>)}
+      </form>
+    </div>
+  );
+}
+
 function SignIn({ onSignedIn, notice }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -7807,6 +7876,7 @@ export default function App() {
   const [promote, setPromote] = useState({ open: false, job: "" });
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [isPublic] = useState(isPublicRoute);
+  const [setupToken, setSetupToken] = useState(() => new URLSearchParams(window.location.search).get("setup") || "");
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
   // Errors get a modal the person has to dismiss, instead of a toast that can be missed.
@@ -7881,7 +7951,7 @@ export default function App() {
   React.useEffect(() => {
     const url = new URL(window.location.href);
     // Public pages (jobs board, a job's page, candidate page, outreach links) keep their own URL.
-    if (/^\/(jobs|careers)(\/|$)/.test(url.pathname) || ["apply", "jobs", "careers", "c", "u"].some((k) => url.searchParams.has(k))) return;
+    if (/^\/(jobs|careers)(\/|$)/.test(url.pathname) || ["apply", "jobs", "careers", "c", "u", "setup"].some((k) => url.searchParams.has(k))) return;
     if (url.searchParams.get("page") === page) return;
     url.searchParams.set("page", page);
     if (routeSkipPush.current) { routeSkipPush.current = false; window.history.replaceState({ page }, "", url); }
@@ -7894,6 +7964,7 @@ export default function App() {
   }, []);
 
   if (isPublic) return <PublicRoot />;
+  if (setupToken) return <AccountSetup token={setupToken} onDone={() => { window.history.replaceState({}, "", "/"); setSetupToken(""); }} />;
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
   if (status === "loading") return <DashboardSkeleton onRetry={() => window.location.reload()} />;
@@ -8074,6 +8145,12 @@ export default function App() {
     },
     deleteAd: (id) => { const a = data.ads.find((x) => x.id === id); return call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "ad_campaign", id, a ? a.job : "")); },
     users: data.users,
+    /* Welcome email with a fresh one-time "Set your password" link (create-user edge function). */
+    sendWelcome: async (id) => {
+      const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "send_welcome", id }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Could not send the welcome email");
+      reload(); return j;
+    },
     createAccount: async ({ email, password, full_name, role }) => {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ email, password, full_name, role }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not create account"); logAudit("created", "user", j.id || null, full_name + " (" + role + ")"); reload();
