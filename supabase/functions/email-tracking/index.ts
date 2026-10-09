@@ -6,7 +6,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // A recipient counts as a candidate when their address is on a candidate, an application/referral or
 // a sourced prospect, and isn't a staff account.
 // Read live from Brevo's event log (GET /v3/smtp/statistics/events); nothing is stored here.
-//   POST { days: 7 | 30 }  ->  { rows, totals, days, truncated }
+//   POST { days: 7 | 30 }                       ->  { rows, totals, days, truncated }
+//   POST { action: "preview", messageId }       ->  { subject, to, date, html }  (the email as sent;
+//        only for candidate recipients, so staff emails with reset codes or setup links never show)
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -80,6 +82,24 @@ Deno.serve(async (req: Request) => {
     const key = Deno.env.get("BREVO_API_KEY");
     if (!key) return json({ error: "Brevo isn't connected (BREVO_API_KEY is not set)" }, 400);
     const body = await req.json().catch(() => ({}));
+
+    if (body.action === "preview") {
+      const messageId = String(body.messageId || "");
+      if (!messageId || messageId.length > 300) return json({ error: "No email selected" }, 400);
+      const h = { "api-key": key, accept: "application/json" };
+      const lr = await fetch("https://api.brevo.com/v3/smtp/emails?limit=5&messageId=" + encodeURIComponent(messageId), { headers: h, signal: AbortSignal.timeout(15000) });
+      const lj = await lr.json().catch(() => ({}));
+      const meta = (lj.transactionalEmails || [])[0];
+      if (!lr.ok || !meta?.uuid) return json({ error: "Brevo no longer has a copy of this email (it keeps them for a limited time)." }, 404);
+      const k = String(meta.email || "").trim().toLowerCase();
+      const { names, staff } = await candidateNames(admin);
+      if (staff.has(k) || !names.has(k) || STAFF_TYPES.has(typeOf(String(meta.subject || ""), ""))) return json({ error: "Only emails sent to candidates can be previewed here." }, 403);
+      const cr = await fetch("https://api.brevo.com/v3/smtp/emails/" + encodeURIComponent(meta.uuid), { headers: h, signal: AbortSignal.timeout(15000) });
+      const cj = await cr.json().catch(() => ({}));
+      if (!cr.ok || !cj.body) return json({ error: "Brevo no longer has the content of this email (it keeps it for a limited time)." }, 404);
+      return json({ ok: true, subject: cj.subject || meta.subject || "", to: meta.email || "", name: names.get(k) || "", date: cj.date || meta.date || "", html: String(cj.body) });
+    }
+
     const days = Number(body.days) === 7 ? 7 : 30;
 
     // Page through the event log, newest first. Capped so one page load stays quick.
@@ -103,7 +123,7 @@ Deno.serve(async (req: Request) => {
 
     const byId = new Map<string, Row>();
     for (const e of events) {
-      const id = String(e.messageId || "") || `${e.email}|${e.subject}|${String(e.date || "").slice(0, 16)}`;
+      const id = String(e.messageId || "") || `nomsg|${e.email}|${e.subject}|${String(e.date || "").slice(0, 16)}`;
       const at = String(e.date || "");
       let row = byId.get(id);
       if (!row) {

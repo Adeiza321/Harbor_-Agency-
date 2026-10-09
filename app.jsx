@@ -6329,6 +6329,44 @@ function UsersPage({ toast, S }) {
 // Email tracking (admins): every email the app sent through Brevo, with delivered / opened /
 // clicked for each one. Read live from Brevo by the email-tracking edge function.
 const EMAIL_FILTERS = [["all", "All"], ["delivered", "Delivered"], ["opened", "Opened"], ["clicked", "Clicked"], ["unopened", "Not opened"], ["problems", "Problems"]];
+// Makes a sent email safe to show: no scripts, links can't be clicked (they'd act as the candidate,
+// e.g. unsubscribe or answer yes/no), and Brevo's open-tracking pixel is removed so viewing the
+// preview doesn't count as the candidate opening it.
+function safeEmailHtml(html) {
+  return String(html || "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/<img\b[^>]*>/gi, (tag) => (/(width|height)\s*=\s*["']?1["'\s>]|sendib|brevo|sendinblue|sib\.|\/tr\/|track|open\.php|pixel/i.test(tag) ? "" : tag))
+    .replace(/\shref\s*=/gi, " data-href=")
+    .replace(/<head([^>]*)>/i, '<head$1><style>a{cursor:default!important}</style>');
+}
+function EmailPreviewModal({ row, onClose, S }) {
+  const [p, setP] = useState(null);
+  const [err, setErr] = useState("");
+  const [h, setH] = useState(500);
+  useEffect(() => {
+    if (!row) return; setP(null); setErr("");
+    S.emailPreview(row.id).then(setP, (e) => setErr(e.message || "Couldn't load this email"));
+  }, [row && row.id]); // eslint-disable-line
+  if (!row) return null;
+  const when = (d) => (d ? new Date(d).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+  return (
+    <Modal open onClose={onClose} title="Email preview" wide>
+      <div className="rounded-xl p-3.5 mb-3 text-sm" style={{ background: C.canvas }}>
+        <div className="flex gap-2"><span className="w-14 shrink-0" style={{ color: C.ink3 }}>To</span><span style={{ color: C.ink }}><b>{row.name || (p && p.name) || row.to}</b> &lt;{row.to}&gt;</span></div>
+        <div className="flex gap-2 mt-1"><span className="w-14 shrink-0" style={{ color: C.ink3 }}>Sent</span><span style={{ color: C.ink }}>{when((p && p.date) || row.sentAt)}</span></div>
+        <div className="flex gap-2 mt-1"><span className="w-14 shrink-0" style={{ color: C.ink3 }}>Subject</span><span style={{ color: C.ink }}>{(p && p.subject) || row.subject}</span></div>
+      </div>
+      {err && <div className="text-sm flex items-start gap-2 py-6" style={{ color: C.ink2 }}><Info size={16} className="shrink-0 mt-0.5" />{err}</div>}
+      {!err && !p && <div className="text-sm py-10 text-center" style={{ color: C.ink3 }}>Loading the email <InlineDots /></div>}
+      {p && <>
+        <iframe title="Email preview" sandbox="allow-same-origin" srcDoc={safeEmailHtml(p.html)} className="w-full rounded-xl border" style={{ borderColor: C.line, height: h, background: "#fff" }}
+          onLoad={(e) => { try { const d = e.target.contentDocument; setH(Math.min(1400, Math.max(300, d.documentElement.scrollHeight + 8))); } catch (x) {} }} />
+        <div className="text-xs mt-2" style={{ color: C.ink3 }}>This is exactly what the candidate received. Links are switched off in the preview, and viewing it doesn't count as an open.</div>
+      </>}
+    </Modal>
+  );
+}
 function EmailTrackingPage({ S }) {
   const [days, setDays] = useState(30);
   const [res, setRes] = useState(null);
@@ -6337,6 +6375,7 @@ function EmailTrackingPage({ S }) {
   const [filter, setFilter] = useState("all");
   const [type, setType] = useState("");
   const [q, setQ] = useState("");
+  const [preview, setPreview] = useState(null);
   const load = async (d) => {
     setBusy(true); setErr("");
     try { setRes(await S.emailTracking(d)); } catch (e) { setErr(e.message || "Couldn't load the email log"); }
@@ -6402,6 +6441,7 @@ function EmailTrackingPage({ S }) {
             keyField="id"
             rows={shown}
             pageSize={25}
+            onRowClick={(r) => { if (!String(r.id).startsWith("nomsg|")) setPreview(r); }}
             empty={rows.length ? "No emails match these filters." : "No emails sent to candidates in this period."}
             columns={[
               { key: "to", label: "CANDIDATE", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
@@ -6410,14 +6450,17 @@ function EmailTrackingPage({ S }) {
               { key: "del", label: "DELIVERED", render: (r) => r.problem && !r.deliveredAt ? <span title={r.problem}><Pill tone="danger">{/blocked/i.test(r.problem) ? "Blocked" : /invalid/i.test(r.problem) ? "Invalid" : /soft/i.test(r.problem) ? "Soft bounce" : "Bounced"}</Pill></span> : mark(r.deliveredAt, "Delivered") },
               { key: "open", label: "OPENED", render: (r) => r.openedAt ? <span className="inline-flex items-center gap-1">{mark(r.openedAt, "First opened")}{r.opens > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.opens}</span>}{r.proxyOnly && <span className="text-xs" style={{ color: C.ink3 }} title="Opened by Apple Mail's privacy protection, which loads emails automatically. The person may not have read it.">*</span>}</span> : mark(null) },
               { key: "click", label: "CLICKED", render: (r) => r.clickedAt ? <span className="inline-flex items-center gap-1" title={(r.links || []).join("\n")}>{mark(r.clickedAt, "First clicked")}{r.clicks > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.clicks}</span>}</span> : mark(null) },
+              { key: "view", label: "PREVIEW", render: (r) => String(r.id).startsWith("nomsg|") ? <span className="text-xs" style={{ color: C.ink3 }}>—</span> : <button onClick={(e) => { e.stopPropagation(); setPreview(r); }} className="text-xs font-medium whitespace-nowrap" style={{ color: C.em }}>View email</button> },
             ]}
           />
         )}
         <div className="text-xs mt-4" style={{ color: C.ink3 }}>
           Opens are counted when the email's images load. * means Apple Mail opened it automatically (privacy protection), so the person may not have read it. Some email apps block images, so real opens can be higher than shown. Clicks are reliable.
+          {" Click an email to see exactly what was sent."}
           {res && res.truncated ? " Showing the most recent emails only — choose 7 days to see that period in full." : ""}
         </div>
       </Card>
+      <EmailPreviewModal row={preview} onClose={() => setPreview(null)} S={S} />
     </div>
   );
 }
@@ -8246,6 +8289,11 @@ export default function App() {
     emailTracking: async (days) => {
       const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ days }) });
       const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load the email log");
+      return j;
+    },
+    emailPreview: async (messageId) => {
+      const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "preview", messageId }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load this email");
       return j;
     },
     /* Welcome email with a fresh one-time "Set your password" link (create-user edge function). */
