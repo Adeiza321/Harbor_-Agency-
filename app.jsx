@@ -1054,6 +1054,7 @@ const NAV_RECOPS = [
 ];
 const NAV_ADMIN_EXTRA = [
   { key: "users", label: "Users & permissions", icon: Shield },
+  { key: "emails", label: "Email tracking", icon: Mail },
   { key: "settings", label: "Agency settings", icon: Settings },
 ];
 const NAV_RECRUITER = [
@@ -6325,6 +6326,101 @@ function UsersPage({ toast, S }) {
   );
 }
 
+// Email tracking (admins): every email the app sent through Brevo, with delivered / opened /
+// clicked for each one. Read live from Brevo by the email-tracking edge function.
+const EMAIL_FILTERS = [["all", "All"], ["delivered", "Delivered"], ["opened", "Opened"], ["clicked", "Clicked"], ["unopened", "Not opened"], ["problems", "Problems"]];
+function EmailTrackingPage({ S }) {
+  const [days, setDays] = useState(30);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("all");
+  const [type, setType] = useState("");
+  const [q, setQ] = useState("");
+  const load = async (d) => {
+    setBusy(true); setErr("");
+    try { setRes(await S.emailTracking(d)); } catch (e) { setErr(e.message || "Couldn't load the email log"); }
+    setBusy(false);
+  };
+  useEffect(() => { load(days); }, [days]); // eslint-disable-line
+  const rows = (res && res.rows) || [];
+  const types = [...new Set(rows.map((r) => r.type))].sort();
+  const ql = q.trim().toLowerCase();
+  const shown = rows.filter((r) => (!type || r.type === type)
+    && (!ql || r.to.toLowerCase().includes(ql) || r.subject.toLowerCase().includes(ql))
+    && (filter === "all" || (filter === "delivered" && r.deliveredAt) || (filter === "opened" && r.openedAt) || (filter === "clicked" && r.clickedAt)
+      || (filter === "unopened" && r.deliveredAt && !r.openedAt) || (filter === "problems" && (r.problem || r.spam))));
+  const t = { sent: shown.length, delivered: shown.filter((r) => r.deliveredAt).length, opened: shown.filter((r) => r.openedAt).length, clicked: shown.filter((r) => r.clickedAt).length, problems: shown.filter((r) => r.problem || r.spam).length };
+  const pct = (n) => (t.sent ? Math.round((n / t.sent) * 100) + "%" : "–");
+  const when = (d) => (d ? new Date(d).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "");
+  const mark = (at, label) => at
+    ? <span className="inline-flex items-center gap-1 text-xs" style={{ color: C.em }} title={label + " " + when(at)}><CheckCircle2 size={14} />{ago(at)}</span>
+    : <span className="text-xs" style={{ color: C.ink3 }}>—</span>;
+  const tile = (label, n, sub, tone) => (
+    <Card className="!p-4">
+      <div className="text-xs font-medium" style={{ color: C.ink2 }}>{label}</div>
+      <div className="text-2xl mt-1" style={{ ...SERIF, color: tone || C.ink }}>{n}</div>
+      <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{sub}</div>
+    </Card>
+  );
+  return (
+    <div className="flex flex-col gap-5 md:gap-6">
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Every email ProNext sent — welcome emails, candidate messages, interviews, applications and outreach." />
+        <div className="flex gap-2 items-center">
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
+            <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option>
+          </select>
+          <Btn onClick={() => load(days)} disabled={busy}>{busy ? "Loading…" : "Refresh"}</Btn>
+        </div>
+      </div>
+      {err && <Card><div className="text-sm flex items-start gap-2" style={{ color: C.dangerFg }}><AlertTriangle size={16} className="shrink-0 mt-0.5" />{err}</div></Card>}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        {tile("Sent", res ? t.sent : "…", type || filter !== "all" || ql ? "matching your filters" : "in the last " + days + " days")}
+        {tile("Delivered", res ? t.delivered : "…", pct(t.delivered) + " of sent")}
+        {tile("Opened", res ? t.opened : "…", pct(t.opened) + " of sent")}
+        {tile("Clicked", res ? t.clicked : "…", pct(t.clicked) + " of sent")}
+        {tile("Problems", res ? t.problems : "…", "bounced, blocked or spam", t.problems ? C.dangerFg : undefined)}
+      </div>
+      <Card>
+        <div className="flex flex-col md:flex-row gap-2.5 md:items-center mb-4">
+          <div className="flex gap-1.5 flex-wrap">
+            {EMAIL_FILTERS.map(([k, l]) => (
+              <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1.5 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : "#fff", color: filter === k ? C.em : C.ink2 }}>{l}</button>
+            ))}
+          </div>
+          <div className="flex gap-2 md:ml-auto">
+            <select value={type} onChange={(e) => setType(e.target.value)} className="text-sm rounded-lg border px-2.5 py-1.5 bg-white" style={{ borderColor: C.line }}>
+              <option value="">All types</option>
+              {types.map((x) => <option key={x} value={x}>{x}</option>)}
+            </select>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search email or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          </div>
+        </div>
+        {!res && busy ? <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>Loading the email log from Brevo <InlineDots /></div> : (
+          <DataTable
+            keyField="id"
+            rows={shown}
+            pageSize={25}
+            empty={rows.length ? "No emails match these filters." : "No emails sent in this period."}
+            columns={[
+              { key: "to", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="font-medium truncate" style={{ color: C.ink, maxWidth: 340 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}>{r.to}<Pill>{r.type}</Pill>{r.spam && <Pill tone="danger">Marked spam</Pill>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
+              { key: "sent", label: "SENT", render: (r) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={when(r.sentAt)}>{when(r.sentAt)}</span> },
+              { key: "del", label: "DELIVERED", render: (r) => r.problem && !r.deliveredAt ? <span title={r.problem}><Pill tone="danger">{/blocked/i.test(r.problem) ? "Blocked" : /invalid/i.test(r.problem) ? "Invalid" : /soft/i.test(r.problem) ? "Soft bounce" : "Bounced"}</Pill></span> : mark(r.deliveredAt, "Delivered") },
+              { key: "open", label: "OPENED", render: (r) => r.openedAt ? <span className="inline-flex items-center gap-1">{mark(r.openedAt, "First opened")}{r.opens > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.opens}</span>}{r.proxyOnly && <span className="text-xs" style={{ color: C.ink3 }} title="Opened by Apple Mail's privacy protection, which loads emails automatically. The person may not have read it.">*</span>}</span> : mark(null) },
+              { key: "click", label: "CLICKED", render: (r) => r.clickedAt ? <span className="inline-flex items-center gap-1" title={(r.links || []).join("\n")}>{mark(r.clickedAt, "First clicked")}{r.clicks > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.clicks}</span>}</span> : mark(null) },
+            ]}
+          />
+        )}
+        <div className="text-xs mt-4" style={{ color: C.ink3 }}>
+          Opens are counted when the email's images load. * means Apple Mail opened it automatically (privacy protection), so the person may not have read it. Some email apps block images, so real opens can be higher than shown. Clicks are reliable.
+          {res && res.truncated ? " Showing the most recent emails only — choose 7 days to see that period in full." : ""}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 function UserDetailModal({ user, onClose, S }) {
   if (!user) return null;
   const sec = user.security || {};
@@ -8145,6 +8241,12 @@ export default function App() {
     },
     deleteAd: (id) => { const a = data.ads.find((x) => x.id === id); return call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "ad_campaign", id, a ? a.job : "")); },
     users: data.users,
+    /* Email tracking page: the Brevo email log grouped per email (admins only). */
+    emailTracking: async (days) => {
+      const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ days }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load the email log");
+      return j;
+    },
     /* Welcome email with a fresh one-time "Set your password" link (create-user edge function). */
     sendWelcome: async (id) => {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "send_welcome", id }) });
@@ -8377,6 +8479,7 @@ export default function App() {
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
   else if (page === "ads") content = <AdsPage role={role} toast={toast} onPromote={onPromote} S={S} />;
   else if (page === "users") content = role === "admin" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
+  else if (page === "emails") content = role === "admin" ? <EmailTrackingPage S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "settings") content = role === "admin" ? <SettingsPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "myProfile") content = <MyProfilePage key={profileTab} initialTab={profileTab} S={S} toast={toast} onBack={() => setPage("overview")} />;
   else content = <OverviewRecOps S={S} />;

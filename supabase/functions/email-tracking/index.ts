@@ -1,0 +1,121 @@
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+// Admin-only: every email the app sent through Brevo in the last 7 or 30 days, one row per email,
+// with whether it was delivered, opened and clicked (or bounced / blocked / marked as spam).
+// Read live from Brevo's event log (GET /v3/smtp/statistics/events); nothing is stored here.
+//   POST { days: 7 | 30 }  ->  { rows, totals, days, truncated }
+
+const cors = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
+
+// What kind of email it was, from its subject (the app's own subject lines).
+function typeOf(subject: string, tag: string): string {
+  const s = subject || "";
+  if (/^\[TEST\]/.test(s)) return "Test";
+  if (/^Welcome to /.test(s)) return "Welcome";
+  if (/password reset/i.test(s)) return "Password reset";
+  if (/^(Interview booked|Interview cancelled|Updated time|Tomorrow:|Starting in an hour|We missed you)/.test(s)) return "Interview";
+  if (/under review/i.test(s)) return "Application received";
+  if (/^An update on /.test(s)) return "Candidate message";
+  if (/referred you/i.test(s)) return "Referral";
+  if (/^Approval needed/.test(s)) return "Approval";
+  if (tag) return tag;
+  return "Outreach & other";
+}
+
+const BOUNCE: Record<string, string> = {
+  hardBounces: "Bounced: the address doesn't exist or refused it", hard_bounce: "Bounced: the address doesn't exist or refused it",
+  softBounces: "Soft bounce: inbox full or unavailable", soft_bounce: "Soft bounce: inbox full or unavailable",
+  blocked: "Blocked by Brevo (address previously bounced or unsubscribed)", invalid: "Invalid email address", invalid_email: "Invalid email address",
+  error: "Couldn't be sent", deferred: "Delayed by the receiving server",
+};
+
+type Row = {
+  id: string; to: string; subject: string; type: string; sentAt: string | null;
+  deliveredAt: string | null; openedAt: string | null; opens: number; proxyOnly: boolean;
+  clickedAt: string | null; clicks: number; links: string[];
+  problem: string | null; spam: boolean; unsubscribed: boolean; lastAt: string;
+};
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  try {
+    const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+    const { data: caller } = await admin.auth.getUser(token);
+    if (!caller?.user) return json({ error: "Not signed in" }, 401);
+    const { data: me } = await admin.from("profiles").select("role,status").eq("id", caller.user.id).single();
+    if (!me || me.role !== "admin" || me.status !== "Active") return json({ error: "Only admins can see email tracking" }, 403);
+
+    const key = Deno.env.get("BREVO_API_KEY");
+    if (!key) return json({ error: "Brevo isn't connected (BREVO_API_KEY is not set)" }, 400);
+    const body = await req.json().catch(() => ({}));
+    const days = Number(body.days) === 7 ? 7 : 30;
+
+    // Page through the event log, newest first. Capped so one page load stays quick.
+    const LIMIT = 2500, MAX_PAGES = 8;
+    const events: any[] = [];
+    let truncated = false;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const url = `https://api.brevo.com/v3/smtp/statistics/events?limit=${LIMIT}&offset=${page * LIMIT}&days=${days}&sort=desc`;
+      const r = await fetch(url, { headers: { "api-key": key, accept: "application/json" }, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) {
+        const t = await r.text().catch(() => "");
+        if (page === 0) return json({ error: "Brevo didn't return the email log (" + r.status + "). " + t.slice(0, 200) }, 502);
+        break;
+      }
+      const j = await r.json().catch(() => ({}));
+      const list = Array.isArray(j.events) ? j.events : [];
+      events.push(...list);
+      if (list.length < LIMIT) break;
+      if (page === MAX_PAGES - 1) truncated = true;
+    }
+
+    const byId = new Map<string, Row>();
+    for (const e of events) {
+      const id = String(e.messageId || "") || `${e.email}|${e.subject}|${String(e.date || "").slice(0, 16)}`;
+      const at = String(e.date || "");
+      let row = byId.get(id);
+      if (!row) {
+        row = { id, to: String(e.email || ""), subject: String(e.subject || ""), type: typeOf(String(e.subject || ""), String(e.tag || "")), sentAt: null,
+          deliveredAt: null, openedAt: null, opens: 0, proxyOnly: true, clickedAt: null, clicks: 0, links: [], problem: null, spam: false, unsubscribed: false, lastAt: at };
+        byId.set(id, row);
+      }
+      if (at > row.lastAt) row.lastAt = at;
+      const earliest = (cur: string | null) => (!cur || at < cur ? at : cur);
+      switch (String(e.event || "")) {
+        case "requests": case "request": case "sent": row.sentAt = earliest(row.sentAt); break;
+        case "delivered": row.deliveredAt = earliest(row.deliveredAt); break;
+        case "opened": case "unique_opened": case "uniqueOpened": row.opens++; row.proxyOnly = false; row.openedAt = earliest(row.openedAt); break;
+        case "loadedByProxy": row.opens++; row.openedAt = earliest(row.openedAt); break;
+        case "clicks": case "click": row.clicks++; row.clickedAt = earliest(row.clickedAt); if (e.link && !row.links.includes(e.link) && row.links.length < 5) row.links.push(String(e.link)); break;
+        case "spam": row.spam = true; break;
+        case "unsubscribed": row.unsubscribed = true; break;
+        default: { const ev = String(e.event || ""); if (BOUNCE[ev] && ev !== "deferred") row.problem = String(e.reason || BOUNCE[ev]).slice(0, 200); }
+      }
+    }
+    const rows = [...byId.values()].map((r) => {
+      // Opening or clicking also proves it arrived, even if the delivered event is missing.
+      if (!r.deliveredAt && (r.openedAt || r.clickedAt)) r.deliveredAt = r.openedAt || r.clickedAt;
+      if (!r.sentAt) r.sentAt = r.deliveredAt || r.lastAt;
+      if (!r.opens) r.proxyOnly = false;
+      if (r.deliveredAt) r.problem = r.problem && /soft|delay/i.test(r.problem) ? null : r.problem;
+      return r;
+    }).sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)));
+
+    const totals = {
+      sent: rows.length,
+      delivered: rows.filter((r) => r.deliveredAt).length,
+      opened: rows.filter((r) => r.openedAt).length,
+      clicked: rows.filter((r) => r.clickedAt).length,
+      problems: rows.filter((r) => r.problem || r.spam).length,
+    };
+    return json({ ok: true, days, rows: rows.slice(0, 3000), totals, truncated });
+  } catch (e) {
+    return json({ error: String((e as Error)?.message || e) }, 500);
+  }
+});
