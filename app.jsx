@@ -7679,7 +7679,7 @@ export function PublicRoot() {
       .catch(() => {})
       .finally(() => setTokenReady(true));
   }, []); // eslint-disable-line
-  const loadPortal = () => sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then(setPortalData).catch(() => setPortalData({ error: true }));
+  const loadPortal = () => sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then((d) => setPortalData(d || { error: true })).catch(() => setPortalData({ error: true }));
   React.useEffect(() => { if (portalToken && tokenReady) loadPortal(); }, [portalToken, tokenReady]); // eslint-disable-line
   if (!r) return null;
   if (r.kind === "apply") return <ApplyPage slug={r.slug} />;
