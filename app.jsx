@@ -6347,7 +6347,7 @@ function EmailTrackingPage({ S }) {
   const types = [...new Set(rows.map((r) => r.type))].sort();
   const ql = q.trim().toLowerCase();
   const shown = rows.filter((r) => (!type || r.type === type)
-    && (!ql || r.to.toLowerCase().includes(ql) || r.subject.toLowerCase().includes(ql))
+    && (!ql || r.to.toLowerCase().includes(ql) || (r.name || "").toLowerCase().includes(ql) || r.subject.toLowerCase().includes(ql))
     && (filter === "all" || (filter === "delivered" && r.deliveredAt) || (filter === "opened" && r.openedAt) || (filter === "clicked" && r.clickedAt)
       || (filter === "unopened" && r.deliveredAt && !r.openedAt) || (filter === "problems" && (r.problem || r.spam))));
   const t = { sent: shown.length, delivered: shown.filter((r) => r.deliveredAt).length, opened: shown.filter((r) => r.openedAt).length, clicked: shown.filter((r) => r.clickedAt).length, problems: shown.filter((r) => r.problem || r.spam).length };
@@ -6366,7 +6366,7 @@ function EmailTrackingPage({ S }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Every email ProNext sent — welcome emails, candidate messages, interviews, applications and outreach." />
+        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Emails sent to candidates: messages, interviews, applications, referrals and outreach." />
         <div className="flex gap-2 items-center">
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
             <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option>
@@ -6394,7 +6394,7 @@ function EmailTrackingPage({ S }) {
               <option value="">All types</option>
               {types.map((x) => <option key={x} value={x}>{x}</option>)}
             </select>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search email or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
           </div>
         </div>
         {!res && busy ? <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>Loading the email log from Brevo <InlineDots /></div> : (
@@ -6402,10 +6402,11 @@ function EmailTrackingPage({ S }) {
             keyField="id"
             rows={shown}
             pageSize={25}
-            empty={rows.length ? "No emails match these filters." : "No emails sent in this period."}
+            empty={rows.length ? "No emails match these filters." : "No emails sent to candidates in this period."}
             columns={[
-              { key: "to", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="font-medium truncate" style={{ color: C.ink, maxWidth: 340 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}>{r.to}<Pill>{r.type}</Pill>{r.spam && <Pill tone="danger">Marked spam</Pill>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
-              { key: "sent", label: "SENT", render: (r) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={when(r.sentAt)}>{when(r.sentAt)}</span> },
+              { key: "to", label: "CANDIDATE", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
+              { key: "subj", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="text-sm truncate" style={{ color: C.ink, maxWidth: 300 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}><Pill>{r.type}</Pill>{r.spam && <Pill tone="danger">Marked spam</Pill>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
+              { key: "sent", label: "DATE SENT", render: (r) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={when(r.sentAt)}>{when(r.sentAt)}</span> },
               { key: "del", label: "DELIVERED", render: (r) => r.problem && !r.deliveredAt ? <span title={r.problem}><Pill tone="danger">{/blocked/i.test(r.problem) ? "Blocked" : /invalid/i.test(r.problem) ? "Invalid" : /soft/i.test(r.problem) ? "Soft bounce" : "Bounced"}</Pill></span> : mark(r.deliveredAt, "Delivered") },
               { key: "open", label: "OPENED", render: (r) => r.openedAt ? <span className="inline-flex items-center gap-1">{mark(r.openedAt, "First opened")}{r.opens > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.opens}</span>}{r.proxyOnly && <span className="text-xs" style={{ color: C.ink3 }} title="Opened by Apple Mail's privacy protection, which loads emails automatically. The person may not have read it.">*</span>}</span> : mark(null) },
               { key: "click", label: "CLICKED", render: (r) => r.clickedAt ? <span className="inline-flex items-center gap-1" title={(r.links || []).join("\n")}>{mark(r.clickedAt, "First clicked")}{r.clicks > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.clicks}</span>}</span> : mark(null) },

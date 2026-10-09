@@ -1,7 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-// Admin-only: every email the app sent through Brevo in the last 7 or 30 days, one row per email,
-// with whether it was delivered, opened and clicked (or bounced / blocked / marked as spam).
+// Admin-only: every email the app sent to a CANDIDATE through Brevo in the last 7 or 30 days, one row
+// per email, with the candidate's name, whether it was delivered, opened and clicked (or bounced /
+// blocked / marked as spam). Emails to staff (welcome, password reset, approvals, tests) are left out.
+// A recipient counts as a candidate when their address is on a candidate, an application/referral or
+// a sourced prospect, and isn't a staff account.
 // Read live from Brevo's event log (GET /v3/smtp/statistics/events); nothing is stored here.
 //   POST { days: 7 | 30 }  ->  { rows, totals, days, truncated }
 
@@ -38,8 +41,31 @@ type Row = {
   id: string; to: string; subject: string; type: string; sentAt: string | null;
   deliveredAt: string | null; openedAt: string | null; opens: number; proxyOnly: boolean;
   clickedAt: string | null; clicks: number; links: string[];
-  problem: string | null; spam: boolean; unsubscribed: boolean; lastAt: string;
+  problem: string | null; spam: boolean; unsubscribed: boolean; lastAt: string; name?: string;
 };
+const STAFF_TYPES = new Set(["Welcome", "Password reset", "Approval", "Test"]);
+
+// email (lowercase) -> candidate name, from candidates, then applications/referrals, then prospects.
+async function candidateNames(admin: any): Promise<{ names: Map<string, string>; staff: Set<string> }> {
+  const names = new Map<string, string>();
+  const all = async (table: string, cols: string) => {
+    const out: any[] = [];
+    for (let from = 0; from < 50000; from += 1000) {
+      const { data } = await admin.from(table).select(cols).not("email", "is", null).range(from, from + 999);
+      out.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    return out;
+  };
+  const [cands, apps, pros, staff] = await Promise.all([
+    all("candidates", "email,name"), all("applications", "email,name"), all("prospects", "email,full_name,first_name,last_name"), all("profiles", "email"),
+  ]);
+  const add = (email: string, name: string) => { const k = String(email || "").trim().toLowerCase(); if (k && !names.has(k)) names.set(k, String(name || "").trim()); };
+  for (const c of cands) add(c.email, c.name);
+  for (const a of apps) add(a.email, a.name);
+  for (const p of pros) add(p.email, p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" "));
+  return { names, staff: new Set(staff.map((p: any) => String(p.email || "").trim().toLowerCase())) };
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -98,7 +124,13 @@ Deno.serve(async (req: Request) => {
         default: { const ev = String(e.event || ""); if (BOUNCE[ev] && ev !== "deferred") row.problem = String(e.reason || BOUNCE[ev]).slice(0, 200); }
       }
     }
-    const rows = [...byId.values()].map((r) => {
+    const { names, staff } = await candidateNames(admin);
+    const rows = [...byId.values()].filter((r) => {
+      const k = r.to.trim().toLowerCase();
+      if (STAFF_TYPES.has(r.type) || staff.has(k) || !names.has(k)) return false;
+      r.name = names.get(k) || "";
+      return true;
+    }).map((r) => {
       // Opening or clicking also proves it arrived, even if the delivered event is missing.
       if (!r.deliveredAt && (r.openedAt || r.clickedAt)) r.deliveredAt = r.openedAt || r.clickedAt;
       if (!r.sentAt) r.sentAt = r.deliveredAt || r.lastAt;
