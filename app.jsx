@@ -7218,7 +7218,8 @@ function UsersPage({ toast, S }) {
 }
 
 // Email tracking (admins): every email the app sent through Brevo, with delivered / opened /
-// clicked for each one. Read live from Brevo by the email-tracking edge function.
+// clicked for each one. Stored in ProNext as Brevo reports each event (webhook, plus a catch-up
+// every 15 minutes), so the page loads from the database; Refresh catches up with Brevo first.
 const EMAIL_FILTERS = [["all", "All"], ["delivered", "Delivered"], ["opened", "Opened"], ["clicked", "Clicked"], ["unopened", "Not opened"], ["problems", "Problems"]];
 // Makes a sent email safe to show: no scripts, links can't be clicked (they'd act as the candidate,
 // e.g. unsubscribe or answer yes/no), and Brevo's open-tracking pixel is removed so viewing the
@@ -7267,9 +7268,9 @@ function EmailTrackingPage({ S }) {
   const [type, setType] = useState("");
   const [q, setQ] = useState("");
   const [preview, setPreview] = useState(null);
-  const load = async (d) => {
+  const load = async (d, refresh) => {
     setBusy(true); setErr("");
-    try { setRes(await S.emailTracking(d)); } catch (e) { setErr(e.message || "Couldn't load the email log"); }
+    try { setRes(await S.emailTracking(d, refresh)); } catch (e) { setErr(e.message || "Couldn't load the email log"); }
     setBusy(false);
   };
   useEffect(() => { load(days); }, [days]); // eslint-disable-line
@@ -7299,12 +7300,14 @@ function EmailTrackingPage({ S }) {
         <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Emails sent to candidates: messages, interviews, applications, referrals and outreach." />
         <div className="flex gap-2 items-center">
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
-            <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option>
+            <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last 12 months</option>
           </select>
-          <Btn onClick={() => load(days)} disabled={busy}>{busy ? "Loading…" : "Refresh"}</Btn>
+          <Btn onClick={() => load(days, true)} disabled={busy} title="Fetch anything new from Brevo now">{busy ? "Loading…" : "Refresh"}</Btn>
         </div>
       </div>
       {err && <Card><div className="text-sm flex items-start gap-2" style={{ color: C.dangerFg }}><AlertTriangle size={16} className="shrink-0 mt-0.5" />{err}</div></Card>}
+      {res && res.warning && <div className="text-xs" style={{ color: C.warnFg }}>{res.warning}</div>}
+      {res && res.syncedAt && !res.warning && <div className="text-xs -mt-3" style={{ color: C.ink3 }}>Latest event received {ago(res.syncedAt)}. New events arrive automatically; Refresh checks Brevo now.</div>}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {tile("Sent", res ? t.sent : "…", type || filter !== "all" || ql ? "matching your filters" : "in the last " + days + " days")}
         {tile("Delivered", res ? t.delivered : "…", pct(t.delivered) + " of sent")}
@@ -7327,7 +7330,7 @@ function EmailTrackingPage({ S }) {
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
           </div>
         </div>
-        {!res && busy ? <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>Loading the email log from Brevo <InlineDots /></div> : (
+        {!res && busy ? <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>Loading the email log <InlineDots /></div> : (
           <DataTable
             keyField="id"
             rows={shown}
@@ -9178,8 +9181,8 @@ export default function App() {
     deleteAd: (id) => { const a = data.ads.find((x) => x.id === id); return call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "ad_campaign", id, a ? a.job : "")); },
     users: data.users,
     /* Email tracking page: the Brevo email log grouped per email (admins only). */
-    emailTracking: async (days) => {
-      const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ days }) });
+    emailTracking: async (days, refresh) => {
+      const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ days, refresh: !!refresh }) });
       const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load the email log");
       return j;
     },

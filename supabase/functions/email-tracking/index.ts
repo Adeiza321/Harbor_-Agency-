@@ -1,18 +1,23 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { storeEvents, toRow } from "./events.ts";
 
 // Admin-only: every email the app sent to a CANDIDATE through Brevo in the last 7 or 30 days, one row
 // per email, with the candidate's name, whether it was delivered, opened and clicked (or bounced /
 // blocked / marked as spam). Emails to staff (welcome, password reset, approvals, tests) are left out.
 // A recipient counts as a candidate when their address is on a candidate, an application/referral or
 // a sourced prospect, and isn't a staff account.
-// Read live from Brevo's event log (GET /v3/smtp/statistics/events); nothing is stored here.
-//   POST { days: 7 | 30 }                       ->  { rows, totals, days, truncated }
+// Events are stored in public.email_events: pushed by Brevo's webhook (brevo-webhook) as they
+// happen, plus a catch-up every 15 minutes (action "sync", scheduler only) that asks Brevo's event
+// log (GET /v3/smtp/statistics/events) only for events since the newest one stored. The page reads
+// the table, so it loads straight away and keeps history after Brevo has dropped it.
+//   POST { days: 7 | 30 | 90 | 365, refresh? }  ->  { rows, totals, days, syncedAt }  (refresh: catch up first)
+//   POST { action: "sync" } + x-harbor-ops      ->  { fetched, stored }
 //   POST { action: "preview", messageId }       ->  { subject, to, date, html }  (the email as sent;
 //        only for candidate recipients, so staff emails with reset codes or setup links never show)
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-harbor-ops",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
@@ -33,9 +38,9 @@ function typeOf(subject: string, tag: string): string {
 }
 
 const BOUNCE: Record<string, string> = {
-  hardBounces: "Bounced: the address doesn't exist or refused it", hard_bounce: "Bounced: the address doesn't exist or refused it",
-  softBounces: "Soft bounce: inbox full or unavailable", soft_bounce: "Soft bounce: inbox full or unavailable",
-  blocked: "Blocked by Brevo (address previously bounced or unsubscribed)", invalid: "Invalid email address", invalid_email: "Invalid email address",
+  hard_bounce: "Bounced: the address doesn't exist or refused it",
+  soft_bounce: "Soft bounce: inbox full or unavailable",
+  blocked: "Blocked by Brevo (address previously bounced or unsubscribed)", invalid: "Invalid email address",
   error: "Couldn't be sent", deferred: "Delayed by the receiving server",
 };
 
@@ -69,10 +74,47 @@ async function candidateNames(admin: any): Promise<{ names: Map<string, string>;
   return { names, staff: new Set(staff.map((p: any) => String(p.email || "").trim().toLowerCase())) };
 }
 
+// Ask Brevo only for what's new: from the day before the newest stored event (the event log
+// filters by whole days; repeats are skipped by the dedupe key). First run: the last 30 days.
+async function syncFromBrevo(admin: any, key: string) {
+  // The cursor is the newest event the sync itself stored, so webhook events never make it skip history.
+  const { data: last } = await admin.from("email_events").select("at").eq("source", "sync").order("at", { ascending: false }).limit(1).maybeSingle();
+  const day = (d: Date) => d.toISOString().slice(0, 10);
+  const start = last?.at ? new Date(new Date(last.at).getTime() - 864e5) : new Date(Date.now() - 30 * 864e5);
+  const LIMIT = 2500, MAX_PAGES = 20;
+  let fetched = 0, stored = 0;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const url = `https://api.brevo.com/v3/smtp/statistics/events?limit=${LIMIT}&offset=${page * LIMIT}&startDate=${day(start)}&endDate=${day(new Date())}&sort=asc`;
+    const r = await fetch(url, { headers: { "api-key": key, accept: "application/json" }, signal: AbortSignal.timeout(20000) });
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      if (page === 0) throw new Error("Brevo didn't return the email log (" + r.status + "). " + t.slice(0, 200));
+      break;
+    }
+    const j = await r.json().catch(() => ({}));
+    const list = Array.isArray(j.events) ? j.events : [];
+    fetched += list.length;
+    stored += await storeEvents(admin, list.map((e: any) => toRow(e, "sync")).filter(Boolean) as any[]);
+    if (list.length < LIMIT) break;
+  }
+  // Kept for a year.
+  await admin.from("email_events").delete().lt("at", new Date(Date.now() - 365 * 864e5).toISOString());
+  return { fetched, stored };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    // Scheduled catch-up (every 15 minutes).
+    const opsKey = req.headers.get("x-harbor-ops") || "";
+    if (opsKey) {
+      const { data: tok } = await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle();
+      if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
+      const k = Deno.env.get("BREVO_API_KEY");
+      if (!k) return json({ error: "BREVO_API_KEY is not set" }, 400);
+      return json({ ok: true, ...(await syncFromBrevo(admin, k)) });
+    }
     const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
     const { data: caller } = await admin.auth.getUser(token);
     if (!caller?.user) return json({ error: "Not signed in" }, 401);
@@ -100,31 +142,28 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, subject: cj.subject || meta.subject || "", to: meta.email || "", name: names.get(k) || "", date: cj.date || meta.date || "", html: String(cj.body) });
     }
 
-    const days = Number(body.days) === 7 ? 7 : 30;
+    const days = [7, 30, 90, 365].includes(Number(body.days)) ? Number(body.days) : 30;
 
-    // Page through the event log, newest first. Capped so one page load stays quick.
-    const LIMIT = 2500, MAX_PAGES = 8;
+    // "Refresh", or nothing stored yet: catch up with Brevo first (only new events are fetched).
+    const { count: have } = await admin.from("email_events").select("id", { count: "exact", head: true }).eq("source", "sync");
+    let syncError = "";
+    if (body.refresh || !have) { try { await syncFromBrevo(admin, key); } catch (e) { syncError = String((e as Error)?.message || e); if (!have) return json({ error: syncError }, 502); } }
+
+    // The stored events for the period, oldest first.
+    const since = new Date(Date.now() - days * 864e5).toISOString();
     const events: any[] = [];
-    let truncated = false;
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const url = `https://api.brevo.com/v3/smtp/statistics/events?limit=${LIMIT}&offset=${page * LIMIT}&days=${days}&sort=desc`;
-      const r = await fetch(url, { headers: { "api-key": key, accept: "application/json" }, signal: AbortSignal.timeout(15000) });
-      if (!r.ok) {
-        const t = await r.text().catch(() => "");
-        if (page === 0) return json({ error: "Brevo didn't return the email log (" + r.status + "). " + t.slice(0, 200) }, 502);
-        break;
-      }
-      const j = await r.json().catch(() => ({}));
-      const list = Array.isArray(j.events) ? j.events : [];
-      events.push(...list);
-      if (list.length < LIMIT) break;
-      if (page === MAX_PAGES - 1) truncated = true;
+    for (let from = 0; from < 300000; from += 1000) {
+      const { data, error } = await admin.from("email_events").select("message_id,email,event,subject,tag,link,reason,at").gte("at", since).order("at").range(from, from + 999);
+      if (error) return json({ error: error.message }, 500);
+      events.push(...(data || []));
+      if (!data || data.length < 1000) break;
     }
+    const { data: newest } = await admin.from("email_events").select("created_at").order("created_at", { ascending: false }).limit(1).maybeSingle();
 
     const byId = new Map<string, Row>();
     for (const e of events) {
-      const id = String(e.messageId || "") || `nomsg|${e.email}|${e.subject}|${String(e.date || "").slice(0, 16)}`;
-      const at = String(e.date || "");
+      const at = String(e.at || "");
+      const id = String(e.message_id || "") || `nomsg|${e.email}|${e.subject}|${at.slice(0, 16)}`;
       let row = byId.get(id);
       if (!row) {
         row = { id, to: String(e.email || ""), subject: String(e.subject || ""), type: typeOf(String(e.subject || ""), String(e.tag || "")), sentAt: null,
@@ -134,11 +173,12 @@ Deno.serve(async (req: Request) => {
       if (at > row.lastAt) row.lastAt = at;
       const earliest = (cur: string | null) => (!cur || at < cur ? at : cur);
       switch (String(e.event || "")) {
-        case "requests": case "request": case "sent": row.sentAt = earliest(row.sentAt); break;
+        case "request": row.sentAt = earliest(row.sentAt); break;
         case "delivered": row.deliveredAt = earliest(row.deliveredAt); break;
-        case "opened": case "unique_opened": case "uniqueOpened": row.opens++; row.proxyOnly = false; row.openedAt = earliest(row.openedAt); break;
-        case "loadedByProxy": row.opens++; row.openedAt = earliest(row.openedAt); break;
-        case "clicks": case "click": row.clicks++; row.clickedAt = earliest(row.clickedAt); if (e.link && !row.links.includes(e.link) && row.links.length < 5) row.links.push(String(e.link)); break;
+        case "opened": row.opens++; row.proxyOnly = false; row.openedAt = earliest(row.openedAt); break;
+        case "unique_opened": row.proxyOnly = false; row.openedAt = earliest(row.openedAt); if (!row.opens) row.opens = 1; break;
+        case "proxy_open": row.opens++; row.openedAt = earliest(row.openedAt); break;
+        case "click": row.clicks++; row.clickedAt = earliest(row.clickedAt); if (e.link && !row.links.includes(e.link) && row.links.length < 5) row.links.push(String(e.link)); break;
         case "spam": row.spam = true; break;
         case "unsubscribed": row.unsubscribed = true; break;
         default: { const ev = String(e.event || ""); if (BOUNCE[ev] && ev !== "deferred") row.problem = String(e.reason || BOUNCE[ev]).slice(0, 200); }
@@ -166,7 +206,7 @@ Deno.serve(async (req: Request) => {
       clicked: rows.filter((r) => r.clickedAt).length,
       problems: rows.filter((r) => r.problem || r.spam).length,
     };
-    return json({ ok: true, days, rows: rows.slice(0, 3000), totals, truncated });
+    return json({ ok: true, days, rows: rows.slice(0, 5000), totals, truncated: rows.length > 5000, syncedAt: newest?.created_at || null, ...(syncError ? { warning: "Couldn't reach Brevo just now; showing what's stored. " + syncError.slice(0, 160) } : {}) });
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
