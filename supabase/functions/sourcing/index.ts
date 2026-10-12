@@ -239,9 +239,7 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
     }
 
-    // Emails for X-ray results (they're saved without one). GitHub public emails are free and run
-    // straight away; LinkedIn people are looked up in Apollo (1 credit per email found), which an
-    // Admin confirms, or approves when someone else asks.
+    // Emails for X-ray results: see emails.ts (also found automatically every 10 minutes).
     if (action === "find_emails") {
       // Runs straight away, no approval: X-ray emails are found automatically anyway; this just
       // doesn't wait for the next run (and looks up anyone asked for, whatever their fit), within the daily cap.
