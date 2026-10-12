@@ -1,8 +1,9 @@
 // Emails for people found by the X-ray search, who are saved without one.
 //   GitHub profiles: the email the person made public on their GitHub profile (free, automatic).
 //   LinkedIn profiles: Apollo looks the person up by their exact profile address and returns their
-//     verified work email (1 Apollo credit per email found), so it needs an Admin's approval like
-//     every other paid step.
+//     verified work email (1 Apollo credit per email found). This runs automatically, without an
+//     approval: every 10 minutes for the best X-ray people (fit >= outreach.xrayEmailMinFit), never more
+//     than outreach.xrayEmailsPerDay lookups a day (the daily cap stands in for the approval).
 // Only verified emails are kept. Each person with an email gets the same short, personal draft as
 // Apollo's own prospects, ready for the usual approve-and-send flow (nothing is sent from here).
 
@@ -78,7 +79,10 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   const gh = await findGithubEmails(admin, o, s, agencyName);
   const list = (await needing(admin, o)).filter((p) => p.linkedin_url && !p.data?.email_lookup?.apollo);
   if (list.length && !apolloKey()) return { ok: false, message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to look up emails." };
-  const { data: job } = list.length ? await admin.from("jobs").select("client").eq("id", list[0].job_id).maybeSingle() : { data: null };
+  // Each person's own job (a run can span several jobs), to leave out the client's own staff.
+  const jobIds = [...new Set(list.map((p) => p.job_id))];
+  const { data: jobRows } = jobIds.length ? await admin.from("jobs").select("id,client").in("id", jobIds) : { data: [] };
+  const clientOf = new Map((jobRows || []).map((j: any) => [j.id, j.client]));
   const found: string[] = [];
   let credits = 0, noMatch = 0, unverified = 0;
   const errors: string[] = [];
@@ -89,7 +93,7 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
     const lookup = { ...(p.data?.email_lookup || {}), apollo: new Date().toISOString() };
     if (m?.email) credits++;
     if (!m) noMatch++;
-    const good = m?.email && m.email_status === "verified" && okEmail(m.email) && !sameCompany(m.company, job?.client) && !(await suppressed(admin, m.email));
+    const good = m?.email && m.email_status === "verified" && okEmail(m.email) && !sameCompany(m.company, clientOf.get(p.job_id)) && !(await suppressed(admin, m.email));
     if (m?.email && !good) unverified++;
     const cc = countryCode(m?.country || "");
     const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup, ...(good ? { email_source: "Apollo (from their LinkedIn profile)", history: m.history || p.data?.history } : {}) } };
@@ -112,6 +116,30 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   return { ok: true, found: total, apollo: found.length, github: gh.found, credits, ids: found,
     message: parts.join(": ").replace(": ", ". ") + (why ? `. Not found: ${why}.` : ".") + (total ? " Review and approve them under the job to send." : ""),
     ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 3) } : {}) };
+}
+
+// Automatic: the best X-ray people without an email, across open jobs (or one job / some people when
+// staff ask), within today's Apollo allowance; plus a draft for anyone who has an email but no note.
+export async function autoFindEmails(admin: any, s: Settings, agencyName: string, o: { jobId?: string | null; ids?: string[] } = {}) {
+  const since = new Date(); since.setUTCHours(0, 0, 0, 0);
+  const { count: used } = await admin.from("prospects").select("id", { count: "exact", head: true }).gte("data->email_lookup->>apollo", since.toISOString());
+  const left = Math.max(0, s.xrayEmailsPerDay - (used || 0));
+  const manual = !!(o.jobId || (o.ids && o.ids.length));
+  let q = admin.from("prospects").select("id,source,linkedin_url,fit,data,jobs!inner(status)").is("email", null).eq("status", "found").neq("source", "apollo")
+    .neq("jobs.status", "Closed").order("fit", { ascending: false }).limit(200);
+  if (o.ids && o.ids.length) q = q.in("id", o.ids); else if (o.jobId) q = q.eq("job_id", o.jobId);
+  if (!manual) q = q.gte("fit", s.xrayEmailMinFit);
+  const { data: rows, error } = await q;
+  if (error) throw new Error(error.message);
+  const github = (rows || []).filter((p: any) => p.source === "github" && !p.data?.email_lookup?.github).map((p: any) => p.id);
+  const apollo = (rows || []).filter((p: any) => p.linkedin_url && !p.data?.email_lookup?.apollo).map((p: any) => p.id).slice(0, Math.min(left, manual ? 40 : 12));
+  const out: Record<string, unknown> = { leftToday: left, waiting: (rows || []).filter((p: any) => p.linkedin_url && !p.data?.email_lookup?.apollo).length };
+  if (github.length || apollo.length) Object.assign(out, await findEmails(admin, { ids: [...github, ...apollo] }, s, agencyName));
+  else out.message = left <= 0 && out.waiting ? `Today's limit of ${s.xrayEmailsPerDay} Apollo lookups is used up; the rest continue tomorrow.` : "No one is waiting for an email.";
+  // Emails found without a note yet (e.g. found by an earlier version): write the usual draft.
+  const { data: undrafted } = await admin.from("prospects").select("id").neq("source", "apollo").not("email", "is", null).is("body", null).eq("status", "found").limit(20);
+  if (undrafted?.length) { await draftEmails(admin, undrafted.map((r: any) => r.id), s, agencyName); out.drafted = undrafted.length; }
+  return out;
 }
 
 // The same short, honest note Apollo prospects get, written from what the X-ray result showed.
