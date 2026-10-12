@@ -5772,7 +5772,7 @@ function CampaignsPage({ toast, S }) {
   // Search and filters (kept while switching between the status tabs), and pages of up to 50.
   const [q, setQ] = useState("");
   const [showFilters, setShowFilters] = useState(false);
-  const [fl, setFl] = useState({ job: "", source: "", email: "", fit: 0, country: "", channel: "" });
+  const [fl, setFl] = useState({ role: "", job: "", source: "", email: "", fit: 0, country: "", channel: "" });
   const setF = (k, v) => setFl((x) => ({ ...x, [k]: v }));
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
@@ -5797,14 +5797,17 @@ function CampaignsPage({ toast, S }) {
   const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced", "rejected"] };
   const lGroups = { new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
   const low = (v) => String(v || "").toLowerCase();
+  // Role = the job title, across clients (e.g. every "Senior Accountant" role); Job = one job.
+  const roleOf = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? String(j.role || "").trim() : ""; };
   const ql = low(q).trim();
   const pMatch = (p) => (!ql || [p.full_name, p.first_name, p.last_name, p.title, p.company, p.location, p.email].some((v) => low(v).includes(ql)))
+    && (!fl.role || low(roleOf(p.job_id)) === low(fl.role))
     && (!fl.job || p.job_id === fl.job)
     && (!fl.source || (fl.source === "pool" ? !!(p.data && p.data.pool) : p.source === fl.source))
     && (!fl.email || (fl.email === "with" ? !!p.email : !p.email))
     && (!fl.fit || (Number(p.fit) || 0) >= fl.fit);
   const lMatch = (l) => (!ql || [l.job_title, l.company, l.location, l.contact_name, l.contact_email].some((v) => low(v).includes(ql)))
-    && (!fl.country || l.country === fl.country) && (!fl.channel || l.channel === fl.channel);
+    && (!fl.role || low(l.job_title).trim() === low(fl.role)) && (!fl.country || l.country === fl.country) && (!fl.channel || l.channel === fl.channel);
   const pAll = (prospects || []).filter(pMatch);
   const lAll = (leads || []).filter(lMatch);
   const pList = pAll.filter((p) => pGroups[pf].includes(p.status));
@@ -5814,7 +5817,15 @@ function CampaignsPage({ toast, S }) {
   const pages = Math.max(1, Math.ceil(curList.length / size));
   const curPage = Math.min(page, pages);
   const pageOf = (list) => list.slice((curPage - 1) * size, curPage * size);
-  const nFilters = (tab === "leads" ? [fl.country, fl.channel] : [fl.job, fl.source, fl.email, fl.fit]).filter(Boolean).length;
+  const nFilters = (tab === "leads" ? [fl.role, fl.country, fl.channel] : [fl.role, fl.job, fl.source, fl.email, fl.fit]).filter(Boolean).length;
+  // Distinct roles, case-insensitive, first spelling kept.
+  const roleOpts = (vals) => { const m = new Map(); vals.map((v) => String(v || "").trim()).filter(Boolean).forEach((v) => { if (!m.has(v.toLowerCase())) m.set(v.toLowerCase(), v); }); return [...m.values()].sort((a, b) => a.localeCompare(b)); };
+  const roleSelect = (vals) => (
+    <select value={fl.role} onChange={(e) => setF("role", e.target.value)} className={selCls} style={{ borderColor: C.line, maxWidth: 260 }} aria-label="Role">
+      <option value="">All roles</option>
+      {roleOpts(vals).map((r) => <option key={r} value={r}>{r}</option>)}
+    </select>
+  );
   const opts = (vals) => [...new Set(vals.filter(Boolean))];
   const selCls = "text-sm rounded-lg border px-2.5 py-2 bg-white";
   const filterBar = (
@@ -5828,6 +5839,7 @@ function CampaignsPage({ toast, S }) {
       </div>
       {showFilters && (tab === "leads" ? (
         <div className="flex flex-wrap gap-2 items-center">
+          {roleSelect((leads || []).map((l) => l.job_title))}
           <select value={fl.country} onChange={(e) => setF("country", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Country">
             <option value="">All countries</option>
             {opts((leads || []).map((l) => l.country)).sort().map((c) => <option key={c} value={c}>{(COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c}</option>)}
@@ -5835,10 +5847,11 @@ function CampaignsPage({ toast, S }) {
           <select value={fl.channel} onChange={(e) => setF("channel", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Contact by">
             <option value="">Email or LinkedIn</option><option value="email">Email</option><option value="linkedin">LinkedIn</option><option value="none">No contact</option>
           </select>
-          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, country: "", channel: "" }))}>Clear filters</button>}
+          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, role: "", country: "", channel: "" }))}>Clear filters</button>}
         </div>
       ) : (
         <div className="flex flex-wrap gap-2 items-center">
+          {roleSelect((prospects || []).map((p) => roleOf(p.job_id)))}
           <select value={fl.job} onChange={(e) => setF("job", e.target.value)} className={selCls} style={{ borderColor: C.line, maxWidth: 280 }} aria-label="Job">
             <option value="">All jobs</option>
             {opts((prospects || []).map((p) => p.job_id)).map((id) => ({ id, label: jobLabel(id) || "Closed or removed job" })).sort((a, b) => a.label.localeCompare(b.label)).map((j) => <option key={j.id} value={j.id}>{j.label}</option>)}
@@ -5854,7 +5867,7 @@ function CampaignsPage({ toast, S }) {
           <select value={fl.fit} onChange={(e) => setF("fit", Number(e.target.value))} className={selCls} style={{ borderColor: C.line }} aria-label="Fit">
             <option value={0}>Any fit</option>{[50, 60, 70, 80].map((n) => <option key={n} value={n}>{n}% fit or more</option>)}
           </select>
-          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, job: "", source: "", email: "", fit: 0 }))}>Clear filters</button>}
+          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, role: "", job: "", source: "", email: "", fit: 0 }))}>Clear filters</button>}
         </div>
       ))}
     </div>
@@ -5874,7 +5887,7 @@ function CampaignsPage({ toast, S }) {
           <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue{conn.sender === "none" && !(status.blockers || []).length ? ", or use Send it myself on any email to send it from your own mailbox" : ""}. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
         </div>
       ) : null}
-      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); }} />
+      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); setFl((x) => ({ ...x, role: "" })); }} />
 
       {tab === "candidates" && (
         <Card>
