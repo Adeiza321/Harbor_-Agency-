@@ -8,6 +8,8 @@ import { button, emailShell, esc, loadBrand, sendBrevo, type Brand } from "./bra
 //   send    email up to `limit` of them (default 50) and stamp preferences_invited_at, so nobody
 //           gets it twice; unsubscribed candidates and drafts are never emailed
 //   test    send the email to the person asking (or `to`), with the link on the preview page
+//   test_journey  send the first email a candidate gets (assigned a recruiter, with the "keep your
+//           profile and recommend you" Yes / No question), with every link on the preview page
 // Rec Ops / Admins only, or a short-lived ops token (public.ops_tokens) for scheduled runs.
 
 const cors = {
@@ -29,6 +31,27 @@ export function inviteEmail(b: Brand, o: { name: string; link: string }) {
      ${button(b, o.link, "Answer the questions")}
      <div style="font-size:13px;line-height:1.6;margin-top:16px;color:#56605A;">Your answers are only seen by our recruitment team. Visa details are never shared with employers.</div>`,
     undefined, o.link.replace(/([?&])prefs=1/, "$1unsub=1"));
+  return { subject, html };
+}
+
+// Same Yes / No block as candidate emails (send-message), for the journey test.
+function pitchYesNo(b: Brand, portalUrl: string) {
+  const btn = (href: string, label: string, solid: boolean) =>
+    `<a href="${esc(href)}" style="display:inline-block;margin:10px 8px 0 0;padding:10px 22px;border:1.5px solid ${b.color};${solid ? `background:${b.color};color:#ffffff;` : `color:${b.color};`}text-decoration:none;border-radius:10px;font-family:Arial,sans-serif;font-size:14px;font-weight:600;">${label}</a>`;
+  return `<div style="margin-top:26px;padding:16px 18px;border:1px solid #E4DED2;border-radius:12px;background:#FAF8F3;">
+    <div style="font-size:15px;line-height:1.6;">Would you like us to pitch your profile anonymously for future roles we think you might be a good fit for? We won't submit your full profile unless you show interest.</div>
+    ${btn(portalUrl + "&pitch=yes", "Yes", true)}${btn(portalUrl + "&pitch=no", "No", false)}
+  </div>`;
+}
+function journeyEmail(b: Brand, o: { name: string; recruiter: string; role: string; client: string; portalUrl: string }) {
+  const first = esc(String(o.name || "there").split(" ")[0] || "there");
+  const subject = `Your application for ${o.role} is under review`;
+  const html = emailShell(b, subject,
+    `<div style="font-size:20px;margin-bottom:8px;">Hi ${first},</div>
+     <div style="font-size:15px;line-height:1.6;">Good news: you've been assigned a recruiter, <b>${esc(o.recruiter)}</b>, for the <b>${esc(o.role)}</b> role at <b>${esc(o.client)}</b>, and your application is now under review. Once a decision is made, you'll get another email updating you on its status.</div>
+     <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message ${esc(o.recruiter.split(" ")[0])} any time if you have questions or want to stay connected.</div>
+     ${button(b, o.portalUrl, "Message your recruiter")}
+     ${pitchYesNo(b, o.portalUrl)}`, undefined, o.portalUrl + "&unsub=1");
   return { subject, html };
 }
 
@@ -60,6 +83,15 @@ Deno.serve(async (req: Request) => {
       const to = String(body.to || me.email || "").trim();
       if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return json({ error: "No email address to send the test to" }, 400);
       const m = inviteEmail(b, { name: String(body.name || me.full_name || "there"), link: `${PORTAL_BASE}/?c=preview&prefs=1` });
+      const ok = await sendBrevo(b, { email: to }, "[Test] " + m.subject, m.html);
+      return ok ? json({ ok: true, sentTo: to }) : json({ error: "The email couldn't be sent (Brevo)" }, 502);
+    }
+
+    if (action === "test_journey") {
+      const to = String(body.to || me.email || "").trim();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return json({ error: "No email address to send the test to" }, 400);
+      const m = journeyEmail(b, { name: String(body.name || me.full_name || "there"), recruiter: String(body.recruiter || "Ada Obi"), role: String(body.role || "Financial Controller"),
+        client: String(body.client || "a sample client"), portalUrl: `${PORTAL_BASE}/?c=preview` });
       const ok = await sendBrevo(b, { email: to }, "[Test] " + m.subject, m.html);
       return ok ? json({ ok: true, sentTo: to }) : json({ error: "The email couldn't be sent (Brevo)" }, 502);
     }
