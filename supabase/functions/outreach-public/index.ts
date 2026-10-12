@@ -1,5 +1,17 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+// "City, Country" without repeating a country the location already names (same as the app's jobPlace).
+const COUNTRY_ALIASES: Record<string, string[]> = { "United States": ["usa", "us", "u.s.", "united states of america"], "United Kingdom": ["uk", "u.k.", "england", "scotland", "wales", "great britain"], "United Arab Emirates": ["uae"] };
+function jobPlace(location?: string | null, country?: string | null) {
+  const loc = String(location || "").trim(), c = String(country || "").trim();
+  if (!c) return loc;
+  if (/^remote\b.*worldwide/i.test(c)) return !loc ? c : /remote|worldwide|anywhere/i.test(loc) ? loc : loc + " \u00b7 Remote";
+  if (!loc) return c;
+  const low = loc.toLowerCase(), names = [c].concat(COUNTRY_ALIASES[c] || []).map((n) => n.toLowerCase());
+  if (names.some((n) => new RegExp("(^|[\\s,(/-])" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[\\s,)/-])").test(low))) return loc;
+  return loc + ", " + c;
+}
+
 // Public endpoint behind the links in outreach emails (no login; the random token in the link
 // identifies the person). The page itself is Pronext's app at /?u=<token>&k=p|l&a=<action>,
 // which calls this function:
@@ -42,7 +54,7 @@ Deno.serve(async (req: Request) => {
     };
 
     if (kind === "p") {
-      const { data: p } = await admin.from("prospects").select("id,job_id,first_name,full_name,email,status,jobs(role_title,location,work_setup,status,description,client,employment_type,min_pay,max_pay,currency,salary_period,commission_only)").eq("unsub_token", token).maybeSingle();
+      const { data: p } = await admin.from("prospects").select("id,job_id,first_name,full_name,email,status,jobs(role_title,location,country,work_setup,status,description,client,employment_type,min_pay,max_pay,currency,salary_period,commission_only)").eq("unsub_token", token).maybeSingle();
       if (!p) return json({ ok: true, gone: true });
       const job: any = (p as any).jobs || {};
       if (action === "info") {
@@ -57,7 +69,7 @@ Deno.serve(async (req: Request) => {
         try { const f = new Intl.NumberFormat("en-US", { style: "currency", currency: job.currency || "USD", maximumFractionDigits: 0 }); money = (n: number) => f.format(n); } catch (_) { /* unknown currency code */ }
         const per = ({ yearly: "a year", monthly: "a month", weekly: "a week", daily: "a day", hourly: "an hour" } as Record<string, string>)[String(job.salary_period || "Yearly").toLowerCase()] || "";
         const pay = showPay ? [job.min_pay, job.max_pay].filter(Boolean).map((n: number) => money(Number(n))).join(" – ") + (per ? " " + per : "") : "";
-        return json({ ok: true, kind, firstName: p.first_name, role: job.role_title, location: job.location, setup: job.work_setup, employment: job.employment_type || "",
+        return json({ ok: true, kind, firstName: p.first_name, role: job.role_title, location: jobPlace(job.location, job.country), setup: job.work_setup, employment: job.employment_type || "",
           pay, description: job.status === "Closed" ? "" : description.slice(0, 20000), closed: job.status === "Closed", agencyName: String(st?.agency_name || "").trim(), status: p.status });
       }
       if (action === "unsubscribe") {

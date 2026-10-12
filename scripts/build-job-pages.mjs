@@ -56,7 +56,23 @@ function payText(p) {
 }
 const EMP = { "full-time": "FULL_TIME", "full time": "FULL_TIME", "part-time": "PART_TIME", "part time": "PART_TIME", contract: "CONTRACTOR", contractor: "CONTRACTOR", temporary: "TEMPORARY", temp: "TEMPORARY", internship: "INTERN", intern: "INTERN", "per diem": "PER_DIEM", volunteer: "VOLUNTEER" };
 const COUNTRY = { "united states": "US", usa: "US", "united kingdom": "GB", uk: "GB", nigeria: "NG", canada: "CA", malaysia: "MY", ireland: "IE", germany: "DE", france: "FR", netherlands: "NL", spain: "ES", "united arab emirates": "AE", "south africa": "ZA", kenya: "KE", ghana: "GH", india: "IN", australia: "AU", singapore: "SG" };
-const countryCode = (c) => { const s = String(c || "").trim(); return /^[A-Za-z]{2}$/.test(s) ? s.toUpperCase() : COUNTRY[s.toLowerCase()] || s; };
+// Every other country by its English name (Node's built-in country names), so Google gets the right
+// two-letter code wherever the job is. The short list above wins for common spellings like "UK".
+{ const dn = new Intl.DisplayNames("en", { type: "region" }); const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; const OLD = new Set("AN BU CS DD DY FQ HV JT MI NH NQ NT PC PU PZ RH SU TP VD WK YD YU ZR".split(" "));
+  for (const a of A) for (const b of A) { const c = a + b; if (OLD.has(c)) continue; let n; try { n = dn.of(c); } catch { continue; } if (n && n !== c) { const k = n.toLowerCase(); if (!COUNTRY[k]) COUNTRY[k] = c; const k2 = k.replace(/ & /g, " and "); if (!COUNTRY[k2]) COUNTRY[k2] = c; } }
+  Object.assign(COUNTRY, { "congo (drc)": "CD", "congo (republic)": "CG", "côte d'ivoire": "CI", "ivory coast": "CI", "türkiye": "TR", turkey: "TR", "south korea": "KR", "north korea": "KP", "czechia": "CZ", "czech republic": "CZ", eswatini: "SZ", "north macedonia": "MK", "saint lucia": "LC", "vatican city": "VA", palestine: "PS", "us virgin islands": "VI", "british virgin islands": "VG", "timor-leste": "TL", myanmar: "MM", burma: "MM", "hong kong": "HK", macao: "MO", macau: "MO", micronesia: "FM", "saint kitts and nevis": "KN", "saint vincent and the grenadines": "VC", "são tomé and príncipe": "ST", "sao tome and principe": "ST", "bosnia and herzegovina": "BA" }); }
+const countryCode = (c) => { const s = String(c || "").trim(); return COUNTRY[s.toLowerCase()] || (/^[A-Za-z]{2}$/.test(s) ? s.toUpperCase() : s); };
+// Same as the app's jobPlace(): "City, Country" without repeating a country the location already names.
+const COUNTRY_ALIASES = { "United States": ["usa", "us", "u.s.", "united states of america"], "United Kingdom": ["uk", "u.k.", "england", "scotland", "wales", "great britain"], "United Arab Emirates": ["uae"] };
+function jobPlace(location, country) {
+  const loc = String(location || "").trim(), c = String(country || "").trim();
+  if (!c) return loc;
+  if (/^remote\b.*worldwide/i.test(c)) return !loc ? c : /remote|worldwide|anywhere/i.test(loc) ? loc : loc + " \u00b7 Remote";
+  if (!loc) return c;
+  const low = loc.toLowerCase(), names = [c].concat(COUNTRY_ALIASES[c] || []).map((n) => n.toLowerCase());
+  if (names.some((n) => new RegExp("(^|[\\s,(/-])" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[\\s,)/-])").test(low))) return loc;
+  return loc + ", " + c;
+}
 const US_STATES = "Alabama Alaska Arizona Arkansas California Colorado Connecticut Delaware Florida Georgia Hawaii Idaho Illinois Indiana Iowa Kansas Kentucky Louisiana Maine Maryland Massachusetts Michigan Minnesota Mississippi Missouri Montana Nebraska Nevada Ohio Oklahoma Oregon Pennsylvania Tennessee Texas Utah Vermont Virginia Washington Wisconsin Wyoming".split(" ")
   .concat(["New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Rhode Island", "South Carolina", "South Dakota", "West Virginia", "District of Columbia"]);
 const isState = (s) => /^[A-Z]{2}$/.test(s) || US_STATES.some((x) => x.toLowerCase() === s.toLowerCase());
@@ -158,7 +174,7 @@ ${head}`;
 const jobBody = (j) => `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif">
 <p><a href="${SITE}/jobs/">All jobs</a></p>
 <h1>${esc(j.title)}</h1>
-<p>${esc([org.name, j.location || j.country, j.workSetup, j.employmentType, payText(j.pay)].filter(Boolean).join(" · "))}</p>
+<p>${esc([org.name, jobPlace(j.location, j.country), j.workSetup, j.employmentType, payText(j.pay)].filter(Boolean).join(" · "))}</p>
 <p><a href="${jobUrl(j.slug)}?go=apply">Apply now</a> · <a href="${jobUrl(j.slug)}?refer=1">Refer someone</a></p>
 <article>${descHtml(j.description)}</article>
 </main>`;
@@ -175,7 +191,7 @@ if (domain) writeFileSync(join(OUT, "CNAME"), domain + "\n");
 for (const j of jobs) {
   const dir = join(OUT, "jobs", j.slug);
   mkdirSync(dir, { recursive: true });
-  const place = j.location || (j.workSetup && /remote/i.test(j.workSetup) ? "Remote" : j.country) || "";
+  const place = jobPlace(j.location, j.country) || (j.workSetup && /remote/i.test(j.workSetup) ? "Remote" : "");
   writeFileSync(join(dir, "index.html"), page({
     title: `${j.title}${place && !String(j.title).includes(place) ? " – " + place : ""} | ${org.short} Jobs`,
     description: snippet(j) || `${j.title} – apply with ${org.short}.`,
@@ -195,7 +211,7 @@ writeFileSync(join(OUT, "jobs", "index.html"), page({
   canonical: `${SITE}/jobs/`,
   head: `<script type="application/ld+json">${jsonLd(boardList)}</script>\n`,
   body: `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif"><h1>Jobs at ${esc(org.short)}</h1><ul>${jobs.map((j) =>
-    `<li><a href="${jobUrl(j.slug)}">${esc(j.title)}</a> – ${esc([j.location || j.country, j.workSetup, j.employmentType].filter(Boolean).join(" · "))}</li>`).join("")}</ul></main>`,
+    `<li><a href="${jobUrl(j.slug)}">${esc(j.title)}</a> – ${esc([jobPlace(j.location, j.country), j.workSetup, j.employmentType].filter(Boolean).join(" · "))}</li>`).join("")}</ul></main>`,
 }));
 
 const urls = [{ loc: `${SITE}/jobs/`, lastmod: day(jobs[0]?.postedAt) }, ...jobs.map((j) => ({ loc: jobUrl(j.slug), lastmod: day(j.postedAt) }))];

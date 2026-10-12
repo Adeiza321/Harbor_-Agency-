@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
-import { COUNTRY_NAMES, targetCodes } from "./regions.ts";
+import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, processLead } from "./leads.ts";
 import { composeProspect, manualCompose, markManualSent, processQueue, queueLeads, queueProspects, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo } from "./apollo.ts";
@@ -65,7 +65,7 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
   // search only when the bench is short and Apollo is connected.
   try {
     const { data: full } = await admin.from("jobs").select("*").eq("id", job.id).single();
-    if (full) { await searchArea(admin, full, targetCodes(s.regions).map((c: string) => COUNTRY_NAMES[c]).filter(Boolean)); job.sourcing = full.sourcing; }
+    if (full) { await searchArea(admin, full, jobCountryNames(full)); job.sourcing = full.sourcing; }
   } catch (e) { console.error("search area", errMsg(e)); }
   // Free X-ray search for every newly live job (runs in the background; nothing is spent).
   try {
@@ -140,7 +140,7 @@ Deno.serve(async (req: Request) => {
       if (body.action === "search_area" && body.jobId) {
         const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();
         if (!job) return json({ error: "Job not found" }, 404);
-        return json({ ok: true, area: await searchArea(admin, job, targetCodes(s.regions).map((c: string) => COUNTRY_NAMES[c]).filter(Boolean)) });
+        return json({ ok: true, area: await searchArea(admin, job, jobCountryNames(job)) });
       }
       if (body.action === "leads_daily") {
         if (!s.leads.enabled) return json({ ok: true, skipped: "Client leads are switched off in Outreach > Setup" });
@@ -212,7 +212,7 @@ Deno.serve(async (req: Request) => {
     if (action === "search_area") {
       const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId || "")).maybeSingle();
       if (!job) return json({ error: "Job not found" }, 404);
-      const area = await searchArea(admin, job, targetCodes(s.regions).map((c) => COUNTRY_NAMES[c]).filter(Boolean));
+      const area = await searchArea(admin, job, jobCountryNames(job));
       return json({ ok: true, area });
     }
 

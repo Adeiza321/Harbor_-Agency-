@@ -3,13 +3,13 @@
 //      people with a verified work email only
 //   2. AI ranks the search results on title, seniority and employer; only the best get revealed
 //   3. reveal emails (1 Apollo credit each) up to the per-job limit; drop anyone unsubscribed,
-//      already in Pronext, or outside the target regions
+//      already in Pronext
 //   4. AI checks each revealed profile against the job; keeps Perfect/Good fits
 //   5. AI writes each person a short email; saved as prospects for review (or queued if auto)
 
 import { askAI } from "./ai.ts";
 import { searchPeople, matchById, apolloKey, type ApolloPerson } from "./apollo.ts";
-import { COUNTRY_NAMES, countryCode, jobCountryCode, regionOf, targetCodes } from "./regions.ts";
+import { COUNTRY_NAMES, countryCode, jobCountryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { emailHash, normEmail } from "./send.ts";
 import { anonymizeJd, fitsToPercent, historyEmployers, sameCompany, workedAt, type Settings } from "./common.ts";
 
@@ -101,11 +101,12 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     return { ok: true, skipped: true, message: `Your bench already has ${good} strong fits, so no outside search was needed.` };
   }
 
-  const allowed = targetCodes(s.regions);
+  // Outside candidates are searched where the job is: its country, city and work setup. The
+  // Outreach regions only decide where to look for new clients, never which jobs get candidates.
   const code = jobCountryCode(job);
-  if (code && !allowed.includes(code)) {
-    await record({ skipped: "Job is outside the target regions" });
-    return { ok: true, skipped: true, message: "This job is outside your target regions (Outreach > Setup)." };
+  if (!code) {
+    await record({ skipped: "Add a country to this job to find outside candidates" });
+    return { ok: true, skipped: true, message: "Add a hiring country to this job to find outside candidates." };
   }
 
   const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8);
@@ -113,10 +114,8 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
   const countryName = code ? COUNTRY_NAMES[code] : "";
   // Commutable cities for on-site/hybrid, preferred time zones for remote (see searchArea);
   // falls back to the plain location or country if that can't be worked out.
-  const area = await searchArea(admin, job, allowed.map((c) => COUNTRY_NAMES[c]).filter(Boolean));
-  const locations = area ? area.locations : remote
-    ? (countryName ? [countryName] : allowed.map((c) => COUNTRY_NAMES[c]).filter(Boolean))
-    : [job.location || countryName].filter(Boolean);
+  const area = await searchArea(admin, job, jobCountryNames(job));
+  const locations = area ? area.locations : remote ? [countryName].filter(Boolean) : [job.location || countryName].filter(Boolean);
   if (!locations.length) { await record({ error: "The job has no location or country" }); return { ok: false, message: "Add a location or country to the job first." }; }
   // Checks passed: an outside search is needed. With checkOnly nothing is spent; the caller
   // asks an Admin to approve the Apollo credits first.
@@ -152,7 +151,7 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
     if (sup) continue;
     const pc = countryCode(p.country);
-    if (pc && !allowed.includes(pc)) continue;
+    if (pc && pc !== code) continue; // someone based outside the job's country
     // Nor anyone who has worked there before (from their full employment history).
     if (workedAt([p.company, ...historyEmployers(p.history)], job.client)) continue;
     people.push(p);

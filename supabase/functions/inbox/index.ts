@@ -13,6 +13,8 @@ import { referralEmail } from "./referral.ts";
 //   unassign put an assigned application back in New (the candidate is kept, without a recruiter)
 //   followup remind someone who was referred (at most 2 reminders, a day apart). A referral
 //            can't be assigned until they've said they're interested.
+//   delete   remove the application from the Inbox for good, with the CV uploaded with it. A
+//            candidate it was assigned to keeps their profile and their own copy of the CV.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -54,6 +56,18 @@ Deno.serve(async (req: Request) => {
         ? { status: "dismissed", handled_at: now, handled_by: me.id, note: String(body.note || "").trim().slice(0, 500) || null }
         : { status: "new", handled_at: null, handled_by: null, note: null };
       await admin.from("applications").update(patch).eq("id", app.id);
+      return json({ ok: true });
+    }
+
+    if (body.action === "delete") {
+      // The CV goes too, unless a candidate still points at this exact file (their copy normally lives
+      // in their own folder, made when the application was assigned).
+      if (app.resume_path) {
+        const { count } = await admin.from("candidates").select("id", { count: "exact", head: true }).eq("resume_path", app.resume_path);
+        if (!count) await admin.storage.from("resumes").remove([app.resume_path]).then(() => {}, () => {});
+      }
+      const { error } = await admin.from("applications").delete().eq("id", app.id);
+      if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
 
