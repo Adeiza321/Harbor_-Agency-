@@ -8,7 +8,7 @@
 //      marked met / unconfirmed / not met, the gaps, and a fit score.
 //   5. The best (up to Settings.xrayPerJob) are saved as prospects next to Apollo's, tagged with
 //      where they were found, without an email. GitHub public emails are added straight away (free);
-//      LinkedIn people's emails are looked up in Apollo when asked (emails.ts, needs approval).
+//      LinkedIn people's emails are looked up in Apollo automatically, within a daily limit (emails.ts).
 // No credits are spent. The run is recorded on jobs.xray.
 
 import { askAI } from "./ai.ts";
