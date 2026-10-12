@@ -72,6 +72,12 @@ export async function matchById(id: string): Promise<ApolloPerson | null> {
   return toPerson(data?.person);
 }
 
+// Reveal a person from their LinkedIn profile address (X-ray results). 1 credit when an email comes back.
+export async function matchByLinkedIn(url: string): Promise<ApolloPerson | null> {
+  const data = await call("/people/match", { linkedin_url: url, reveal_personal_emails: false, reveal_phone_number: false });
+  return toPerson(data?.person);
+}
+
 // Find a named person at a company (for a job poster whose email we don't have).
 export async function matchByName(first: string, last: string, domain: string, company: string): Promise<ApolloPerson | null> {
   const data = await call("/people/match", { first_name: first, last_name: last, domain: domain || undefined, organization_name: domain ? undefined : company, reveal_personal_emails: false, reveal_phone_number: false });

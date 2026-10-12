@@ -3,15 +3,17 @@
 //   apollo_search  outside search for one job: Apollo reveals up to prospectsPerJob emails
 //   leads_fetch    the client-lead feed: up to postingsPerDay TheirStack postings, plus up to
 //                  the same number of Apollo lookups for hiring contacts' emails
+//   xray_emails    emails for people the X-ray search found on LinkedIn: 1 Apollo credit per email
 
 import type { Settings } from "./common.ts";
 
-export type Kind = "apollo_search" | "leads_fetch";
+export type Kind = "apollo_search" | "leads_fetch" | "xray_emails";
 
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
-export function estimate(kind: Kind, s: Settings) {
+export function estimate(kind: Kind, s: Settings, count = 0) {
   if (kind === "apollo_search") return { apollo: s.prospectsPerJob, theirstack: 0 };
+  if (kind === "xray_emails") return { apollo: count, theirstack: 0 };
   return { apollo: s.leads.postingsPerDay, theirstack: s.leads.postingsPerDay };
 }
 export const costText = (e: { apollo: number; theirstack: number }) =>
@@ -34,12 +36,12 @@ ${button(b, link, "Review in Pronext")}`, b.name + " · spending approvals");
 }
 
 // One open request per job (or one feed request) at a time.
-export async function requestSpend(admin: any, kind: Kind, s: Settings, o: { jobId?: string | null; title: string; requestedBy?: string | null; payload?: Record<string, unknown> }) {
+export async function requestSpend(admin: any, kind: Kind, s: Settings, o: { jobId?: string | null; title: string; requestedBy?: string | null; payload?: Record<string, unknown>; count?: number }) {
   let q = admin.from("spend_requests").select("*").eq("kind", kind).eq("status", "pending");
   q = o.jobId ? q.eq("job_id", o.jobId) : q.is("job_id", null);
   const { data: open } = await q.limit(1).maybeSingle();
   if (open) return { request: open, created: false };
-  const est = estimate(kind, s);
+  const est = estimate(kind, s, o.count || 0);
   const { data: req, error } = await admin.from("spend_requests").insert({
     kind, job_id: o.jobId || null, title: o.title, est_apollo: est.apollo, est_theirstack: est.theirstack, cost_text: costText(est),
     payload: o.payload || {}, requested_by: o.requestedBy || null,
