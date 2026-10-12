@@ -4,13 +4,15 @@
 //     verified work email, or a personal email when there's no verified work one (1 Apollo credit per email found). This runs automatically, without an
 //     approval: every 10 minutes for the best X-ray people (fit >= outreach.xrayEmailMinFit), never more
 //     than outreach.xrayEmailsPerDay lookups a day (the daily cap stands in for the approval).
+//     When Apollo has nothing usable, ContactOut is tried by the same profile (contactout.ts, CONTACTOUT_API_KEY).
 // Only verified work emails or Apollo-found personal emails are kept. Each person with an email gets the same short, personal draft as
 // Apollo's own prospects, ready for the usual approve-and-send flow (nothing is sent from here).
 
 import { askAI } from "./ai.ts";
 import { apolloKey, bestEmail, matchByLinkedIn } from "./apollo.ts";
 import { jobBrief } from "./prospects.ts";
-import { countryCode, regionOf } from "./regions.ts";
+import { countryCode, jobCountryCode, regionOf } from "./regions.ts";
+import { contactoutByLinkedIn, contactoutKey } from "./contactout.ts";
 import { emailHash } from "./send.ts";
 import { anonymizeJd, sameCompany, type Settings } from "./common.ts";
 
@@ -81,8 +83,11 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   if (list.length && !apolloKey()) return { ok: false, message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to look up emails." };
   // Each person's own job (a run can span several jobs), to leave out the client's own staff.
   const jobIds = [...new Set(list.map((p) => p.job_id))];
-  const { data: jobRows } = jobIds.length ? await admin.from("jobs").select("id,client").in("id", jobIds) : { data: [] };
+  const { data: jobRows } = jobIds.length ? await admin.from("jobs").select("id,client,country,location").in("id", jobIds) : { data: [] };
   const clientOf = new Map((jobRows || []).map((j: any) => [j.id, j.client]));
+  // Personal emails from ContactOut only for jobs outside the EU/UK/EEA (see contactout.ts).
+  const personalOk = new Map((jobRows || []).map((j: any) => [j.id, regionOf(jobCountryCode(j)) !== "EU"]));
+  let coFound = 0, coTried = 0;
   const found: string[] = [];
   let credits = 0, noMatch = 0, unverified = 0;
   const errors: string[] = [];
@@ -90,20 +95,31 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
     let m: any = null;
     try { m = await matchByLinkedIn(p.linkedin_url); }
     catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); if (/rate|credit|402|403/i.test(errors[errors.length - 1])) break; continue; }
-    const lookup = { ...(p.data?.email_lookup || {}), apollo: new Date().toISOString() };
+    const lookup: Record<string, string> = { ...(p.data?.email_lookup || {}), apollo: new Date().toISOString() };
     // Verified work email first; a personal email when there's no verified work one.
-    const best = bestEmail(m);
+    let best = bestEmail(m);
     if (m?.email || best.email) credits++;
-    if (!m) noMatch++;
-    const good = !!best.email && okEmail(best.email) && !sameCompany(m.company, clientOf.get(p.job_id)) && !(await suppressed(admin, best.email)) && !(m.email && m.email !== best.email && await suppressed(admin, m.email));
+    const atClient = !!m && sameCompany(m.company, clientOf.get(p.job_id));
+    let good = !!best.email && okEmail(best.email) && !atClient && !(await suppressed(admin, best.email)) && !(m.email && m.email !== best.email && await suppressed(admin, m.email));
+    let via = "Apollo (from their LinkedIn profile)";
+    // Fallback: ContactOut, by the same LinkedIn profile, when Apollo had nothing usable.
+    if (!good && !atClient && contactoutKey() && !p.data?.email_lookup?.contactout) {
+      coTried++;
+      lookup.contactout = new Date().toISOString();
+      try {
+        const co = await contactoutByLinkedIn(p.linkedin_url, personalOk.get(p.job_id) !== false);
+        if (co.email && !(await suppressed(admin, co.email))) { best = { email: co.email, status: co.status }; good = true; via = "ContactOut (from their LinkedIn profile)"; coFound++; }
+      } catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); }
+    }
+    if (!m && !good) noMatch++;
     if (m && !good) unverified++;
     const cc = countryCode(m?.country || "");
-    const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup, ...(good ? { email_source: "Apollo (from their LinkedIn profile)", history: m.history || p.data?.history } : {}) } };
+    const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup, ...(good ? { email_source: via, history: m?.history || p.data?.history } : {}) } };
     if (good) Object.assign(patch, {
       email: best.email, email_status: best.status,
-      first_name: p.first_name || m.first_name || null, last_name: p.last_name || m.last_name || null, full_name: p.full_name || m.name || null,
-      title: p.title || m.title || null, company: p.company || m.company || null,
-      location: p.location || [m.city, m.state].filter(Boolean).join(", ") || null, country: cc || m.country || null, region: regionOf(cc),
+      first_name: p.first_name || m?.first_name || null, last_name: p.last_name || m?.last_name || null, full_name: p.full_name || m?.name || null,
+      title: p.title || m?.title || null, company: p.company || m?.company || null,
+      location: p.location || [m?.city, m?.state].filter(Boolean).join(", ") || null, country: cc || m?.country || p.country || null, region: cc ? regionOf(cc) : (p.region || null),
     });
     await admin.from("prospects").update(patch).eq("id", p.id);
     if (good) found.push(p.id);
@@ -112,10 +128,11 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   if (found.length) await draftEmails(admin, found, s, agencyName);
   const total = gh.found + found.length;
   const parts = [`Found ${total} email${total === 1 ? "" : "s"}`];
-  if (list.length) parts.push(`${found.length} of ${list.length} LinkedIn ${list.length === 1 ? "person" : "people"} through Apollo (${credits} credit${credits === 1 ? "" : "s"} used)`);
+  if (list.length) parts.push(`${found.length - coFound} of ${list.length} LinkedIn ${list.length === 1 ? "person" : "people"} through Apollo (${credits} credit${credits === 1 ? "" : "s"} used)`);
+  if (coTried) parts.push(`${coFound} of ${coTried} more through ContactOut`);
   if (gh.checked) parts.push(`${gh.found} of ${gh.checked} from public GitHub profiles (free)`);
   const why = [noMatch ? `${noMatch} not in Apollo` : "", unverified ? `${unverified} without a usable work or personal email` : ""].filter(Boolean).join(", ");
-  return { ok: true, found: total, apollo: found.length, github: gh.found, credits, ids: found,
+  return { ok: true, found: total, apollo: found.length - coFound, contactout: coFound, github: gh.found, credits, ids: found,
     message: parts.join(": ").replace(": ", ". ") + (why ? `. Not found: ${why}.` : ".") + (total ? " Review and approve them under the job to send." : ""),
     ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 3) } : {}) };
 }
