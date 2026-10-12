@@ -11,7 +11,7 @@
 import type { ResumeInput } from "./resume.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { cleanPay } from "./profile.ts";
-import { lessonsFor, lessonsPrompt } from "./lessons.ts";
+import { lessonsFor, lessonsPrompt, NO_LESSONS } from "./lessons.ts";
 
 type Ask = (system: string, text: string, resume: ResumeInput | null, maxTokens: number) => Promise<any>;
 type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null; why?: string }>;
@@ -216,7 +216,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
 
   const { resume } = await loadResume(admin, candidate);
   const industries = await ensureIndustries(admin, candidate, resume);
-  const lessons = lessonsPrompt(await lessonsFor(admin, job).catch(() => ({ same: [], other: [] })), job);
+  const lessons = lessonsPrompt(await lessonsFor(admin, job).catch(() => NO_LESSONS), job);
   const here = answersOn(link, job);
   const elsewhere = links.filter((l) => l.id !== link.id).flatMap((l) => {
     const j = jobOf(l.job_id);
@@ -328,7 +328,7 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
   const { resume } = await loadResume(admin, candidate);
   // Bench checks review several people at once, so they use employer lookups already on file.
   const industries = opts.skipLookup ? (Array.isArray(candidate.industries) ? candidate.industries : []) : await ensureIndustries(admin, candidate, resume);
-  const lessons = lessonsPrompt(await lessonsFor(admin, job).catch(() => ({ same: [], other: [] })), job);
+  const lessons = lessonsPrompt(await lessonsFor(admin, job).catch(() => NO_LESSONS), job);
 
   const system =
     "You are a recruitment analyst checking whether a candidate already in the database is a fit for a NEW role they have not been put forward for. " +
@@ -524,22 +524,22 @@ export async function draftFollowups(admin: any, linkId: string, askAI: Ask) {
   const jobQs: string[] = (Array.isArray(job.screening_questions) ? job.screening_questions : []).filter(Boolean).map(String);
   const asked = [...askedQuestions(links, jobOf), ...jobQs];
   const answered = links.flatMap((l) => answersOn(l, jobOf(l.job_id)));
-  // Must-haves first; within each, lines learned from client rejections come first.
+  // Must-haves first; within each, lines learned from past rejections on this role come first.
   const learned = (r: any) => /^(client feedback|watch-out):/i.test(String(r.requirement || "")) ? 0 : 1;
-  const open = (link.ai?.requirements || []).filter((r: any) => r.status !== "met")
+  const open = (link.ai?.requirements || []).filter((r: any) => r.status !== "met" && !/^client liked:/i.test(String(r.requirement || "")))
     .sort((a: any, b: any) => ((a.type === "must" ? 0 : 2) + learned(a)) - ((b.type === "must" ? 0 : 2) + learned(b)));
-  const ls = await lessonsFor(admin, job).catch(() => ({ same: [], other: [] }));
-  const hints = [...ls.same, ...ls.other].filter((l) => l.look_for || l.question);
+  const ls = await lessonsFor(admin, job).catch(() => NO_LESSONS);
+  const hints = [...ls.client, ...ls.internal].filter((l) => l.look_for || l.question);
   if (!open.length) throw new Error("Nothing on this card's checklist is unmet, so there's nothing to screen for");
   const system = "You write short candidate screening questions for a recruiter. Reply with STRICT JSON only: {\"questions\": string[]}. " +
     "Up to 3 questions (under 25 words each), most important first, each aimed at one of the open requirements below (must-haves first), asking for specifics (where, how long, what they did). " +
     "NEVER repeat or rephrase any already-asked question, and never ask for something the candidate has already answered. " +
-    "Lines starting 'Client feedback:' or 'Watch-out:' come from real client rejections: when one is open, ask about it, using the 'what to look for' notes below to ask for the exact evidence the client cared about. " +
+    "Lines starting 'Client feedback:' or 'Watch-out:' come from real rejections on this role (the client's or our own team's): when one is open, ask about it, using the 'what to look for' notes below to ask for the exact evidence that mattered. Never ask about a 'Client liked:' line; it is a bonus, not a gap. " +
     "Only ask what is needed to decide whether this is a strong candidate to submit; if the CV already settles a point, don't ask about it.";
   const text = `Job: ${job.role_title} at ${job.client}.\nOpen requirements:\n` + open.map((r: any) => `- [${r.type}] ${r.requirement} (${r.status}${r.evidence ? ": " + r.evidence : ""})`).join("\n") +
     `\n\nAlready asked (never repeat):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}` +
     `\n\nAlready answered:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}`).join("\n") : "(nothing yet)"}` +
-    (hints.length ? `\n\nWhat to look for, from past client rejections:\n${hints.map((l) => `- ${l.lesson} Look for: ${l.look_for}`).join("\n")}` : "");
+    (hints.length ? `\n\nWhat to look for, from past rejections on this role:\n${hints.map((l) => `- ${l.lesson} Look for: ${l.look_for}`).join("\n")}` : "");
   const out = await askAI(system, text, null, 600);
   const questions = dedupeQuestions(out?.questions, asked);
   if (!questions.length) throw new Error("Every question the AI suggested has already been asked. Add one yourself instead.");

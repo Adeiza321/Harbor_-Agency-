@@ -3,7 +3,7 @@ import { prepareResume, findLinkedIn, type ResumeInput } from "./resume.ts";
 import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
-import { learnFromRejection } from "./lessons.ts";
+import { learnFromOutcome } from "./lessons.ts";
 
 // AI screening for Pronext: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -263,21 +263,22 @@ async function autoScreen(admin: any, linkId: string) {
   }
 }
 
-// Turns client rejections into lessons (lessons.ts), then rescreens up to 6 not-yet-submitted
-// candidates on those clients' open roles in the background, so their checklists pick it up.
-// ids = null means every past client rejection that has no lesson yet (or all of them with force).
+// Turns status updates into lessons (lessons.ts): client rejections, our team's rejections, and
+// candidates the client moved to Interview, Offer or Placed. Then rescreens up to 6 not-yet-submitted
+// candidates on the same roles in the background, so their checklists pick it up (lessons apply to
+// their own role only). ids = null means every learnable update with no lesson yet (all with force).
 async function learnLessons(admin: any, ids: string[] | null, by: string | null, force = false) {
   let list = ids || [];
   if (!ids) {
-    const { data: rows } = await admin.from("candidate_jobs").select("id").eq("reject_kind", "client").not("reject_reason", "is", null).order("rejected_at", { ascending: false }).limit(25);
+    const { data: rows } = await admin.rpc("lesson_links", { p_pending: false, p_limit: 25 });
     const { data: done } = await admin.from("screening_lessons").select("source_link_id");
     const have = new Set((done || []).map((d: any) => d.source_link_id));
-    list = (rows || []).map((r: any) => r.id).filter((id: string) => force || !have.has(id));
+    list = (rows || []).map((r: any) => (typeof r === "string" ? r : r.lesson_links)).filter((id: string) => id && (force || !have.has(id)));
   }
   const results: any[] = [];
   for (const id of list.slice(0, 25)) {
     try {
-      results.push({ id, ...(await learnFromRejection(admin, id, askAI as any, by)) });
+      results.push({ id, ...(await learnFromOutcome(admin, id, askAI as any, by)) });
       // Stamped once learned (or found to hold nothing to learn), so the database's sweep doesn't
       // ask the AI about the same rejection again. Editing the rejection clears it (re-learn).
       await admin.from("candidate_jobs").update({ lessons_learned_at: new Date().toISOString() }).eq("id", id);
@@ -288,10 +289,10 @@ async function learnLessons(admin: any, ids: string[] | null, by: string | null,
     }
   }
   const learned = results.filter((r) => r.lesson);
-  const clients = [...new Set(learned.map((r) => r.lesson.client).filter(Boolean))];
+  const jobIds = [...new Set(learned.map((r) => r.lesson.job_id).filter(Boolean))];
   let rescreening = 0;
-  if (clients.length) {
-    const { data: jobs } = await admin.from("jobs").select("id").in("client", clients).neq("status", "Closed");
+  if (jobIds.length) {
+    const { data: jobs } = await admin.from("jobs").select("id").in("id", jobIds).neq("status", "Closed");
     const { data: cards } = (jobs || []).length
       ? await admin.from("candidate_jobs").select("id,candidates!inner(ai_locked,is_draft)").in("job_id", jobs.map((j: any) => j.id))
         .in("stage", ["Screening", "In review"]).eq("candidate_response", "accepted").eq("candidates.ai_locked", false).eq("candidates.is_draft", false).limit(6)
@@ -373,18 +374,18 @@ Deno.serve(async (req: Request) => {
         for (const r of due) out.push({ id: r.id, ...(await autoScreen(admin, r.id)) });
         return json({ ok: true, screened: out });
       }
-      // Learning from client rejections happens here, on the backend: the database calls this the
-      // moment a client rejection is recorded or its feedback edited ("learn_link"), and a sweep
-      // every 10 minutes picks up anything that slipped through ("learn_pending").
+      // Learning from status updates happens here, on the backend: the database calls this the moment
+      // a card is rejected (by the client or our team, with a reason) or moved to Interview, Offer or
+      // Placed ("learn_link"), and a sweep every 10 minutes picks up anything that slipped through
+      // ("learn_pending"). Which updates teach what is decided by public.lesson_kind.
       if (body.action === "learn_link" && body.linkId) return json(await learnLessons(admin, [String(body.linkId)], null));
       if (body.action === "learn_pending") {
-        const { data: rows } = await admin.from("candidate_jobs").select("id").eq("reject_kind", "client").not("reject_reason", "is", null)
-          .is("lessons_learned_at", null).lt("lesson_tries", 3).lt("rejected_at", new Date(Date.now() - 90e3).toISOString())
-          .order("rejected_at", { ascending: false }).limit(3);
-        const ids = (rows || []).map((r: any) => r.id);
+        const { data: rows, error } = await admin.rpc("lesson_links", { p_pending: true, p_limit: 3 });
+        if (error) return json({ ok: false, error: error.message }, 500);
+        const ids = (rows || []).map((r: any) => (typeof r === "string" ? r : r.lesson_links)).filter(Boolean);
         return json(ids.length ? await learnLessons(admin, ids, null) : { ok: true, learned: 0 });
       }
-      // Maintenance: learn from every past client rejection that has no lesson yet.
+      // Maintenance: learn from every past status update that has no lesson yet.
       if (body.action === "learn_all") return json(await learnLessons(admin, null, null, !!body.force));
       if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate, bench_fits, screening or learning run with an ops token" }, 400);
       const { data: cand } = await admin.from("candidates").select("*").eq("id", body.candidateId).maybeSingle();
@@ -477,8 +478,8 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, ai });
     }
 
-    // Learning from client rejections. Called by the app right after a client rejection is
-    // recorded ("learn_rejection"), or for every past client rejection ("learn_all").
+    // Learning from status updates, by hand: one card ("learn_rejection", kept for the app) or every
+    // past learnable update ("learn_all"). The database normally does this on its own.
     if (action === "learn_rejection" || action === "learn_all") {
       const ids: string[] = [];
       if (action === "learn_rejection") {
