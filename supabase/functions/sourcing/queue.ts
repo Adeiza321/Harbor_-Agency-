@@ -4,7 +4,7 @@
 // the must-haves, and "I'm interested" / "Refer someone" buttons to the public job page.
 
 import { footerText, regionOf, countryCode, type Region } from "./regions.ts";
-import { emailHash, provider, sendMail } from "./send.ts";
+import { emailHash, provider, sendMail, toHtml } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
 import { candidateEmail, introOf, mustHavesFor, payText } from "./outreach.ts";
 import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
@@ -91,6 +91,20 @@ export async function sendTest(admin: any, prospectId: string, to: string, s: Se
   return { ok: true, to };
 }
 
+// The same for a client pitch: plain text with the footer, as the hiring manager would get it.
+export async function sendLeadTest(admin: any, leadId: string, to: string, s: Settings, agencyName: string) {
+  const { data: l } = await admin.from("leads").select("*").eq("id", leadId).maybeSingle();
+  if (!l) throw new Error("Not found");
+  if (!l.pitch_body) throw new Error("This lead has no drafted email yet");
+  const b = await loadBrand(admin);
+  const region = (l.region as Region) || regionOf(countryCode(l.country));
+  const text = finalBody(l.pitch_body, "test-preview", "l", region, s, agencyName, "client");
+  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#14201B;">${toHtml(text)}</div>`;
+  const ok = await sendBrevo(b, { email: to }, "[TEST] " + (l.pitch_subject || `Candidate for your ${l.job_title} role`), html);
+  if (!ok) throw new Error("Brevo didn't accept the test email");
+  return { ok: true, to };
+}
+
 export async function queueProspects(admin: any, ids: string[], approver: string | null, s: Settings, agencyName: string) {
   const missing = sendBlockers(s);
   if (missing.length) throw new Error("Before emailing anyone, add your " + missing.join(" and ") + " in Outreach > Setup (required by anti-spam law).");
@@ -140,12 +154,14 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
 // Send what's waiting, oldest first, within today's cap. Every address is re-checked against
 // the unsubscribe list right before sending.
 export async function processQueue(admin: any, s: Settings, max = 8) {
-  if (provider() === "none") return { sent: 0, waiting: true, message: "No outreach sender connected yet; approved emails are waiting in the queue." };
+  // Each kind waits for its own sender (client pitches need their own Apollo sequence).
+  const ready = (["candidate", "client"] as const).filter((k) => provider(k) !== "none");
+  if (!ready.length) return { sent: 0, waiting: true, message: "No outreach sender connected yet; approved emails are waiting in the queue." };
   const since = new Date(); since.setUTCHours(0, 0, 0, 0);
   const { count: sentToday } = await admin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", since.toISOString());
   const room = Math.max(0, s.dailyCap - (sentToday || 0));
   if (!room) return { sent: 0, capped: true, message: `Today's limit of ${s.dailyCap} emails is reached; the rest go out tomorrow.` };
-  const { data: batch } = await admin.from("outreach_messages").select("*").eq("status", "queued").order("created_at").limit(Math.min(max, room));
+  const { data: batch } = await admin.from("outreach_messages").select("*").eq("status", "queued").in("kind", ready).order("created_at").limit(Math.min(max, room));
   let sent = 0, failed = 0;
   for (const m of batch || []) {
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(m.to_email)).maybeSingle();

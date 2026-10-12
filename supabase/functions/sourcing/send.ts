@@ -14,8 +14,12 @@ import { sendViaApollo } from "./apollo.ts";
 
 export type Provider = "apollo" | "instantly" | "gmail" | "none";
 
-export function provider(): Provider {
-  if (Deno.env.get("APOLLO_API_KEY") && Deno.env.get("APOLLO_SEQUENCE_ID")) return "apollo";
+// The sender for one kind of email. Client pitches go through Apollo only with their own
+// sequence (APOLLO_CLIENT_SEQUENCE_ID): the candidate sequence's follow-ups talk about a role and
+// "your background", which would be wrong for a hiring manager.
+export function provider(kind: "candidate" | "client" = "candidate"): Provider {
+  const apolloSeq = kind === "client" ? Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID") : Deno.env.get("APOLLO_SEQUENCE_ID");
+  if (Deno.env.get("APOLLO_API_KEY") && apolloSeq) return "apollo";
   if (Deno.env.get("INSTANTLY_API_KEY") && Deno.env.get("INSTANTLY_CAMPAIGN_ID")) return "instantly";
   if (Deno.env.get("GMAIL_REFRESH_TOKEN") && Deno.env.get("GMAIL_CLIENT_ID") && Deno.env.get("GMAIL_CLIENT_SECRET") && Deno.env.get("GMAIL_SENDER")) return "gmail";
   return "none";
@@ -141,7 +145,7 @@ async function sendGmail(m: OutMail, fromName: string): Promise<string> {
 }
 
 export async function sendMail(m: OutMail, fromName: string): Promise<{ provider: Provider; ref: string }> {
-  const p = provider();
+  const p = provider(m.kind);
   if (p === "apollo") return { provider: p, ref: await sendViaApollo(m) };
   if (p === "instantly") return { provider: p, ref: await sendInstantly(m) };
   if (p === "gmail") return { provider: p, ref: await sendGmail(m, fromName) };

@@ -5368,6 +5368,14 @@ function ManualSend({ kind, id, S, toast, onDone, label }) {
   );
 }
 
+// "Email me a test": the email exactly as this person would get it, sent to your own address.
+// Nothing is queued, sent to them or marked as sent.
+function TestEmailBtn({ kind, id, S, toast }) {
+  const [busy, setBusy] = useState(false);
+  const go = () => { setBusy(true); S.sourcing("test_email", { kind, id }).then((r) => toast("Test sent to " + r.to)).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  return <Btn icon={Mail} onClick={go} disabled={busy}>{busy ? "Sending…" : "Email me a test"}</Btn>;
+}
+
 function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged }) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(p.subject || "");
@@ -5422,6 +5430,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {canEdit && (
             <div className="flex gap-2 mt-2 justify-end items-center flex-wrap">
               {xray && p.status === "found" && <Btn kind="primary" onClick={() => onStatus("contacted", { contacted_at: new Date().toISOString() })}>Mark contacted</Btn>}
+              {S && p.email && p.body && <TestEmailBtn kind="p" id={p.id} S={S} toast={toast} />}
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} />}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
               <RowMenu label={"More actions for " + name} items={[
@@ -5608,6 +5617,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             </div>
           )}
           <div className="flex gap-2 mt-2 justify-end flex-wrap">
+            {S && l.pitch_body && <TestEmailBtn kind="l" id={l.id} S={S} toast={toast} />}
             {l.channel === "email" && l.contact_email && ["new", "approved", "queued"].includes(l.status) && <ManualSend kind="l" id={l.id} S={S} toast={toast} onDone={onChanged} />}
             {l.channel === "linkedin" && ["new", "approved"].includes(l.status) && <>
               <Btn icon={Copy} onClick={() => { copyText(f.linkedin_message, toast, "Message copied. Paste it on LinkedIn."); if (l.contact_linkedin) window.open(l.contact_linkedin, "_blank"); }}>Copy and open LinkedIn</Btn>
