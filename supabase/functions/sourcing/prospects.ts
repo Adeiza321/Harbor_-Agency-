@@ -8,7 +8,7 @@
 //   5. AI writes each person a short email; saved as prospects for review (or queued if auto)
 
 import { askAI } from "./ai.ts";
-import { searchPeople, matchById, apolloKey, type ApolloPerson } from "./apollo.ts";
+import { searchPeople, matchById, bestEmail, apolloKey, type ApolloPerson } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, jobCountryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { emailHash, normEmail } from "./send.ts";
 import { anonymizeJd, fitsToPercent, historyEmployers, sameCompany, workedAt, type Settings } from "./common.ts";
@@ -146,10 +146,16 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     let p: ApolloPerson | null = null;
     try { p = await matchById(h.id); revealed++; } catch (e) { console.error("apollo match", String((e as Error)?.message || e)); break; }
     await sleep(700);
-    if (!p?.email || p.email_status !== "verified") continue;
-    if (inPronext.has(normEmail(p.email))) continue;
-    const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
-    if (sup) continue;
+    // Verified work email first; a personal email only when there's no verified work one.
+    const best = bestEmail(p);
+    if (!p || !best.email) continue;
+    // Never someone already in Pronext under either address.
+    if (inPronext.has(normEmail(best.email)) || (p.email && inPronext.has(normEmail(p.email)))) continue;
+    // Nor anyone who unsubscribed under either address.
+    const hashes = [...new Set([await emailHash(best.email), ...(p.email ? [await emailHash(p.email)] : [])])];
+    const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").in("email_norm", hashes).limit(1);
+    if (sup?.length) continue;
+    p = { ...p, email: best.email, email_status: best.status };
     const pc = countryCode(p.country);
     if (pc && pc !== code) continue; // someone based outside the job's country
     // Nor anyone who has worked there before (from their full employment history).

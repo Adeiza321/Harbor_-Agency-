@@ -52,6 +52,7 @@ export async function searchPeople(opts: { titles: string[]; locations: string[]
 export type ApolloPerson = {
   id: string; first_name: string; last_name: string; name: string; title: string; email: string; email_status: string;
   linkedin_url: string; city: string; state: string; country: string; company: string; domain: string; history: string;
+  personal_emails: string[];
 };
 
 function toPerson(p: any): ApolloPerson | null {
@@ -63,13 +64,25 @@ function toPerson(p: any): ApolloPerson | null {
     title: String(p.title || ""), email: String(p.email || ""), email_status: String(p.email_status || ""),
     linkedin_url: String(p.linkedin_url || ""), city: String(p.city || ""), state: String(p.state || ""), country: String(p.country || ""),
     company: String(p.organization?.name || ""), domain: String(p.organization?.primary_domain || p.organization?.website_url || ""), history: hist,
+    personal_emails: (Array.isArray(p.personal_emails) ? p.personal_emails : []).map((e: unknown) => String(e || "").trim()).filter((e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)),
   };
 }
 
-// Reveal one person by Apollo id (1 credit when an email comes back).
+// Reveal one person by Apollo id (1 credit when an email comes back). Personal emails are asked
+// for too, as a fallback when there's no verified work email; Apollo never reveals them for
+// people living in GDPR countries (EU, UK, EEA).
 export async function matchById(id: string): Promise<ApolloPerson | null> {
-  const data = await call("/people/match", { id, reveal_personal_emails: false, reveal_phone_number: false });
+  const data = await call("/people/match", { id, reveal_personal_emails: true, reveal_phone_number: false });
   return toPerson(data?.person);
+}
+
+// The address to email a candidate at: their verified work email first, otherwise the first
+// personal email Apollo found. Empty when there's neither.
+export function bestEmail(p: ApolloPerson | null): { email: string; status: string } {
+  if (!p) return { email: "", status: "" };
+  if (p.email && p.email_status === "verified") return { email: p.email, status: "verified" };
+  const personal = p.personal_emails.find((e) => e.toLowerCase() !== p.email.toLowerCase());
+  return personal ? { email: personal, status: "personal" } : { email: "", status: "" };
 }
 
 // Find a named person at a company (for a job poster whose email we don't have).
@@ -150,8 +163,8 @@ export async function apolloSendCheck() {
 }
 
 export async function sendViaApollo(m: { kind: string; to: string; firstName: string; lastName: string; company: string; subject: string; body: string; html?: string }): Promise<string> {
-  const seq = (m.kind === "client" && Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID")) || Deno.env.get("APOLLO_SEQUENCE_ID") || "";
-  if (!seq) throw new Error("APOLLO_SEQUENCE_ID isn't set");
+  const seq = (m.kind === "client" ? Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID") : Deno.env.get("APOLLO_SEQUENCE_ID")) || "";
+  if (!seq) throw new Error(m.kind === "client" ? "APOLLO_CLIENT_SEQUENCE_ID isn't set" : "APOLLO_SEQUENCE_ID isn't set");
   const st = await sendSetup();
   const content = (Deno.env.get("APOLLO_BODY") || "html") === "text" || !m.html ? m.body : m.html;
   const c = await api("POST", "/contacts", {
@@ -169,4 +182,21 @@ export async function sendViaApollo(m: { kind: string; to: string; firstName: st
   const skipped = r?.skipped_contact_ids || {};
   if (skipped && typeof skipped === "object" && contactId in skipped) throw new Error("Apollo skipped this person: " + String((skipped as any)[contactId]).slice(0, 120));
   return contactId;
+}
+
+// Take people out of Pronext's sequences so no more follow-ups go out: they applied, said no,
+// unsubscribed, asked to be deleted, or a recruiter closed them off. Marked "finished" in Apollo.
+export function apolloSequenceIds(): string[] {
+  return [...new Set([Deno.env.get("APOLLO_SEQUENCE_ID"), Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID")].map((x) => String(x || "").trim()).filter(Boolean))];
+}
+export async function stopInSequences(contactIds: string[]): Promise<number> {
+  const ids = [...new Set(contactIds.map((x) => String(x || "").trim()).filter((x) => /^[A-Za-z0-9]{8,40}$/.test(x)))].slice(0, 100);
+  const seqs = apolloSequenceIds();
+  if (!ids.length || !seqs.length || !apolloKey()) return 0;
+  const q = new URLSearchParams();
+  seqs.forEach((id) => q.append("emailer_campaign_ids[]", id));
+  ids.forEach((id) => q.append("contact_ids[]", id));
+  q.set("mode", "mark_as_finished");
+  await api("POST", "/emailer_campaigns/remove_or_stop_contact_ids", undefined, q);
+  return ids.length;
 }

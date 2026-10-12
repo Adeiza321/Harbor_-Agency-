@@ -3,8 +3,8 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, processLead } from "./leads.ts";
-import { composeProspect, manualCompose, markManualSent, processQueue, queueLeads, queueProspects, sendTest } from "./queue.ts";
-import { apolloKey, apolloSendCheck, sendViaApollo } from "./apollo.ts";
+import { composeProspect, manualCompose, markManualSent, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
+import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
@@ -39,6 +39,7 @@ function connections() {
     apollo: !!apolloKey(),
     theirstack: !!theirstackKey(),
     sender: provider(),
+    clientSender: provider("client"),
     search: searchEngines(),
   };
 }
@@ -156,6 +157,13 @@ Deno.serve(async (req: Request) => {
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
       // Free X-ray search for one job (also started automatically for every newly live job).
       if (body.action === "xray" && body.jobId) return json(await startXray(admin, String(body.jobId), s, null));
+      // Someone applied, said no, unsubscribed or was deleted (database trigger): finish their
+      // Apollo sequence so the follow-ups stop.
+      if (body.action === "apollo_stop") {
+        const ids = (Array.isArray(body.contactIds) ? body.contactIds : []).map(String);
+        try { return json({ ok: true, stopped: await stopInSequences(ids) }); }
+        catch (e) { console.error("apollo stop", errMsg(e)); return json({ ok: false, error: errMsg(e) }, 502); }
+      }
       // A test send through Apollo: a prospect's email, to a given address, with dummy unsubscribe links.
       if (body.action === "apollo_test" && body.prospectId && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(body.to || ""))) {
         const { data: p } = await admin.from("prospects").select("*").eq("id", String(body.prospectId)).maybeSingle();
@@ -273,10 +281,12 @@ Deno.serve(async (req: Request) => {
       if (action === "manual_compose") return json({ ok: true, ...(await manualCompose(admin, kind, id, s, agencyName)) });
       return json(await markManualSent(admin, kind, id));
     }
-    // "Email me a test": the prospect's first email, sent to your own address.
+    // "Email me a test": the first email to a prospect (or the pitch to a lead), sent to your
+    // own address so you see exactly what they'd get. Nothing is queued or marked as sent.
     if (action === "test_email") {
       const to = String(me.email || caller.user.email || "");
       if (!to) return json({ error: "Your profile has no email address" }, 400);
+      if (body.kind === "l") return json(await sendLeadTest(admin, String(body.id || ""), to, s, agencyName));
       return json(await sendTest(admin, String(body.id || ""), to, s, agencyName));
     }
     if (action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
