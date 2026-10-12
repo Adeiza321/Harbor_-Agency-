@@ -6,7 +6,7 @@
 import { footerText, regionOf, countryCode, type Region } from "./regions.ts";
 import { emailHash, provider, sendMail, toHtml } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
-import { candidateEmail, introOf, mustHavesFor, payText } from "./outreach.ts";
+import { candidateEmail, introOf, mustHavesFor, payText, sourceText } from "./outreach.ts";
 import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
 
 // "City, Country" without repeating a country the location already names (same as the app's jobPlace).
@@ -75,6 +75,7 @@ export async function composeProspect(admin: any, p: any, s: Settings, agencyNam
     summary: pack?.mustHaves?.summary || "", mustHaves: pack?.mustHaves?.items || [],
     applyUrl: q("go=apply&pt=" + encodeURIComponent(p.unsub_token || "")), referUrl: q("refer=1"),
     unsubUrl: linkFor(p.unsub_token, "p", "unsubscribe"), deleteUrl: linkFor(p.unsub_token, "p", "delete"),
+    source: sourceText(p),
   });
 }
 

@@ -76,7 +76,7 @@ export function footerText(region: Region, f: Footer, kind: "candidate" | "clien
   if (region !== "US") {
     lines.push("",
       kind === "candidate"
-        ? `Why you're getting this: we found your work profile in Apollo.io, a business contact database, and it matches this role. We use only your name, job title and work email, only to tell you about roles like this, and delete them if you're not interested. To have your details deleted now: ${f.deleteUrl}`
+        ? `Why you're getting this: we found your professional profile and contact details in a contact database, and they match this role. We use only your name, job title and email address, only to tell you about roles like this, and delete them if you're not interested. To have your details deleted now: ${f.deleteUrl}`
         : `Why you're getting this: your company advertised this role publicly and we have a matching candidate. We use only your name, role and work email, only for this purpose. To have your details deleted: ${f.deleteUrl}`);
   }
   lines.push(`Not interested? Unsubscribe: ${f.unsubUrl}`);

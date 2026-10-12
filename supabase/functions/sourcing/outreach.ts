@@ -75,7 +75,18 @@ export type CandidateMail = {
   role: { title: string; location: string; workSetup: string; employmentType: string; pay: string };
   summary: string; mustHaves: string[];
   applyUrl: string; referUrl: string; unsubUrl: string; deleteUrl: string;
+  source?: string;                     // where their details came from, for the privacy notice
 };
+
+// Where a prospect's details came from, in words for the privacy notice (GDPR Art. 14).
+export function sourceText(p: any): string {
+  const src = String(p?.data?.email_source || "");
+  const site = p?.source === "github" ? "GitHub" : "LinkedIn";
+  if (/contactout/i.test(src)) return `your public ${site} profile, with your contact details from ContactOut, a contact database`;
+  if (/apollo/i.test(src) && p?.data?.xray) return `your public ${site} profile, with your contact details from Apollo.io, a business contact database`;
+  if (/github/i.test(src)) return "your public GitHub profile";
+  return "your work profile in Apollo.io, a business contact database";
+}
 
 const P = "margin:0 0 14px;font-size:15px;line-height:1.6;color:#14201B;font-family:Arial,Helvetica,sans-serif;";
 
@@ -85,7 +96,7 @@ export function candidateEmail(m: CandidateMail): { text: string; html: string }
     .filter((v, i, a) => i === 0 || !String(a[0]).toLowerCase().includes(String(v).toLowerCase()));
   const signName = m.signoff || m.senderName.split(" ")[0] || "";
   const why = m.region !== "US"
-    ? "Why you're getting this: we found your work profile in Apollo.io, a business contact database, and it matches this role. We use only your name, job title and work email, only to tell you about roles like this, and delete them if you're not interested."
+    ? `Why you're getting this: we found ${m.source || "your work profile in Apollo.io, a business contact database"}, and it matches this role. We use only your name, job title and email address, only to tell you about roles like this, and delete them if you're not interested.`
     : "";
 
   // ---- plain text ----

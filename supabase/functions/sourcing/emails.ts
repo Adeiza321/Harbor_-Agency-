@@ -4,14 +4,15 @@
 //     verified work email, or a personal email when there's no verified work one (1 Apollo credit per email found). This runs automatically, without an
 //     approval: every 10 minutes for the best X-ray people (fit >= outreach.xrayEmailMinFit), never more
 //     than outreach.xrayEmailsPerDay lookups a day (the daily cap stands in for the approval).
-//     When Apollo has nothing usable, ContactOut is tried by the same profile (contactout.ts, CONTACTOUT_API_KEY).
+//     When Apollo has nothing usable, ContactOut is tried by the same profile (contactout.ts, CONTACTOUT_API_KEY),
+//     asking for work and personal emails anywhere; every address found is kept in data.emails_found.
 // Only verified work emails or Apollo-found personal emails are kept. Each person with an email gets the same short, personal draft as
 // Apollo's own prospects, ready for the usual approve-and-send flow (nothing is sent from here).
 
 import { askAI } from "./ai.ts";
 import { apolloKey, bestEmail, matchByLinkedIn } from "./apollo.ts";
 import { jobBrief } from "./prospects.ts";
-import { countryCode, jobCountryCode, regionOf } from "./regions.ts";
+import { countryCode, regionOf } from "./regions.ts";
 import { contactoutByLinkedIn, contactoutKey } from "./contactout.ts";
 import { emailHash } from "./send.ts";
 import { anonymizeJd, sameCompany, type Settings } from "./common.ts";
@@ -83,10 +84,8 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   if (list.length && !apolloKey()) return { ok: false, message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to look up emails." };
   // Each person's own job (a run can span several jobs), to leave out the client's own staff.
   const jobIds = [...new Set(list.map((p) => p.job_id))];
-  const { data: jobRows } = jobIds.length ? await admin.from("jobs").select("id,client,country,location").in("id", jobIds) : { data: [] };
+  const { data: jobRows } = jobIds.length ? await admin.from("jobs").select("id,client").in("id", jobIds) : { data: [] };
   const clientOf = new Map((jobRows || []).map((j: any) => [j.id, j.client]));
-  // Personal emails from ContactOut only for jobs outside the EU/UK/EEA (see contactout.ts).
-  const personalOk = new Map((jobRows || []).map((j: any) => [j.id, regionOf(jobCountryCode(j)) !== "EU"]));
   let coFound = 0, coTried = 0;
   const found: string[] = [];
   let credits = 0, noMatch = 0, unverified = 0;
@@ -102,19 +101,22 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
     const atClient = !!m && sameCompany(m.company, clientOf.get(p.job_id));
     let good = !!best.email && okEmail(best.email) && !atClient && !(await suppressed(admin, best.email)) && !(m.email && m.email !== best.email && await suppressed(admin, m.email));
     let via = "Apollo (from their LinkedIn profile)";
+    // Every address found, kept on the prospect (the one emailed is in prospects.email).
+    let extra: { work: string[]; personal: string[] } | null = m ? { work: m.email ? [m.email] : [], personal: m.personal_emails || [] } : null;
     // Fallback: ContactOut, by the same LinkedIn profile, when Apollo had nothing usable.
     if (!good && !atClient && contactoutKey() && !p.data?.email_lookup?.contactout) {
       coTried++;
       lookup.contactout = new Date().toISOString();
       try {
-        const co = await contactoutByLinkedIn(p.linkedin_url, personalOk.get(p.job_id) !== false);
+        const co = await contactoutByLinkedIn(p.linkedin_url);
+        if (co.work.length || co.personal.length) extra = { work: co.work, personal: co.personal };
         if (co.email && !(await suppressed(admin, co.email))) { best = { email: co.email, status: co.status }; good = true; via = "ContactOut (from their LinkedIn profile)"; coFound++; }
       } catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); }
     }
     if (!m && !good) noMatch++;
     if (m && !good) unverified++;
     const cc = countryCode(m?.country || "");
-    const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup, ...(good ? { email_source: via, history: m?.history || p.data?.history } : {}) } };
+    const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup, ...(good ? { email_source: via, history: m?.history || p.data?.history } : {}), ...(extra && (extra.work.length || extra.personal.length) ? { emails_found: extra } : {}) } };
     if (good) Object.assign(patch, {
       email: best.email, email_status: best.status,
       first_name: p.first_name || m?.first_name || null, last_name: p.last_name || m?.last_name || null, full_name: p.full_name || m?.name || null,
