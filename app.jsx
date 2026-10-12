@@ -847,6 +847,37 @@ function GlobalStyles() {
   );
 }
 
+// The branded spinner on its own: a ring turning around the logo mark, the ProNext logo pulsing
+// underneath, and a short label. Used on its own (public pages) and over the grey page outlines.
+function LogoSpinner({ label = "Loading…", compact = false }) {
+  const ring = compact ? 44 : 56, mark = compact ? 20 : 26;
+  return (
+    <div className="flex flex-col items-center gap-4" role="status" aria-live="polite">
+      <GlobalStyles />
+      <div className="relative flex items-center justify-center" style={{ width: ring, height: ring }}>
+        <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: `3px solid ${C.line}` }} />
+        <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "3px solid transparent", borderTopColor: C.em, animation: "harborSpin 0.85s linear infinite" }} />
+        <img src={MARK_SRC} alt="" style={{ width: mark, height: mark }} />
+      </div>
+      <div className="flex flex-col items-center gap-1.5">
+        <div style={{ animation: "harborPulse 1.8s ease-in-out infinite" }}><BrandLogo height={compact ? 18 : 22} /></div>
+        {label && <div className="text-xs" style={{ color: C.ink3 }}>{label}</div>}
+      </div>
+    </div>
+  );
+}
+// The spinner centred over a page outline, on a soft white card so it reads over the grey blocks.
+function SpinnerOverlay({ label, children }) {
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center pointer-events-none">
+      <div className="rounded-2xl px-8 py-6 pointer-events-auto" style={{ background: "rgba(255,255,255,0.92)", border: "1px solid " + C.line, boxShadow: "0 8px 30px rgba(20,32,27,0.08)" }}>
+        <LogoSpinner label={label} />
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function Loader({ label = "Loading…", onRetry }) {
   const [slow, setSlow] = useState(false);
   useEffect(() => { const t = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(t); }, []);
@@ -898,13 +929,15 @@ function DashboardSkeleton({ onRetry }) {
               {[0, 1, 2].map((j) => <div key={j} className="flex items-center gap-3"><SkelBar w={36} h={36} r={18} className="shrink-0" /><div className="flex-1 flex flex-col gap-2"><SkelBar w="45%" /><SkelBar w="25%" h={10} /></div></div>)}
             </div>
           ))}
-          {slow && (
-            <div className="text-xs text-center" style={{ color: C.ink2 }}>This is taking longer than usual. Your connection may be slow.
-              {onRetry && <button type="button" onClick={onRetry} className="font-medium ml-1.5" style={{ color: C.em }}>Try again</button>}
-            </div>
-          )}
         </div>
       </div>
+      <SpinnerOverlay label="Loading your workspace…">
+        {slow && (
+          <div className="text-xs text-center mt-3" style={{ color: C.ink2, maxWidth: 220 }}>This is taking longer than usual. Your connection may be slow.
+            {onRetry && <div><button type="button" onClick={onRetry} className="font-medium mt-1" style={{ color: C.em }}>Try again</button></div>}
+          </div>
+        )}
+      </SpinnerOverlay>
     </div>
   );
 }
@@ -6616,7 +6649,7 @@ function OutreachLinkPage({ token, kind, action }) {
   const what = kind === "l" ? "about candidates for your " + (role || "open role") + (info && info.company ? " at " + info.company : "") : "about the " + (role || "role") + (info && info.location ? " in " + info.location : "");
   let bodyEl;
   if (err && !info) bodyEl = <div className="text-sm" style={{ color: C.dangerFg }}>{err}</div>;
-  else if (!info) bodyEl = <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div>;
+  else if (!info) bodyEl = <div className="py-4 flex justify-center"><LogoSpinner compact label="" /></div>;
   else if (info.gone) bodyEl = <div className="text-sm" style={{ color: C.ink2 }}>We no longer hold any details for this link. You won't hear from us again.</div>;
   else if (done === "interested") bodyEl = <div className="text-sm">Thanks{info.firstName ? ", " + info.firstName : ""}. {kind === "l" ? "We'll be in touch shortly with an anonymised profile." : "A recruiter will be in touch shortly about the " + (role || "role") + "."}</div>;
   else if (done === "closed") bodyEl = <div className="text-sm">Sorry, this role has just been filled. We'll keep you in mind for similar ones.</div>;
@@ -6683,7 +6716,7 @@ function ClientViewPage({ token }) {
   };
   let bodyEl;
   if (err) bodyEl = <div className="text-sm" style={{ color: C.dangerFg }}>{err === "not found" ? "This link is not valid." : err}</div>;
-  else if (!info) bodyEl = <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div>;
+  else if (!info) bodyEl = <div className="py-4 flex justify-center"><LogoSpinner compact label="" /></div>;
   else {
     const Row = ({ label, value }) => value ? <div className="flex gap-2 text-sm"><span className="font-medium shrink-0" style={{ color: C.ink2, width: 90 }}>{label}</span><span>{value}</span></div> : null;
     const chips = (list, tone) => !!(list && list.length) && (
@@ -8338,7 +8371,7 @@ function ApplyPage({ slug }) {
       </div>
     </div>
   );
-  if (job === null) return shell(<div className="py-16 text-center"><InlineDots /></div>);
+  if (job === null) return shell(<div className="py-16 flex justify-center"><LogoSpinner compact label="Loading the job…" /></div>);
   if (job === false) return shell(<Card><div className="text-xl" style={SERIF}>This job link isn't valid</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>Check the link you were sent, or ask the recruiter for a new one.</div></Card>);
   if (job.status === "Closed" || job.status === "On hold") return shell(
     <Card><div className="text-xl" style={SERIF}>{job.title}</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>{job.status === "Closed" ? "This role is no longer taking applications." : "This role is paused for now. Please check back soon."}</div></Card>);
@@ -8591,7 +8624,7 @@ function JobsBoard() {
           <div className="md:p-2 md:pl-0"><Btn kind="primary" type="submit" className="w-full md:w-auto h-12 md:h-10 !px-6 md:mt-0">Find jobs</Btn></div>
         </form>
 
-        {data === null && <div className="py-20 text-center"><InlineDots /></div>}
+        {data === null && <div className="py-20 flex justify-center"><LogoSpinner compact label="Loading jobs…" /></div>}
         {data === false && <div className="py-16 text-center"><div className="text-lg font-semibold">Couldn't load the jobs</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>Please refresh the page to try again.</div></div>}
         {data && (
           <>
@@ -8968,6 +9001,7 @@ function PortalSkeleton() {
         </div>
         {[0, 1].map((i) => <div key={i} className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: "#fff", border: "1px solid " + C.line }}><SkelBar w="50%" h={16} /><SkelBar w="80%" /><SkelBar w="30%" /></div>)}
       </div>
+      <SpinnerOverlay label="Loading…" />
     </div>
   );
 }
