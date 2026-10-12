@@ -203,10 +203,10 @@ const prefsFacts = (p: any) => {
   if (!p || typeof p !== "object") return "";
   const visa = p.citizen ? `citizen or permanent resident of ${p.currentCountry || "where they live"}`
     : `on a ${p.visaType || "visa"}${p.visaExpiry ? " expiring " + p.visaExpiry : ""}${p.sponsorship ? ", needs sponsorship to change employer: " + p.sponsorship : ""}`;
-  const rtw = (p.rightToWork || []).map((x: any) => `${x.country}: ${x.status === "yes" ? "can work" : x.status === "sponsorship" ? "needs sponsorship" : "cannot work"}`).join("; ");
   return `\nTheir stated job preferences: wants ${(p.roles || []).join(", ") || "?"} (${p.seniority || "?"}, ${(p.employmentTypes || []).join("/") || "?"}); ` +
-    `work setup they accept: ${(p.workSetup || []).join(", ") || "?"}; would work in ${(p.preferredLocations || []).join(", ") || "?"} (relocate: ${p.relocate || "?"}); ` +
-    `right to work: ${visa}${rtw ? "; elsewhere " + rtw : ""}; languages: ${(p.languages || []).map((l: any) => l.language + " (" + l.level + ")").join(", ") || "?"}; ` +
+    `work setup they accept: ${(p.workSetup || []).join(", ") || "?"}; based in ${[p.currentCity, p.currentCountry].filter(Boolean).join(", ") || "?"}, ` +
+    `would move to another city in their country: ${p.relocate || "?"}${(p.preferredCities || []).length ? " (prefers " + p.preferredCities.join(", ") + ")" : ""}; ` +
+    `right to work: ${visa}; languages: ${(p.languages || []).map((l: any) => l.language + " (" + l.level + ")").join(", ") || "?"}; ` +
     `industry experience they claim: ${(p.industries || []).join(", ") || "?"}. Treat a work setup, location or right-to-work mismatch with this job as a real gap.`;
 };
 const candidateFacts = (c: any) =>

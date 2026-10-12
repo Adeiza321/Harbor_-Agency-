@@ -5872,9 +5872,8 @@ const EMPLOYMENT_TYPES = ["Full-time", "Contract", "Part-time", "Temporary"];
 const PAY_PERIODS = [["year", "per year"], ["month", "per month"], ["hour", "per hour"]];
 const AVAILABILITY = ["Immediately", "1 week", "2 weeks", "1 month", "2 months", "3 months or more"];
 const WORK_SETUPS = [["remote", "Remote"], ["hybrid", "Hybrid"], ["onsite", "On-site"]];
-const RELOCATE = [["yes", "Yes"], ["maybe", "Maybe, for the right role"], ["no", "No"]];
+const RELOCATE = [["yes", "Yes"], ["maybe", "Maybe, for the right role"], ["no", "No, I'd stay where I am"]];
 const SPONSOR = [["yes", "Yes"], ["no", "No"], ["unsure", "Not sure"]];
-const RTW = [["yes", "Yes, I can work there"], ["sponsorship", "I'd need sponsorship"], ["no", "No"]];
 const LANG_LEVELS = ["Native", "Fluent", "Professional", "Conversational", "Basic"];
 const LANGUAGES = ["English", "French", "Spanish", "Portuguese", "German", "Italian", "Dutch", "Arabic", "Mandarin Chinese", "Cantonese", "Hindi", "Urdu", "Bengali", "Punjabi", "Tamil", "Telugu", "Malay", "Indonesian", "Tagalog / Filipino", "Vietnamese", "Thai", "Japanese", "Korean", "Russian", "Ukrainian", "Polish", "Romanian", "Turkish", "Greek", "Hebrew", "Persian (Farsi)", "Swahili", "Yoruba", "Igbo", "Hausa", "Amharic", "Zulu", "Afrikaans", "Swedish", "Norwegian", "Danish", "Finnish", "Czech", "Hungarian", "Serbian / Croatian / Bosnian", "Bulgarian", "Sign language (ASL / BSL)"];
 const INDUSTRY_OPTIONS = ["Accounting / audit", "Big 4 / professional services", "Banking", "Fintech", "Insurance", "Asset / wealth management", "Private equity / venture capital", "Consulting", "SaaS / software", "IT services", "Telecoms", "E-commerce / retail", "Consumer goods (FMCG)", "Manufacturing", "Automotive", "Aerospace / defence", "Energy / oil & gas", "Renewables", "Mining", "Construction", "Real estate", "Logistics / supply chain", "Transport / aviation", "Healthcare", "Pharma / biotech", "Medical devices", "Education", "Government / public sector", "Non-profit / NGO", "Legal", "Media / entertainment", "Marketing / advertising", "Hospitality / travel", "Food & beverage", "Agriculture", "Staffing / recruitment", "Gaming", "Crypto / web3"];
@@ -5904,72 +5903,67 @@ const INDUSTRY_PICK = INDUSTRY_OPTIONS.map((l) => ({ value: l, label: l }));
 const COUNTRY_ONLY_OPTIONS = COUNTRIES.map((n) => ({ value: n, label: n }));
 
 const emptyPrefs = () => ({ roles: [], seniority: "", employmentTypes: [], salary: { min: "", max: "", currency: "", period: "year" }, currentCity: "", currentCountry: "",
-  preferredLocations: [], relocate: "", workSetup: [], citizen: null, visaType: "", visaOther: "", visaExpiry: "", visaNoExpiry: false, sponsorship: "", rightToWork: [],
+  locationConfirmed: false, relocate: "", preferredCities: [], workSetup: [], citizen: null, visaType: "", visaOther: "", visaExpiry: "", visaNoExpiry: false, sponsorship: "",
   languages: [{ language: "English", level: "" }], availability: "", industries: [] });
 
-// Prefill from what we already know (their location) the first time.
+// Start from saved answers, or from what we already know (their location) the first time.
 function prefsStart(saved, known) {
   const p = { ...emptyPrefs(), ...(saved || {}) };
   p.salary = { ...emptyPrefs().salary, ...((saved && saved.salary) || {}) };
+  p.preferredCities = (saved && saved.preferredCities) || [];
   if (!saved && known && known.location) {
     const parts = String(known.location).split(",").map((x) => x.trim()).filter(Boolean);
     const last = parts[parts.length - 1] || "";
     if (COUNTRIES.includes(last)) { p.currentCountry = last; p.currentCity = parts.slice(0, -1).join(", "); }
     else p.currentCity = known.location;
   }
+  if (saved) p.locationConfirmed = true;
   if (p.visaType && !visaListFor(p.currentCountry).includes(p.visaType)) { p.visaOther = p.visaType; p.visaType = "Other"; }
-  if (saved && saved.visaExpiry === "") p.visaNoExpiry = true;
+  if (saved && saved.citizen === false && saved.visaExpiry === "") p.visaNoExpiry = true;
   if (!p.salary.currency && p.currentCountry) p.salary.currency = COUNTRY_CURRENCY[p.currentCountry] || "";
   return p;
 }
 
-// Countries among their preferred locations, other than where they live: right to work is asked for each.
-const otherCountries = (p) => [...new Set(p.preferredLocations.filter((l) => COUNTRIES.includes(l) && l !== p.currentCountry))];
-
+// One check per answer (the quiz checks each step with these; the staff form shows them all).
+const PREF_CHECKS = {
+  roles: (p) => !p.roles.filter((r) => r.trim()).length && "Add at least one role",
+  seniority: (p) => !p.seniority && "Choose a level",
+  employmentTypes: (p) => !p.employmentTypes.length && "Choose at least one",
+  salary: (p) => !(Number(p.salary.min) > 0) ? "Enter the salary you're looking for"
+    : p.salary.max && Number(p.salary.max) < Number(p.salary.min) ? "The top of the range is lower than the bottom" : !p.salary.currency && "Choose a currency",
+  location: (p) => !p.currentCountry ? "Choose the country you live in" : !p.currentCity.trim() && "Enter your city",
+  relocate: (p) => !p.relocate && "Choose one",
+  workSetup: (p) => !p.workSetup.length && "Choose at least one",
+  citizen: (p) => p.citizen === null && "Choose one",
+  visa: (p) => p.citizen === false && (!p.visaType || (p.visaType === "Other" && !p.visaOther.trim())) && "Choose the visa you're on",
+  visaExpiry: (p) => p.citizen === false && !p.visaNoExpiry && !p.visaExpiry && "Add the expiry date, or choose that it doesn't expire",
+  sponsorship: (p) => p.citizen === false && !p.sponsorship && "Choose one",
+  languages: (p) => (!p.languages.length || p.languages.some((l) => !l.language || !l.level)) && "Add each language with your level",
+  availability: (p) => !p.availability && "Choose one",
+  industries: (p) => !p.industries.length && "Add at least one industry",
+};
 function prefsErrors(p) {
   const e = {};
-  if (!p.roles.filter((r) => r.trim()).length) e.roles = "Add at least one role";
-  if (!p.seniority) e.seniority = "Choose a level";
-  if (!p.employmentTypes.length) e.employmentTypes = "Choose at least one";
-  if (!(Number(p.salary.min) > 0)) e.salary = "Enter the salary you're looking for";
-  else if (p.salary.max && Number(p.salary.max) < Number(p.salary.min)) e.salary = "The top of the range is lower than the bottom";
-  else if (!p.salary.currency) e.salary = "Choose a currency";
-  if (!p.currentCountry) e.current = "Choose the country you live in"; else if (!p.currentCity.trim()) e.current = "Enter your city";
-  if (!p.preferredLocations.length) e.preferredLocations = "Add at least one place you'd work";
-  if (!p.relocate) e.relocate = "Choose one";
-  if (!p.workSetup.length) e.workSetup = "Choose at least one";
-  if (p.citizen === null) e.citizen = "Choose one";
-  if (p.citizen === false) {
-    if (!p.visaType || (p.visaType === "Other" && !p.visaOther.trim())) e.visa = "Tell us which visa you're on";
-    else if (!p.visaNoExpiry && !p.visaExpiry) e.visa = "Add the expiry date, or tick that it doesn't expire";
-    if (!p.sponsorship) e.sponsorship = "Choose one";
-  }
-  const rtw = otherCountries(p);
-  if (rtw.some((c) => !(p.rightToWork.find((x) => x.country === c) || {}).status)) e.rightToWork = "Answer for each country";
-  if (!p.languages.length || p.languages.some((l) => !l.language || !l.level)) e.languages = "Add each language with your level";
-  if (!p.availability) e.availability = "Choose one";
-  if (!p.industries.length) e.industries = "Add at least one industry";
+  Object.entries(PREF_CHECKS).forEach(([k, f]) => { const m = f(p); if (m) e[k] = m; });
   return e;
 }
 
-// What gets saved: tidy, with the typed visa in place of "Other".
+// What gets saved: tidy, with the typed visa in place of "Other". Cities are in their own country.
 function prefsToSave(p) {
-  const rtw = otherCountries(p);
   return {
     roles: p.roles.map((r) => r.trim()).filter(Boolean).slice(0, 5), seniority: p.seniority, employmentTypes: p.employmentTypes,
     salary: { min: Number(p.salary.min), max: p.salary.max ? Number(p.salary.max) : null, currency: p.salary.currency, period: p.salary.period || "year" },
-    currentCity: p.currentCity.trim(), currentCountry: p.currentCountry, preferredLocations: p.preferredLocations, relocate: p.relocate, workSetup: p.workSetup,
+    currentCity: p.currentCity.trim(), currentCountry: p.currentCountry, relocate: p.relocate, preferredCities: p.relocate === "no" ? [] : p.preferredCities, workSetup: p.workSetup,
     citizen: p.citizen, visaType: p.citizen ? "" : (p.visaType === "Other" ? p.visaOther.trim() : p.visaType),
     visaExpiry: p.citizen || p.visaNoExpiry ? "" : p.visaExpiry, sponsorship: p.citizen ? "" : p.sponsorship,
-    rightToWork: rtw.map((c) => ({ country: c, status: (p.rightToWork.find((x) => x.country === c) || {}).status || "" })),
     languages: p.languages.filter((l) => l.language), availability: p.availability, industries: p.industries,
   };
 }
 
 function Chips({ items, onRemove, label = (x) => x }) {
   return items.map((k) => (
-    <span key={k} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-0.5 text-xs" style={{ background: C.canvas, border: `1px solid ${C.line}` }}>
-      {label(k)}<button type="button" aria-label={"Remove " + label(k)} onClick={() => onRemove(k)} className="w-5 h-5 rounded-full flex items-center justify-center" style={{ color: C.ink2 }}><X size={11} /></button>
+    <span key={k} className="inline-flex items-center gap-1 rounded-full pl-3 pr-1 py-1 text-sm" style={{ background: C.emTint, color: C.em }}>
+      {label(k)}<button type="button" aria-label={"Remove " + label(k)} onClick={() => onRemove(k)} className="w-6 h-6 rounded-full flex items-center justify-center"><X size={12} /></button>
     </span>
   ));
 }
@@ -5985,7 +5979,6 @@ function ChoiceRow({ options, value, onChange, multi }) {
     </div>
   );
 }
-
 function Q({ n, title, sub, children }) {
   return (
     <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -5996,134 +5989,293 @@ function Q({ n, title, sub, children }) {
   );
 }
 
-function PreferencesForm({ initial, known, onSave, onCancel, saveLabel = "Save my preferences", staff }) {
+/* ---------- The quiz (candidates) ----------
+   One question per screen, like a short career quiz: a top bar with back, logo and "3/12", a thin
+   progress line, a big question, and full-width answers. Tapping a single-choice answer moves on;
+   multi-choice and typed answers have Continue. Full screen, so it feels like an app on phones. */
+const QUIZ_FONT = { fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" };
+function QuizOption({ selected, onClick, children, hint, multi }) {
+  return (
+    <button type="button" onClick={onClick} aria-pressed={!!selected}
+      className="w-full text-left rounded-2xl px-5 py-4 text-[15px] flex items-center gap-3 transition-colors"
+      style={{ background: selected ? C.emTint : "#fff", border: `1.5px solid ${selected ? C.em : C.line}`, color: C.ink }}>
+      {multi && <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ border: `1.5px solid ${selected ? C.em : "#C9C4B8"}`, background: selected ? C.em : "#fff" }}>{selected && <Check size={13} color="#fff" strokeWidth={3} />}</span>}
+      <span className="flex-1 min-w-0">{children}{hint && <span className="block text-xs mt-0.5" style={{ color: C.ink2 }}>{hint}</span>}</span>
+      {!multi && selected && <CheckCircle2 size={18} color={C.em} className="shrink-0" />}
+    </button>
+  );
+}
+const quizInp = "w-full rounded-2xl border px-4 py-3.5 text-[15px] outline-none bg-white";
+const quizInpS = { borderColor: C.line, borderWidth: 1.5 };
+
+function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
   const [p, setP] = useState(() => prefsStart(initial, known));
-  const [shown, setShown] = useState(false); // errors show after the first attempt to save
+  const [i, setI] = useState(0);
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [changingLoc, setChangingLoc] = useState(false);
+  const [indQ, setIndQ] = useState("");
+  const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
+  const country = p.currentCountry || "your country";
+  const notCitizen = p.citizen === false;
+  const knownPlace = [p.currentCity, p.currentCountry].filter(Boolean).join(", ");
+
+  // The steps, in order; visa steps only for people who aren't citizens, cities only if they'd move.
+  const steps = [
+    { key: "roles", check: "roles", title: "What roles are you looking for?", sub: "Add up to five job titles." },
+    { key: "seniority", check: "seniority", title: "What level are you at?", sub: "The level you'd like your next role to be.", auto: true },
+    { key: "employmentTypes", check: "employmentTypes", title: "What type of work do you want?", sub: "Choose all that apply." },
+    { key: "salary", check: "salary", title: "What salary are you looking for?", sub: "A single figure, or a range." },
+    { key: "location", check: "location", title: knownPlace && !changingLoc ? "Is this where you're based?" : "Where are you based?", sub: "We match you to roles in the country you live in." },
+    { key: "relocate", check: "relocate", title: `Would you move to another city in ${country} for the right role?`, auto: true },
+    ...(p.relocate && p.relocate !== "no" ? [{ key: "cities", title: `Any cities in ${country} you'd prefer?`, sub: "Optional. Leave it empty if anywhere works." }] : []),
+    { key: "workSetup", check: "workSetup", title: "Remote, hybrid or on-site?", sub: "Choose every option you'd accept." },
+    { key: "citizen", check: "citizen", title: `Are you a citizen or permanent resident of ${country}?`, auto: true },
+    ...(notCitizen ? [
+      { key: "visa", check: "visa", title: "Which visa are you on?", sub: `Your current visa or permit in ${country}.` },
+      { key: "visaExpiry", check: "visaExpiry", title: "When does your visa expire?" },
+      { key: "sponsorship", check: "sponsorship", title: "Would you need sponsorship to change employer?", auto: true },
+    ] : []),
+    { key: "languages", check: "languages", title: "Which languages can you work in?", sub: "Add each one with your level." },
+    { key: "availability", check: "availability", title: "When could you start a new role?", auto: true },
+    { key: "industries", check: "industries", title: "Which industries have you worked in?", sub: "Choose all that apply." },
+  ];
+  const step = steps[Math.min(i, steps.length - 1)];
+  const msg = step.check ? PREF_CHECKS[step.check](p) : "";
+  const last = i >= steps.length - 1;
+  useEffect(() => { setTried(false); setDraft(""); setErr(""); window.scrollTo && window.scrollTo(0, 0); }, [i]);
+
+  const finish = async () => {
+    const errs = prefsErrors(p);
+    const firstBad = steps.findIndex((s) => s.check && errs[s.check]);
+    if (firstBad >= 0) { setI(firstBad); setTimeout(() => setTried(true), 0); return; }
+    setBusy(true); setErr("");
+    try { await onSave(prefsToSave(p)); setDone(true); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
+    setBusy(false);
+  };
+  const next = () => { if (msg) { setTried(true); return; } if (last) finish(); else setI(i + 1); };
+  const back = () => { if (i > 0) setI(i - 1); else if (onClose) onClose(); };
+  // Single-choice answers move on by themselves, after a beat so the tap registers visually.
+  const pick = (k, v) => { setP((x) => ({ ...x, [k]: v })); setTimeout(() => setI((n) => Math.min(n + 1, steps.length)), 220); };
+  useEffect(() => { if (i >= steps.length) setI(steps.length - 1); }, [steps.length]); // eslint-disable-line
+
+  const addChip = (k, v, max) => { const t = String(v || "").trim(); if (t && !p[k].includes(t) && (!max || p[k].length < max)) set(k, [...p[k], t]); setDraft(""); };
+  const visas = visaListFor(p.currentCountry);
+  const cities = (CITY_STATE_OPTIONS[p.currentCountry] || []).map((c) => c.split(",")[0].trim()).filter((c) => c !== p.currentCity);
+  const pct = done ? 100 : Math.round((i / steps.length) * 100);
+
+  const body = () => {
+    switch (step.key) {
+      case "roles": return (
+        <div className="flex flex-col gap-3">
+          {p.roles.length > 0 && <div className="flex flex-wrap gap-2"><Chips items={p.roles} onRemove={(r) => set("roles", p.roles.filter((x) => x !== r))} /></div>}
+          {p.roles.length < 5 && <div className="flex gap-2">
+            <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); draft.trim() ? addChip("roles", draft, 5) : next(); } }} placeholder="e.g. Financial Controller" className={quizInp} style={quizInpS} />
+            <button type="button" onClick={() => addChip("roles", draft, 5)} disabled={!draft.trim()} className="rounded-2xl px-5 text-sm font-semibold shrink-0" style={{ background: draft.trim() ? C.ink : C.line, color: "#fff" }}>Add</button>
+          </div>}
+        </div>);
+      case "seniority": return <div className="flex flex-col gap-2.5">{SENIORITY.map((v) => <QuizOption key={v} selected={p.seniority === v} onClick={() => pick("seniority", v)}>{v}</QuizOption>)}</div>;
+      case "employmentTypes": return <div className="flex flex-col gap-2.5">{EMPLOYMENT_TYPES.map((v) => <QuizOption multi key={v} selected={p.employmentTypes.includes(v)} onClick={() => set("employmentTypes", p.employmentTypes.includes(v) ? p.employmentTypes.filter((x) => x !== v) : [...p.employmentTypes, v])}>{v}</QuizOption>)}</div>;
+      case "salary": return (
+        <div className="flex flex-col gap-3">
+          <PickList value={p.salary.currency} onChange={(v) => set("salary", { ...p.salary, currency: v })} options={withValue(CURRENCY_OPTIONS, p.salary.currency)} placeholder="Currency" searchPlaceholder="Search currency or code" className={quizInp} style={quizInpS} />
+          <div className="grid grid-cols-2 gap-2.5">
+            <input autoFocus inputMode="numeric" value={p.salary.min ? Number(p.salary.min).toLocaleString("en-US") : ""} onChange={(e) => set("salary", { ...p.salary, min: e.target.value.replace(/[^\d]/g, "") })} placeholder="From" className={quizInp} style={quizInpS} />
+            <input inputMode="numeric" value={p.salary.max ? Number(p.salary.max).toLocaleString("en-US") : ""} onChange={(e) => set("salary", { ...p.salary, max: e.target.value.replace(/[^\d]/g, "") })} placeholder="To (optional)" className={quizInp} style={quizInpS} />
+          </div>
+          <div className="grid grid-cols-3 gap-2">{PAY_PERIODS.map(([k, l]) => <button key={k} type="button" onClick={() => set("salary", { ...p.salary, period: k })} className="rounded-2xl py-3 text-sm font-medium" style={p.salary.period === k ? { background: C.ink, color: "#fff" } : { background: "#fff", color: C.ink, border: `1.5px solid ${C.line}` }}>{l}</button>)}</div>
+        </div>);
+      case "location": return knownPlace && !changingLoc ? (
+        <div className="flex flex-col gap-2.5">
+          <div className="rounded-2xl px-5 py-5 flex items-center gap-3" style={{ background: "#fff", border: `1.5px solid ${C.line}` }}><MapPin size={20} color={C.em} /><span className="text-lg font-semibold">{knownPlace}</span></div>
+          <QuizOption selected={p.locationConfirmed} onClick={() => { if (PREF_CHECKS.location(p)) { setChangingLoc(true); return; } set("locationConfirmed", true); setTimeout(() => setI((n) => n + 1), 220); }}>Yes, that's right</QuizOption>
+          <QuizOption onClick={() => setChangingLoc(true)}>No, I've moved</QuizOption>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2.5">
+          <PickList value={p.currentCountry} onChange={(v) => setP((x) => ({ ...x, currentCountry: v, visaType: "", preferredCities: [], salary: x.salary.min ? x.salary : { ...x.salary, currency: COUNTRY_CURRENCY[v] || x.salary.currency } }))} options={withValue(COUNTRY_ONLY_OPTIONS, p.currentCountry)} placeholder="Country" searchPlaceholder="Search countries" className={quizInp} style={quizInpS} />
+          <input value={p.currentCity} onChange={(e) => set("currentCity", e.target.value)} placeholder="City" className={quizInp} style={quizInpS} />
+        </div>);
+      case "relocate": return <div className="flex flex-col gap-2.5">{RELOCATE.map(([k, l]) => <QuizOption key={k} selected={p.relocate === k} onClick={() => pick("relocate", k)}>{l}</QuizOption>)}</div>;
+      case "cities": return (
+        <div className="flex flex-col gap-3">
+          {p.preferredCities.length > 0 && <div className="flex flex-wrap gap-2"><Chips items={p.preferredCities} onRemove={(c) => set("preferredCities", p.preferredCities.filter((x) => x !== c))} /></div>}
+          <div className="flex gap-2">
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); draft.trim() ? addChip("preferredCities", draft) : next(); } }} placeholder={"A city in " + country} className={quizInp} style={quizInpS} />
+            <button type="button" onClick={() => addChip("preferredCities", draft)} disabled={!draft.trim()} className="rounded-2xl px-5 text-sm font-semibold shrink-0" style={{ background: draft.trim() ? C.ink : C.line, color: "#fff" }}>Add</button>
+          </div>
+          {cities.filter((c) => !p.preferredCities.includes(c)).length > 0 && <div className="flex flex-wrap gap-2">{cities.filter((c) => !p.preferredCities.includes(c)).map((c) => <button key={c} type="button" onClick={() => addChip("preferredCities", c)} className="rounded-full px-3.5 py-1.5 text-sm" style={{ background: "#fff", border: `1.5px solid ${C.line}` }}>+ {c}</button>)}</div>}
+        </div>);
+      case "workSetup": return <div className="flex flex-col gap-2.5">{WORK_SETUPS.map(([k, l]) => <QuizOption multi key={k} selected={p.workSetup.includes(k)} hint={{ remote: "Work from home", hybrid: "Some days in the office", onsite: "In the office every day" }[k]} onClick={() => set("workSetup", p.workSetup.includes(k) ? p.workSetup.filter((x) => x !== k) : [...p.workSetup, k])}>{l}</QuizOption>)}</div>;
+      case "citizen": return <div className="flex flex-col gap-2.5"><QuizOption selected={p.citizen === true} onClick={() => pick("citizen", true)}>Yes</QuizOption><QuizOption selected={p.citizen === false} onClick={() => pick("citizen", false)}>No, I'm on a visa or permit</QuizOption></div>;
+      case "visa": return (
+        <div className="flex flex-col gap-2.5">
+          {visas.map((v) => <QuizOption key={v} selected={p.visaType === v} onClick={() => (v === "Other" ? set("visaType", v) : pick("visaType", v))}>{v === "Other" ? "Something else" : v}</QuizOption>)}
+          {p.visaType === "Other" && <input autoFocus value={p.visaOther} onChange={(e) => set("visaOther", e.target.value)} onKeyDown={(e) => e.key === "Enter" && next()} placeholder="Type your visa or permit" className={quizInp} style={quizInpS} />}
+        </div>);
+      case "visaExpiry": return (
+        <div className="flex flex-col gap-2.5">
+          <input type="date" value={p.visaExpiry} onChange={(e) => setP((x) => ({ ...x, visaExpiry: e.target.value, visaNoExpiry: false }))} className={quizInp} style={quizInpS} />
+          <QuizOption selected={p.visaNoExpiry} onClick={() => { setP((x) => ({ ...x, visaNoExpiry: !x.visaNoExpiry, visaExpiry: "" })); }}>It doesn't expire</QuizOption>
+        </div>);
+      case "sponsorship": return <div className="flex flex-col gap-2.5">{SPONSOR.map(([k, l]) => <QuizOption key={k} selected={p.sponsorship === k} onClick={() => pick("sponsorship", k)}>{l}</QuizOption>)}</div>;
+      case "languages": return (
+        <div className="flex flex-col gap-2.5">
+          {p.languages.map((l, n) => (
+            <div key={n} className="rounded-2xl p-3 flex flex-col gap-2" style={{ background: "#fff", border: `1.5px solid ${C.line}` }}>
+              <div className="flex items-center gap-2">
+                <div className="flex-1"><PickList value={l.language} onChange={(v) => set("languages", p.languages.map((x, k) => (k === n ? { ...x, language: v } : x)))} options={withValue(LANGUAGE_OPTIONS.filter((o) => o.value === l.language || !p.languages.some((x) => x.language === o.value)), l.language)} placeholder="Choose a language" searchPlaceholder="Search languages" className="w-full rounded-xl border px-3.5 py-2.5 text-[15px] outline-none bg-white" style={{ borderColor: C.line }} /></div>
+                {p.languages.length > 1 && <button type="button" aria-label="Remove language" onClick={() => set("languages", p.languages.filter((_, k) => k !== n))} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2 }}><X size={16} /></button>}
+              </div>
+              <div className="flex flex-wrap gap-1.5">{LANG_LEVELS.map((v) => <button key={v} type="button" onClick={() => set("languages", p.languages.map((x, k) => (k === n ? { ...x, level: v } : x)))} className="rounded-full px-3 py-1.5 text-sm" style={l.level === v ? { background: C.em, color: "#fff" } : { background: C.canvas, color: C.ink }}>{v}</button>)}</div>
+            </div>
+          ))}
+          <button type="button" onClick={() => set("languages", [...p.languages, { language: "", level: "" }])} className="rounded-2xl py-3.5 text-sm font-semibold" style={{ border: `1.5px dashed ${C.line}`, color: C.em }}>+ Add another language</button>
+        </div>);
+      case "availability": return <div className="flex flex-col gap-2.5">{AVAILABILITY.map((v) => <QuizOption key={v} selected={p.availability === v} onClick={() => pick("availability", v)}>{v}</QuizOption>)}</div>;
+      case "industries": {
+        const shown = INDUSTRY_OPTIONS.filter((v) => !indQ.trim() || v.toLowerCase().includes(indQ.trim().toLowerCase()));
+        return (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2 rounded-2xl border px-4 py-3 bg-white" style={quizInpS}><Search size={16} color={C.ink3} /><input value={indQ} onChange={(e) => setIndQ(e.target.value)} placeholder="Search industries" className="flex-1 bg-transparent outline-none text-[15px]" /></div>
+            <div className="flex flex-wrap gap-2">
+              {shown.map((v) => { const on = p.industries.includes(v); return <button key={v} type="button" aria-pressed={on} onClick={() => set("industries", on ? p.industries.filter((x) => x !== v) : [...p.industries, v])} className="rounded-full px-3.5 py-2 text-sm" style={on ? { background: C.em, color: "#fff", border: `1.5px solid ${C.em}` } : { background: "#fff", color: C.ink, border: `1.5px solid ${C.line}` }}>{on && "✓ "}{v}</button>; })}
+              {!shown.length && <span className="text-sm" style={{ color: C.ink2 }}>No match. Try another word.</span>}
+            </div>
+          </div>);
+      }
+      default: return null;
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: "#FBFAF7", ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
+      <div className="sticky top-0 z-10" style={{ background: "#FBFAF7" }}>
+        <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
+          <button type="button" onClick={done ? onClose : back} aria-label={i === 0 || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{i === 0 || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
+          <BrandLogo height={24} />
+          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.ink }}>{done ? steps.length : i + 1}/{steps.length}</span>
+        </div>
+        <div style={{ height: 3, background: "#ECE9E2" }}><div style={{ height: 3, width: pct + "%", background: C.em, transition: "width .3s ease" }} /></div>
+      </div>
+      {preview && <div className="max-w-md mx-auto px-4 pt-3"><div className="text-xs rounded-xl px-3 py-2 text-center" style={{ background: C.warnBg, color: C.warnFg }}>Preview: this is what candidates see. Nothing is saved.</div></div>}
+      {done ? (
+        <div className="max-w-md mx-auto px-4 pt-16 pb-10 text-center flex flex-col items-center">
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mb-5" style={{ background: C.emTint }}><Check size={30} color={C.em} strokeWidth={3} /></div>
+          <div className="text-[28px] leading-tight font-bold tracking-tight" style={{ color: C.ink }}>You're all set</div>
+          <div className="text-[15px] mt-3 leading-relaxed" style={{ color: C.ink2 }}>{preview ? "In the real page this is saved to the candidate's profile." : "Thanks. We'll only recommend you for roles that fit what you told us, and we'll be in touch when one does. You can update your answers any time."}</div>
+          <button type="button" onClick={onClose} className="mt-8 w-full rounded-2xl py-4 text-[15px] font-semibold" style={{ background: C.em, color: "#fff" }}>{preview ? "Close" : "Back to my page"}</button>
+        </div>
+      ) : (
+        <div className="max-w-md mx-auto px-4 pt-8 pb-32">
+          <div className="text-center mb-7">
+            <div className="text-[26px] md:text-[30px] leading-tight font-bold tracking-tight" style={{ color: C.ink }}>{step.title}</div>
+            {step.sub && <div className="text-[15px] mt-2.5" style={{ color: C.ink2 }}>{step.sub}</div>}
+          </div>
+          {body()}
+          {tried && msg && <div className="text-sm mt-3 text-center" style={{ color: C.dangerFg }}>{msg}</div>}
+          {err && <div className="text-sm mt-3 rounded-xl px-3.5 py-2.5 text-center" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+        </div>
+      )}
+      {!done && (!step.auto || last) && (
+        <div className="fixed bottom-0 inset-x-0 px-4 pb-5 pt-3" style={{ background: "linear-gradient(to top, #FBFAF7 70%, rgba(251,250,247,0))" }}>
+          <div className="max-w-md mx-auto">
+            <button type="button" onClick={next} disabled={busy} className="w-full rounded-2xl py-4 text-[15px] font-semibold" style={{ background: msg ? "#B9C7BF" : C.em, color: "#fff" }}>
+              {busy ? <>Saving <InlineDots color="#fff" /></> : last ? "Finish" : step.key === "cities" && !p.preferredCities.length ? "Skip" : "Continue"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Staff: every answer on one page (quick to correct). Same answers and checks as the quiz. */
+function PreferencesForm({ initial, known, onSave, onCancel, saveLabel = "Save preferences", staff }) {
+  const [p, setP] = useState(() => prefsStart(initial, known));
+  const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [roleDraft, setRoleDraft] = useState("");
   const [cityDraft, setCityDraft] = useState("");
   const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
   const errs = prefsErrors(p);
-  const E = (k) => shown && errs[k] ? <div className="text-xs mt-1.5" style={{ color: C.dangerFg }} data-err="1">{errs[k]}</div> : null;
+  const E = (...ks) => { const k = ks.find((x) => errs[x]); return shown && k ? <div className="text-xs mt-1.5" style={{ color: C.dangerFg }} data-err="1">{errs[k]}</div> : null; };
   const inp = "w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none";
   const inpS = { borderColor: C.line, background: "#FAF8F3" };
   const addRole = () => { const r = roleDraft.trim(); if (r && p.roles.length < 5 && !p.roles.includes(r)) set("roles", [...p.roles, r]); setRoleDraft(""); };
-  const addCity = () => { const c = cityDraft.trim(); if (c && !p.preferredLocations.includes(c)) set("preferredLocations", [...p.preferredLocations, c]); setCityDraft(""); };
-  const setRtw = (country, status) => set("rightToWork", [...p.rightToWork.filter((x) => x.country !== country), { country, status }]);
+  const addCity = () => { const c = cityDraft.trim(); if (c && !p.preferredCities.includes(c)) set("preferredCities", [...p.preferredCities, c]); setCityDraft(""); };
   const submit = async () => {
     setShown(true); setErr("");
-    if (Object.keys(errs).length) {
-      setTimeout(() => { const el = document.querySelector("[data-err]"); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" }); }, 30);
-      return;
-    }
+    if (Object.keys(errs).length) { setTimeout(() => { const el = document.querySelector("[data-err]"); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" }); }, 30); return; }
     setBusy(true);
-    try { await onSave(prefsToSave(p)); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
+    try { await onSave(prefsToSave(p)); } catch (e) { setErr(e.message || "Couldn't save. Please try again."); }
     setBusy(false);
   };
-  const visas = visaListFor(p.currentCountry);
-  const rtwCountries = otherCountries(p);
+  const country = p.currentCountry || "their country";
   return (
     <div className="flex flex-col gap-4">
-      <Q n={1} title={staff ? "Roles they're looking for" : "What roles are you looking for?"} sub="Up to five job titles.">
+      <Q n={1} title="Roles they're looking for" sub="Up to five job titles.">
         <div className="flex flex-wrap gap-1.5 mb-2"><Chips items={p.roles} onRemove={(r) => set("roles", p.roles.filter((x) => x !== r))} /></div>
-        {p.roles.length < 5 && <div className="flex gap-2">
-          <input value={roleDraft} onChange={(e) => setRoleDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRole(); } }} placeholder="e.g. Financial Controller" className={inp} style={inpS} />
-          <Btn onClick={addRole} disabled={!roleDraft.trim()}>Add</Btn>
-        </div>}
+        {p.roles.length < 5 && <div className="flex gap-2"><input value={roleDraft} onChange={(e) => setRoleDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRole(); } }} placeholder="e.g. Financial Controller" className={inp} style={inpS} /><Btn onClick={addRole} disabled={!roleDraft.trim()}>Add</Btn></div>}
         {E("roles")}
       </Q>
-      <Q n={2} title="Level">
-        <ChoiceRow options={SENIORITY} value={p.seniority} onChange={(v) => set("seniority", v)} />{E("seniority")}
-      </Q>
-      <Q n={3} title="Type of work" sub="Choose all that apply.">
-        <ChoiceRow multi options={EMPLOYMENT_TYPES} value={p.employmentTypes} onChange={(v) => set("employmentTypes", v)} />{E("employmentTypes")}
-      </Q>
-      <Q n={4} title={staff ? "Salary expectation" : "What salary are you looking for?"} sub="A single figure, or a range.">
+      <Q n={2} title="Level"><ChoiceRow options={SENIORITY} value={p.seniority} onChange={(v) => set("seniority", v)} />{E("seniority")}</Q>
+      <Q n={3} title="Type of work"><ChoiceRow multi options={EMPLOYMENT_TYPES} value={p.employmentTypes} onChange={(v) => set("employmentTypes", v)} />{E("employmentTypes")}</Q>
+      <Q n={4} title="Salary expectation">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <input inputMode="numeric" value={p.salary.min} onChange={(e) => set("salary", { ...p.salary, min: e.target.value.replace(/[^\d.]/g, "") })} placeholder="From" className={inp} style={inpS} />
           <input inputMode="numeric" value={p.salary.max || ""} onChange={(e) => set("salary", { ...p.salary, max: e.target.value.replace(/[^\d.]/g, "") })} placeholder="To (optional)" className={inp} style={inpS} />
           <PickList value={p.salary.currency} onChange={(v) => set("salary", { ...p.salary, currency: v })} options={withValue(CURRENCY_OPTIONS, p.salary.currency)} placeholder="Currency" searchPlaceholder="Search currency or code" className={inp} style={inpS} />
           <select value={p.salary.period} onChange={(e) => set("salary", { ...p.salary, period: e.target.value })} className={inp} style={inpS}>{PAY_PERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-        </div>
-        {E("salary")}
+        </div>{E("salary")}
       </Q>
-      <Q n={5} title={staff ? "Where they live" : "Where do you live now?"}>
+      <Q n={5} title="Where they're based">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <PickList value={p.currentCountry} onChange={(v) => setP((x) => ({ ...x, currentCountry: v, visaType: "", salary: x.salary.currency ? x.salary : { ...x.salary, currency: COUNTRY_CURRENCY[v] || "" } }))} options={withValue(COUNTRY_ONLY_OPTIONS, p.currentCountry)} placeholder="Country" searchPlaceholder="Search countries" className={inp} style={inpS} />
+          <PickList value={p.currentCountry} onChange={(v) => setP((x) => ({ ...x, currentCountry: v, visaType: "" }))} options={withValue(COUNTRY_ONLY_OPTIONS, p.currentCountry)} placeholder="Country" searchPlaceholder="Search countries" className={inp} style={inpS} />
           <input value={p.currentCity} onChange={(e) => set("currentCity", e.target.value)} placeholder="City" className={inp} style={inpS} />
-        </div>
-        {E("current")}
-      </Q>
-      <Q n={6} title={staff ? "Where they'd work" : "Where would you like to work?"} sub="Add countries, and cities if you have a preference.">
-        <div className="flex flex-wrap gap-1.5 mb-2"><Chips items={p.preferredLocations} onRemove={(l) => set("preferredLocations", p.preferredLocations.filter((x) => x !== l))} /></div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <PickList value="" onChange={(v) => v && !p.preferredLocations.includes(v) && set("preferredLocations", [...p.preferredLocations, v])} options={COUNTRY_ONLY_OPTIONS.filter((o) => !p.preferredLocations.includes(o.value))} placeholder="Add a country…" searchPlaceholder="Search countries" className={inp} style={inpS} />
-          <div className="flex gap-2"><input value={cityDraft} onChange={(e) => setCityDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCity(); } }} placeholder="Add a city (optional)" className={inp} style={inpS} /><Btn onClick={addCity} disabled={!cityDraft.trim()}>Add</Btn></div>
-        </div>
-        {E("preferredLocations")}
-        <div className="text-sm mt-3 mb-1.5">{staff ? "Open to relocating?" : "Would you relocate for the right role?"}</div>
+        </div>{E("location")}
+        <div className="text-sm mt-3 mb-1.5">Would they move to another city in {country}?</div>
         <ChoiceRow options={RELOCATE} value={p.relocate} onChange={(v) => set("relocate", v)} />{E("relocate")}
+        {p.relocate && p.relocate !== "no" && <>
+          <div className="text-sm mt-3 mb-1.5">Preferred cities in {country} (optional)</div>
+          <div className="flex flex-wrap gap-1.5 mb-2"><Chips items={p.preferredCities} onRemove={(c) => set("preferredCities", p.preferredCities.filter((x) => x !== c))} /></div>
+          <div className="flex gap-2"><input value={cityDraft} onChange={(e) => setCityDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCity(); } }} placeholder="Add a city" className={inp} style={inpS} /><Btn onClick={addCity} disabled={!cityDraft.trim()}>Add</Btn></div>
+        </>}
       </Q>
-      <Q n={7} title="Remote, hybrid or on-site?" sub="Choose all you'd accept.">
-        <ChoiceRow multi options={WORK_SETUPS} value={p.workSetup} onChange={(v) => set("workSetup", v)} />{E("workSetup")}
-      </Q>
-      <Q n={8} title="Right to work">
-        <div className="text-sm mb-1.5">{staff ? "Citizen or permanent resident of " : "Are you a citizen or permanent resident of "}{p.currentCountry || (staff ? "the country they live in" : "the country you live in")}?</div>
+      <Q n={6} title="Remote, hybrid or on-site?"><ChoiceRow multi options={WORK_SETUPS} value={p.workSetup} onChange={(v) => set("workSetup", v)} />{E("workSetup")}</Q>
+      <Q n={7} title={"Citizen or permanent resident of " + country + "?"}>
         <ChoiceRow options={[[true, "Yes"], [false, "No"]]} value={p.citizen} onChange={(v) => set("citizen", v)} />{E("citizen")}
         {p.citizen === false && (
           <div className="mt-3 rounded-xl p-3.5 flex flex-col gap-3" style={{ background: C.canvas }}>
-            <div>
-              <div className="text-sm mb-1.5">{staff ? "Which visa are they on?" : "Which visa are you on?"}</div>
-              <select value={p.visaType} onChange={(e) => set("visaType", e.target.value)} className={inp} style={inpS}>
-                <option value="">Choose your visa…</option>{visas.map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-              {p.visaType === "Other" && <input value={p.visaOther} onChange={(e) => set("visaOther", e.target.value)} placeholder="Type the visa or permit" className={inp + " mt-2"} style={inpS} />}
-            </div>
-            <div>
-              <div className="text-sm mb-1.5">When does it expire?</div>
-              <div className="flex flex-wrap items-center gap-3">
-                <input type="date" value={p.visaExpiry} disabled={p.visaNoExpiry} onChange={(e) => set("visaExpiry", e.target.value)} className={inp + " sm:w-48"} style={{ ...inpS, opacity: p.visaNoExpiry ? 0.5 : 1 }} />
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={p.visaNoExpiry} onChange={(e) => set("visaNoExpiry", e.target.checked)} /> It doesn't expire</label>
-              </div>
-            </div>
-            {E("visa")}
-            <div>
-              <div className="text-sm mb-1.5">{staff ? "Would they need sponsorship to change employer?" : "Would you need sponsorship to change employer?"}</div>
-              <ChoiceRow options={SPONSOR} value={p.sponsorship} onChange={(v) => set("sponsorship", v)} />{E("sponsorship")}
-            </div>
-          </div>
-        )}
-        {rtwCountries.length > 0 && (
-          <div className="mt-3 flex flex-col gap-2.5">
-            {rtwCountries.map((c) => (
-              <div key={c}><div className="text-sm mb-1.5">{staff ? "Can they work in " : "Can you work in "}{c}?</div>
-                <ChoiceRow options={RTW} value={(p.rightToWork.find((x) => x.country === c) || {}).status || ""} onChange={(v) => setRtw(c, v)} /></div>
-            ))}
-            {E("rightToWork")}
+            <div><div className="text-sm mb-1.5">Visa they're on</div>
+              <select value={p.visaType} onChange={(e) => set("visaType", e.target.value)} className={inp} style={inpS}><option value="">Choose…</option>{visaListFor(p.currentCountry).map((v) => <option key={v} value={v}>{v}</option>)}</select>
+              {p.visaType === "Other" && <input value={p.visaOther} onChange={(e) => set("visaOther", e.target.value)} placeholder="Type the visa or permit" className={inp + " mt-2"} style={inpS} />}{E("visa")}</div>
+            <div><div className="text-sm mb-1.5">Expires</div>
+              <div className="flex flex-wrap items-center gap-3"><input type="date" value={p.visaExpiry} disabled={p.visaNoExpiry} onChange={(e) => set("visaExpiry", e.target.value)} className={inp + " sm:w-48"} style={{ ...inpS, opacity: p.visaNoExpiry ? 0.5 : 1 }} /><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={p.visaNoExpiry} onChange={(e) => set("visaNoExpiry", e.target.checked)} /> Doesn't expire</label></div>{E("visaExpiry")}</div>
+            <div><div className="text-sm mb-1.5">Needs sponsorship to change employer?</div><ChoiceRow options={SPONSOR} value={p.sponsorship} onChange={(v) => set("sponsorship", v)} />{E("sponsorship")}</div>
           </div>
         )}
       </Q>
-      <Q n={9} title="Languages" sub="Every language you can work in, with your level.">
+      <Q n={8} title="Languages">
         <div className="flex flex-col gap-2">
-          {p.languages.map((l, i) => (
-            <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-              <PickList value={l.language} onChange={(v) => set("languages", p.languages.map((x, k) => (k === i ? { ...x, language: v } : x)))} options={withValue(LANGUAGE_OPTIONS.filter((o) => o.value === l.language || !p.languages.some((x) => x.language === o.value)), l.language)} placeholder="Language" searchPlaceholder="Search languages" className={inp} style={inpS} />
-              <select value={l.level} onChange={(e) => set("languages", p.languages.map((x, k) => (k === i ? { ...x, level: e.target.value } : x)))} className={inp} style={inpS}><option value="">Level…</option>{LANG_LEVELS.map((v) => <option key={v}>{v}</option>)}</select>
-              <button type="button" aria-label="Remove language" disabled={p.languages.length < 2} onClick={() => set("languages", p.languages.filter((_, k) => k !== i))} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: C.ink2, opacity: p.languages.length < 2 ? 0.3 : 1 }}><X size={15} /></button>
+          {p.languages.map((l, n) => (
+            <div key={n} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+              <PickList value={l.language} onChange={(v) => set("languages", p.languages.map((x, k) => (k === n ? { ...x, language: v } : x)))} options={withValue(LANGUAGE_OPTIONS.filter((o) => o.value === l.language || !p.languages.some((x) => x.language === o.value)), l.language)} placeholder="Language" searchPlaceholder="Search languages" className={inp} style={inpS} />
+              <select value={l.level} onChange={(e) => set("languages", p.languages.map((x, k) => (k === n ? { ...x, level: e.target.value } : x)))} className={inp} style={inpS}><option value="">Level…</option>{LANG_LEVELS.map((v) => <option key={v}>{v}</option>)}</select>
+              <button type="button" aria-label="Remove language" disabled={p.languages.length < 2} onClick={() => set("languages", p.languages.filter((_, k) => k !== n))} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: C.ink2, opacity: p.languages.length < 2 ? 0.3 : 1 }}><X size={15} /></button>
             </div>
           ))}
           <button type="button" onClick={() => set("languages", [...p.languages, { language: "", level: "" }])} className="text-sm font-medium w-fit" style={{ color: C.em }}>+ Add another language</button>
-        </div>
-        {E("languages")}
+        </div>{E("languages")}
       </Q>
-      <Q n={10} title={staff ? "When could they start?" : "When could you start a new role?"}>
-        <ChoiceRow options={AVAILABILITY} value={p.availability} onChange={(v) => set("availability", v)} />{E("availability")}
-      </Q>
-      <Q n={11} title="Industry experience" sub="Industries you've worked in.">
+      <Q n={9} title="Can start"><ChoiceRow options={AVAILABILITY} value={p.availability} onChange={(v) => set("availability", v)} />{E("availability")}</Q>
+      <Q n={10} title="Industry experience">
         <div className="flex flex-wrap gap-1.5 mb-2"><Chips items={p.industries} onRemove={(v) => set("industries", p.industries.filter((x) => x !== v))} /></div>
-        <PickList value="" onChange={(v) => v && set("industries", [...new Set([...p.industries, v])])} options={INDUSTRY_PICK.filter((o) => !p.industries.includes(o.value))} placeholder="Add an industry…" searchPlaceholder="Search industries" className={inp} style={inpS} />
-        {E("industries")}
+        <PickList value="" onChange={(v) => v && set("industries", [...new Set([...p.industries, v])])} options={INDUSTRY_PICK.filter((o) => !p.industries.includes(o.value))} placeholder="Add an industry…" searchPlaceholder="Search industries" className={inp} style={inpS} />{E("industries")}
       </Q>
       {shown && Object.keys(errs).length > 0 && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>Please answer every question ({Object.keys(errs).length} still to go).</div>}
       {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
@@ -6145,17 +6297,18 @@ function PreferencesSummary({ p, staff }) {
   const visa = p.citizen ? "Citizen or permanent resident" + (p.currentCountry ? " of " + p.currentCountry : "")
     : [p.visaType, p.visaExpiry ? "expires " + fdate(p.visaExpiry) : "no expiry", p.sponsorship ? "sponsorship to move: " + label(SPONSOR, p.sponsorship).toLowerCase() : ""].filter(Boolean).join(" · ");
   const soon = !p.citizen && p.visaExpiry && new Date(p.visaExpiry).getTime() - Date.now() < 180 * 864e5;
+  const move = p.relocate ? (p.relocate === "no" ? "Staying in " + (p.currentCity || "their city") : (p.relocate === "yes" ? "Would move" : "Might move") + " within " + (p.currentCountry || "their country") + ((p.preferredCities || []).length ? " (prefers " + p.preferredCities.join(", ") + ")" : "")) : "";
   return (
     <div>
       {row("Roles", (p.roles || []).join(", "))}
       {row("Level", p.seniority)}
       {row("Type", (p.employmentTypes || []).join(", "))}
       {row("Salary", s.min ? (s.currency || "") + " " + fmt(s.min) + (s.max ? " – " + fmt(s.max) : "") + " " + label(PAY_PERIODS, s.period || "year") : "")}
-      {row("Lives in", [p.currentCity, p.currentCountry].filter(Boolean).join(", "))}
-      {row("Would work in", (p.preferredLocations || []).join(", ") + (p.relocate ? " · relocate: " + label(RELOCATE, p.relocate).toLowerCase() : ""))}
+      {row("Based in", [p.currentCity, p.currentCountry].filter(Boolean).join(", "))}
+      {row("Relocation", move)}
+      {(p.preferredLocations || []).length > 0 && row("Would work in", p.preferredLocations.join(", "))}
       {row("Work setup", (p.workSetup || []).map((k) => label(WORK_SETUPS, k)).join(", "))}
       {row(staff ? "Visa (staff only)" : "Visa", <>{visa}{soon && staff && <span className="ml-1.5"><Pill tone="warn">Expires within 6 months</Pill></span>}</>)}
-      {(p.rightToWork || []).length > 0 && row("Right to work", p.rightToWork.map((x) => x.country + ": " + ({ yes: "can work there", sponsorship: "needs sponsorship", no: "can't work there" }[x.status] || x.status)).join(" · "))}
       {row("Languages", (p.languages || []).map((l) => l.language + (l.level ? " (" + l.level.toLowerCase() + ")" : "")).join(", "))}
       {row("Can start", p.availability)}
       {row("Industries", (p.industries || []).join(", "))}
@@ -6163,60 +6316,62 @@ function PreferencesSummary({ p, staff }) {
   );
 }
 
-// Candidate page card: the form when they've said yes but not answered yet, otherwise a summary
-// they can edit. Opened directly by ?prefs=1 (the invite email) or right after clicking Yes.
+// Candidate page card. Unanswered: a short invitation that opens the quiz (it opens by itself right
+// after they click Yes, or from ?prefs=1 in the invite email). Answered: a summary they can redo.
 function PortalPreferences({ token, pitchConsent, openSignal }) {
-  const [state, setState] = useState(null); // { preferences, location, ... }
-  const [editing, setEditing] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const ref = React.useRef(null);
+  const [state, setState] = useState(null);
+  const [open, setOpen] = useState(false);
+  const autoOpened = React.useRef(false);
   const load = () => sbFetch("/rest/v1/rpc/candidate_preferences", { method: "POST", body: { p_token: token } }).then(setState).catch(() => setState({ error: true }));
   useEffect(() => { if (token) load(); }, [token, openSignal]); // eslint-disable-line
   const wantsOpen = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("prefs") === "1";
-  useEffect(() => { if (state && !state.error && (wantsOpen || openSignal) && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "start" }); }, [state, openSignal]); // eslint-disable-line
+  useEffect(() => {
+    if (!state || state.error || autoOpened.current) return;
+    if ((wantsOpen || openSignal) && !state.preferences) { autoOpened.current = true; setOpen(true); }
+  }, [state, openSignal]); // eslint-disable-line
   if (!state || state.error) return null;
   const consent = pitchConsent || state.pitchConsent;
   if (!consent && !wantsOpen && !state.preferences) return null;
   const has = !!state.preferences;
-  const save = async (prefs) => {
-    await sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs } });
-    setEditing(false); setSaved(true); await load();
+  const save = (prefs) => sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs } });
+  const close = () => {
+    setOpen(false); load();
+    try { const u = new URL(window.location.href); if (u.searchParams.get("prefs")) { u.searchParams.delete("prefs"); window.history.replaceState({}, "", u.toString()); } } catch (e) { /* fine */ }
   };
   return (
-    <div ref={ref}>
-      <Card>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-xl" style={{ ...SERIF }}>{has ? "My job preferences" : "Help us match you"}</div>
-            <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{has ? "What you're looking for. We use it to recommend you only for roles that fit." : "A few questions so we only recommend you for roles that really fit. It takes about two minutes."}</div>
+    <>
+      {has ? (
+        <Card>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xl" style={{ ...SERIF }}>My job preferences</div>
+              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>We only recommend you for roles that fit these.</div>
+            </div>
+            <Btn icon={Pencil} onClick={() => setOpen(true)} className="!px-3 !py-1.5 text-xs shrink-0">Update</Btn>
           </div>
-          {has && !editing && <Btn icon={Pencil} onClick={() => { setEditing(true); setSaved(false); }} className="!px-3 !py-1.5 text-xs shrink-0">Edit</Btn>}
+          <div className="mt-3"><PreferencesSummary p={state.preferences} /></div>
+        </Card>
+      ) : (
+        <div className="rounded-2xl p-5 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4" style={{ background: C.side, color: "#fff" }}>
+          <div className="flex-1">
+            <div className="text-xl" style={{ ...SERIF, color: C.lime }}>Help us match you</div>
+            <div className="text-sm mt-1" style={{ color: "#C9D6CE" }}>A few quick questions so we only recommend you for roles that really fit. About two minutes.</div>
+          </div>
+          <button type="button" onClick={() => setOpen(true)} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
         </div>
-        {saved && !editing && <div className="text-sm rounded-xl px-3.5 py-2.5 mt-3" style={{ background: C.emTint, color: C.em }}>Thanks, your preferences are saved. We'll be in touch when a role fits.</div>}
-        <div className="mt-3">
-          {has && !editing ? <PreferencesSummary p={state.preferences} />
-            : <PreferencesForm initial={state.preferences} known={state} onSave={save} onCancel={has ? () => setEditing(false) : null} />}
-        </div>
-      </Card>
-    </div>
+      )}
+      {open && <PreferencesQuiz initial={state.preferences} known={state} onSave={save} onClose={close} />}
+    </>
   );
 }
 
-// /?c=preview: what candidates see, with nothing saved (used for the test email).
+// /?c=preview: the quiz as candidates see it, with nothing saved (used for test emails).
 function PreferencesPreviewPage() {
-  const [done, setDone] = useState(false);
+  const [open, setOpen] = useState(true);
   return (
-    <div className="min-h-screen" style={{ background: C.canvas }}>
-      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
-        <div className="mb-1"><BrandLogo height={30} /></div>
-        <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.warnBg, color: C.warnFg }}>Preview: this is what candidates see. Nothing you enter here is saved.</div>
-        <Card>
-          <div className="text-xl" style={{ ...SERIF }}>Help us match you</div>
-          <div className="text-sm mt-0.5 mb-3" style={{ color: C.ink2 }}>A few questions so we only recommend you for roles that really fit. It takes about two minutes.</div>
-          {done ? <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>All questions answered. In the real page this is saved to the candidate's profile.</div>
-            : <PreferencesForm initial={null} known={{ location: "Lagos, Nigeria" }} onSave={async () => setDone(true)} />}
-        </Card>
-      </div>
+    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: C.canvas }}>
+      {open ? <PreferencesQuiz preview initial={null} known={{ location: "Lagos, Nigeria" }} onSave={async () => {}} onClose={() => setOpen(false)} />
+        : <div><div className="text-sm mb-4" style={{ color: C.ink2 }}>That's the end of the preview.</div><Btn kind="primary" onClick={() => setOpen(true)}>Start again</Btn></div>}
     </div>
   );
 }
