@@ -5098,6 +5098,9 @@ function PortalInterviews({ list, token, onChanged }) {
    sent until an email sender, a sender name and a postal address are set (Setup tab).
    ---------------------------------------------------------------------- */
 const PROSPECT_TONE = { found: "info", approved: "warn", queued: "warn", contacted: "neutral", interested: "em", not_interested: "neutral", unsubscribed: "danger", bounced: "danger", rejected: "neutral", converted: "em" };
+// Where an outside prospect was found (shown as a small tag beside their name).
+const FOUND_ON = { apollo: "Apollo", linkedin: "LinkedIn X-ray", github: "GitHub", stackoverflow: "Stack Overflow", gitlab: "GitLab", kaggle: "Kaggle", huggingface: "Hugging Face", devto: "DEV", dribbble: "Dribbble", behance: "Behance" };
+const CHECK_STYLE = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43" }, unconfirmed: { t: "?", bg: "#F3EFE6", fg: "#6B6455" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E" } };
 const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted" };
 const LEAD_TONE = { new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
 const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send", contacted: "Contacted", replied: "Replied", meeting: "Meeting booked", won: "Won", lost: "Lost", ignored: "Not a fit", unsubscribed: "Unsubscribed" };
@@ -5225,24 +5228,43 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
   const dirty = subject !== (p.subject || "") || body !== (p.body || "");
   const editable = canEdit && ["found", "approved"].includes(p.status);
   const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown";
+  // X-ray people come from free searches: no email, so they're contacted on LinkedIn or the site.
+  const d = p.data || {};
+  const xray = !!d.xray;
+  const profile = d.profile_url || p.linkedin_url;
+  const statusLabel = xray && p.status === "found" ? "To contact" : xray && p.status === "contacted" ? "Contacted" : (PROSPECT_LABEL[p.status] || p.status);
+  const checklist = Array.isArray(d.checklist) ? d.checklist : [];
+  const gaps = Array.isArray(d.gaps) ? d.gaps : [];
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
       <div className="flex items-start gap-3">
-        {editable && <input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} className="mt-1.5 shrink-0" />}
+        {editable && p.email && <input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} className="mt-1.5 shrink-0" />}
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <div className="min-w-0"><div className="font-medium text-sm truncate">{name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[p.title, p.company, p.location].filter(Boolean).join(" · ")}</div></div>
-            <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{PROSPECT_LABEL[p.status] || p.status}</Pill></div>
+            <div className="min-w-0">
+              <div className="font-medium text-sm truncate">{name}{FOUND_ON[p.source] && <span className="ml-1.5 align-middle rounded px-1.5 py-px font-normal" style={{ fontSize: 10, background: C.canvas, color: C.ink3 }} title="Where this person was found">{FOUND_ON[p.source]}</span>}</div>
+              <div className="text-xs truncate" style={{ color: C.ink2 }}>{[p.title, p.company, p.location].filter(Boolean).join(" · ")}</div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{statusLabel}</Pill></div>
           </div>
           {jobLabel && <div className="text-xs mt-1" style={{ color: C.ink3 }}>For {jobLabel}</div>}
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
+          {xray && checklist.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {checklist.map((c, i) => { const st = CHECK_STYLE[c.status] || CHECK_STYLE.unconfirmed; return (
+                <span key={i} className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: st.bg, color: st.fg }} title={c.evidence || (c.status === "unconfirmed" ? "Not shown in their public profile summary" : "")}>{st.t} {c.item}</span>
+              ); })}
+            </div>
+          )}
+          {xray && gaps.length > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
           <div className="flex gap-3 mt-2 text-xs flex-wrap">
-            <button onClick={() => setOpen((o) => !o)} style={{ color: C.em }}>{open ? "Hide email" : editable ? "Review email" : "View email"}</button>
-            {p.linkedin_url && <a href={p.linkedin_url} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn profile</a>}
+            {!xray && <button onClick={() => setOpen((o) => !o)} style={{ color: C.em }}>{open ? "Hide email" : editable ? "Review email" : "View email"}</button>}
+            {profile && <a href={profile} target="_blank" rel="noreferrer" style={{ color: C.em }}>{p.source === "linkedin" || (!xray && p.linkedin_url) ? "LinkedIn profile" : (FOUND_ON[p.source] || "Profile") + " profile"}</a>}
             {p.email && <span style={{ color: C.ink3 }}>{p.email}</span>}
-            {p.contacted_at && <span style={{ color: C.ink3 }}>Emailed {fdate(p.contacted_at)}</span>}
+            {xray && <span style={{ color: C.ink3 }}>From a public search result; confirm details with them</span>}
+            {p.contacted_at && <span style={{ color: C.ink3 }}>{xray ? "Contacted" : "Emailed"} {fdate(p.contacted_at)}</span>}
           </div>
-          {open && (
+          {open && !xray && (
             <div className="mt-2 flex flex-col gap-2">
               <input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={!editable} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
               <textarea value={body} onChange={(e) => setBody(e.target.value)} disabled={!editable} rows={9} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
@@ -5253,6 +5275,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {canEdit && (
             <div className="flex gap-2 mt-2 justify-end flex-wrap">
               {p.status === "found" && <Btn onClick={() => onStatus("rejected")}>Skip</Btn>}
+              {xray && p.status === "found" && <Btn kind="primary" onClick={() => onStatus("contacted", { contacted_at: new Date().toISOString() })}>Mark contacted</Btn>}
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} />}
               {["contacted", "queued"].includes(p.status) && <Btn onClick={() => onStatus("not_interested")}>Not interested</Btn>}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
@@ -5274,7 +5297,7 @@ function JobSourcingCard({ job, S, toast }) {
   const [sel, setSel] = useState({});
   const canRun = S.role === "admin" || S.role === "recops";
   const load = () => Promise.all([
-    S.sb("/rest/v1/jobs?id=eq." + job.id + "&select=parallel_titles,parallel_titles_at,sourcing").then((r) => setRow((r || [])[0] || {})),
+    S.sb("/rest/v1/jobs?id=eq." + job.id + "&select=parallel_titles,parallel_titles_at,sourcing,xray").then((r) => setRow((r || [])[0] || {})),
     canRun ? S.sb("/rest/v1/prospects?job_id=eq." + job.id + "&select=*&order=fit.desc.nullslast&limit=200").then((r) => setProspects(r || [])) : Promise.resolve(),
   ]).catch(() => {});
   React.useEffect(() => { load(); }, [job.id]); // eslint-disable-line
@@ -5287,27 +5310,41 @@ function JobSourcingCard({ job, S, toast }) {
     setAreaAsked(true);
     S.sourcing("search_area", { jobId: job.id }).then(() => load()).catch(() => {});
   }, [row]); // eslint-disable-line
+  // While an X-ray search runs on the server, check back every few seconds.
+  const xrayRunning = !!(row && row.xray && row.xray.state === "running");
+  React.useEffect(() => {
+    if (!xrayRunning) return;
+    const t = setTimeout(load, 8000);
+    return () => clearTimeout(t);
+  }, [row]); // eslint-disable-line
   if (!row) return null;
   const titles = Array.isArray(row.parallel_titles) ? row.parallel_titles : [];
   const src = row.sourcing || {};
   const internal = src.internal || null, external = src.external || null;
+  const xr = row.xray || null;
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const regen = () => run("titles", () => S.aiScreen("job_titles", { jobId: job.id }).then(() => toast("Parallel titles updated")));
+  // One button for every outside source: the free X-ray search starts straight away; Apollo
+  // (paid) still needs an Admin's approval.
   const outside = (force) => run("outside", async () => {
     if (!internal) await S.aiScreen("bench_fits", { jobId: job.id });
+    const x = await S.sourcing("xray", { jobId: job.id }).catch((e) => ({ message: e.message }));
+    if (x && x.message) toast(x.message);
     await paidAction(S, toast, "search_external", { jobId: job.id, force }, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load);
   });
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }));
   const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
-  const waiting = prospects.filter((p) => p.status === "found");
+  const waiting = prospects.filter((p) => p.status === "found" && p.email);
+  const toContact = prospects.filter((p) => p.status === "found" && !p.email).length;
   const state = src.state;
+  const siteText = xr && xr.bySite ? Object.entries(xr.bySite).map(([k, n]) => n + " " + (FOUND_ON[k] || k)).join(", ") : "";
   return (
     <Card>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <SectionTitle title="Sourcing" sub="ProNext checks your own candidates first, using the job's parallel titles. Only when there aren't enough strong fits does it look outside ProNext for people with verified emails." size="text-xl" />
+        <SectionTitle title="Sourcing" sub="ProNext checks your own candidates first, using the job's parallel titles. Searching outside runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles) and, when the bench is short, Apollo for people with verified emails (Admin approval)." size="text-xl" />
         {canRun && <div className="flex gap-2 shrink-0 flex-wrap">
-          <Btn kind="primary" icon={Search} onClick={() => outside(!!external)} disabled={!!busy}>{busy === "outside" ? "Searching…" : external ? "Search outside again" : "Search outside ProNext"}</Btn>
+          <Btn kind="primary" icon={Search} onClick={() => outside(!!external)} disabled={!!busy || xrayRunning}>{busy === "outside" || xrayRunning ? "Searching…" : external || xr ? "Search outside again" : "Search outside ProNext"}</Btn>
         </div>}
       </div>
       <div className="mt-3">
@@ -5325,20 +5362,25 @@ function JobSourcingCard({ job, S, toast }) {
           </div>
         ) : <div className="text-sm mt-1" style={{ color: C.ink2 }}>{canRun ? <>Working it out <InlineDots /></> : "Worked out when the job goes live."}</div>}
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
           <div className="text-xs" style={{ color: C.ink3 }}>In ProNext</div>
           <div className="text-sm mt-0.5">{internal ? <>{plural(internal.goodFits || 0, "strong fit")} on the bench · {internal.considered || 0} with a matching title{internal.onRole ? " · " + internal.onRole + " already submitted to this role (not counted)" : ""} · checked {fdate(internal.at)}</> : state === "pending" ? "Queued. The bench is checked automatically within about 10 minutes." : "Not checked yet"}</div>
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
-          <div className="text-xs" style={{ color: C.ink3 }}>Outside ProNext</div>
+          <div className="text-xs" style={{ color: C.ink3 }}>Apollo (paid)</div>
           <div className="text-sm mt-0.5">{src.state === "awaiting_approval" ? "Waiting for an Admin to approve the Apollo search (Outreach > Approvals)" : external ? (external.skipped || external.error || (plural(external.found || 0, "person", "people") + " found · " + fdate(external.at))) : "Not searched yet"}</div>
+        </div>
+        <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
+          <div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
+          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xr.state === "running" ? <>Searching public profiles <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "unknown error") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
         </div>
       </div>
       {canRun && prospects.length > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
-            <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} waiting for approval</span></div>
+            <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} email{waiting.length === 1 ? "" : "s"} waiting for approval{toContact ? " · " + toContact + " to contact on LinkedIn or their site" : ""}</span></div>
             {waiting.length > 0 && <div className="flex gap-2">
               <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all"}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={approve}>{busy === "approve" ? "Approving…" : "Approve " + (ids.length || "") + " email" + (ids.length === 1 ? "" : "s")}</Btn>
@@ -5346,7 +5388,7 @@ function JobSourcingCard({ job, S, toast }) {
           </div>
           <div className="flex flex-col gap-2">
             {prospects.map((p) => <ProspectCard key={p.id} p={p} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
-              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />)}
+              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />)}
           </div>
         </div>
       )}
@@ -5442,7 +5484,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
   const save = () => {
     setBusy(true);
     const regions = (f.regions || []).filter(Boolean);
-    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1 } } };
+    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1 } } };
     S.sb("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body }).then(() => { toast("Outreach settings saved"); onSaved(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false));
   };
   const conn = (status && status.connections) || {};
@@ -5460,6 +5502,12 @@ function OutreachSetup({ S, toast, status, onSaved }) {
         <div className="mt-2">
           <Row ok={conn.anthropic} label="AI (Claude)" hint={conn.anthropic ? "Connected" : "Add ANTHROPIC_API_KEY"} />
           <Row ok={conn.apollo} label="Apollo: finds candidates outside ProNext and hiring managers' emails" hint={conn.apollo ? "Connected" : "Add APOLLO_API_KEY. Until then, jobs only check your own bench."} />
+          <Row ok={!!(conn.search && (conn.search.serper || conn.search.brave || conn.search.tavily || conn.search.gemini))} label="Free search engines: X-ray sourcing of public profiles" hint={(() => {
+            const se = conn.search || {}, use = (status && status.searchUsage) || {};
+            const per = { total: "free in total", month: "free this month", day: "free today" };
+            const one = (k, label, secret) => se[k] ? label + (use[k] ? " " + use[k].used + "/" + use[k].limit + " " + per[use[k].per] : " connected") : label + ": add " + secret;
+            return [one("serper", "Serper (Google)", "SERPER_API_KEY"), one("brave", "Brave", "BRAVE_API_KEY"), one("tavily", "Tavily", "TAVILY_API_KEY"), one("gemini", "Gemini", "GEMINI_API_KEY"), se.github ? "GitHub token connected" : "GitHub works without a key (add GITHUB_TOKEN for more profiles)"].join(" · ") + ". ProNext stops before any free allowance runs out, so nothing is charged.";
+          })()} />
           <Row ok={conn.theirstack} label="TheirStack: daily feed of new job postings" hint={conn.theirstack ? "Connected" : "Add THEIRSTACK_API_KEY. Until then, no client leads are fetched."} />
           <Row ok={conn.sender && conn.sender !== "none"} label="Email sender" hint={conn.sender === "apollo" ? "Apollo sequence (from your outreach mailbox)" : conn.sender === "instantly" ? "Instantly" : conn.sender === "gmail" ? "Gmail (Google Workspace)" : "Not connected. Link your outreach-domain mailbox in Apollo and add APOLLO_SEQUENCE_ID. Approved emails wait in the queue until then."} />
           <Row ok={!(status && status.blockers && status.blockers.length)} label="Sender details" hint={status && status.blockers && status.blockers.length ? "Missing: " + status.blockers.join(", ") + ". Required by anti-spam law in every email." : "Set"} />
@@ -5493,6 +5541,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside ProNext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most X-ray people kept per job (free searches)</label><input type="number" min="5" max="80" value={f.xrayPerJob ?? 40} onChange={(e) => set("xrayPerJob", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outreach emails per day</label><input type="number" min="1" value={f.dailyCap ?? 40} onChange={(e) => set("dailyCap", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete outside contacts who never engaged after (days)</label><input type="number" min="14" value={f.retentionDays ?? 90} onChange={(e) => set("retentionDays", e.target.value)} className={inp} style={inpS} /></div>
           <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={f.includePay !== false} onChange={(e) => set("includePay", e.target.checked)} />Mention the job's pay range in candidate emails</label>
@@ -5563,16 +5612,16 @@ function CampaignsPage({ toast, S }) {
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(prospects, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />
-            {pf === "found" && pList.length > 0 && <div className="flex gap-2 shrink-0">
-              <Btn onClick={() => setSel(ids.length === pList.length ? {} : Object.fromEntries(pList.map((p) => [p.id, true])))}>{ids.length === pList.length ? "Clear" : "Select all"}</Btn>
+            {pf === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
+              <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all"}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first. If there are fewer strong fits than your setting, it searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>
           <div className="flex flex-col gap-2 mt-3">
             {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pList.map((p) => (
               <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
-                onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st) => patchP(p.id, { status: st }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />
+                onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />
             )) : <div className="text-sm" style={{ color: C.ink2 }}>{pf === "found" ? "No one waiting for approval." : "Nothing here yet."}</div>}
           </div>
         </Card>

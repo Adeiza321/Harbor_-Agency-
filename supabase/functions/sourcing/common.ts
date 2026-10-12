@@ -6,6 +6,7 @@ export type Settings = {
   regions: string[];                   // "US", "EU", "MY"
   minInternalFits: number;             // search outside Pronext only when fewer good fits than this
   prospectsPerJob: number;             // most emails revealed (Apollo credits) per job
+  xrayPerJob: number;                  // most people kept per job from free X-ray searches (no credits)
   dailyCap: number;                    // most outreach emails sent per day
   senderName: string; senderTitle: string; businessAddress: string;
   footerName: string;                  // company name in footers: Agency settings' full name, else the agency name
@@ -28,6 +29,7 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
       regions: Array.isArray(o.regions) && o.regions.length ? o.regions : ["US", "EU", "MY"],
       minInternalFits: num(o.minInternalFits, 3, 0, 50),
       prospectsPerJob: num(o.prospectsPerJob, 20, 1, 100),
+      xrayPerJob: num(o.xrayPerJob, 40, 5, 80),
       dailyCap: num(o.dailyCap, 40, 1, 1000),
       senderName: String(o.senderName || "").trim(),
       senderTitle: String(o.senderTitle || "").trim(),

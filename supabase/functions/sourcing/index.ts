@@ -8,11 +8,15 @@ import { apolloKey, apolloSendCheck, sendViaApollo } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
+import { startXray } from "./xray.ts";
+import { searchEngines, searchUsage } from "./search.ts";
 
 // Sourcing and outreach for Pronext.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
-//   matching the job's parallel titles both ways); only if there are fewer strong fits than the
-//   setting does Pronext search Apollo, reveal verified emails for the best matches and draft emails.
+//   matching the job's parallel titles both ways). Then a free X-ray search (xray.ts) looks for
+//   public profiles on LinkedIn and, for technical roles, GitHub and technical sites, through free
+//   search engines only; and only if there are fewer strong fits than the setting does Pronext
+//   search Apollo (paid, Admin approval), reveal verified emails for the best matches and draft emails.
 //   Client side: a daily job feed (TheirStack) is matched against candidates who agreed to be
 //   presented anonymously; the hiring contact gets an anonymous pitch by email, or a LinkedIn
 //   note for a person to send (LinkedIn doesn't allow automated messages).
@@ -35,6 +39,7 @@ function connections() {
     apollo: !!apolloKey(),
     theirstack: !!theirstackKey(),
     sender: provider(),
+    search: searchEngines(),
   };
 }
 
@@ -62,6 +67,11 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
     const { data: full } = await admin.from("jobs").select("*").eq("id", job.id).single();
     if (full) { await searchArea(admin, full, targetCodes(s.regions).map((c: string) => COUNTRY_NAMES[c]).filter(Boolean)); job.sourcing = full.sourcing; }
   } catch (e) { console.error("search area", errMsg(e)); }
+  // Free X-ray search for every newly live job (runs in the background; nothing is spent).
+  try {
+    const { data: xr } = await admin.from("jobs").select("xray").eq("id", job.id).single();
+    if (!xr?.xray) await startXray(admin, job.id, s, null);
+  } catch (e) { console.error("xray start", errMsg(e)); }
   if (!apolloKey()) {
     await admin.from("jobs").update({ sourcing: { ...(job.sourcing || {}), state: "done", external: { at: new Date().toISOString(), skipped: "Apollo not connected" } } }).eq("id", job.id);
     return { job: job.id, step: "external", skipped: "apollo" };
@@ -144,6 +154,8 @@ Deno.serve(async (req: Request) => {
         return json(await sendTest(admin, String(body.prospectId), String(body.to), s, agencyName));
       }
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
+      // Free X-ray search for one job (also started automatically for every newly live job).
+      if (body.action === "xray" && body.jobId) return json(await startXray(admin, String(body.jobId), s, null));
       // A test send through Apollo: a prospect's email, to a given address, with dummy unsubscribe links.
       if (body.action === "apollo_test" && body.prospectId && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(body.to || ""))) {
         const { data: p } = await admin.from("prospects").select("*").eq("id", String(body.prospectId)).maybeSingle();
@@ -173,7 +185,8 @@ Deno.serve(async (req: Request) => {
         admin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "failed"),
       ]);
       const { count: approvals } = await admin.from("spend_requests").select("id", { count: "exact", head: true }).eq("status", "pending");
-      return json({ ok: true, connections: connections(), settings: s, blockers: sendBlockers(s), queue: { queued, sentToday, failed }, approvals: approvals || 0, canApprove: me.role === "admin" });
+      const searchUse = await searchUsage(admin).catch(() => ({}));
+      return json({ ok: true, connections: connections(), searchUsage: searchUse, settings: s, blockers: sendBlockers(s), queue: { queued, sentToday, failed }, approvals: approvals || 0, canApprove: me.role === "admin" });
     }
 
     // Paid work from a button: an Admin confirms the cost and it runs; anyone else's click
@@ -201,6 +214,13 @@ Deno.serve(async (req: Request) => {
       if (!job) return json({ error: "Job not found" }, 404);
       const area = await searchArea(admin, job, targetCodes(s.regions).map((c) => COUNTRY_NAMES[c]).filter(Boolean));
       return json({ ok: true, area });
+    }
+
+    // Free X-ray search (LinkedIn, and GitHub and technical sites for technical roles). No
+    // credits are used, so it runs straight away for Rec Ops and Admins.
+    if (action === "xray") {
+      if (!body.jobId) return json({ error: "jobId is required" }, 400);
+      return json(await startXray(admin, String(body.jobId), s, me.id));
     }
 
     if (action === "search_external") {
