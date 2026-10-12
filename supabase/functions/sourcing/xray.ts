@@ -12,7 +12,7 @@
 
 import { askAI } from "./ai.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
-import { COUNTRY_NAMES, targetCodes } from "./regions.ts";
+import { jobCountryNames } from "./regions.ts";
 import { fitsToPercent, sameCompany, type Settings } from "./common.ts";
 import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
 
@@ -85,7 +85,8 @@ type Person = Hit & { key: string; site: SiteKey; query: string };
 export async function runXray(admin: any, jobId: string, s: Settings) {
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("Job not found");
-  const area = await searchArea(admin, job, targetCodes(s.regions).map((c) => COUNTRY_NAMES[c]).filter(Boolean));
+  // Searched where the job is (its own country), like every other outside search.
+  const area = await searchArea(admin, job, jobCountryNames(job));
   const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8) as string[];
   const { data: ls } = await admin.from("screening_lessons").select("lesson,kind").eq("job_id", jobId).eq("active", true).in("kind", ["client_reject", "internal_reject"]).limit(6);
   const p = await plan(job, area, (ls || []).map((l: any) => l.lesson), titles);
