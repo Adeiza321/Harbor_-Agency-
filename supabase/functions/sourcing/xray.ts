@@ -30,7 +30,7 @@ export async function startXray(admin: any, jobId: string, s: Settings, by: stri
   const { data: job } = await admin.from("jobs").select("id,xray").eq("id", jobId).maybeSingle();
   if (!job) return { ok: false, message: "Job not found" };
   const e = searchEngines();
-  if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No search engine is connected yet. Add a SERPER_API_KEY, BRAVE_API_KEY, TAVILY_API_KEY or GEMINI_API_KEY secret." };
+  if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No free search engine is connected yet. Add a SERPER_API_KEY, BRAVE_API_KEY or TAVILY_API_KEY secret in Supabase." };
   const x = job.xray || {};
   if (x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < 6 * 60e3) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
   await setXray(admin, jobId, { state: "running", by });
@@ -51,7 +51,7 @@ async function plan(job: any, area: any, lessons: string[], titles: string[]): P
     "{\"technical\": boolean, \"checklist\": string[], \"linkedin\": string[], \"sites\": [{\"site\": string, \"query\": string}], \"github\": {\"location\": string, \"language\": string, \"keywords\": string} | null}. " +
     "checklist: 5 to 8 of the job's most important must-haves, each a few words that a profile headline or summary could show (e.g. '8+ yrs technical accounting', 'Big 4 Advisory background', 'Senior Manager level', 'Based in Pacific or Mountain time zone'). Always include the seniority/title level and the location requirement. Add the lessons from past candidates when they apply. " +
     "linkedin: 4 to 8 search queries. Each MUST start with site:linkedin.com/in, then an OR group of 2 to 4 title variants in double quotes (the job title and its parallel titles, as people write them in headlines), " +
-    "then at most 2 must-have terms in double quotes that people put in their headline or summary (a core skill, standard or certification), then an OR group of up to 4 locations in double quotes taken from the search area, and finally -jobs -hiring -recruiter. " +
+    "then at most 2 must-have terms in double quotes that people actually write in a headline or summary: a core skill, tool, standard or certification (e.g. \"ServiceNow\", \"ASC 606\", \"CPA\"); never years, numbers or phrases like \"5 years\" or \"senior level\", then an OR group of up to 4 locations in double quotes taken from the search area, and finally -jobs -hiring -recruiter. " +
     "Keep each under 30 words. Spread the locations of the search area across the queries so together they cover it, and vary the title groups and terms so the queries don't repeat each other. Never include the hiring company's name. Use Google syntax: \"A\" OR \"B\" inside parentheses. " +
     "technical: true for software, data, IT, engineering, security, DevOps, ML/AI, product design and similar roles. " +
     `sites: only when technical (otherwise []): up to 4 queries on the sites that suit this role, from: ${siteList}. Each query starts with that site's prefix, then quoted skills/titles and a location term; under 25 words. ` +

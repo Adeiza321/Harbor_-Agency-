@@ -3,7 +3,8 @@
 //   Serper.dev  real Google results           SERPER_API_KEY   one-time free allowance (2,500)
 //   Brave       Brave's own index             BRAVE_API_KEY    monthly free credit (~1,000)
 //   Tavily      AI search API                 TAVILY_API_KEY   1,000 free credits a month
-//   Gemini      Google Search grounding       GEMINI_API_KEY   free daily grounding allowance
+//   Gemini      Google Search grounding       GEMINI_API_KEY + XRAY_GEMINI_MODEL (opt-in: off unless the
+//               model is named, because grounding on current Gemini models may be billed)
 //   GitHub      user search (technical roles) GITHUB_TOKEN optional (more profiles per run)
 // The allowances can be lowered (or raised, if a paid plan is added later) with SERPER_FREE_LIMIT,
 // BRAVE_FREE_LIMIT, TAVILY_FREE_LIMIT and GEMINI_FREE_LIMIT. Each search goes to the first engine
@@ -119,7 +120,7 @@ async function tavily(q: string): Promise<Hit[]> {
 // grounding sources, resolved from Google's redirect links) are kept, so nothing the model
 // might make up gets through.
 async function gemini(q: string): Promise<Hit[]> {
-  const model = env("XRAY_GEMINI_MODEL") || "gemini-2.5-flash";
+  const model = env("XRAY_GEMINI_MODEL");
   const prompt = "Use Google Search to run exactly this search query and report the results it returns. Do not add anything that is not in the results.\n" +
     `Query: ${q}\n` +
     "Reply with STRICT JSON only: {\"results\": [{\"url\": string, \"title\": string, \"snippet\": string}]} with every individual person's profile page found (up to 20).";
@@ -160,12 +161,12 @@ function engines(): Engine[] {
     { name: "serper", key: env("SERPER_API_KEY"), period: "total" as const, limit: limitOf("SERPER_FREE_LIMIT", 2400), run: serper },
     { name: "brave", key: env("BRAVE_API_KEY"), period: "month" as const, limit: limitOf("BRAVE_FREE_LIMIT", 950), run: brave },
     { name: "tavily", key: env("TAVILY_API_KEY"), period: "month" as const, limit: limitOf("TAVILY_FREE_LIMIT", 950), run: tavily },
-    { name: "gemini", key: env("GEMINI_API_KEY"), period: "day" as const, limit: limitOf("GEMINI_FREE_LIMIT", 400), run: gemini },
+    { name: "gemini", key: env("XRAY_GEMINI_MODEL") ? env("GEMINI_API_KEY") : "", period: "day" as const, limit: limitOf("GEMINI_FREE_LIMIT", 400), run: gemini },
   ].filter((e) => e.key);
 }
 
 export function searchEngines() {
-  return { serper: !!env("SERPER_API_KEY"), brave: !!env("BRAVE_API_KEY"), tavily: !!env("TAVILY_API_KEY"), gemini: !!env("GEMINI_API_KEY"), github: !!env("GITHUB_TOKEN") };
+  return { serper: !!env("SERPER_API_KEY"), brave: !!env("BRAVE_API_KEY"), tavily: !!env("TAVILY_API_KEY"), gemini: !!(env("GEMINI_API_KEY") && env("XRAY_GEMINI_MODEL")), github: !!env("GITHUB_TOKEN") };
 }
 
 // Current use against each engine's free allowance (for Outreach > Setup and the run summary).
