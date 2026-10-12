@@ -7,13 +7,15 @@
 //   4. The AI reviews each search result (title and snippet only): a short overview, the checklist
 //      marked met / unconfirmed / not met, the gaps, and a fit score.
 //   5. The best (up to Settings.xrayPerJob) are saved as prospects next to Apollo's, tagged with
-//      where they were found. They have no email: a recruiter contacts them on LinkedIn or the site.
+//      where they were found, without an email. GitHub public emails are added straight away (free);
+//      LinkedIn people's emails are looked up in Apollo when asked (emails.ts, needs approval).
 // No credits are spent. The run is recorded on jobs.xray.
 
 import { askAI } from "./ai.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fitsToPercent, sameCompany, type Settings } from "./common.ts";
+import { findGithubEmails } from "./emails.ts";
 import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
 
 const errMsg = (e: unknown) => String((e as Error)?.message || e);
@@ -192,11 +194,19 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
     if (error) throw new Error(error.message);
     inserted = data || [];
   }
+  // GitHub people often show a public email on their profile: picked up now, free.
+  let ghEmails = 0;
+  if (rows.some((r) => r.source === "github")) {
+    try {
+      const { data: ag } = await admin.from("agency_settings").select("agency_name").limit(1).maybeSingle();
+      ghEmails = (await findGithubEmails(admin, { jobId }, s, String(ag?.agency_name || "").trim())).found;
+    } catch (e) { errors.push(errMsg(e).slice(0, 200)); }
+  }
   const bySite: Record<string, number> = {};
   for (const r of rows) bySite[r.source] = (bySite[r.source] || 0) + 1;
   const usage = await searchUsage(admin).catch(() => ({}));
   await setXray(admin, jobId, {
-    state: "done", found: inserted.length, reviewed: byKey.size, searched, used, bySite, technical: p.technical, checklist: p.checklist,
+    state: "done", found: inserted.length, reviewed: byKey.size, searched, used, bySite, ghEmails, technical: p.technical, checklist: p.checklist,
     queries: queries.map((x) => x.q), usage, ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
   });
   return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches).` };

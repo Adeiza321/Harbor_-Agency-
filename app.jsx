@@ -5368,16 +5368,21 @@ function ManualSend({ kind, id, S, toast, onDone, label }) {
   );
 }
 
-function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged }) {
+function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged, onFindEmail }) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(p.subject || "");
   const [body, setBody] = useState(p.body || "");
   const dirty = subject !== (p.subject || "") || body !== (p.body || "");
   const editable = canEdit && ["found", "approved"].includes(p.status);
   const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown";
-  // X-ray people come from free searches: no email, so they're contacted on LinkedIn or the site.
+  // X-ray people come from free searches without an email: contacted on LinkedIn or the site until
+  // an email is found for them (Find email), after which they go through the usual email flow.
   const d = p.data || {};
-  const xray = !!d.xray;
+  const found = !!d.xray;
+  const xray = found && !p.email;
+  const looked = d.email_lookup || {};
+  const lookedUp = !!(looked.apollo || (p.source === "github" && looked.github));
+  const canFind = xray && p.status === "found" && !looked.apollo && (p.linkedin_url || (p.source === "github" && !looked.github));
   const profile = d.profile_url || p.linkedin_url;
   const statusLabel = xray && p.status === "found" ? "To contact" : xray && p.status === "contacted" ? "Contacted" : (PROSPECT_LABEL[p.status] || p.status);
   const checklist = Array.isArray(d.checklist) ? d.checklist : [];
@@ -5396,19 +5401,20 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           </div>
           {jobLabel && <div className="text-xs mt-1" style={{ color: C.ink3 }}>For {jobLabel}</div>}
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
-          {xray && checklist.length > 0 && (
+          {found && checklist.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {checklist.map((c, i) => { const st = CHECK_STYLE[c.status] || CHECK_STYLE.unconfirmed; return (
                 <span key={i} className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: st.bg, color: st.fg }} title={c.evidence || (c.status === "unconfirmed" ? "Not shown in their public profile summary" : "")}>{st.t} {c.item}</span>
               ); })}
             </div>
           )}
-          {xray && gaps.length > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
+          {found && gaps.length > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
           <div className="flex gap-3 mt-2 text-xs flex-wrap">
             {!xray && <button onClick={() => setOpen((o) => !o)} style={{ color: C.em }}>{open ? "Hide email" : editable ? "Review email" : "View email"}</button>}
             {profile && <a href={profile} target="_blank" rel="noreferrer" style={{ color: C.em }}>{p.source === "linkedin" || (!xray && p.linkedin_url) ? "LinkedIn profile" : (FOUND_ON[p.source] || "Profile") + " profile"}</a>}
-            {p.email && <span style={{ color: C.ink3 }}>{p.email}</span>}
-            {xray && <span style={{ color: C.ink3 }}>From a public search result; confirm details with them</span>}
+            {p.email && <span style={{ color: C.ink3 }}>{p.email}{d.email_source ? " · from " + d.email_source : ""}</span>}
+            {found && <span style={{ color: C.ink3 }}>From a public search result; confirm details with them</span>}
+            {xray && lookedUp && <span style={{ color: C.ink3 }}>No verified email found</span>}
             {p.contacted_at && <span style={{ color: C.ink3 }}>{xray ? "Contacted" : "Emailed"} {fdate(p.contacted_at)}</span>}
           </div>
           {open && !xray && (
@@ -5422,6 +5428,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {canEdit && (
             <div className="flex gap-2 mt-2 justify-end items-center flex-wrap">
               {xray && p.status === "found" && <Btn kind="primary" onClick={() => onStatus("contacted", { contacted_at: new Date().toISOString() })}>Mark contacted</Btn>}
+              {canFind && onFindEmail && <Btn icon={Mail} onClick={onFindEmail}>Find email</Btn>}
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} />}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
               <RowMenu label={"More actions for " + name} items={[
@@ -5484,6 +5491,9 @@ function JobSourcingCard({ job, S, toast }) {
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }));
   const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
+  // X-ray people without an email who haven't been looked up yet (LinkedIn via Apollo, GitHub free).
+  const noEmail = prospects.filter((p) => p.data && p.data.xray && !p.email && p.status === "found" && !(p.data.email_lookup || {}).apollo && (p.linkedin_url || (p.source === "github" && !(p.data.email_lookup || {}).github)));
+  const findEmails = (payload) => run("emails", () => paidAction(S, toast, "find_emails", payload, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load));
   const waiting = prospects.filter((p) => p.status === "found" && p.email);
   const toContact = prospects.filter((p) => p.status === "found" && !p.email).length;
   const state = src.state;
@@ -5531,6 +5541,7 @@ function JobSourcingCard({ job, S, toast }) {
         <div className="mt-4">
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
             <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} email{waiting.length === 1 ? "" : "s"} waiting for approval{toContact ? " · " + toContact + " to contact on LinkedIn or their site" : ""}</span></div>
+            {noEmail.length > 0 && <Btn icon={Mail} onClick={() => findEmails({ jobId: job.id })} disabled={!!busy} title="LinkedIn people are looked up in Apollo (1 credit per email found, needs Admin approval); GitHub public emails are free">{busy === "emails" ? "Finding emails…" : "Find emails (" + noEmail.length + ")"}</Btn>}
             {waiting.length > 0 && <div className="flex gap-2">
               <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all"}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={approve}>{busy === "approve" ? "Approving…" : "Approve " + (ids.length || "") + " email" + (ids.length === 1 ? "" : "s")}</Btn>
@@ -5538,7 +5549,7 @@ function JobSourcingCard({ job, S, toast }) {
           </div>
           <div className="flex flex-col gap-2">
             {prospects.map((p) => <ProspectCard key={p.id} p={p} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
-              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />)}
+              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} onFindEmail={() => findEmails({ ids: [p.id] })} />)}
           </div>
         </div>
       )}
