@@ -197,9 +197,20 @@ const jobText = (job: any) =>
   (job.location ? `\nLocation: ${job.location}` : "") + (job.country ? `\nHiring country: ${job.country}` : "") +
   (job.work_setup ? `\nWork setup: ${job.work_setup}` : "") + (job.employment_type ? `\nEmployment type: ${job.employment_type}` : "");
 
-// What the profile says about the candidate outside the CV (location, notice, pay).
+// What the profile says about the candidate outside the CV (location, notice, pay), plus the job
+// preferences they gave on their candidate page (work setup, right to work, languages, roles...).
+const prefsFacts = (p: any) => {
+  if (!p || typeof p !== "object") return "";
+  const visa = p.citizen ? `citizen or permanent resident of ${p.currentCountry || "where they live"}`
+    : `on a ${p.visaType || "visa"}${p.visaExpiry ? " expiring " + p.visaExpiry : ""}${p.sponsorship ? ", needs sponsorship to change employer: " + p.sponsorship : ""}`;
+  const rtw = (p.rightToWork || []).map((x: any) => `${x.country}: ${x.status === "yes" ? "can work" : x.status === "sponsorship" ? "needs sponsorship" : "cannot work"}`).join("; ");
+  return `\nTheir stated job preferences: wants ${(p.roles || []).join(", ") || "?"} (${p.seniority || "?"}, ${(p.employmentTypes || []).join("/") || "?"}); ` +
+    `work setup they accept: ${(p.workSetup || []).join(", ") || "?"}; would work in ${(p.preferredLocations || []).join(", ") || "?"} (relocate: ${p.relocate || "?"}); ` +
+    `right to work: ${visa}${rtw ? "; elsewhere " + rtw : ""}; languages: ${(p.languages || []).map((l: any) => l.language + " (" + l.level + ")").join(", ") || "?"}; ` +
+    `industry experience they claim: ${(p.industries || []).join(", ") || "?"}. Treat a work setup, location or right-to-work mismatch with this job as a real gap.`;
+};
 const candidateFacts = (c: any) =>
-  `Candidate's stated location: ${c.location || "not given"}. Notice period: ${c.notice && c.notice !== "-" ? c.notice : "not given"}. Salary expectation: ${c.pay && c.pay !== "-" ? c.pay : "not given"}.`;
+  `Candidate's stated location: ${c.location || "not given"}. Notice period: ${c.notice && c.notice !== "-" ? c.notice : "not given"}. Salary expectation: ${c.pay && c.pay !== "-" ? c.pay : "not given"}.` + prefsFacts(c.preferences);
 
 export async function screenLink(admin: any, linkId: string, askAI: Ask, loadResume: Load) {
   const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", linkId).single();
