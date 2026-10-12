@@ -10,6 +10,7 @@ import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
 import { startXray } from "./xray.ts";
 import { searchEngines, searchUsage } from "./search.ts";
+import { autoFindEmails, findEmails } from "./emails.ts";
 
 // Sourcing and outreach for Pronext.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
@@ -154,6 +155,8 @@ Deno.serve(async (req: Request) => {
       if (body.action === "test_email" && body.prospectId && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(body.to || ""))) {
         return json(await sendTest(admin, String(body.prospectId), String(body.to), s, agencyName));
       }
+      // Every 10 minutes (cron harbor-xray-emails): emails for the best X-ray people, within the daily cap.
+      if (body.action === "auto_emails") return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName)) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
       // Free X-ray search for one job (also started automatically for every newly live job).
       if (body.action === "xray" && body.jobId) return json(await startXray(admin, String(body.jobId), s, null));
@@ -205,6 +208,7 @@ Deno.serve(async (req: Request) => {
         status: "done", requested_by: me.id, decided_by: me.id, decided_at: new Date().toISOString(), result }).then(() => {}, () => {});
     };
     const runApproved = async (req: any) => {
+      if (req.kind === "xray_emails") return await findEmails(admin, { jobId: req.job_id, ids: Array.isArray(req.payload?.ids) ? req.payload.ids : [] }, s, agencyName);
       if (req.kind === "apollo_search") {
         const r: any = await sourceExternal(admin, req.job_id, s, { force: true });
         if (s.approval === "auto" && r.ids?.length && !sendBlockers(s).length) await queueProspects(admin, r.ids, null, s, agencyName);
@@ -241,6 +245,18 @@ Deno.serve(async (req: Request) => {
       if (isAdmin) { const r = await runApproved({ kind: "apollo_search", job_id: body.jobId }); await logDirect("apollo_search", body.jobId, title, { a: s.prospectsPerJob, t: 0 }, r); return json(r); }
       const { created } = await requestSpend(admin, "apollo_search", s, { jobId: body.jobId, title, requestedBy: me.id });
       return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
+    }
+
+    // Emails for X-ray results (they're saved without one). GitHub public emails are free and run
+    // straight away; LinkedIn people are looked up in Apollo (1 credit per email found), which an
+    // Admin confirms, or approves when someone else asks.
+    if (action === "find_emails") {
+      // Runs straight away, no approval: X-ray emails are found automatically anyway; this just
+      // doesn't wait for the next run (and looks up anyone asked for, whatever their fit), within the daily cap.
+      const o = { jobId: body.jobId ? String(body.jobId) : null, ids };
+      if (!o.jobId && !ids.length) return json({ error: "jobId or ids is required" }, 400);
+      if (!apolloKey()) return json({ ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to look up emails." });
+      return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName, o)) });
     }
 
     if (action === "list_requests") {

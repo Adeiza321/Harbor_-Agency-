@@ -5376,16 +5376,21 @@ function TestEmailBtn({ kind, id, S, toast }) {
   return <Btn icon={Mail} onClick={go} disabled={busy}>{busy ? "Sending…" : "Email me a test"}</Btn>;
 }
 
-function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged }) {
+function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged, onFindEmail }) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(p.subject || "");
   const [body, setBody] = useState(p.body || "");
   const dirty = subject !== (p.subject || "") || body !== (p.body || "");
   const editable = canEdit && ["found", "approved"].includes(p.status);
   const name = p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" ") || "Unknown";
-  // X-ray people come from free searches: no email, so they're contacted on LinkedIn or the site.
+  // X-ray people come from free searches without an email: contacted on LinkedIn or the site until
+  // an email is found for them (Find email), after which they go through the usual email flow.
   const d = p.data || {};
-  const xray = !!d.xray;
+  const found = !!d.xray;
+  const xray = found && !p.email;
+  const looked = d.email_lookup || {};
+  const lookedUp = !!(looked.apollo || (p.source === "github" && looked.github));
+  const canFind = xray && p.status === "found" && !looked.apollo && (p.linkedin_url || (p.source === "github" && !looked.github));
   const profile = d.profile_url || p.linkedin_url;
   const statusLabel = xray && p.status === "found" ? "To contact" : xray && p.status === "contacted" ? "Contacted" : (PROSPECT_LABEL[p.status] || p.status);
   const checklist = Array.isArray(d.checklist) ? d.checklist : [];
@@ -5404,19 +5409,20 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           </div>
           {jobLabel && <div className="text-xs mt-1" style={{ color: C.ink3 }}>For {jobLabel}</div>}
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
-          {xray && checklist.length > 0 && (
+          {found && checklist.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {checklist.map((c, i) => { const st = CHECK_STYLE[c.status] || CHECK_STYLE.unconfirmed; return (
                 <span key={i} className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: st.bg, color: st.fg }} title={c.evidence || (c.status === "unconfirmed" ? "Not shown in their public profile summary" : "")}>{st.t} {c.item}</span>
               ); })}
             </div>
           )}
-          {xray && gaps.length > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
+          {found && gaps.length > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
           <div className="flex gap-3 mt-2 text-xs flex-wrap">
             {!xray && <button onClick={() => setOpen((o) => !o)} style={{ color: C.em }}>{open ? "Hide email" : editable ? "Review email" : "View email"}</button>}
             {profile && <a href={profile} target="_blank" rel="noreferrer" style={{ color: C.em }}>{p.source === "linkedin" || (!xray && p.linkedin_url) ? "LinkedIn profile" : (FOUND_ON[p.source] || "Profile") + " profile"}</a>}
-            {p.email && <span style={{ color: C.ink3 }}>{p.email}</span>}
-            {xray && <span style={{ color: C.ink3 }}>From a public search result; confirm details with them</span>}
+            {p.email && <span style={{ color: C.ink3 }}>{p.email}{d.email_source ? " · from " + d.email_source : ""}</span>}
+            {found && <span style={{ color: C.ink3 }}>From a public search result; confirm details with them</span>}
+            {xray && lookedUp && <span style={{ color: C.ink3 }}>No verified email found</span>}
             {p.contacted_at && <span style={{ color: C.ink3 }}>{xray ? "Contacted" : "Emailed"} {fdate(p.contacted_at)}</span>}
           </div>
           {open && !xray && (
@@ -5430,6 +5436,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {canEdit && (
             <div className="flex gap-2 mt-2 justify-end items-center flex-wrap">
               {xray && p.status === "found" && <Btn kind="primary" onClick={() => onStatus("contacted", { contacted_at: new Date().toISOString() })}>Mark contacted</Btn>}
+              {canFind && onFindEmail && <Btn icon={Mail} onClick={onFindEmail}>Find email</Btn>}
               {S && p.email && p.body && <TestEmailBtn kind="p" id={p.id} S={S} toast={toast} />}
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} />}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
@@ -5493,6 +5500,9 @@ function JobSourcingCard({ job, S, toast }) {
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }));
   const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
+  // X-ray people without an email who haven't been looked up yet (LinkedIn via Apollo, GitHub free).
+  const noEmail = prospects.filter((p) => p.data && p.data.xray && !p.email && p.status === "found" && !(p.data.email_lookup || {}).apollo && (p.linkedin_url || (p.source === "github" && !(p.data.email_lookup || {}).github)));
+  const findEmails = (payload) => run("emails", () => paidAction(S, toast, "find_emails", payload, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load));
   const waiting = prospects.filter((p) => p.status === "found" && p.email);
   const toContact = prospects.filter((p) => p.status === "found" && !p.email).length;
   const state = src.state;
@@ -5540,6 +5550,7 @@ function JobSourcingCard({ job, S, toast }) {
         <div className="mt-4">
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
             <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} email{waiting.length === 1 ? "" : "s"} waiting for approval{toContact ? " · " + toContact + " to contact on LinkedIn or their site" : ""}</span></div>
+            {noEmail.length > 0 && <span className="text-xs inline-flex items-center gap-1.5" style={{ color: C.ink2 }} title="The best matches are looked up in Apollo by their LinkedIn profile every 10 minutes, within the daily limit in Outreach setup; GitHub public emails are free"><Mail size={13} /> Finding emails automatically · {noEmail.length} without one yet</span>}
             {waiting.length > 0 && <div className="flex gap-2">
               <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all"}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={approve}>{busy === "approve" ? "Approving…" : "Approve " + (ids.length || "") + " email" + (ids.length === 1 ? "" : "s")}</Btn>
@@ -5547,7 +5558,7 @@ function JobSourcingCard({ job, S, toast }) {
           </div>
           <div className="flex flex-col gap-2">
             {prospects.map((p) => <ProspectCard key={p.id} p={p} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
-              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />)}
+              onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} onFindEmail={() => findEmails({ ids: [p.id] })} />)}
           </div>
         </div>
       )}
@@ -5644,7 +5655,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
   const save = () => {
     setBusy(true);
     const regions = (f.regions || []).filter(Boolean);
-    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1 } } };
+    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, xrayEmailsPerDay: f.xrayEmailsPerDay === "" || f.xrayEmailsPerDay == null ? 40 : Math.max(0, Number(f.xrayEmailsPerDay) || 0), xrayEmailMinFit: f.xrayEmailMinFit === "" || f.xrayEmailMinFit == null ? 60 : Math.max(0, Math.min(100, Number(f.xrayEmailMinFit) || 0)), dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1 } } };
     S.sb("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body }).then(() => { toast("Outreach settings saved"); onSaved(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false));
   };
   const conn = (status && status.connections) || {};
@@ -5714,6 +5725,8 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside ProNext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most X-ray people kept per job (free searches)</label><input type="number" min="5" max="80" value={f.xrayPerJob ?? 40} onChange={(e) => set("xrayPerJob", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Emails found for X-ray people per day (each uses an Apollo credit; 0 turns it off)</label><input type="number" min="0" max="500" value={f.xrayEmailsPerDay ?? 40} onChange={(e) => set("xrayEmailsPerDay", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only find emails for X-ray people with a fit of at least (%)</label><input type="number" min="0" max="100" value={f.xrayEmailMinFit ?? 60} onChange={(e) => set("xrayEmailMinFit", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outreach emails per day</label><input type="number" min="1" value={f.dailyCap ?? 40} onChange={(e) => set("dailyCap", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete outside contacts who never engaged after (days)</label><input type="number" min="14" value={f.retentionDays ?? 90} onChange={(e) => set("retentionDays", e.target.value)} className={inp} style={inpS} /></div>
           <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={f.includePay !== false} onChange={(e) => set("includePay", e.target.checked)} />Mention the job's pay range in candidate emails</label>
