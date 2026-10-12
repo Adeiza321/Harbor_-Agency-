@@ -218,7 +218,7 @@ function mapAll(d) {
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
-    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
+    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
@@ -2655,6 +2655,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         <div className="flex flex-col gap-4">
           <CandidateInterviewsCard candidate={candidate} S={S} toast={toast} />
           <CandidateJobsCard candidate={candidate} S={S} toast={toast} />
+          <CandidatePrefsCard candidate={candidate} S={S} toast={toast} />
           <Card>
             <SectionTitle title="Candidate page" sub="Their secure link. No login needed." size="text-xl" />
             <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 mt-3 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{window.location.host + "/?c=" + candidate.portal}</span><Copy size={15} color={C.ink2} className="ml-auto cursor-pointer shrink-0" onClick={() => { try { navigator.clipboard.writeText(window.location.origin + window.location.pathname + "?c=" + candidate.portal); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} /></div>
@@ -5817,7 +5818,7 @@ function CampaignsPage({ toast, S }) {
 // Candidate page: the Yes/No pitching buttons and the "click here" unsubscribe link in our emails
 // land here (?pitch=yes|no, ?unsub=1). The choice is recorded straight away and confirmed in a
 // short note; these settings aren't shown on the candidate page otherwise.
-function EmailChoiceNote({ token, onChanged }) {
+function EmailChoiceNote({ token, onChanged, onPitchYes }) {
   const [msg, setMsg] = useState(null);
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -5829,11 +5830,395 @@ function EmailChoiceNote({ token, onChanged }) {
         .then(() => { clear(); setMsg({ text: "You've been unsubscribed. We won't send you any more emails." }); }).catch(fail);
     } else if (pitch === "yes" || pitch === "no") {
       sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: pitch === "yes" } })
-        .then(() => { clear(); setMsg({ text: pitch === "yes" ? "Thanks. We'll pitch your profile anonymously for roles that fit you, and only share your details once you say yes to a specific role." : "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); }).catch(fail);
+        .then(() => { clear(); setMsg({ text: pitch === "yes" ? "Thanks. We'll pitch your profile anonymously for roles that fit you, and only share your details once you say yes to a specific role. Please answer the questions below so we match you well." : "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); if (pitch === "yes" && onPitchYes) onPitchYes(); }).catch(fail);
     }
   }, [token]);
   if (!msg) return null;
   return <div className="text-sm rounded-xl px-3.5 py-2.5" style={msg.err ? { background: C.dangerBg, color: C.dangerFg } : { background: C.emTint, color: C.em }}>{msg.text}</div>;
+}
+
+// Staff view of the candidate's job preferences (from their candidate page), editable by staff.
+function CandidatePrefsCard({ candidate, S, toast }) {
+  const [editing, setEditing] = useState(false);
+  const p = candidate.preferences;
+  const save = async (prefs) => {
+    const loc = prefs.currentCity + ", " + prefs.currentCountry;
+    const s = prefs.salary, n = (x) => Number(x).toLocaleString("en-US");
+    const pay = s.currency + " " + n(s.min) + (s.max && s.max > s.min ? " – " + n(s.max) : "") + " per " + (s.period || "year");
+    S.updateCand(candidate.id, (c) => ({ preferences: { ...prefs, v: 1 }, preferencesAt: new Date().toISOString(), location: loc, notice: prefs.availability, pay,
+      timeline: [...c.timeline, { t: "Job preferences updated by " + (S.me.name || "staff"), d: todayStr(), done: true }] }));
+    setEditing(false); toast("Preferences saved");
+  };
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <SectionTitle title="Job preferences" size="text-xl" sub={p ? "From their candidate page" + (candidate.preferencesAt ? ", " + fdate(candidate.preferencesAt) : "") + ". Visa details are never shown to clients." : candidate.pitchConsent ? "They agreed to be kept on file but haven't answered the questions yet." : "Asked once they agree to be kept on file and recommended for roles."} />
+        <RowMenu label="Preference actions" items={[{ label: p ? "Edit preferences" : "Fill in for them", icon: Pencil, onClick: () => setEditing(true) }]} />
+      </div>
+      {p && <div className="mt-3"><PreferencesSummary p={p} staff /></div>}
+      <Modal open={editing} onClose={() => setEditing(false)} title={"Job preferences: " + candidate.name} wide>
+        <PreferencesForm staff initial={p} known={{ location: candidate.location }} onSave={save} onCancel={() => setEditing(false)} saveLabel="Save preferences" />
+      </Modal>
+    </Card>
+  );
+}
+
+/* ---------- Job preferences ("Help us match you") ----------
+   Asked once a candidate agrees to be kept on file and recommended for roles; every question is
+   required. Stored on candidates.preferences (see migration 20261012d). Visa answers are staff-only:
+   no client link, blind CV or pitch shows them. */
+const SENIORITY = ["Entry level", "Junior", "Mid-level", "Senior", "Lead / principal", "Manager", "Director", "Executive (VP / C-level)"];
+const EMPLOYMENT_TYPES = ["Full-time", "Contract", "Part-time", "Temporary"];
+const PAY_PERIODS = [["year", "per year"], ["month", "per month"], ["hour", "per hour"]];
+const AVAILABILITY = ["Immediately", "1 week", "2 weeks", "1 month", "2 months", "3 months or more"];
+const WORK_SETUPS = [["remote", "Remote"], ["hybrid", "Hybrid"], ["onsite", "On-site"]];
+const RELOCATE = [["yes", "Yes"], ["maybe", "Maybe, for the right role"], ["no", "No"]];
+const SPONSOR = [["yes", "Yes"], ["no", "No"], ["unsure", "Not sure"]];
+const RTW = [["yes", "Yes, I can work there"], ["sponsorship", "I'd need sponsorship"], ["no", "No"]];
+const LANG_LEVELS = ["Native", "Fluent", "Professional", "Conversational", "Basic"];
+const LANGUAGES = ["English", "French", "Spanish", "Portuguese", "German", "Italian", "Dutch", "Arabic", "Mandarin Chinese", "Cantonese", "Hindi", "Urdu", "Bengali", "Punjabi", "Tamil", "Telugu", "Malay", "Indonesian", "Tagalog / Filipino", "Vietnamese", "Thai", "Japanese", "Korean", "Russian", "Ukrainian", "Polish", "Romanian", "Turkish", "Greek", "Hebrew", "Persian (Farsi)", "Swahili", "Yoruba", "Igbo", "Hausa", "Amharic", "Zulu", "Afrikaans", "Swedish", "Norwegian", "Danish", "Finnish", "Czech", "Hungarian", "Serbian / Croatian / Bosnian", "Bulgarian", "Sign language (ASL / BSL)"];
+const INDUSTRY_OPTIONS = ["Accounting / audit", "Big 4 / professional services", "Banking", "Fintech", "Insurance", "Asset / wealth management", "Private equity / venture capital", "Consulting", "SaaS / software", "IT services", "Telecoms", "E-commerce / retail", "Consumer goods (FMCG)", "Manufacturing", "Automotive", "Aerospace / defence", "Energy / oil & gas", "Renewables", "Mining", "Construction", "Real estate", "Logistics / supply chain", "Transport / aviation", "Healthcare", "Pharma / biotech", "Medical devices", "Education", "Government / public sector", "Non-profit / NGO", "Legal", "Media / entertainment", "Marketing / advertising", "Hospitality / travel", "Food & beverage", "Agriculture", "Staffing / recruitment", "Gaming", "Crypto / web3"];
+// Visa types by the country the candidate lives in (EU countries share one list); "Other" is typed.
+const VISAS_EU = ["EU Blue Card", "National work permit", "Opportunity Card / job seeker visa", "Intra-company transfer (ICT)", "Family / spouse visa", "Student visa", "Graduate / post-study residence"];
+const VISA_OPTIONS = {
+  US: ["H-1B", "H-1B (transfer pending)", "L-1", "TN", "O-1", "E-2 / E-3", "F-1 OPT", "F-1 STEM OPT", "H-4 EAD", "L-2 EAD", "Green card pending (EAD)", "Asylum / TPS (EAD)"],
+  GB: ["Skilled Worker", "Health and Care Worker", "Graduate", "Global Talent", "High Potential Individual", "Scale-up", "Dependant", "Student", "Youth Mobility", "EU Pre-settled status"],
+  CA: ["Employer-specific work permit", "Open work permit", "Post-graduation work permit (PGWP)", "Spousal open work permit", "Study permit", "International Experience Canada (IEC)"],
+  AU: ["Skills in Demand / TSS (482)", "Temporary Graduate (485)", "Skilled regional (491 / 494)", "Working Holiday (417 / 462)", "Student (500)", "Bridging visa", "Partner (820)"],
+  AE: ["Employment visa", "Golden visa", "Green visa", "Family / dependant visa", "Freelance permit", "Investor / partner visa"],
+  SA: ["Work visa (Iqama)", "Premium residency", "Family / dependant visa"],
+  QA: ["Work visa (RP)", "Family / dependant visa"],
+  SG: ["Employment Pass", "S Pass", "ONE Pass", "EntrePass", "Dependant's Pass", "Long-Term Visit Pass", "Letter of Consent"],
+  MY: ["Employment Pass", "Professional Visit Pass", "Residence Pass-Talent", "Dependant Pass", "Student Pass", "DE Rantau (digital nomad)"],
+  IE: ["Critical Skills Employment Permit", "General Employment Permit", "Stamp 1G (graduate)", "Stamp 3 (dependant)", "Stamp 2 (student)", "Intra-company transfer"],
+  NZ: ["Accredited Employer Work Visa", "Post-study work visa", "Partner work visa", "Working holiday", "Student visa"],
+  IN: ["Employment visa", "OCI card", "Dependant / X visa"],
+  NG: ["CERPAC / work permit (STR)", "Temporary work permit", "Dependant visa"],
+  ZA: ["Critical Skills work visa", "General work visa", "Intra-company transfer", "Spousal visa", "Study visa"],
+};
+const EU_ISO = new Set("AT BE BG HR CY CZ DK EE FI FR DE GR HU IT LV LT LU MT NL PL PT RO SK SI ES SE NO CH IS LI".split(" "));
+const isoOf = (name) => (COUNTRY_DATA.find((x) => x.name === name) || {}).iso || "";
+const visaListFor = (country) => { const iso = isoOf(country); return (VISA_OPTIONS[iso] || (EU_ISO.has(iso) ? VISAS_EU : ["Work permit / employment visa", "Intra-company transfer", "Dependant / spouse visa", "Student visa", "Graduate / post-study visa"])).concat(["Other"]); };
+const LANGUAGE_OPTIONS = LANGUAGES.map((l) => ({ value: l, label: l }));
+const INDUSTRY_PICK = INDUSTRY_OPTIONS.map((l) => ({ value: l, label: l }));
+const COUNTRY_ONLY_OPTIONS = COUNTRIES.map((n) => ({ value: n, label: n }));
+
+const emptyPrefs = () => ({ roles: [], seniority: "", employmentTypes: [], salary: { min: "", max: "", currency: "", period: "year" }, currentCity: "", currentCountry: "",
+  preferredLocations: [], relocate: "", workSetup: [], citizen: null, visaType: "", visaOther: "", visaExpiry: "", visaNoExpiry: false, sponsorship: "", rightToWork: [],
+  languages: [{ language: "English", level: "" }], availability: "", industries: [] });
+
+// Prefill from what we already know (their location) the first time.
+function prefsStart(saved, known) {
+  const p = { ...emptyPrefs(), ...(saved || {}) };
+  p.salary = { ...emptyPrefs().salary, ...((saved && saved.salary) || {}) };
+  if (!saved && known && known.location) {
+    const parts = String(known.location).split(",").map((x) => x.trim()).filter(Boolean);
+    const last = parts[parts.length - 1] || "";
+    if (COUNTRIES.includes(last)) { p.currentCountry = last; p.currentCity = parts.slice(0, -1).join(", "); }
+    else p.currentCity = known.location;
+  }
+  if (p.visaType && !visaListFor(p.currentCountry).includes(p.visaType)) { p.visaOther = p.visaType; p.visaType = "Other"; }
+  if (saved && saved.visaExpiry === "") p.visaNoExpiry = true;
+  if (!p.salary.currency && p.currentCountry) p.salary.currency = COUNTRY_CURRENCY[p.currentCountry] || "";
+  return p;
+}
+
+// Countries among their preferred locations, other than where they live: right to work is asked for each.
+const otherCountries = (p) => [...new Set(p.preferredLocations.filter((l) => COUNTRIES.includes(l) && l !== p.currentCountry))];
+
+function prefsErrors(p) {
+  const e = {};
+  if (!p.roles.filter((r) => r.trim()).length) e.roles = "Add at least one role";
+  if (!p.seniority) e.seniority = "Choose a level";
+  if (!p.employmentTypes.length) e.employmentTypes = "Choose at least one";
+  if (!(Number(p.salary.min) > 0)) e.salary = "Enter the salary you're looking for";
+  else if (p.salary.max && Number(p.salary.max) < Number(p.salary.min)) e.salary = "The top of the range is lower than the bottom";
+  else if (!p.salary.currency) e.salary = "Choose a currency";
+  if (!p.currentCountry) e.current = "Choose the country you live in"; else if (!p.currentCity.trim()) e.current = "Enter your city";
+  if (!p.preferredLocations.length) e.preferredLocations = "Add at least one place you'd work";
+  if (!p.relocate) e.relocate = "Choose one";
+  if (!p.workSetup.length) e.workSetup = "Choose at least one";
+  if (p.citizen === null) e.citizen = "Choose one";
+  if (p.citizen === false) {
+    if (!p.visaType || (p.visaType === "Other" && !p.visaOther.trim())) e.visa = "Tell us which visa you're on";
+    else if (!p.visaNoExpiry && !p.visaExpiry) e.visa = "Add the expiry date, or tick that it doesn't expire";
+    if (!p.sponsorship) e.sponsorship = "Choose one";
+  }
+  const rtw = otherCountries(p);
+  if (rtw.some((c) => !(p.rightToWork.find((x) => x.country === c) || {}).status)) e.rightToWork = "Answer for each country";
+  if (!p.languages.length || p.languages.some((l) => !l.language || !l.level)) e.languages = "Add each language with your level";
+  if (!p.availability) e.availability = "Choose one";
+  if (!p.industries.length) e.industries = "Add at least one industry";
+  return e;
+}
+
+// What gets saved: tidy, with the typed visa in place of "Other".
+function prefsToSave(p) {
+  const rtw = otherCountries(p);
+  return {
+    roles: p.roles.map((r) => r.trim()).filter(Boolean).slice(0, 5), seniority: p.seniority, employmentTypes: p.employmentTypes,
+    salary: { min: Number(p.salary.min), max: p.salary.max ? Number(p.salary.max) : null, currency: p.salary.currency, period: p.salary.period || "year" },
+    currentCity: p.currentCity.trim(), currentCountry: p.currentCountry, preferredLocations: p.preferredLocations, relocate: p.relocate, workSetup: p.workSetup,
+    citizen: p.citizen, visaType: p.citizen ? "" : (p.visaType === "Other" ? p.visaOther.trim() : p.visaType),
+    visaExpiry: p.citizen || p.visaNoExpiry ? "" : p.visaExpiry, sponsorship: p.citizen ? "" : p.sponsorship,
+    rightToWork: rtw.map((c) => ({ country: c, status: (p.rightToWork.find((x) => x.country === c) || {}).status || "" })),
+    languages: p.languages.filter((l) => l.language), availability: p.availability, industries: p.industries,
+  };
+}
+
+function Chips({ items, onRemove, label = (x) => x }) {
+  return items.map((k) => (
+    <span key={k} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-0.5 text-xs" style={{ background: C.canvas, border: `1px solid ${C.line}` }}>
+      {label(k)}<button type="button" aria-label={"Remove " + label(k)} onClick={() => onRemove(k)} className="w-5 h-5 rounded-full flex items-center justify-center" style={{ color: C.ink2 }}><X size={11} /></button>
+    </span>
+  ));
+}
+function ChoiceRow({ options, value, onChange, multi }) {
+  const on = (k) => (multi ? (value || []).includes(k) : value === k);
+  const flip = (k) => onChange(multi ? (on(k) ? value.filter((x) => x !== k) : [...(value || []), k]) : k);
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((o) => { const [k, l] = Array.isArray(o) ? o : [o, o]; return (
+        <button key={String(k)} type="button" onClick={() => flip(k)} aria-pressed={on(k)} className="rounded-full px-3.5 py-1.5 text-sm"
+          style={on(k) ? { background: C.em, color: "#fff", border: `1px solid ${C.em}` } : { background: "#fff", color: C.ink, border: `1px solid ${C.line}` }}>{l}</button>
+      ); })}
+    </div>
+  );
+}
+
+function Q({ n, title, sub, children }) {
+  return (
+    <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
+      <div className="text-sm font-semibold">{n}. {title}</div>
+      {sub && <div className="text-xs mt-0.5 mb-2" style={{ color: C.ink2 }}>{sub}</div>}
+      <div className={sub ? "" : "mt-2"}>{children}</div>
+    </div>
+  );
+}
+
+function PreferencesForm({ initial, known, onSave, onCancel, saveLabel = "Save my preferences", staff }) {
+  const [p, setP] = useState(() => prefsStart(initial, known));
+  const [shown, setShown] = useState(false); // errors show after the first attempt to save
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [roleDraft, setRoleDraft] = useState("");
+  const [cityDraft, setCityDraft] = useState("");
+  const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
+  const errs = prefsErrors(p);
+  const E = (k) => shown && errs[k] ? <div className="text-xs mt-1.5" style={{ color: C.dangerFg }} data-err="1">{errs[k]}</div> : null;
+  const inp = "w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const addRole = () => { const r = roleDraft.trim(); if (r && p.roles.length < 5 && !p.roles.includes(r)) set("roles", [...p.roles, r]); setRoleDraft(""); };
+  const addCity = () => { const c = cityDraft.trim(); if (c && !p.preferredLocations.includes(c)) set("preferredLocations", [...p.preferredLocations, c]); setCityDraft(""); };
+  const setRtw = (country, status) => set("rightToWork", [...p.rightToWork.filter((x) => x.country !== country), { country, status }]);
+  const submit = async () => {
+    setShown(true); setErr("");
+    if (Object.keys(errs).length) {
+      setTimeout(() => { const el = document.querySelector("[data-err]"); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "center" }); }, 30);
+      return;
+    }
+    setBusy(true);
+    try { await onSave(prefsToSave(p)); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
+    setBusy(false);
+  };
+  const visas = visaListFor(p.currentCountry);
+  const rtwCountries = otherCountries(p);
+  return (
+    <div className="flex flex-col gap-4">
+      <Q n={1} title={staff ? "Roles they're looking for" : "What roles are you looking for?"} sub="Up to five job titles.">
+        <div className="flex flex-wrap gap-1.5 mb-2"><Chips items={p.roles} onRemove={(r) => set("roles", p.roles.filter((x) => x !== r))} /></div>
+        {p.roles.length < 5 && <div className="flex gap-2">
+          <input value={roleDraft} onChange={(e) => setRoleDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRole(); } }} placeholder="e.g. Financial Controller" className={inp} style={inpS} />
+          <Btn onClick={addRole} disabled={!roleDraft.trim()}>Add</Btn>
+        </div>}
+        {E("roles")}
+      </Q>
+      <Q n={2} title="Level">
+        <ChoiceRow options={SENIORITY} value={p.seniority} onChange={(v) => set("seniority", v)} />{E("seniority")}
+      </Q>
+      <Q n={3} title="Type of work" sub="Choose all that apply.">
+        <ChoiceRow multi options={EMPLOYMENT_TYPES} value={p.employmentTypes} onChange={(v) => set("employmentTypes", v)} />{E("employmentTypes")}
+      </Q>
+      <Q n={4} title={staff ? "Salary expectation" : "What salary are you looking for?"} sub="A single figure, or a range.">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <input inputMode="numeric" value={p.salary.min} onChange={(e) => set("salary", { ...p.salary, min: e.target.value.replace(/[^\d.]/g, "") })} placeholder="From" className={inp} style={inpS} />
+          <input inputMode="numeric" value={p.salary.max || ""} onChange={(e) => set("salary", { ...p.salary, max: e.target.value.replace(/[^\d.]/g, "") })} placeholder="To (optional)" className={inp} style={inpS} />
+          <PickList value={p.salary.currency} onChange={(v) => set("salary", { ...p.salary, currency: v })} options={withValue(CURRENCY_OPTIONS, p.salary.currency)} placeholder="Currency" searchPlaceholder="Search currency or code" className={inp} style={inpS} />
+          <select value={p.salary.period} onChange={(e) => set("salary", { ...p.salary, period: e.target.value })} className={inp} style={inpS}>{PAY_PERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+        </div>
+        {E("salary")}
+      </Q>
+      <Q n={5} title={staff ? "Where they live" : "Where do you live now?"}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <PickList value={p.currentCountry} onChange={(v) => setP((x) => ({ ...x, currentCountry: v, visaType: "", salary: x.salary.currency ? x.salary : { ...x.salary, currency: COUNTRY_CURRENCY[v] || "" } }))} options={withValue(COUNTRY_ONLY_OPTIONS, p.currentCountry)} placeholder="Country" searchPlaceholder="Search countries" className={inp} style={inpS} />
+          <input value={p.currentCity} onChange={(e) => set("currentCity", e.target.value)} placeholder="City" className={inp} style={inpS} />
+        </div>
+        {E("current")}
+      </Q>
+      <Q n={6} title={staff ? "Where they'd work" : "Where would you like to work?"} sub="Add countries, and cities if you have a preference.">
+        <div className="flex flex-wrap gap-1.5 mb-2"><Chips items={p.preferredLocations} onRemove={(l) => set("preferredLocations", p.preferredLocations.filter((x) => x !== l))} /></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <PickList value="" onChange={(v) => v && !p.preferredLocations.includes(v) && set("preferredLocations", [...p.preferredLocations, v])} options={COUNTRY_ONLY_OPTIONS.filter((o) => !p.preferredLocations.includes(o.value))} placeholder="Add a country…" searchPlaceholder="Search countries" className={inp} style={inpS} />
+          <div className="flex gap-2"><input value={cityDraft} onChange={(e) => setCityDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCity(); } }} placeholder="Add a city (optional)" className={inp} style={inpS} /><Btn onClick={addCity} disabled={!cityDraft.trim()}>Add</Btn></div>
+        </div>
+        {E("preferredLocations")}
+        <div className="text-sm mt-3 mb-1.5">{staff ? "Open to relocating?" : "Would you relocate for the right role?"}</div>
+        <ChoiceRow options={RELOCATE} value={p.relocate} onChange={(v) => set("relocate", v)} />{E("relocate")}
+      </Q>
+      <Q n={7} title="Remote, hybrid or on-site?" sub="Choose all you'd accept.">
+        <ChoiceRow multi options={WORK_SETUPS} value={p.workSetup} onChange={(v) => set("workSetup", v)} />{E("workSetup")}
+      </Q>
+      <Q n={8} title="Right to work">
+        <div className="text-sm mb-1.5">{staff ? "Citizen or permanent resident of " : "Are you a citizen or permanent resident of "}{p.currentCountry || (staff ? "the country they live in" : "the country you live in")}?</div>
+        <ChoiceRow options={[[true, "Yes"], [false, "No"]]} value={p.citizen} onChange={(v) => set("citizen", v)} />{E("citizen")}
+        {p.citizen === false && (
+          <div className="mt-3 rounded-xl p-3.5 flex flex-col gap-3" style={{ background: C.canvas }}>
+            <div>
+              <div className="text-sm mb-1.5">{staff ? "Which visa are they on?" : "Which visa are you on?"}</div>
+              <select value={p.visaType} onChange={(e) => set("visaType", e.target.value)} className={inp} style={inpS}>
+                <option value="">Choose your visa…</option>{visas.map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+              {p.visaType === "Other" && <input value={p.visaOther} onChange={(e) => set("visaOther", e.target.value)} placeholder="Type the visa or permit" className={inp + " mt-2"} style={inpS} />}
+            </div>
+            <div>
+              <div className="text-sm mb-1.5">When does it expire?</div>
+              <div className="flex flex-wrap items-center gap-3">
+                <input type="date" value={p.visaExpiry} disabled={p.visaNoExpiry} onChange={(e) => set("visaExpiry", e.target.value)} className={inp + " sm:w-48"} style={{ ...inpS, opacity: p.visaNoExpiry ? 0.5 : 1 }} />
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={p.visaNoExpiry} onChange={(e) => set("visaNoExpiry", e.target.checked)} /> It doesn't expire</label>
+              </div>
+            </div>
+            {E("visa")}
+            <div>
+              <div className="text-sm mb-1.5">{staff ? "Would they need sponsorship to change employer?" : "Would you need sponsorship to change employer?"}</div>
+              <ChoiceRow options={SPONSOR} value={p.sponsorship} onChange={(v) => set("sponsorship", v)} />{E("sponsorship")}
+            </div>
+          </div>
+        )}
+        {rtwCountries.length > 0 && (
+          <div className="mt-3 flex flex-col gap-2.5">
+            {rtwCountries.map((c) => (
+              <div key={c}><div className="text-sm mb-1.5">{staff ? "Can they work in " : "Can you work in "}{c}?</div>
+                <ChoiceRow options={RTW} value={(p.rightToWork.find((x) => x.country === c) || {}).status || ""} onChange={(v) => setRtw(c, v)} /></div>
+            ))}
+            {E("rightToWork")}
+          </div>
+        )}
+      </Q>
+      <Q n={9} title="Languages" sub="Every language you can work in, with your level.">
+        <div className="flex flex-col gap-2">
+          {p.languages.map((l, i) => (
+            <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+              <PickList value={l.language} onChange={(v) => set("languages", p.languages.map((x, k) => (k === i ? { ...x, language: v } : x)))} options={withValue(LANGUAGE_OPTIONS.filter((o) => o.value === l.language || !p.languages.some((x) => x.language === o.value)), l.language)} placeholder="Language" searchPlaceholder="Search languages" className={inp} style={inpS} />
+              <select value={l.level} onChange={(e) => set("languages", p.languages.map((x, k) => (k === i ? { ...x, level: e.target.value } : x)))} className={inp} style={inpS}><option value="">Level…</option>{LANG_LEVELS.map((v) => <option key={v}>{v}</option>)}</select>
+              <button type="button" aria-label="Remove language" disabled={p.languages.length < 2} onClick={() => set("languages", p.languages.filter((_, k) => k !== i))} className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: C.ink2, opacity: p.languages.length < 2 ? 0.3 : 1 }}><X size={15} /></button>
+            </div>
+          ))}
+          <button type="button" onClick={() => set("languages", [...p.languages, { language: "", level: "" }])} className="text-sm font-medium w-fit" style={{ color: C.em }}>+ Add another language</button>
+        </div>
+        {E("languages")}
+      </Q>
+      <Q n={10} title={staff ? "When could they start?" : "When could you start a new role?"}>
+        <ChoiceRow options={AVAILABILITY} value={p.availability} onChange={(v) => set("availability", v)} />{E("availability")}
+      </Q>
+      <Q n={11} title="Industry experience" sub="Industries you've worked in.">
+        <div className="flex flex-wrap gap-1.5 mb-2"><Chips items={p.industries} onRemove={(v) => set("industries", p.industries.filter((x) => x !== v))} /></div>
+        <PickList value="" onChange={(v) => v && set("industries", [...new Set([...p.industries, v])])} options={INDUSTRY_PICK.filter((o) => !p.industries.includes(o.value))} placeholder="Add an industry…" searchPlaceholder="Search industries" className={inp} style={inpS} />
+        {E("industries")}
+      </Q>
+      {shown && Object.keys(errs).length > 0 && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>Please answer every question ({Object.keys(errs).length} still to go).</div>}
+      {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+      <div className="flex gap-2 justify-end">
+        {onCancel && <Btn onClick={onCancel} disabled={busy}>Cancel</Btn>}
+        <Btn kind="primary" onClick={submit} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : saveLabel}</Btn>
+      </div>
+    </div>
+  );
+}
+
+// One-line-per-answer summary, for the candidate page and the staff profile.
+function PreferencesSummary({ p, staff }) {
+  if (!p) return null;
+  const s = p.salary || {};
+  const fmt = (n) => (n ? Number(n).toLocaleString() : "");
+  const row = (label, value) => value ? <div className="grid grid-cols-[130px_1fr] gap-3 text-sm py-1.5" style={{ borderTop: `1px solid ${C.line}` }}><div style={{ color: C.ink2 }}>{label}</div><div className="min-w-0 break-words">{value}</div></div> : null;
+  const label = (list, k) => (list.find((x) => x[0] === k) || [k, k])[1];
+  const visa = p.citizen ? "Citizen or permanent resident" + (p.currentCountry ? " of " + p.currentCountry : "")
+    : [p.visaType, p.visaExpiry ? "expires " + fdate(p.visaExpiry) : "no expiry", p.sponsorship ? "sponsorship to move: " + label(SPONSOR, p.sponsorship).toLowerCase() : ""].filter(Boolean).join(" · ");
+  const soon = !p.citizen && p.visaExpiry && new Date(p.visaExpiry).getTime() - Date.now() < 180 * 864e5;
+  return (
+    <div>
+      {row("Roles", (p.roles || []).join(", "))}
+      {row("Level", p.seniority)}
+      {row("Type", (p.employmentTypes || []).join(", "))}
+      {row("Salary", s.min ? (s.currency || "") + " " + fmt(s.min) + (s.max ? " – " + fmt(s.max) : "") + " " + label(PAY_PERIODS, s.period || "year") : "")}
+      {row("Lives in", [p.currentCity, p.currentCountry].filter(Boolean).join(", "))}
+      {row("Would work in", (p.preferredLocations || []).join(", ") + (p.relocate ? " · relocate: " + label(RELOCATE, p.relocate).toLowerCase() : ""))}
+      {row("Work setup", (p.workSetup || []).map((k) => label(WORK_SETUPS, k)).join(", "))}
+      {row(staff ? "Visa (staff only)" : "Visa", <>{visa}{soon && staff && <span className="ml-1.5"><Pill tone="warn">Expires within 6 months</Pill></span>}</>)}
+      {(p.rightToWork || []).length > 0 && row("Right to work", p.rightToWork.map((x) => x.country + ": " + ({ yes: "can work there", sponsorship: "needs sponsorship", no: "can't work there" }[x.status] || x.status)).join(" · "))}
+      {row("Languages", (p.languages || []).map((l) => l.language + (l.level ? " (" + l.level.toLowerCase() + ")" : "")).join(", "))}
+      {row("Can start", p.availability)}
+      {row("Industries", (p.industries || []).join(", "))}
+    </div>
+  );
+}
+
+// Candidate page card: the form when they've said yes but not answered yet, otherwise a summary
+// they can edit. Opened directly by ?prefs=1 (the invite email) or right after clicking Yes.
+function PortalPreferences({ token, pitchConsent, openSignal }) {
+  const [state, setState] = useState(null); // { preferences, location, ... }
+  const [editing, setEditing] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const ref = React.useRef(null);
+  const load = () => sbFetch("/rest/v1/rpc/candidate_preferences", { method: "POST", body: { p_token: token } }).then(setState).catch(() => setState({ error: true }));
+  useEffect(() => { if (token) load(); }, [token, openSignal]); // eslint-disable-line
+  const wantsOpen = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("prefs") === "1";
+  useEffect(() => { if (state && !state.error && (wantsOpen || openSignal) && ref.current) ref.current.scrollIntoView({ behavior: "smooth", block: "start" }); }, [state, openSignal]); // eslint-disable-line
+  if (!state || state.error) return null;
+  const consent = pitchConsent || state.pitchConsent;
+  if (!consent && !wantsOpen && !state.preferences) return null;
+  const has = !!state.preferences;
+  const save = async (prefs) => {
+    await sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs } });
+    setEditing(false); setSaved(true); await load();
+  };
+  return (
+    <div ref={ref}>
+      <Card>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xl" style={{ ...SERIF }}>{has ? "My job preferences" : "Help us match you"}</div>
+            <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{has ? "What you're looking for. We use it to recommend you only for roles that fit." : "A few questions so we only recommend you for roles that really fit. It takes about two minutes."}</div>
+          </div>
+          {has && !editing && <Btn icon={Pencil} onClick={() => { setEditing(true); setSaved(false); }} className="!px-3 !py-1.5 text-xs shrink-0">Edit</Btn>}
+        </div>
+        {saved && !editing && <div className="text-sm rounded-xl px-3.5 py-2.5 mt-3" style={{ background: C.emTint, color: C.em }}>Thanks, your preferences are saved. We'll be in touch when a role fits.</div>}
+        <div className="mt-3">
+          {has && !editing ? <PreferencesSummary p={state.preferences} />
+            : <PreferencesForm initial={state.preferences} known={state} onSave={save} onCancel={has ? () => setEditing(false) : null} />}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// /?c=preview: what candidates see, with nothing saved (used for the test email).
+function PreferencesPreviewPage() {
+  const [done, setDone] = useState(false);
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.warnBg, color: C.warnFg }}>Preview: this is what candidates see. Nothing you enter here is saved.</div>
+        <Card>
+          <div className="text-xl" style={{ ...SERIF }}>Help us match you</div>
+          <div className="text-sm mt-0.5 mb-3" style={{ color: C.ink2 }}>A few questions so we only recommend you for roles that really fit. It takes about two minutes.</div>
+          {done ? <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>All questions answered. In the real page this is saved to the candidate's profile.</div>
+            : <PreferencesForm initial={null} known={{ location: "Lagos, Nigeria" }} onSave={async () => setDone(true)} />}
+        </Card>
+      </div>
+    </div>
+  );
 }
 
 // Public page behind the links in outreach emails: /?u=<token>&k=p|l&a=interested|unsubscribe|delete
@@ -7305,6 +7690,7 @@ function CandidatePortal({ data, token, onChanged }) {
   const [err, setErr] = useState("");
   const [chat, setChat] = useState(null); // null | { startId }
   const [openApps, setOpenApps] = useState({});
+  const [prefsSignal, setPrefsSignal] = useState(0); // bumps when they click Yes, to open the questions
   const act = async (key, body, done) => {
     setBusy(key); setErr(""); setNote("");
     try {
@@ -7338,7 +7724,7 @@ function CandidatePortal({ data, token, onChanged }) {
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1"><BrandLogo height={30} /></div>
-        {token && <EmailChoiceNote token={token} onChanged={onChanged} />}
+        {token && <EmailChoiceNote token={token} onChanged={onChanged} onPitchYes={() => setPrefsSignal((n) => n + 1)} />}
 
         <Card>
           <div className="flex flex-col sm:flex-row items-center sm:items-center gap-4 sm:gap-5 text-center sm:text-left">
@@ -7365,6 +7751,8 @@ function CandidatePortal({ data, token, onChanged }) {
 
         {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+
+        {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} />}
 
         {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
 
@@ -8177,6 +8565,7 @@ export function PublicRoot() {
   if (r.kind === "board") return <JobsBoard />;
   if (r.kind === "outreach") return <OutreachLinkPage token={r.token} kind={r.linkKind} action={r.action} />;
   if (r.kind === "client") return <ClientViewPage token={r.token} />;
+  if (portalToken === "preview") return <PreferencesPreviewPage />;
   if (!portalData) return <PortalSkeleton />;
   if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
   return <CandidatePortal data={portalData} token={portalToken} onChanged={loadPortal} />;
@@ -8386,7 +8775,7 @@ export default function App() {
   };
 
   // Local candidate field -> candidates table column, for the fields a person can actually edit.
-  const CAND_FIELD_MAP = { status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", linkedin: "linkedin_url", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id", ai_locked: "ai_locked" };
+  const CAND_FIELD_MAP = { preferences: "preferences", preferencesAt: "preferences_at", status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", linkedin: "linkedin_url", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id", ai_locked: "ai_locked" };
   const updateCand = (id, patch) => {
     const c = data.cands.find((x) => x.id === id); const p = typeof patch === "function" ? patch(c) : patch;
     const body = {}; Object.entries(CAND_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
