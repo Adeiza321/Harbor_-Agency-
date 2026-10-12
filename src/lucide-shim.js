@@ -10,4 +10,5 @@ export {
   LuEllipsis as MoreHorizontal, LuUserPlus as UserPlus, LuPencil as Pencil, LuInfo as Info, LuCalendar as Calendar,
   LuCamera as Camera, LuUserRound as UserRound, LuMessageCircle as MessageCircle, LuArrowLeft as ArrowLeft, LuSendHorizontal as SendHorizontal, LuPaperclip as Paperclip, LuTrash2 as Trash2, LuFileText as FileText,
   LuEllipsisVertical as MoreVertical, LuRotateCcw as RotateCcw, LuUserMinus as UserMinus, LuArrowRightLeft as ArrowRightLeft, LuExternalLink as ExternalLink, LuMailPlus as MailPlus, LuBan as Ban,
+  LuKeyRound as KeyRound, LuPower as Power, LuPowerOff as PowerOff, LuUserCheck as UserCheck, LuRefreshCw as RefreshCw, LuForward as Forward, LuRocket as Rocket, LuThumbsDown as ThumbsDown, LuSkipForward as SkipForward, LuClipboardPen as ClipboardPen, LuScanSearch as ScanSearch, LuCirclePause as CirclePause, LuCirclePlay as CirclePlay, LuBadgeCheck as BadgeCheck,
 } from "react-icons/lu";

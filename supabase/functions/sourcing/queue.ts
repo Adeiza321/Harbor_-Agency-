@@ -9,6 +9,18 @@ import { sendBlockers, type Settings } from "./common.ts";
 import { candidateEmail, introOf, mustHavesFor, payText } from "./outreach.ts";
 import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
 
+// "City, Country" without repeating a country the location already names (same as the app's jobPlace).
+const COUNTRY_ALIASES: Record<string, string[]> = { "United States": ["usa", "us", "u.s.", "united states of america"], "United Kingdom": ["uk", "u.k.", "england", "scotland", "wales", "great britain"], "United Arab Emirates": ["uae"] };
+function jobPlace(location?: string | null, country?: string | null) {
+  const loc = String(location || "").trim(), c = String(country || "").trim();
+  if (!c) return loc;
+  if (/^remote\b.*worldwide/i.test(c)) return !loc ? c : /remote|worldwide|anywhere/i.test(loc) ? loc : loc + " \u00b7 Remote";
+  if (!loc) return c;
+  const low = loc.toLowerCase(), names = [c].concat(COUNTRY_ALIASES[c] || []).map((n) => n.toLowerCase());
+  if (names.some((n) => new RegExp("(^|[\\s,(/-])" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[\\s,)/-])").test(low))) return loc;
+  return loc + ", " + c;
+}
+
 export const portalBase = () => (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com").replace(/\/+$/, "");
 export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "unsubscribe" | "delete" | "job") =>
   `${portalBase()}/?u=${token}&k=${kind}&a=${action}`;
@@ -58,7 +70,7 @@ export async function composeProspect(admin: any, p: any, s: Settings, agencyNam
   return candidateEmail({
     brand: b, region, paragraphs, signoff,
     senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
-    role: { title: job.role_title || p.subject || "", location: job.location || (remote ? (job.country ? "Remote, " + job.country : "Remote") : job.country || ""),
+    role: { title: job.role_title || p.subject || "", location: jobPlace(job.location, job.country) || (remote ? "Remote" : ""),
       workSetup: job.work_setup || "", employmentType: job.employment_type || "", pay: payText(job, s.includePay) },
     summary: pack?.mustHaves?.summary || "", mustHaves: pack?.mustHaves?.items || [],
     applyUrl: q("go=apply&pt=" + encodeURIComponent(p.unsub_token || "")), referUrl: q("refer=1"),

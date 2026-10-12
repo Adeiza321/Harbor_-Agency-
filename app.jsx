@@ -7,6 +7,7 @@ import {
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
+  KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck,
 } from "lucide-react";
 
 /* Design tokens */
@@ -2534,11 +2535,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 {S.role === "admin" && <button type="button" onClick={unlockReview} disabled={unlockBusy} className="font-medium underline shrink-0">{unlockBusy ? "Unlocking…" : "Unlock"}</button>}
               </div>
             )}
-            <div className="flex flex-wrap gap-2 mb-3">
-              <Btn icon={Pencil} onClick={openEdit} className="flex-1 sm:flex-none justify-center">Edit</Btn>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
               <Btn icon={MessageSquare} onClick={() => setPanel("msg")} className="flex-1 sm:flex-none justify-center">Message</Btn>
-              {S.role !== "recruiter" && <Btn onClick={() => setPanel("fwd")} className="flex-1 sm:flex-none justify-center">Forward</Btn>}
-              {S.role === "admin" && <Btn icon={X} onClick={() => setDelOpen(true)} className="flex-1 sm:flex-none justify-center">Delete</Btn>}
               {S.role === "recruiter" ? (
                 !["Hired", "Placed", "Rejected"].includes(status) && (
                   <Btn kind="primary" className="flex-1 sm:flex-none justify-center" onClick={() => doStatus("Hired")}>Mark hired</Btn>
@@ -2555,6 +2553,11 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 )}
               </div>
               )}
+              <RowMenu label={"More actions for " + candidate.name} items={[
+                { label: "Edit details", icon: Pencil, onClick: openEdit },
+                { label: "Forward to client", icon: Forward, onClick: () => setPanel("fwd"), hidden: S.role === "recruiter" },
+                { label: "Delete candidate", icon: Trash2, danger: true, onClick: () => setDelOpen(true), hidden: S.role !== "admin" },
+              ]} />
             </div>
             <div className="flex flex-wrap gap-2 mb-4">
               <StatusPill status={status} />
@@ -3033,9 +3036,11 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
                   ))}
                   <div className="flex items-center gap-2 flex-wrap">
                     <Btn kind="primary" onClick={approve} disabled={!!busy}>{busy === "approve" ? <>Sending <InlineDots color="#fff" /></> : "Approve and send"}</Btn>
-                    <Btn onClick={() => setDrafts([...qList, ""])}>Add a question</Btn>
-                    {qList.some((q) => q.trim()) && <Btn onClick={startAnswers} disabled={!!busy}>Enter answers yourself</Btn>}
-                    {f && <button type="button" onClick={discardAll} disabled={!!busy} className="text-xs font-medium ml-auto" style={{ color: C.ink2 }}>{busy === "discard" ? "Removing…" : "Remove all"}</button>}
+                    <RowMenu label="More question actions" busy={busy === "discard"} items={[
+                      { label: "Add a question", icon: Plus, onClick: () => setDrafts([...qList, ""]) },
+                      { label: "Enter answers yourself", icon: ClipboardPen, onClick: startAnswers, hidden: !qList.some((q) => q.trim()), disabled: !!busy },
+                      { label: "Remove all questions", icon: Trash2, danger: true, onClick: discardAll, hidden: !f, disabled: !!busy },
+                    ]} />
                   </div>
                 </>
               ) : f && f.state === "draft" ? (
@@ -3948,15 +3953,9 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             <div className="text-2xl md:text-3xl" style={{ ...SERIF }}>{job.role}</div>
             <div className="text-sm" style={{ color: C.ink2 }}>{job.client}</div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Btn icon={Copy} onClick={copyLink}>Copy link</Btn>
+          <div className="flex flex-wrap items-center gap-2">
             <Btn icon={Upload} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job)} title={takesCandidates(job) ? "" : "This role isn't taking new candidates"}>Add candidate</Btn>
-            <Btn onClick={() => onPromote(job.role)}>Promote</Btn>
-            {myOpenEngagement
-              ? <Btn onClick={() => setReasonOpen(true)} disabled={busy}>Disengage</Btn>
-              : <Btn kind="primary" onClick={engage} disabled={busy || job.status === "Closed"}>Engage</Btn>}
-            {S.role !== "recruiter" && <Btn icon={Pencil} onClick={onEdit}>Edit</Btn>}
-            {S.role === "admin" && <Btn icon={X} onClick={() => setDelOpen(true)}>Delete</Btn>}
+            {!myOpenEngagement && <Btn kind="primary" onClick={engage} disabled={busy || job.status === "Closed"}>Engage</Btn>}
             {S.role !== "recruiter" && (
               <div className="relative">
                 <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
@@ -3971,6 +3970,13 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                 )}
               </div>
             )}
+            <RowMenu label="More job actions" busy={busy} items={[
+              { label: "Copy link", icon: Copy, onClick: copyLink },
+              { label: "Promote", icon: Megaphone, onClick: () => onPromote(job.role) },
+              { label: "Edit job", icon: Pencil, onClick: onEdit, hidden: S.role === "recruiter" },
+              { label: "Disengage", icon: UserMinus, danger: true, onClick: () => setReasonOpen(true), hidden: !myOpenEngagement },
+              { label: "Delete job", icon: Trash2, danger: true, onClick: () => setDelOpen(true), hidden: S.role !== "admin" },
+            ]} />
           </div>
         </div>
         <div className="flex flex-wrap gap-2 mb-4">
@@ -5388,11 +5394,13 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             </div>
           )}
           {canEdit && (
-            <div className="flex gap-2 mt-2 justify-end flex-wrap">
-              {p.status === "found" && <Btn onClick={() => onStatus("rejected")}>Skip</Btn>}
+            <div className="flex gap-2 mt-2 justify-end items-center flex-wrap">
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} />}
-              {["contacted", "queued"].includes(p.status) && <Btn onClick={() => onStatus("not_interested")}>Not interested</Btn>}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
+              <RowMenu label={"More actions for " + name} items={[
+                { label: "Skip this person", icon: SkipForward, danger: true, onClick: () => onStatus("rejected"), hidden: p.status !== "found" },
+                { label: "Not interested", icon: ThumbsDown, danger: true, onClick: () => onStatus("not_interested"), hidden: !["contacted", "queued"].includes(p.status) },
+              ]} />
             </div>
           )}
         </div>
@@ -6323,6 +6331,8 @@ function UsersPage({ toast, S }) {
   const [pwValue, setPwValue] = useState("");
   const [pwBusy, setPwBusy] = useState(false);
   const [delUser, setDelUser] = useState(null);
+  const [disUser, setDisUser] = useState(null);
+  const [disBusy, setDisBusy] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
   const [viewUser, setViewUser] = useState(null);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
@@ -6408,17 +6418,19 @@ function UsersPage({ toast, S }) {
             } },
             { key: "status", label: "STATUS", render: (u) => <StatusPill status={u.status} /> },
             { key: "act", label: "", render: (u) => {
-              if (u.isOwner) return <button onClick={() => openEdit(u)} className="text-xs" style={{ color: C.em }}>Edit</button>;
               const lastAdmin = u.roleKey === "admin" && u.status === "Active" && adminCount <= 1;
+              const other = !u.isOwner;
               return (
-                <div className="flex items-center gap-2.5 flex-wrap justify-end">
-                  <button onClick={() => openEdit(u)} className="text-xs" style={{ color: C.em }}>Edit</button>
-                  <button onClick={() => { setPwUser(u); setPwValue(""); }} className="text-xs" style={{ color: C.em }}>Set password</button>
-                  {u.status === "Active" && u.id !== S.me.id && <button onClick={() => resendWelcome(u)} disabled={welcomeBusyId === u.id} className="text-xs" style={{ color: C.em }} title={u.welcomeSentAt ? "Last sent " + new Date(u.welcomeSentAt).toLocaleDateString() : "Not sent yet"}>{welcomeBusyId === u.id ? "Sending…" : u.welcomeSentAt ? "Resend welcome" : "Send welcome email"}</button>}
-                  {u.status === "Disabled" || u.status === "Invited"
-                    ? <button onClick={() => activate(u)} className="text-xs" style={{ color: C.em }}>{u.status === "Invited" ? "Activate" : "Enable"}</button>
-                    : !lastAdmin && u.roleKey !== "admin" && <button onClick={() => S.disableUser(u.id).then(() => toast("Account disabled"))} className="text-xs" style={{ color: C.dangerFg }}>Disable</button>}
-                  {!lastAdmin && <button onClick={() => setDelUser(u)} className="text-xs" style={{ color: C.dangerFg }}>Delete</button>}
+                <div className="flex justify-end">
+                  <RowMenu label={"Actions for " + u.name} busy={welcomeBusyId === u.id} items={[
+                    { label: "Edit details", icon: Pencil, onClick: () => openEdit(u) },
+                    { label: "Set password", icon: KeyRound, onClick: () => { setPwUser(u); setPwValue(""); }, hidden: !other },
+                    { label: u.welcomeSentAt ? "Resend welcome email" : "Send welcome email", icon: Mail, onClick: () => resendWelcome(u), hidden: !(other && u.status === "Active" && u.id !== S.me.id),
+                      title: u.welcomeSentAt ? "Last sent " + new Date(u.welcomeSentAt).toLocaleDateString() : "Not sent yet" },
+                    { label: u.status === "Invited" ? "Activate" : "Enable", icon: Power, onClick: () => activate(u), hidden: !(other && (u.status === "Disabled" || u.status === "Invited")) },
+                    { label: "Disable", icon: PowerOff, danger: true, onClick: () => setDisUser(u), hidden: !(other && u.status !== "Disabled" && u.status !== "Invited" && !lastAdmin && u.roleKey !== "admin") },
+                    { label: "Delete", icon: Trash2, danger: true, onClick: () => setDelUser(u), hidden: !(other && !lastAdmin) },
+                  ]} />
                 </div>
               );
             } },
@@ -6438,6 +6450,10 @@ function UsersPage({ toast, S }) {
         <input type="text" value={pwValue} onChange={(e) => setPwValue(e.target.value)} className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         <Btn kind="primary" full onClick={savePassword} disabled={pwBusy}>{pwBusy ? "Setting…" : "Set password"}</Btn>
       </Modal>
+      <ConfirmModal open={!!disUser} onClose={() => !disBusy && setDisUser(null)} busy={disBusy} confirmLabel="Disable" busyLabel="Disabling"
+        title={disUser ? "Disable " + disUser.name + "?" : "Disable user?"}
+        body="They can't sign in until the account is enabled again. Their candidates, jobs and history stay as they are."
+        onConfirm={() => { setDisBusy(true); S.disableUser(disUser.id).then(() => { toast("Account disabled"); setDisUser(null); }).catch((e) => S.error(e.message || "Couldn't disable the account")).finally(() => setDisBusy(false)); }} />
       <ConfirmModal
         open={!!delUser}
         onClose={() => setDelUser(null)}
