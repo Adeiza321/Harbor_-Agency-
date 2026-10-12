@@ -276,8 +276,16 @@ async function learnLessons(admin: any, ids: string[] | null, by: string | null,
   }
   const results: any[] = [];
   for (const id of list.slice(0, 25)) {
-    try { results.push({ id, ...(await learnFromRejection(admin, id, askAI as any, by)) }); }
-    catch (e) { results.push({ id, ok: false, error: String((e as Error)?.message || e).slice(0, 200) }); }
+    try {
+      results.push({ id, ...(await learnFromRejection(admin, id, askAI as any, by)) });
+      // Stamped once learned (or found to hold nothing to learn), so the database's sweep doesn't
+      // ask the AI about the same rejection again. Editing the rejection clears it (re-learn).
+      await admin.from("candidate_jobs").update({ lessons_learned_at: new Date().toISOString() }).eq("id", id);
+    }
+    catch (e) {
+      results.push({ id, ok: false, error: String((e as Error)?.message || e).slice(0, 200) });
+      await admin.rpc("note_lesson_attempt", { p_link: id }).then(() => {}, () => {});
+    }
   }
   const learned = results.filter((r) => r.lesson);
   const clients = [...new Set(learned.map((r) => r.lesson.client).filter(Boolean))];
@@ -365,9 +373,20 @@ Deno.serve(async (req: Request) => {
         for (const r of due) out.push({ id: r.id, ...(await autoScreen(admin, r.id)) });
         return json({ ok: true, screened: out });
       }
+      // Learning from client rejections happens here, on the backend: the database calls this the
+      // moment a client rejection is recorded or its feedback edited ("learn_link"), and a sweep
+      // every 10 minutes picks up anything that slipped through ("learn_pending").
+      if (body.action === "learn_link" && body.linkId) return json(await learnLessons(admin, [String(body.linkId)], null));
+      if (body.action === "learn_pending") {
+        const { data: rows } = await admin.from("candidate_jobs").select("id").eq("reject_kind", "client").not("reject_reason", "is", null)
+          .is("lessons_learned_at", null).lt("lesson_tries", 3).lt("rejected_at", new Date(Date.now() - 90e3).toISOString())
+          .order("rejected_at", { ascending: false }).limit(3);
+        const ids = (rows || []).map((r: any) => r.id);
+        return json(ids.length ? await learnLessons(admin, ids, null) : { ok: true, learned: 0 });
+      }
       // Maintenance: learn from every past client rejection that has no lesson yet.
       if (body.action === "learn_all") return json(await learnLessons(admin, null, null, !!body.force));
-      if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate, bench_fits or screening run with an ops token" }, 400);
+      if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate, bench_fits, screening or learning run with an ops token" }, 400);
       const { data: cand } = await admin.from("candidates").select("*").eq("id", body.candidateId).maybeSingle();
       if (!cand) return json({ error: "Candidate not found" }, 404);
       const r = await refreshCandidate(admin, cand, String(body.step || ""), !!body.force);
