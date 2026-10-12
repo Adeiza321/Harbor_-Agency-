@@ -5330,10 +5330,12 @@ function ApprovalsPanel({ S, toast, onChanged }) {
 
 // "Send it myself": until an outreach sender is connected, open the finished email (links, sender
 // details and unsubscribe included) in the recruiter's own mailbox, then record it as sent.
-function ManualSend({ kind, id, S, toast, onDone, label }) {
+function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
   const [mail, setMail] = useState(null);
   const [busy, setBusy] = useState(false);
   const open = () => { setBusy(true); S.sourcing("manual_compose", { kind, id }).then(setMail).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  // Opened from a ⋮ menu: the parent bumps openKey.
+  React.useEffect(() => { if (openKey) open(); }, [openKey]); // eslint-disable-line
   const done = () => { setBusy(true); S.sourcing("manual_sent", { kind, id }).then(() => { setMail(null); toast("Marked as sent"); onDone && onDone(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
   const [testing, setTesting] = useState(false);
   // A copy of this email in its finished design, sent through Brevo to your own address.
@@ -5344,7 +5346,7 @@ function ManualSend({ kind, id, S, toast, onDone, label }) {
   const mailto = mail ? "mailto:" + enc(mail.to) + "?subject=" + enc(mail.subject) + "&body=" + enc(mail.body) : "";
   return (
     <>
-      <Btn icon={Send} onClick={open} disabled={busy}>{busy && !mail ? "Preparing…" : label || "Send it myself"}</Btn>
+      {!noButton && <Btn icon={Send} onClick={open} disabled={busy}>{busy && !mail ? "Preparing…" : label || "Send it myself"}</Btn>}
       <Modal open={!!mail} onClose={() => setMail(null)} title="Send it from your own email">
         {mail && (
           <div className="flex flex-col gap-3">
@@ -5395,6 +5397,13 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
   const statusLabel = xray && p.status === "found" ? "To contact" : xray && p.status === "contacted" ? "Contacted" : (PROSPECT_LABEL[p.status] || p.status);
   const checklist = Array.isArray(d.checklist) ? d.checklist : [];
   const gaps = Array.isArray(d.gaps) ? d.gaps : [];
+  // One clear action per person: Approve when their email is ready. Testing and sending it
+  // yourself are in the ⋮ menu.
+  const [manualKey, setManualKey] = useState(0);
+  const [acting, setActing] = useState("");
+  const canApprove = S && p.email && p.body && p.status === "found";
+  const approveOne = () => { setActing("approve"); S.sourcing("approve_prospects", { ids: [p.id] }).then((r) => { toast(approvedMsg(r.queued)); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
+  const testOne = () => { setActing("test"); S.sourcing("test_email", { kind: "p", id: p.id }).then((r) => toast("Test sent to " + r.to)).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
       <div className="flex items-start gap-3">
@@ -5437,10 +5446,12 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             <div className="flex gap-2 mt-2 justify-end items-center flex-wrap">
               {xray && p.status === "found" && <Btn kind="primary" onClick={() => onStatus("contacted", { contacted_at: new Date().toISOString() })}>Mark contacted</Btn>}
               {canFind && onFindEmail && <Btn icon={Mail} onClick={onFindEmail}>Find email</Btn>}
-              {S && p.email && p.body && <TestEmailBtn kind="p" id={p.id} S={S} toast={toast} />}
-              {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} />}
+              {canApprove && <Btn kind="primary" icon={Send} onClick={approveOne} disabled={!!acting}>{acting === "approve" ? "Approving…" : "Approve"}</Btn>}
+              {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} openKey={manualKey} noButton />}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
-              <RowMenu label={"More actions for " + name} items={[
+              <RowMenu label={"More actions for " + name} busy={acting === "test"} items={[
+                { label: "Email me a test", icon: Mail, onClick: testOne, hidden: !(S && p.email && p.body) },
+                { label: "Send it myself", icon: Send, onClick: () => setManualKey((k) => k + 1), hidden: !(S && p.email && ["found", "approved", "queued"].includes(p.status)) },
                 { label: "Skip this person", icon: SkipForward, danger: true, onClick: () => onStatus("rejected"), hidden: p.status !== "found" },
                 { label: "Not interested", icon: ThumbsDown, danger: true, onClick: () => onStatus("not_interested"), hidden: !["contacted", "queued"].includes(p.status) },
               ]} />
@@ -5460,6 +5471,8 @@ function JobSourcingCard({ job, S, toast }) {
   const [prospects, setProspects] = useState([]);
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState({});
+  const [pPage, setPPage] = useState(1);
+  const [pSize, setPSize] = useState(25);
   const canRun = S.role === "admin" || S.role === "recops";
   const load = () => Promise.all([
     S.sb("/rest/v1/jobs?id=eq." + job.id + "&select=parallel_titles,parallel_titles_at,sourcing,xray").then((r) => setRow((r || [])[0] || {})),
@@ -5552,14 +5565,15 @@ function JobSourcingCard({ job, S, toast }) {
             <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} email{waiting.length === 1 ? "" : "s"} waiting for approval{toContact ? " · " + toContact + " to contact on LinkedIn or their site" : ""}</span></div>
             {noEmail.length > 0 && <span className="text-xs inline-flex items-center gap-1.5" style={{ color: C.ink2 }} title="The best matches are looked up in Apollo by their LinkedIn profile every 10 minutes, within the daily limit in Outreach setup; GitHub public emails are free"><Mail size={13} /> Finding emails automatically · {noEmail.length} without one yet</span>}
             {waiting.length > 0 && <div className="flex gap-2">
-              <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all"}</Btn>
+              <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all " + waiting.length}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={approve}>{busy === "approve" ? "Approving…" : "Approve " + (ids.length || "") + " email" + (ids.length === 1 ? "" : "s")}</Btn>
             </div>}
           </div>
           <div className="flex flex-col gap-2">
-            {prospects.map((p) => <ProspectCard key={p.id} p={p} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
+            {prospects.slice((Math.min(pPage, Math.max(1, Math.ceil(prospects.length / pSize))) - 1) * pSize, Math.min(pPage, Math.max(1, Math.ceil(prospects.length / pSize))) * pSize).map((p) => <ProspectCard key={p.id} p={p} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
               onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} onFindEmail={() => findEmails({ ids: [p.id] })} />)}
           </div>
+          {prospects.length > 10 && <Pager page={Math.min(pPage, Math.max(1, Math.ceil(prospects.length / pSize)))} pages={Math.max(1, Math.ceil(prospects.length / pSize))} size={pSize} total={prospects.length} onPage={setPPage} onSize={(n) => { setPSize(n); setPPage(1); }} />}
         </div>
       )}
       <SpendConfirm c={confirm} busy={confirmBusy} onClose={() => setConfirm(null)} />
@@ -5755,11 +5769,19 @@ function CampaignsPage({ toast, S }) {
   const [lf, setLf] = useState("new");
   const [sel, setSel] = useState({});
   const [busy, setBusy] = useState("");
+  // Search and filters (kept while switching between the status tabs), and pages of up to 50.
+  const [q, setQ] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [fl, setFl] = useState({ job: "", source: "", email: "", fit: 0, country: "", channel: "" });
+  const setF = (k, v) => setFl((x) => ({ ...x, [k]: v }));
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(25);
+  React.useEffect(() => { setPage(1); }, [tab, pf, lf, q, fl, size]);
   const canRun = S.role === "admin" || S.role === "recops";
   const load = () => {
     S.sourcing("status", {}).then(setStatus).catch(() => setStatus({ error: true }));
-    S.sb("/rest/v1/prospects?select=*&order=created_at.desc&limit=500").then(setProspects).catch(() => setProspects([]));
-    S.sb("/rest/v1/leads?select=*&status=neq.pending&order=created_at.desc&limit=500").then(setLeads).catch(() => setLeads([]));
+    S.sb("/rest/v1/prospects?select=*&order=created_at.desc&limit=2000").then(setProspects).catch(() => setProspects([]));
+    S.sb("/rest/v1/leads?select=*&status=neq.pending&order=created_at.desc&limit=2000").then(setLeads).catch(() => setLeads([]));
     S.sb("/rest/v1/leads?select=id&status=eq.pending").then((r) => setPendingLeads((r || []).length)).catch(() => {});
   };
   React.useEffect(() => { if (canRun) load(); }, []); // eslint-disable-line
@@ -5774,9 +5796,70 @@ function CampaignsPage({ toast, S }) {
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced", "rejected"] };
   const lGroups = { new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
-  const pList = (prospects || []).filter((p) => pGroups[pf].includes(p.status));
-  const lList = (leads || []).filter((l) => lGroups[lf].includes(l.status));
+  const low = (v) => String(v || "").toLowerCase();
+  const ql = low(q).trim();
+  const pMatch = (p) => (!ql || [p.full_name, p.first_name, p.last_name, p.title, p.company, p.location, p.email].some((v) => low(v).includes(ql)))
+    && (!fl.job || p.job_id === fl.job)
+    && (!fl.source || (fl.source === "pool" ? !!(p.data && p.data.pool) : p.source === fl.source))
+    && (!fl.email || (fl.email === "with" ? !!p.email : !p.email))
+    && (!fl.fit || (Number(p.fit) || 0) >= fl.fit);
+  const lMatch = (l) => (!ql || [l.job_title, l.company, l.location, l.contact_name, l.contact_email].some((v) => low(v).includes(ql)))
+    && (!fl.country || l.country === fl.country) && (!fl.channel || l.channel === fl.channel);
+  const pAll = (prospects || []).filter(pMatch);
+  const lAll = (leads || []).filter(lMatch);
+  const pList = pAll.filter((p) => pGroups[pf].includes(p.status));
+  const lList = lAll.filter((l) => lGroups[lf].includes(l.status));
   const cnt = (list, g) => (list || []).filter((x) => g.includes(x.status)).length;
+  const curList = tab === "leads" ? lList : pList;
+  const pages = Math.max(1, Math.ceil(curList.length / size));
+  const curPage = Math.min(page, pages);
+  const pageOf = (list) => list.slice((curPage - 1) * size, curPage * size);
+  const nFilters = (tab === "leads" ? [fl.country, fl.channel] : [fl.job, fl.source, fl.email, fl.fit]).filter(Boolean).length;
+  const opts = (vals) => [...new Set(vals.filter(Boolean))];
+  const selCls = "text-sm rounded-lg border px-2.5 py-2 bg-white";
+  const filterBar = (
+    <div className="mt-3 flex flex-col gap-2">
+      <div className="flex gap-2 items-center">
+        <div className="relative flex-1 min-w-0">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.ink3 }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tab === "leads" ? "Search role, company, contact" : "Search name, title, company, email"} className="w-full rounded-lg border pl-9 pr-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        </div>
+        <Btn icon={Filter} onClick={() => setShowFilters((v) => !v)}>Filters{nFilters ? " · " + nFilters : ""}</Btn>
+      </div>
+      {showFilters && (tab === "leads" ? (
+        <div className="flex flex-wrap gap-2 items-center">
+          <select value={fl.country} onChange={(e) => setF("country", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Country">
+            <option value="">All countries</option>
+            {opts((leads || []).map((l) => l.country)).sort().map((c) => <option key={c} value={c}>{(COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c}</option>)}
+          </select>
+          <select value={fl.channel} onChange={(e) => setF("channel", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Contact by">
+            <option value="">Email or LinkedIn</option><option value="email">Email</option><option value="linkedin">LinkedIn</option><option value="none">No contact</option>
+          </select>
+          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, country: "", channel: "" }))}>Clear filters</button>}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2 items-center">
+          <select value={fl.job} onChange={(e) => setF("job", e.target.value)} className={selCls} style={{ borderColor: C.line, maxWidth: 280 }} aria-label="Job">
+            <option value="">All jobs</option>
+            {opts((prospects || []).map((p) => p.job_id)).map((id) => ({ id, label: jobLabel(id) || "Closed or removed job" })).sort((a, b) => a.label.localeCompare(b.label)).map((j) => <option key={j.id} value={j.id}>{j.label}</option>)}
+          </select>
+          <select value={fl.source} onChange={(e) => setF("source", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Found on">
+            <option value="">Found anywhere</option>
+            {opts((prospects || []).map((p) => p.source)).map((s) => <option key={s} value={s}>{FOUND_ON[s] || s}</option>)}
+            {(prospects || []).some((p) => p.data && p.data.pool) && <option value="pool">Talent pool</option>}
+          </select>
+          <select value={fl.email} onChange={(e) => setF("email", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Email">
+            <option value="">With or without email</option><option value="with">Has an email</option><option value="without">No email yet</option>
+          </select>
+          <select value={fl.fit} onChange={(e) => setF("fit", Number(e.target.value))} className={selCls} style={{ borderColor: C.line }} aria-label="Fit">
+            <option value={0}>Any fit</option>{[50, 60, 70, 80].map((n) => <option key={n} value={n}>{n}% fit or more</option>)}
+          </select>
+          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, job: "", source: "", email: "", fit: 0 }))}>Clear filters</button>}
+        </div>
+      ))}
+    </div>
+  );
+  const pager = curList.length > 10 ? <Pager page={curPage} pages={pages} size={size} total={curList.length} onPage={(n) => setPage(Math.max(1, Math.min(pages, n)))} onSize={setSize} /> : null;
   const conn = (status && status.connections) || {};
   const notice = status && !status.error && ((status.blockers || []).length || conn.sender === "none");
   const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
@@ -5796,26 +5879,28 @@ function CampaignsPage({ toast, S }) {
       {tab === "candidates" && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(prospects, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />
+            <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />
             {pf === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
-              <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all"}</Btn>
+              <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
           <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>
+          {filterBar}
           <div className="flex flex-col gap-2 mt-3">
-            {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pList.map((p) => (
+            {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pageOf(pList).map((p) => (
               <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
                 onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />
-            )) : <div className="text-sm" style={{ color: C.ink2 }}>{pf === "found" ? "No one waiting for approval." : "Nothing here yet."}</div>}
+            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No one matches your search or filters." : pf === "found" ? "No one waiting for approval." : "Nothing here yet."}</div>}
           </div>
+          {pager}
         </Card>
       )}
 
       {tab === "leads" && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <Tabs tabs={[["new", "New"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(leads, lGroups[k]) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
+            <Tabs tabs={[["new", "New"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(lAll, lGroups[k]) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
             <div className="flex gap-2 shrink-0 flex-wrap">
               {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
               {pendingLeads > 0 && <Btn disabled={!!busy} onClick={() => run("process", () => S.sourcing("process_leads", {}).then((r) => toast("Checked " + (r.processed || 0) + ", kept " + (r.kept || 0))))}>{busy === "process" ? "Checking…" : "Check " + pendingLeads + " waiting"}</Btn>}
@@ -5823,11 +5908,13 @@ function CampaignsPage({ toast, S }) {
             </div>
           </div>
           <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in the places you chose for new clients for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
+          {filterBar}
           <div className="flex flex-col gap-2 mt-3">
-            {leads == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : lList.length ? lList.map((l) => (
+            {leads == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : lList.length ? pageOf(lList).map((l) => (
               <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
-            )) : <div className="text-sm" style={{ color: C.ink2 }}>Nothing here yet.</div>}
+            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No leads match your search or filters." : "Nothing here yet."}</div>}
           </div>
+          {pager}
         </Card>
       )}
 
