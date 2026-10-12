@@ -3,6 +3,7 @@ import { prepareResume, findLinkedIn, type ResumeInput } from "./resume.ts";
 import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
+import { learnFromRejection } from "./lessons.ts";
 
 // AI screening for Pronext: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -262,6 +263,39 @@ async function autoScreen(admin: any, linkId: string) {
   }
 }
 
+// Turns client rejections into lessons (lessons.ts), then rescreens up to 6 not-yet-submitted
+// candidates on those clients' open roles in the background, so their checklists pick it up.
+// ids = null means every past client rejection that has no lesson yet (or all of them with force).
+async function learnLessons(admin: any, ids: string[] | null, by: string | null, force = false) {
+  let list = ids || [];
+  if (!ids) {
+    const { data: rows } = await admin.from("candidate_jobs").select("id").eq("reject_kind", "client").not("reject_reason", "is", null).order("rejected_at", { ascending: false }).limit(25);
+    const { data: done } = await admin.from("screening_lessons").select("source_link_id");
+    const have = new Set((done || []).map((d: any) => d.source_link_id));
+    list = (rows || []).map((r: any) => r.id).filter((id: string) => force || !have.has(id));
+  }
+  const results: any[] = [];
+  for (const id of list.slice(0, 25)) {
+    try { results.push({ id, ...(await learnFromRejection(admin, id, askAI as any, by)) }); }
+    catch (e) { results.push({ id, ok: false, error: String((e as Error)?.message || e).slice(0, 200) }); }
+  }
+  const learned = results.filter((r) => r.lesson);
+  const clients = [...new Set(learned.map((r) => r.lesson.client).filter(Boolean))];
+  let rescreening = 0;
+  if (clients.length) {
+    const { data: jobs } = await admin.from("jobs").select("id").in("client", clients).neq("status", "Closed");
+    const { data: cards } = (jobs || []).length
+      ? await admin.from("candidate_jobs").select("id,candidates!inner(ai_locked,is_draft)").in("job_id", jobs.map((j: any) => j.id))
+        .in("stage", ["Screening", "In review"]).eq("candidate_response", "accepted").eq("candidates.ai_locked", false).eq("candidates.is_draft", false).limit(6)
+      : { data: [] };
+    rescreening = (cards || []).length;
+    const work = (async () => { for (const c of cards || []) { try { await screenLink(admin, c.id, askAI, loadResume); } catch (e) { console.error("rescreen after lesson", c.id, String((e as Error)?.message || e)); } } })();
+    // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
+    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
+  }
+  return { ok: true, learned: learned.length, skipped: results.filter((r) => !r.lesson && r.ok).length, failed: results.filter((r) => !r.ok).length, results, rescreening };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -331,6 +365,8 @@ Deno.serve(async (req: Request) => {
         for (const r of due) out.push({ id: r.id, ...(await autoScreen(admin, r.id)) });
         return json({ ok: true, screened: out });
       }
+      // Maintenance: learn from every past client rejection that has no lesson yet.
+      if (body.action === "learn_all") return json(await learnLessons(admin, null, null, !!body.force));
       if (body.action !== "refresh_candidate") return json({ error: "Only refresh_candidate, bench_fits or screening run with an ops token" }, 400);
       const { data: cand } = await admin.from("candidates").select("*").eq("id", body.candidateId).maybeSingle();
       if (!cand) return json({ error: "Candidate not found" }, 404);
@@ -420,6 +456,20 @@ Deno.serve(async (req: Request) => {
       await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
       await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening questions sent by " + (me.full_name || "Rec Ops"), done: true });
       return json({ ok: true, ai });
+    }
+
+    // Learning from client rejections. Called by the app right after a client rejection is
+    // recorded ("learn_rejection"), or for every past client rejection ("learn_all").
+    if (action === "learn_rejection" || action === "learn_all") {
+      const ids: string[] = [];
+      if (action === "learn_rejection") {
+        const { data: l } = await admin.from("candidate_jobs").select("id,candidate_id").eq("id", body.linkId).maybeSingle();
+        if (!l) return json({ error: "Screening card not found" }, 404);
+        const { data: owner } = await admin.from("candidates").select("recruiter_id").eq("id", l.candidate_id).single();
+        if (!isStaff && owner?.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
+        ids.push(l.id);
+      } else if (!isStaff) return json({ error: "Only admins and Rec Ops can do this" }, 403);
+      return json(await learnLessons(admin, action === "learn_all" ? null : ids, me.id, !!body.force));
     }
 
     // Regenerate a job's parallel titles (other titles the same role is advertised under).

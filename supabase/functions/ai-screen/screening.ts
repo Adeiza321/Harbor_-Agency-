@@ -11,6 +11,7 @@
 import type { ResumeInput } from "./resume.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { cleanPay } from "./profile.ts";
+import { lessonsFor, lessonsPrompt } from "./lessons.ts";
 
 type Ask = (system: string, text: string, resume: ResumeInput | null, maxTokens: number) => Promise<any>;
 type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null; why?: string }>;
@@ -215,6 +216,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
 
   const { resume } = await loadResume(admin, candidate);
   const industries = await ensureIndustries(admin, candidate, resume);
+  const lessons = lessonsPrompt(await lessonsFor(admin, job).catch(() => ({ same: [], other: [] })), job);
   const here = answersOn(link, job);
   const elsewhere = links.filter((l) => l.id !== link.id).flatMap((l) => {
     const j = jobOf(l.job_id);
@@ -238,6 +240,7 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     `{${REQS_SHAPE}, "summary": string, "strengths": string[], "gaps": string[], "score": number (0-100), "verdict": "Perfect fit" | "Good fit" | "Possible fit" | "Reject", "verdict_reason": string, "salary_expectation": string, "parallel_titles": string[], "questions": string[]}. ` +
     PARALLEL_RULE +
     RUBRIC +
+    lessons.rule +
     "Judge ONLY on: (1) the requirement checklist above, from the CV and anything the answers add; " +
     "(2) salary expectation vs budget — be flexible, only count it against them if clearly and substantially over; (3) availability vs the role's timeline. " +
     "If an answer contradicts the CV, list it in gaps. " +
@@ -262,7 +265,8 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
     `\nAnswers for this job:\n${here.length ? fmt(here) : "(none yet)"}\n` +
     `\nAnswers given for other jobs:\n${elsewhere.length ? fmt(elsewhere) : "(none)"}\n` +
     `\nThis job's own screening questions (never repeat or rephrase):\n${jobQs.length ? jobQs.map((q) => "- " + q).join("\n") : "(none)"}\n` +
-    `\nAlready asked (never ask these again):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}`;
+    `\nAlready asked (never ask these again):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}` +
+    lessons.text;
 
   const result = await askAI(system, content, resume, 2500);
   const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit", "Reject");
@@ -324,6 +328,7 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
   const { resume } = await loadResume(admin, candidate);
   // Bench checks review several people at once, so they use employer lookups already on file.
   const industries = opts.skipLookup ? (Array.isArray(candidate.industries) ? candidate.industries : []) : await ensureIndustries(admin, candidate, resume);
+  const lessons = lessonsPrompt(await lessonsFor(admin, job).catch(() => ({ same: [], other: [] })), job);
 
   const system =
     "You are a recruitment analyst checking whether a candidate already in the database is a fit for a NEW role they have not been put forward for. " +
@@ -336,7 +341,8 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
     "questions: 3 to 6 short questions (under 30 words each) that would confirm the fit for THIS role, most important first, aimed at must-haves marked 'partial' or 'not met' and at anything this role needs that earlier answers don't cover. " +
     "For each question, if the candidate has ALREADY answered it (or something that settles it) in the answers provided, set already_answered true and put a one-sentence summary of what they said in 'answer'; otherwise already_answered false and answer ''. " +
     "Include salary, start date or work authorisation only if they have not already answered it. " +
-    "Never repeat or rephrase any of this job's own screening questions (listed below): they are asked separately.";
+    "Never repeat or rephrase any of this job's own screening questions (listed below): they are asked separately." +
+    lessons.rule;
   const jobQs: string[] = (Array.isArray(job.screening_questions) ? job.screening_questions : []).filter(Boolean).map(String);
   const content =
     jobText(job) + "\n\n" +
@@ -344,7 +350,8 @@ export async function reviewMatch(admin: any, candidateId: string, jobId: string
     (resume ? "The candidate's CV is included.\n" : `No readable CV on file. Known skills: ${(candidate.skills || []).join(", ") || "not yet known"}.\n`) +
     candidateFacts(candidate) + "\n" +
     industryText(industries) + "\n" +
-    `\nEverything they have answered so far:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}\n(answered for ${x.where})`).join("\n\n") : "(nothing yet)"}`;
+    `\nEverything they have answered so far:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}\n(answered for ${x.where})`).join("\n\n") : "(nothing yet)"}` +
+    lessons.text;
 
   const result = await askAI(system, content, resume, 3000);
   const checked = enforceChecklist(result.requirements, clampScore(result.score), normalizeVerdict(result.verdict), "Perfect fit", "Possible fit", "Reject");
@@ -517,14 +524,22 @@ export async function draftFollowups(admin: any, linkId: string, askAI: Ask) {
   const jobQs: string[] = (Array.isArray(job.screening_questions) ? job.screening_questions : []).filter(Boolean).map(String);
   const asked = [...askedQuestions(links, jobOf), ...jobQs];
   const answered = links.flatMap((l) => answersOn(l, jobOf(l.job_id)));
-  const open = (link.ai?.requirements || []).filter((r: any) => r.status !== "met").sort((a: any, b: any) => (a.type === "must" ? 0 : 1) - (b.type === "must" ? 0 : 1));
+  // Must-haves first; within each, lines learned from client rejections come first.
+  const learned = (r: any) => /^(client feedback|watch-out):/i.test(String(r.requirement || "")) ? 0 : 1;
+  const open = (link.ai?.requirements || []).filter((r: any) => r.status !== "met")
+    .sort((a: any, b: any) => ((a.type === "must" ? 0 : 2) + learned(a)) - ((b.type === "must" ? 0 : 2) + learned(b)));
+  const ls = await lessonsFor(admin, job).catch(() => ({ same: [], other: [] }));
+  const hints = [...ls.same, ...ls.other].filter((l) => l.look_for || l.question);
   if (!open.length) throw new Error("Nothing on this card's checklist is unmet, so there's nothing to screen for");
   const system = "You write short candidate screening questions for a recruiter. Reply with STRICT JSON only: {\"questions\": string[]}. " +
     "Up to 3 questions (under 25 words each), most important first, each aimed at one of the open requirements below (must-haves first), asking for specifics (where, how long, what they did). " +
-    "NEVER repeat or rephrase any already-asked question, and never ask for something the candidate has already answered.";
+    "NEVER repeat or rephrase any already-asked question, and never ask for something the candidate has already answered. " +
+    "Lines starting 'Client feedback:' or 'Watch-out:' come from real client rejections: when one is open, ask about it, using the 'what to look for' notes below to ask for the exact evidence the client cared about. " +
+    "Only ask what is needed to decide whether this is a strong candidate to submit; if the CV already settles a point, don't ask about it.";
   const text = `Job: ${job.role_title} at ${job.client}.\nOpen requirements:\n` + open.map((r: any) => `- [${r.type}] ${r.requirement} (${r.status}${r.evidence ? ": " + r.evidence : ""})`).join("\n") +
     `\n\nAlready asked (never repeat):\n${asked.length ? asked.map((q) => "- " + q).join("\n") : "(nothing yet)"}` +
-    `\n\nAlready answered:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}`).join("\n") : "(nothing yet)"}`;
+    `\n\nAlready answered:\n${answered.length ? answered.map((x) => `Q: ${x.q}\nA: ${x.a}`).join("\n") : "(nothing yet)"}` +
+    (hints.length ? `\n\nWhat to look for, from past client rejections:\n${hints.map((l) => `- ${l.lesson} Look for: ${l.look_for}`).join("\n")}` : "");
   const out = await askAI(system, text, null, 600);
   const questions = dedupeQuestions(out?.questions, asked);
   if (!questions.length) throw new Error("Every question the AI suggested has already been asked. Add one yourself instead.");
