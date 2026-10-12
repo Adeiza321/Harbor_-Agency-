@@ -5989,6 +5989,81 @@ function Q({ n, title, sub, children }) {
   );
 }
 
+/* Finish screen: a check mark that draws itself inside a pulsing ring, a confetti burst (tap the
+   check for another), and a short recap of what they told us. Calm for people who turn motion off. */
+const CONFETTI_COLORS = ["#1F6F54", "#C8F169", "#F2B84B", "#E8735A", "#5B8DEF", "#12241D"];
+function Confetti({ burst }) {
+  const pieces = React.useMemo(() => Array.from({ length: 70 }, (_, k) => ({
+    k, left: 50 + (Math.random() - 0.5) * 30, dx: (Math.random() - 0.5) * 520, dy: -(180 + Math.random() * 260), rot: (Math.random() - 0.5) * 900,
+    delay: Math.random() * 120, dur: 1300 + Math.random() * 900, w: 6 + Math.random() * 6, h: 8 + Math.random() * 8,
+    color: CONFETTI_COLORS[k % CONFETTI_COLORS.length], round: Math.random() < 0.3,
+  })), [burst]);
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden" key={burst}>
+      {pieces.map((c) => (
+        <span key={c.k} className="pn-confetti" style={{ left: c.left + "%", width: c.w, height: c.round ? c.w : c.h, background: c.color, borderRadius: c.round ? "50%" : 2,
+          animationDuration: c.dur + "ms", animationDelay: c.delay + "ms", "--dx": c.dx + "px", "--dy": c.dy + "px", "--rot": c.rot + "deg" }} />
+      ))}
+    </div>
+  );
+}
+const CELEBRATE_CSS = `
+@keyframes pn-pop { 0% { transform: scale(.4); opacity: 0 } 60% { transform: scale(1.12); opacity: 1 } 100% { transform: scale(1) } }
+@keyframes pn-ring { 0% { transform: scale(.8); opacity: .55 } 100% { transform: scale(1.9); opacity: 0 } }
+@keyframes pn-draw { to { stroke-dashoffset: 0 } }
+@keyframes pn-rise { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes pn-fall { 0% { transform: translate(0,0) rotate(0); opacity: 1 }
+  35% { transform: translate(calc(var(--dx) * .55), var(--dy)) rotate(calc(var(--rot) * .4)); opacity: 1 }
+  100% { transform: translate(var(--dx), 70vh) rotate(var(--rot)); opacity: 0 } }
+.pn-confetti { position: absolute; top: 34%; animation-name: pn-fall; animation-timing-function: cubic-bezier(.2,.6,.4,1); animation-fill-mode: forwards; opacity: 0 }
+.pn-pop { animation: pn-pop .55s cubic-bezier(.2,.9,.3,1.3) both }
+.pn-ring { animation: pn-ring 1.6s ease-out .3s infinite }
+.pn-draw { stroke-dasharray: 60; stroke-dashoffset: 60; animation: pn-draw .5s ease-out .35s forwards }
+.pn-rise { animation: pn-rise .5s ease-out both }
+@media (prefers-reduced-motion: reduce) { .pn-confetti { display: none } .pn-ring { animation: none; opacity: 0 } .pn-pop, .pn-rise { animation: none } .pn-draw { animation: none; stroke-dashoffset: 0 } }
+`;
+function PreferencesDone({ p, name, preview, onClose }) {
+  const [burst, setBurst] = useState(1);
+  useEffect(() => { const t = setTimeout(() => setBurst((n) => n + 1), 1700); return () => clearTimeout(t); }, []);
+  const first = String(name || "").trim().split(" ")[0];
+  const s = p.salary || {};
+  const label = (list, k) => (list.find((x) => x[0] === k) || [k, k])[1];
+  const recap = [
+    [Briefcase, (p.roles || []).slice(0, 2).join(", ") + ((p.roles || []).length > 2 ? " +" + (p.roles.length - 2) : ""), p.seniority],
+    [MapPin, [p.currentCity, p.currentCountry].filter(Boolean).join(", "), (p.workSetup || []).map((k) => label(WORK_SETUPS, k)).join(" · ")],
+    [CreditCard, s.min ? (s.currency || "") + " " + Number(s.min).toLocaleString() + (s.max ? " – " + Number(s.max).toLocaleString() : "") : "", label(PAY_PERIODS, s.period || "year")],
+  ].filter((r) => r[1]);
+  return (
+    <div className="relative max-w-md mx-auto px-4 pt-14 pb-10 text-center flex flex-col items-center">
+      <style>{CELEBRATE_CSS}</style>
+      <Confetti burst={burst} />
+      <button type="button" onClick={() => setBurst((n) => n + 1)} aria-label="Celebrate again" className="relative w-24 h-24 mb-6 pn-pop">
+        <span className="absolute inset-0 rounded-full pn-ring" style={{ background: C.lime }} />
+        <span className="absolute inset-0 rounded-full flex items-center justify-center" style={{ background: C.em, boxShadow: "0 10px 30px rgba(31,111,84,.35)" }}>
+          <svg width="46" height="46" viewBox="0 0 24 24" fill="none"><path className="pn-draw" d="M5 12.5l4.5 4.5L19 7.5" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </span>
+      </button>
+      <div className="pn-rise text-[30px] leading-tight font-bold tracking-tight" style={{ color: C.ink, animationDelay: ".25s" }}>You're all set{first ? ", " + first : ""}! 🎉</div>
+      <div className="pn-rise text-[15px] mt-3 leading-relaxed" style={{ color: C.ink2, animationDelay: ".35s" }}>
+        {preview ? "This is the screen candidates see when they finish. In the real page their answers are saved to their profile." : "Your profile is ready. We'll only recommend you for roles that fit what you told us, and we'll be in touch when one does."}
+      </div>
+      {recap.length > 0 && (
+        <div className="pn-rise w-full mt-7 rounded-2xl p-4 flex flex-col gap-3 text-left" style={{ background: "#fff", border: `1.5px solid ${C.line}`, animationDelay: ".5s" }}>
+          <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.ink3 }}>What we'll match you on</div>
+          {recap.map(([Icon, main, sub], n) => (
+            <div key={n} className="flex items-center gap-3">
+              <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.emTint }}><Icon size={17} color={C.em} /></span>
+              <div className="min-w-0"><div className="text-[15px] font-semibold truncate" style={{ color: C.ink }}>{main}</div>{sub && <div className="text-xs" style={{ color: C.ink2 }}>{sub}</div>}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="pn-rise text-xs mt-4" style={{ color: C.ink3, animationDelay: ".6s" }}>You can update your answers any time on your candidate page.</div>
+      <button type="button" onClick={onClose} className="pn-rise mt-6 w-full rounded-2xl py-4 text-[15px] font-semibold" style={{ background: C.em, color: "#fff", animationDelay: ".7s" }}>{preview ? "Close preview" : "Back to my page"}</button>
+    </div>
+  );
+}
+
 /* ---------- The quiz (candidates) ----------
    One question per screen, like a short career quiz: a top bar with back, logo and "3/12", a thin
    progress line, a big question, and full-width answers. Tapping a single-choice answer moves on;
@@ -6163,12 +6238,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
       </div>
       {preview && <div className="max-w-md mx-auto px-4 pt-3"><div className="text-xs rounded-xl px-3 py-2 text-center" style={{ background: C.warnBg, color: C.warnFg }}>Preview: this is what candidates see. Nothing is saved.</div></div>}
       {done ? (
-        <div className="max-w-md mx-auto px-4 pt-16 pb-10 text-center flex flex-col items-center">
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mb-5" style={{ background: C.emTint }}><Check size={30} color={C.em} strokeWidth={3} /></div>
-          <div className="text-[28px] leading-tight font-bold tracking-tight" style={{ color: C.ink }}>You're all set</div>
-          <div className="text-[15px] mt-3 leading-relaxed" style={{ color: C.ink2 }}>{preview ? "In the real page this is saved to the candidate's profile." : "Thanks. We'll only recommend you for roles that fit what you told us, and we'll be in touch when one does. You can update your answers any time."}</div>
-          <button type="button" onClick={onClose} className="mt-8 w-full rounded-2xl py-4 text-[15px] font-semibold" style={{ background: C.em, color: "#fff" }}>{preview ? "Close" : "Back to my page"}</button>
-        </div>
+        <PreferencesDone p={prefsToSave(p)} name={known && known.name} preview={preview} onClose={onClose} />
       ) : (
         <div className="max-w-md mx-auto px-4 pt-8 pb-32">
           <div className="text-center mb-7">
@@ -6318,7 +6388,7 @@ function PreferencesSummary({ p, staff }) {
 
 // Candidate page card. Unanswered: a short invitation that opens the quiz (it opens by itself right
 // after they click Yes, or from ?prefs=1 in the invite email). Answered: a summary they can redo.
-function PortalPreferences({ token, pitchConsent, openSignal }) {
+function PortalPreferences({ token, pitchConsent, openSignal, name }) {
   const [state, setState] = useState(null);
   const [open, setOpen] = useState(false);
   const autoOpened = React.useRef(false);
@@ -6360,18 +6430,43 @@ function PortalPreferences({ token, pitchConsent, openSignal }) {
           <button type="button" onClick={() => setOpen(true)} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
         </div>
       )}
-      {open && <PreferencesQuiz initial={state.preferences} known={state} onSave={save} onClose={close} />}
+      {open && <PreferencesQuiz initial={state.preferences} known={{ ...state, name }} onSave={save} onClose={close} />}
     </>
   );
 }
 
-// /?c=preview: the quiz as candidates see it, with nothing saved (used for test emails).
+// /?c=preview: the candidate journey with nothing saved, for test emails. &pitch=yes is the "Yes"
+// button in the email (thanks note, then the quiz opens by itself); &pitch=no shows the "No" reply;
+// &prefs=1 opens the quiz directly (the invite email).
 function PreferencesPreviewPage() {
-  const [open, setOpen] = useState(true);
+  const q = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const pitch = q.get("pitch");
+  const [open, setOpen] = useState(pitch !== "no");
+  const [said, setSaid] = useState(pitch === "yes" ? "yes" : pitch === "no" ? "no" : "");
   return (
-    <div className="min-h-screen flex items-center justify-center p-6 text-center" style={{ background: C.canvas }}>
-      {open ? <PreferencesQuiz preview initial={null} known={{ location: "Lagos, Nigeria" }} onSave={async () => {}} onClose={() => setOpen(false)} />
-        : <div><div className="text-sm mb-4" style={{ color: C.ink2 }}>That's the end of the preview.</div><Btn kind="primary" onClick={() => setOpen(true)}>Start again</Btn></div>}
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        <div className="text-xs rounded-xl px-3.5 py-2 text-center" style={{ background: C.warnBg, color: C.warnFg }}>Preview of a candidate's page. Nothing you do here is saved.</div>
+        {said && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{said === "yes" ? "Thanks. We'll pitch your profile anonymously for roles that fit you, and only share your details once you say yes to a specific role. Please answer the questions below so we match you well." : "No problem. We won't pitch your profile to other employers."}</div>}
+        <Card>
+          <div className="flex items-center gap-4">
+            <span className="w-16 h-16 rounded-full flex items-center justify-center shrink-0" style={{ background: C.neutralBg, color: C.ink3 }}><UserRound size={30} /></span>
+            <div><div className="text-2xl" style={{ ...SERIF }}>Ahmed Sanni</div><div className="text-sm mt-0.5" style={{ color: C.ink2 }}>Your recruiter is <b style={{ color: C.ink }}>Ada Obi</b>.</div></div>
+          </div>
+        </Card>
+        {said !== "no" && (
+          <div className="rounded-2xl p-5 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4" style={{ background: C.side, color: "#fff" }}>
+            <div className="flex-1">
+              <div className="text-xl" style={{ ...SERIF, color: C.lime }}>Help us match you</div>
+              <div className="text-sm mt-1" style={{ color: "#C9D6CE" }}>A few quick questions so we only recommend you for roles that really fit. About two minutes.</div>
+            </div>
+            <button type="button" onClick={() => setOpen(true)} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
+          </div>
+        )}
+        {said === "no" && <Card><div className="text-sm" style={{ color: C.ink2 }}>Candidates who say No aren't asked the matching questions. <button type="button" className="underline" style={{ color: C.em }} onClick={() => { setSaid("yes"); setOpen(true); }}>See what Yes looks like</button></div></Card>}
+      </div>
+      {open && <PreferencesQuiz preview initial={null} known={{ location: "Lagos, Nigeria", name: "Ahmed Sanni" }} onSave={async () => {}} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -7907,7 +8002,7 @@ function CandidatePortal({ data, token, onChanged }) {
         {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
 
-        {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} />}
+        {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} name={c.name} />}
 
         {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
 
