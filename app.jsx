@@ -5449,7 +5449,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             </div>
             <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{statusLabel}</Pill></div>
           </div>
-          {jobLabel && <div className="text-xs mt-1" style={{ color: C.ink3 }}>{p.status === "archived" ? "Found for" : "For"} {jobLabel}</div>}
+          {(jobLabel || (p.status === "archived" && d.archived_role)) && <div className="text-xs mt-1" style={{ color: C.ink3 }}>{p.status === "archived" ? "Found for" : "For"} {jobLabel || d.archived_role}</div>}
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
@@ -5849,7 +5849,8 @@ function CampaignsPage({ toast, S }) {
     && (!fl.role || low(l.job_title).trim() === low(fl.role)) && (!fl.country || l.country === fl.country) && (!fl.channel || l.channel === fl.channel);
   const pAll = (prospects || []).filter(pMatch);
   const lAll = (leads || []).filter(lMatch);
-  const pList = pAll.filter((p) => pGroups[pf].includes(p.status));
+  const pfx = tab === "pool" ? "pool" : pf;
+  const pList = pAll.filter((p) => pGroups[pfx].includes(p.status));
   const lList = lAll.filter((l) => lGroups[lf].includes(l.status));
   const cnt = (list, g) => (list || []).filter((x) => g.includes(x.status)).length;
   const curList = tab === "leads" ? lList : pList;
@@ -5926,24 +5927,24 @@ function CampaignsPage({ toast, S }) {
           <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue{conn.sender === "none" && !(status.blockers || []).length ? ", or use Send it myself on any email to send it from your own mailbox" : ""}. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
         </div>
       ) : null}
-      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); setFl((x) => ({ ...x, role: "" })); }} />
+      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "pool", label: "Talent pool " + cnt(prospects, pGroups.pool) }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); setFl((x) => ({ ...x, role: "" })); }} />
 
-      {tab === "candidates" && (
+      {(tab === "candidates" || tab === "pool") && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["pool", "Talent pool"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />
-            {pf === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
+            {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed. When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
+            {pfx === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
               <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>
+          {tab !== "pool" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>}
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pageOf(pList).map((p) => (
               <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
                 onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />
-            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No one matches your search or filters." : pf === "found" ? "No one waiting for approval." : pf === "pool" ? "No one yet. When a role closes, the people found for it move here and come back when a new role fits them." : "Nothing here yet."}</div>}
+            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No one matches your search or filters." : pfx === "found" ? "No one waiting for approval." : pfx === "pool" ? "No one yet. When a role closes, the people found for it move here and come back when a new role fits them." : "Nothing here yet."}</div>}
           </div>
           {pager}
         </Card>
