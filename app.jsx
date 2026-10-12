@@ -2667,7 +2667,9 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   // and answers open up once they accept on their candidate page.
   const pending = link.response === "pending";
   const e = endorsed.find((x) => x.role === job.role) || null;
-  const status = pending ? "Routed, waiting for " + first + " to accept" : e ? e.status : link.stage;
+  const status = pending ? "Routed, waiting for " + first + " to accept"
+    : link.reject ? (link.reject.kind === "client" ? "Rejected by the client" : "Rejected") + ": " + (REJECT_LABEL[link.reject.reason] || link.reject.reason)
+    : e ? e.status : link.stage;
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   // Once put forward to the client, this always reads Good fit, whatever the AI verdict was.
   const sent = !!e || SENT_STAGES.includes(link.stage);
@@ -2945,17 +2947,29 @@ const REJECT_REASONS = [["experience", "Not enough experience"], ["skill", "Miss
 const REJECT_LABEL = Object.fromEntries(REJECT_REASONS);
 function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose, onDone }) {
   const first = candidate.name.split(" ")[0];
-  const links = candidate.jobLinks.filter((l) => l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)).sort((a, b) => b.createdAt - a.createdAt);
-  const [kind, setKind] = useState(kind0 || "internal");
-  const [linkId, setLinkId] = useState(link0 || (links[0] ? links[0].id : ""));
-  const [reason, setReason] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const [notify, setNotify] = useState(!!candidate.emailAddr);
+  // Live roles first; roles already rejected stay pickable so their reason and feedback can be
+  // updated (otherwise an update landed on "Not for a specific role" and was saved nowhere).
+  const live = candidate.jobLinks.filter((l) => l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)).sort((a, b) => b.createdAt - a.createdAt);
+  const done = candidate.jobLinks.filter((l) => l.stage === "Rejected").sort((a, b) => b.createdAt - a.createdAt);
+  const links = [...live, ...done];
+  const start = candidate.jobLinks.find((l) => l.id === link0) || links[0] || null;
+  const [kind, setKind] = useState(kind0 || (start && start.reject && start.reject.kind) || "internal");
+  const [linkId, setLinkId] = useState(start ? start.id : "");
+  const [reason, setReason] = useState((start && start.reject && start.reject.reason) || "");
+  const [feedback, setFeedback] = useState((start && start.reject && start.reject.feedback) || "");
+  // Updating an existing rejection doesn't email the candidate again unless you tick it.
+  const [notify, setNotify] = useState(!!candidate.emailAddr && !(start && start.reject));
+  const pickLink = (id) => {
+    setLinkId(id);
+    const l = candidate.jobLinks.find((x) => x.id === id);
+    if (l && l.reject) { setReason(l.reject.reason || ""); setFeedback(l.reject.feedback || ""); setNotify(false); if (!kind0) setKind(l.reject.kind || "internal"); }
+  };
   const [message, setMessage] = useState("");
   const [edited, setEdited] = useState(false);
   const [busy, setBusy] = useState("");
   const [preview, setPreview] = useState(null);
   const link = candidate.jobLinks.find((l) => l.id === linkId) || null;
+  const updating = !!(link && link.reject);
   const job = link ? S.jobs.find((j) => j.id === link.jobId) : null;
   const draft = () => { setBusy("draft"); S.msgQuiet("draft_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason, feedback }).then((r) => { setMessage(r.message || ""); setEdited(false); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
   // A plain explanation as soon as a reason is picked; "Write it from the feedback" makes it specific.
@@ -2965,7 +2979,7 @@ function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose,
     if (!reason) { toast("Pick the main reason"); return; }
     setBusy("save");
     S.rejectCandidate({ linkId: linkId || undefined, candidateId: candidate.id, kind, reason, feedback, message, notify })
-      .then((r) => { toast((kind === "client" ? "Recorded as rejected by the client" : "Candidate rejected") + (r.emailed ? ". " + first + " has been emailed why." : notify && r.unsubscribed ? ". Not emailed: " + first + " has unsubscribed from emails." : notify && !r.emailed ? ". The email couldn't be sent." : ".") + (r.movedToActiveFile ? " Moved to Active file." : "")); onDone && onDone(r); onClose(); })
+      .then((r) => { toast((updating ? "Rejection updated" : kind === "client" ? "Recorded as rejected by the client" : "Candidate rejected") + (r.emailed ? ". " + first + " has been emailed why." : notify && r.unsubscribed ? ". Not emailed: " + first + " has unsubscribed from emails." : notify && !r.emailed ? ". The email couldn't be sent." : ".") + (r.movedToActiveFile ? " Moved to Active file." : "")); onDone && onDone(r); onClose(); })
       .catch(() => {}).finally(() => setBusy(""));
   };
   const ta = "w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none";
@@ -2976,8 +2990,8 @@ function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose,
       <div className="flex flex-col gap-4">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label>
-            <select value={linkId} onChange={(e) => setLinkId(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm" style={taS}>
-              {links.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
+            <select value={linkId} onChange={(e) => pickLink(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm" style={taS}>
+              {links.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{(j ? j.role + " · " + j.client : "Role") + (l.stage === "Rejected" ? " (already rejected: update it)" : "")}</option>; })}
               <option value="">{links.length ? "Not for a specific role" : "No role linked"}</option>
             </select></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Who decided</label>
@@ -2997,8 +3011,8 @@ function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose,
             <div className="text-xs" style={{ color: C.ink2 }}>Kind and specific, never harsh. It also appears on {first}'s candidate page. <button type="button" className="underline" disabled={!reason || !!busy} onClick={showPreview}>{busy === "preview" ? "Loading…" : "Preview the email"}</button></div>
           </>}
         </div>
-        <div className="text-xs rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>The reason and feedback are saved on this role's card and {first}'s timeline. {link ? "The role is marked Rejected. " : ""}They go back to Active file unless they're live on another role, so they stay searchable.</div>
-        <div className="flex justify-end gap-2"><Btn onClick={onClose} disabled={busy === "save"}>Cancel</Btn><Btn kind="danger" disabled={!reason || busy === "save"} onClick={submit}>{busy === "save" ? <>Saving <InlineDots color="#fff" /></> : notify ? "Reject and send" : "Reject"}</Btn></div>
+        <div className="text-xs rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{updating ? "Updates the reason and feedback saved on this role's card. " : link ? "The reason and feedback are saved on this role's card and " + first + "'s timeline. The role is marked Rejected. " : "No role picked: only a timeline note is saved, and the feedback isn't kept anywhere. "}They go back to Active file unless they're live on another role, so they stay searchable.</div>
+        <div className="flex justify-end gap-2"><Btn onClick={onClose} disabled={busy === "save"}>Cancel</Btn><Btn kind="danger" disabled={!reason || busy === "save"} onClick={submit}>{busy === "save" ? <>Saving <InlineDots color="#fff" /></> : updating ? (notify ? "Update and send" : "Update") : notify ? "Reject and send" : "Reject"}</Btn></div>
       </div>
       <Modal open={!!preview} onClose={() => setPreview(null)} title="Email preview" wide>
         {preview && <div className="flex flex-col gap-2">
@@ -3958,6 +3972,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                     onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.setStage(c.link.id, v).then(() => toast(c.name.split(" ")[0] + " moved to " + v)).catch(() => {}); }}>
                     {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
+                  {c.link.reject && <span className="text-xs max-w-[220px] truncate" style={{ color: C.dangerFg }} title={c.link.reject.feedback || ""}>{c.link.reject.kind === "client" ? "Client: " : "Us: "}{REJECT_LABEL[c.link.reject.reason] || c.link.reject.reason}</span>}
                   {c.link.stage === "Interview" && S.settings.integrations && S.settings.integrations.googleCalendar && (
                     <a href={gcalUrl(job, c.name)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Add interview to Google Calendar" className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.canvas }}>
                       <Clock size={14} color={C.ink2} />
