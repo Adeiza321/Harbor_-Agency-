@@ -3,7 +3,7 @@
 
 export type Settings = {
   approval: "manual" | "auto";        // manual: a person approves each email before it is sent
-  regions: string[];                   // "US", "EU", "MY"
+  regions: string[];                   // where to look for new clients: "EU" or country codes ("US", "MY", "NG"…)
   minInternalFits: number;             // search outside Pronext only when fewer good fits than this
   prospectsPerJob: number;             // most emails revealed (Apollo credits) per job
   dailyCap: number;                    // most outreach emails sent per day

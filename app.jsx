@@ -5244,7 +5244,10 @@ const PROSPECT_TONE = { found: "info", approved: "warn", queued: "warn", contact
 const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted" };
 const LEAD_TONE = { new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
 const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send", contacted: "Contacted", replied: "Replied", meeting: "Meeting booked", won: "Won", lost: "Lost", ignored: "Not a fit", unsubscribed: "Unsubscribed" };
-const REGION_OPTIONS = [["US", "United States"], ["EU", "Europe (EU, UK, EEA, Switzerland)"], ["MY", "Malaysia"]];
+// Where to look for new clients: "EU" for all of Europe, or a country's ISO code.
+const EUROPE_LABEL = "Europe (EU, UK, EEA, Switzerland)";
+const leadPlaceLabel = (k) => k === "EU" ? EUROPE_LABEL : (COUNTRY_DATA.find((x) => x.iso === k) || {}).name || k;
+const LEAD_PLACE_OPTIONS = [{ value: "EU", label: EUROPE_LABEL }].concat(COUNTRY_DATA.map((x) => ({ value: x.iso, label: x.name })));
 const approvedMsg = (n) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected.";
 const copyText = (t, toast, label) => { try { navigator.clipboard.writeText(t); toast(label || "Copied"); } catch (e) { toast("Copy failed. Select and copy it manually."); } };
 
@@ -5461,6 +5464,7 @@ function JobSourcingCard({ job, S, toast }) {
       </div>
       <div className="mt-3">
         <div className="text-xs" style={{ color: C.ink3 }}>Where ProNext looks outside</div>
+        {(!job.country || /worldwide/i.test(job.country)) && <div className="text-sm mt-1 rounded-lg px-3 py-2" style={{ background: C.warnBg, color: C.warnFg }}>{job.country ? "This role is remote worldwide. " : ""}Add a hiring country to this job to find outside candidates. They're always searched in the job's own country.</div>}
         {src.area && src.area.locations ? (
           <div className="text-sm mt-1">
             <span>{src.area.summary || src.area.locations.join(", ")}</span>
@@ -5631,10 +5635,22 @@ function OutreachSetup({ S, toast, status, onSaved }) {
             </select>
           </div>
           <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Target regions</label>
-            <div className="flex flex-col gap-1.5 mt-2">{REGION_OPTIONS.map(([k, label]) => (
-              <label key={k} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={(f.regions || []).includes(k)} onChange={(e) => set("regions", e.target.checked ? [...new Set([...(f.regions || []), k])] : (f.regions || []).filter((x) => x !== k))} />{label}</label>
-            ))}</div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where to look for new clients</label>
+            <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Only for finding companies hiring now (client leads). Outside candidates for a job are always searched where that job is.</div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {(f.regions || []).map((k) => (
+                <span key={k} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-0.5 text-xs" style={{ background: C.canvas, border: `1px solid ${C.line}` }}>
+                  {leadPlaceLabel(k)}
+                  <button type="button" aria-label={"Remove " + leadPlaceLabel(k)} onClick={() => set("regions", (f.regions || []).filter((x) => x !== k))} className="w-5 h-5 rounded-full flex items-center justify-center" style={{ color: C.ink2 }}><X size={11} /></button>
+                </span>
+              ))}
+              {!(f.regions || []).length && <span className="text-xs" style={{ color: C.ink3 }}>None chosen: the United States, Europe and Malaysia are used.</span>}
+            </div>
+            <div className="mt-2">
+              <PickList value="" onChange={(v) => v && set("regions", [...new Set([...(f.regions || []), v])])}
+                options={LEAD_PLACE_OPTIONS.filter((o) => !(f.regions || []).includes(o.value))} placeholder="Add a country or Europe…" searchPlaceholder="Search countries"
+                className={inp} style={inpS} />
+            </div>
           </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside ProNext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
@@ -5733,7 +5749,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in your target regions for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in the places you chose for new clients for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : lList.length ? lList.map((l) => (
               <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
