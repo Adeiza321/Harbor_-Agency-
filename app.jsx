@@ -5241,11 +5241,11 @@ function PortalInterviews({ list, token, onChanged }) {
    Server side lives in the `sourcing` and `outreach-public` Edge Functions; nothing is
    sent until an email sender, a sender name and a postal address are set (Setup tab).
    ---------------------------------------------------------------------- */
-const PROSPECT_TONE = { found: "info", approved: "warn", queued: "warn", contacted: "neutral", interested: "em", not_interested: "neutral", unsubscribed: "danger", bounced: "danger", rejected: "neutral", converted: "em" };
+const PROSPECT_TONE = { found: "info", approved: "warn", queued: "warn", contacted: "neutral", interested: "em", not_interested: "neutral", unsubscribed: "danger", bounced: "danger", rejected: "neutral", converted: "em", archived: "neutral" };
 // Where an outside prospect was found (shown as a small tag beside their name).
 const FOUND_ON = { apollo: "Apollo", linkedin: "LinkedIn X-ray", github: "GitHub", stackoverflow: "Stack Overflow", gitlab: "GitLab", kaggle: "Kaggle", huggingface: "Hugging Face", devto: "DEV", dribbble: "Dribbble", behance: "Behance" };
 const CHECK_STYLE = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43" }, unconfirmed: { t: "?", bg: "#F3EFE6", fg: "#6B6455" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E" } };
-const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted" };
+const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted", archived: "In talent pool" };
 const LEAD_TONE = { new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
 const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send", contacted: "Contacted", replied: "Replied", meeting: "Meeting booked", won: "Won", lost: "Lost", ignored: "Not a fit", unsubscribed: "Unsubscribed" };
 // Where to look for new clients: "EU" for all of Europe, or a country's ISO code.
@@ -5416,7 +5416,9 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             </div>
             <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{statusLabel}</Pill></div>
           </div>
-          {jobLabel && <div className="text-xs mt-1" style={{ color: C.ink3 }}>For {jobLabel}</div>}
+          {jobLabel && <div className="text-xs mt-1" style={{ color: C.ink3 }}>{p.status === "archived" ? "Found for" : "For"} {jobLabel}</div>}
+          {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
+          {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
           {found && checklist.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -5506,6 +5508,8 @@ function JobSourcingCard({ job, S, toast }) {
   // (paid) still needs an Admin's approval.
   const outside = (force) => run("outside", async () => {
     if (!internal) await S.aiScreen("bench_fits", { jobId: job.id });
+    const pl = await S.sourcing("pool", { jobId: job.id }).catch(() => null);
+    if (pl && pl.matched) toast(pl.message);
     const x = await S.sourcing("xray", { jobId: job.id }).catch((e) => ({ message: e.message }));
     if (x && x.message) toast(x.message);
     await paidAction(S, toast, "search_external", { jobId: job.id, force }, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load);
@@ -5559,6 +5563,8 @@ function JobSourcingCard({ job, S, toast }) {
           {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
         </div>
       </div>
+      {src.pool && src.pool.matched > 0 && job.status !== "Closed" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>Talent pool: {plural(src.pool.matched, "person", "people")} from earlier roles added for approval · {fdate(src.pool.at)}</div>}
+      {canRun && job.status === "Closed" && prospects.some((p) => p.status === "archived") && <div className="text-sm mt-4 rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>This role is closed. {plural(prospects.filter((p) => p.status === "archived").length, "person", "people")} found for it moved to the talent pool: any emails still waiting were cancelled and Apollo follow-ups stopped. They come back automatically when a new role fits them.</div>}
       {canRun && prospects.length > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
@@ -5794,7 +5800,7 @@ function CampaignsPage({ toast, S }) {
   const jobLabel = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? j.role + ", " + j.client : ""; };
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
-  const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced", "rejected"] };
+  const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced", "rejected"], pool: ["archived"] };
   const lGroups = { new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
   const low = (v) => String(v || "").toLowerCase();
   // Role = the job title, across clients (e.g. every "Senior Accountant" role); Job = one job.
@@ -5892,7 +5898,7 @@ function CampaignsPage({ toast, S }) {
       {tab === "candidates" && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />
+            <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["pool", "Talent pool"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />
             {pf === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
               <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
@@ -5904,7 +5910,7 @@ function CampaignsPage({ toast, S }) {
             {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pageOf(pList).map((p) => (
               <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
                 onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />
-            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No one matches your search or filters." : pf === "found" ? "No one waiting for approval." : "Nothing here yet."}</div>}
+            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No one matches your search or filters." : pf === "found" ? "No one waiting for approval." : pf === "pool" ? "No one yet. When a role closes, the people found for it move here and come back when a new role fits them." : "Nothing here yet."}</div>}
           </div>
           {pager}
         </Card>

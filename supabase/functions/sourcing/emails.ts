@@ -164,7 +164,7 @@ export async function autoFindEmails(admin: any, s: Settings, agencyName: string
 }
 
 // The same short, honest note Apollo prospects get, written from what the X-ray result showed.
-async function draftEmails(admin: any, ids: string[], s: Settings, agencyName: string) {
+export async function draftEmails(admin: any, ids: string[], s: Settings, agencyName: string) {
   const { data: rows } = await admin.from("prospects").select("*").in("id", ids);
   const byJob: Record<string, any[]> = {};
   for (const r of rows || []) (byJob[r.job_id] = byJob[r.job_id] || []).push(r);
@@ -174,12 +174,12 @@ async function draftEmails(admin: any, ids: string[], s: Settings, agencyName: s
     const sys = "You write short, honest recruiting emails to professionals who have not heard from us before. Reply with STRICT JSON only: " +
       "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 60-110 words, plain text, in this order: " +
       "(1) 'Hi <first name>,' (2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given. " +
-      "(3) say we're recruiting for the role (title and seniority) and came across their public professional profile while searching for people with their experience (never claim we met or were referred). " +
+      "(3) say we're recruiting for the role (title and seniority) and came across their public professional profile while searching for people with their experience (never claim we met or were referred). If a person is marked 'emailed before about another role', say instead that we were in touch a while ago about a different role and this one looks a closer fit. " +
       "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. Don't list the location, pay or requirements: they're shown under your note. " +
       "(4) say we think they'd be a good fit because ... with the specific reasons from their headline, employer and what their profile shows (one or two sentences). " +
       "(5) a sign-off line with only the sender's first name. No links, no job description, no postscript, no footer, no unsubscribe text (all added separately).";
     const sender = `Sender first name: ${(s.senderName || "").split(" ")[0] || "the recruiter"}\nSender title: ${s.senderTitle || "(not given)"}\nAgency name: ${agencyName || "(not given)"}`;
-    const who = people.map((p) => `id=${p.id} | first name: ${p.first_name || ""} | ${p.title || ""} at ${p.company || ""} | ${clip(p.data?.overview || p.fit_reason, 300)} | ${clip(p.data?.history, 300)}`).join("\n");
+    const who = people.map((p) => `id=${p.id} | first name: ${p.first_name || ""} | ${p.title || ""} at ${p.company || ""} | ${clip(p.data?.overview || p.fit_reason, 300)} | ${clip(p.data?.history, 300)}${p.data?.pool?.contactedBefore ? " | emailed before about another role" : ""}`).join("\n");
     let out: any = null;
     try { out = await askAI(sys, jobBrief(job, s.includePay) + `\n\n${sender}\n\nPeople:\n` + who, 5000); } catch (e) { console.error("draft xray emails", String((e as Error)?.message || e)); continue; }
     for (const m of Array.isArray(out?.emails) ? out.emails : []) {

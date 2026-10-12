@@ -11,6 +11,7 @@ import { requestSpend } from "./approvals.ts";
 import { startXray } from "./xray.ts";
 import { searchEngines, searchUsage } from "./search.ts";
 import { autoFindEmails, findEmails } from "./emails.ts";
+import { matchPool } from "./pool.ts";
 
 // Sourcing and outreach for Pronext.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
@@ -69,6 +70,11 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
     const { data: full } = await admin.from("jobs").select("*").eq("id", job.id).single();
     if (full) { await searchArea(admin, full, jobCountryNames(full)); job.sourcing = full.sourcing; }
   } catch (e) { console.error("search area", errMsg(e)); }
+  // The talent pool first: people found for closed roles who fit this one (free, no credits).
+  try {
+    const { data: full } = await admin.from("jobs").select("*").eq("id", job.id).single();
+    if (full) await matchPool(admin, full, s, agencyName);
+  } catch (e) { console.error("talent pool", errMsg(e)); }
   // Free X-ray search for every newly live job (runs in the background; nothing is spent).
   try {
     const { data: xr } = await admin.from("jobs").select("xray").eq("id", job.id).single();
@@ -109,12 +115,16 @@ async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   return { processed: (pending || []).length, kept, errors };
 }
 
-// Data minimisation: prospects nobody engaged with are deleted after the retention period.
+// Data minimisation: prospects nobody engaged with are deleted after the retention period, and
+// people in the talent pool (sourced for a role that has closed) 12 months after it closed.
+const POOL_DAYS = 365;
 async function cleanup(admin: any, days: number) {
   const cutoff = new Date(Date.now() - days * 864e5).toISOString();
   const { count } = await admin.from("prospects").delete({ count: "exact" }).lt("created_at", cutoff)
     .in("status", ["found", "approved", "contacted", "not_interested", "rejected", "bounced"]);
-  return count || 0;
+  const { count: pooled } = await admin.from("prospects").delete({ count: "exact" }).eq("status", "archived")
+    .lt("archived_at", new Date(Date.now() - POOL_DAYS * 864e5).toISOString());
+  return (count || 0) + (pooled || 0);
 }
 
 Deno.serve(async (req: Request) => {
@@ -158,6 +168,12 @@ Deno.serve(async (req: Request) => {
       // Every 10 minutes (cron harbor-xray-emails): emails for the best X-ray people, within the daily cap.
       if (body.action === "auto_emails") return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName)) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
+      // The talent pool for one job (also checked automatically when a job goes live).
+      if (body.action === "pool" && body.jobId) {
+        const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();
+        if (!job) return json({ error: "Job not found" }, 404);
+        return json(await matchPool(admin, job, s, agencyName));
+      }
       // Free X-ray search for one job (also started automatically for every newly live job).
       if (body.action === "xray" && body.jobId) return json(await startXray(admin, String(body.jobId), s, null));
       // Someone applied, said no, unsubscribed or was deleted (database trigger): finish their
@@ -233,6 +249,14 @@ Deno.serve(async (req: Request) => {
     if (action === "xray") {
       if (!body.jobId) return json({ error: "jobId is required" }, 400);
       return json(await startXray(admin, String(body.jobId), s, me.id));
+    }
+
+    // People from the talent pool who fit this job (free; also checked when a job goes live).
+    if (action === "pool") {
+      const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId || "")).maybeSingle();
+      if (!job) return json({ error: "Job not found" }, 404);
+      if (job.status === "Closed") return json({ ok: true, matched: 0, message: "This role is closed." });
+      return json(await matchPool(admin, job, s, agencyName));
     }
 
     if (action === "search_external") {
