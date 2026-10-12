@@ -6,6 +6,7 @@ import {
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
+  MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
 } from "lucide-react";
 
 /* Design tokens */
@@ -148,9 +149,28 @@ const scoreTone = (v) => (!v ? "neutral" : v >= 80 ? "em" : v >= 60 ? "warn" : "
 const PIPELINE_STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
 /* A Google Calendar "quick add" link — no OAuth needed, just opens their calendar pre-filled. */
 const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent("Interview: " + candidateName + " – " + job.role) + "&details=" + encodeURIComponent("Interview for " + job.role + " at " + job.client + " with " + candidateName + ".");
-const CURRENCIES = ["NGN", "USD", "GBP", "EUR", "CAD", "AUD", "ZAR", "KES", "GHS", "AED", "INR"];
+
 /* Picking a hiring country pre-selects its usual currency (still overridable). */
-const COUNTRY_CURRENCY = { Nigeria: "NGN", "United States": "USD", "United Kingdom": "GBP", Canada: "CAD", Ghana: "GHS", Kenya: "KES", "South Africa": "ZAR", "United Arab Emirates": "AED", Germany: "EUR", Ireland: "EUR", Netherlands: "EUR", France: "EUR", India: "INR", Australia: "AUD", "Remote \u2013 worldwide": "" };
+/* Every country (ISO code, name, local currency) and every currency it uses, so jobs anywhere can be
+   posted and paid in their own money. Packed as "<ISO2><CUR><Name>" / "<CUR><Name>" to keep the bundle small. */
+const COUNTRY_DATA = "AFAFNAfghanistan|ALALLAlbania|DZDZDAlgeria|ADEURAndorra|AOAOAAngola|AGXCDAntigua and Barbuda|ARARSArgentina|AMAMDArmenia|AWAWGAruba|AUAUDAustralia|ATEURAustria|AZAZNAzerbaijan|BSBSDBahamas|BHBHDBahrain|BDBDTBangladesh|BBBBDBarbados|BYBYNBelarus|BEEURBelgium|BZBZDBelize|BJXOFBenin|BMBMDBermuda|BTBTNBhutan|BOBOBBolivia|BABAMBosnia and Herzegovina|BWBWPBotswana|BRBRLBrazil|VGUSDBritish Virgin Islands|BNBNDBrunei|BGEURBulgaria|BFXOFBurkina Faso|BIBIFBurundi|KHKHRCambodia|CMXAFCameroon|CACADCanada|CVCVECape Verde|KYKYDCayman Islands|CFXAFCentral African Republic|TDXAFChad|CLCLPChile|CNCNYChina|COCOPColombia|KMKMFComoros|CDCDFCongo (DRC)|CGXAFCongo (Republic)|CRCRCCosta Rica|CIXOFCôte d'Ivoire|HREURCroatia|CUCUPCuba|CWANGCuraçao|CYEURCyprus|CZCZKCzechia|DKDKKDenmark|DJDJFDjibouti|DMXCDDominica|DODOPDominican Republic|ECUSDEcuador|EGEGPEgypt|SVUSDEl Salvador|GQXAFEquatorial Guinea|ERERNEritrea|EEEUREstonia|SZSZLEswatini|ETETBEthiopia|FODKKFaroe Islands|FJFJDFiji|FIEURFinland|FREURFrance|GFEURFrench Guiana|PFXPFFrench Polynesia|GAXAFGabon|GMGMDGambia|GEGELGeorgia|DEEURGermany|GHGHSGhana|GIGIPGibraltar|GREURGreece|GLDKKGreenland|GDXCDGrenada|GPEURGuadeloupe|GUUSDGuam|GTGTQGuatemala|GGGBPGuernsey|GNGNFGuinea|GWXOFGuinea-Bissau|GYGYDGuyana|HTHTGHaiti|HNHNLHonduras|HKHKDHong Kong|HUHUFHungary|ISISKIceland|ININRIndia|IDIDRIndonesia|IRIRRIran|IQIQDIraq|IEEURIreland|IMGBPIsle of Man|ILILSIsrael|ITEURItaly|JMJMDJamaica|JPJPYJapan|JEGBPJersey|JOJODJordan|KZKZTKazakhstan|KEKESKenya|KIAUDKiribati|XKEURKosovo|KWKWDKuwait|KGKGSKyrgyzstan|LALAKLaos|LVEURLatvia|LBLBPLebanon|LSLSLLesotho|LRLRDLiberia|LYLYDLibya|LICHFLiechtenstein|LTEURLithuania|LUEURLuxembourg|MOMOPMacao|MGMGAMadagascar|MWMWKMalawi|MYMYRMalaysia|MVMVRMaldives|MLXOFMali|MTEURMalta|MHUSDMarshall Islands|MQEURMartinique|MRMRUMauritania|MUMURMauritius|YTEURMayotte|MXMXNMexico|FMUSDMicronesia|MDMDLMoldova|MCEURMonaco|MNMNTMongolia|MEEURMontenegro|MAMADMorocco|MZMZNMozambique|MMMMKMyanmar|NANADNamibia|NRAUDNauru|NPNPRNepal|NLEURNetherlands|NCXPFNew Caledonia|NZNZDNew Zealand|NINIONicaragua|NEXOFNiger|NGNGNNigeria|KPKPWNorth Korea|MKMKDNorth Macedonia|NONOKNorway|OMOMROman|PKPKRPakistan|PWUSDPalau|PSILSPalestine|PAPABPanama|PGPGKPapua New Guinea|PYPYGParaguay|PEPENPeru|PHPHPPhilippines|PLPLNPoland|PTEURPortugal|PRUSDPuerto Rico|QAQARQatar|REEURRéunion|RORONRomania|RURUBRussia|RWRWFRwanda|KNXCDSaint Kitts and Nevis|LCXCDSaint Lucia|VCXCDSaint Vincent and the Grenadines|WSWSTSamoa|SMEURSan Marino|STSTNSão Tomé and Príncipe|SASARSaudi Arabia|SNXOFSenegal|RSRSDSerbia|SCSCRSeychelles|SLSLESierra Leone|SGSGDSingapore|SKEURSlovakia|SIEURSlovenia|SBSBDSolomon Islands|SOSOSSomalia|ZAZARSouth Africa|KRKRWSouth Korea|SSSSPSouth Sudan|ESEURSpain|LKLKRSri Lanka|SDSDGSudan|SRSRDSuriname|SESEKSweden|CHCHFSwitzerland|SYSYPSyria|TWTWDTaiwan|TJTJSTajikistan|TZTZSTanzania|THTHBThailand|TLUSDTimor-Leste|TGXOFTogo|TOTOPTonga|TTTTDTrinidad and Tobago|TNTNDTunisia|TRTRYTürkiye|TMTMTTurkmenistan|TVAUDTuvalu|UGUGXUganda|UAUAHUkraine|AEAEDUnited Arab Emirates|GBGBPUnited Kingdom|USUSDUnited States|UYUYUUruguay|VIUSDUS Virgin Islands|UZUZSUzbekistan|VUVUVVanuatu|VAEURVatican City|VEVESVenezuela|VNVNDVietnam|YEYERYemen|ZMZMWZambia|ZWUSDZimbabwe".split("|").map((s) => ({ iso: s.slice(0, 2), currency: s.slice(2, 5), name: s.slice(5) }));
+const COUNTRIES = COUNTRY_DATA.map((x) => x.name);
+const COUNTRY_CURRENCY = Object.fromEntries(COUNTRY_DATA.map((x) => [x.name, x.currency]).concat([["Remote \u2013 worldwide", ""]]));
+const CURRENCY_NAMES = Object.fromEntries("AEDUnited Arab Emirates Dirham|AFNAfghan Afghani|ALLAlbanian Lek|AMDArmenian Dram|ANGNetherlands Antillean Guilder|AOAAngolan Kwanza|ARSArgentine Peso|AUDAustralian Dollar|AWGAruban Florin|AZNAzerbaijani Manat|BAMBosnia-Herzegovina Convertible Mark|BBDBarbadian Dollar|BDTBangladeshi Taka|BHDBahraini Dinar|BIFBurundian Franc|BMDBermudan Dollar|BNDBrunei Dollar|BOBBolivian Boliviano|BRLBrazilian Real|BSDBahamian Dollar|BTNBhutanese Ngultrum|BWPBotswanan Pula|BYNBelarusian Ruble|BZDBelize Dollar|CADCanadian Dollar|CDFCongolese Franc|CHFSwiss Franc|CLPChilean Peso|CNYChinese Yuan|COPColombian Peso|CRCCosta Rican Colón|CUPCuban Peso|CVECape Verdean Escudo|CZKCzech Koruna|DJFDjiboutian Franc|DKKDanish Krone|DOPDominican Peso|DZDAlgerian Dinar|EGPEgyptian Pound|ERNEritrean Nakfa|ETBEthiopian Birr|EUREuro|FJDFijian Dollar|GBPBritish Pound|GELGeorgian Lari|GHSGhanaian Cedi|GIPGibraltar Pound|GMDGambian Dalasi|GNFGuinean Franc|GTQGuatemalan Quetzal|GYDGuyanaese Dollar|HKDHong Kong Dollar|HNLHonduran Lempira|HTGHaitian Gourde|HUFHungarian Forint|IDRIndonesian Rupiah|ILSIsraeli New Shekel|INRIndian Rupee|IQDIraqi Dinar|IRRIranian Rial|ISKIcelandic Króna|JMDJamaican Dollar|JODJordanian Dinar|JPYJapanese Yen|KESKenyan Shilling|KGSKyrgystani Som|KHRCambodian Riel|KMFComorian Franc|KPWNorth Korean Won|KRWSouth Korean Won|KWDKuwaiti Dinar|KYDCayman Islands Dollar|KZTKazakhstani Tenge|LAKLaotian Kip|LBPLebanese Pound|LKRSri Lankan Rupee|LRDLiberian Dollar|LSLLesotho Loti|LYDLibyan Dinar|MADMoroccan Dirham|MDLMoldovan Leu|MGAMalagasy Ariary|MKDMacedonian Denar|MMKMyanmar Kyat|MNTMongolian Tugrik|MOPMacanese Pataca|MRUMauritanian Ouguiya|MURMauritian Rupee|MVRMaldivian Rufiyaa|MWKMalawian Kwacha|MXNMexican Peso|MYRMalaysian Ringgit|MZNMozambican Metical|NADNamibian Dollar|NGNNigerian Naira|NIONicaraguan Córdoba|NOKNorwegian Krone|NPRNepalese Rupee|NZDNew Zealand Dollar|OMROmani Rial|PABPanamanian Balboa|PENPeruvian Sol|PGKPapua New Guinean Kina|PHPPhilippine Peso|PKRPakistani Rupee|PLNPolish Zloty|PYGParaguayan Guarani|QARQatari Riyal|RONRomanian Leu|RSDSerbian Dinar|RUBRussian Ruble|RWFRwandan Franc|SARSaudi Riyal|SBDSolomon Islands Dollar|SCRSeychellois Rupee|SDGSudanese Pound|SEKSwedish Krona|SGDSingapore Dollar|SLESierra Leonean Leone|SOSSomali Shilling|SRDSurinamese Dollar|SSPSouth Sudanese Pound|STNSão Tomé and Príncipe Dobra|SYPSyrian Pound|SZLSwazi Lilangeni|THBThai Baht|TJSTajikistani Somoni|TMTTurkmenistani Manat|TNDTunisian Dinar|TOPTongan Paʻanga|TRYTurkish Lira|TTDTrinidad and Tobago Dollar|TWDNew Taiwan Dollar|TZSTanzanian Shilling|UAHUkrainian Hryvnia|UGXUgandan Shilling|USDUS Dollar|UYUUruguayan Peso|UZSUzbekistani Som|VESVenezuelan Bolívar|VNDVietnamese Dong|VUVVanuatu Vatu|WSTSamoan Tala|XAFCentral African CFA Franc|XCDEast Caribbean Dollar|XOFWest African CFA Franc|XPFCFP Franc|YERYemeni Rial|ZARSouth African Rand|ZMWZambian Kwacha".split("|").map((s) => [s.slice(0, 3), s.slice(3)]));
+const CURRENCIES = Object.keys(CURRENCY_NAMES);
+/* Where a job is, as "City, Country": "Kuala Lumpur, Malaysia". The country isn't repeated when the
+   location already names it ("Lagos, Nigeria", "Austin, TX, USA"), and a worldwide-remote role reads
+   "Remote – worldwide". */
+const COUNTRY_ALIASES = { "United States": ["usa", "us", "u.s.", "united states of america"], "United Kingdom": ["uk", "u.k.", "england", "scotland", "wales", "great britain"], "United Arab Emirates": ["uae"] };
+function jobPlace(location, country) {
+  const loc = String(location || "").trim(), c = String(country || "").trim();
+  if (!c) return loc;
+  if (/^remote\b.*worldwide/i.test(c)) return !loc ? c : /remote|worldwide|anywhere/i.test(loc) ? loc : loc + " \u00b7 Remote";
+  if (!loc) return c;
+  const low = loc.toLowerCase(), names = [c].concat(COUNTRY_ALIASES[c] || []).map((n) => n.toLowerCase());
+  if (names.some((n) => new RegExp("(^|[\\s,(/-])" + n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[\\s,)/-])").test(low))) return loc;
+  return loc + ", " + c;
+}
 /* City/state suggestions for the "City / state" field, keyed by hiring country. Just a
    starting-point list for the datalist \u2014 typing anything else is still fine. */
 const CITY_STATE_OPTIONS = {
@@ -950,19 +970,138 @@ function Modal({ open, onClose, title, children, wide }) {
 }
 
 /* Shared "are you sure" modal for destructive actions (delete candidate/job/campaign/ad). */
-function ConfirmModal({ open, onClose, title, body, confirmLabel = "Delete", onConfirm, busy }) {
+function ConfirmModal({ open, onClose, title, body, confirmLabel = "Delete", onConfirm, busy, busyLabel = "Deleting" }) {
   return (
     <Modal open={open} onClose={onClose} title={title}>
       <div className="flex flex-col gap-4">
         <div className="text-sm" style={{ color: C.ink2 }}>{body}</div>
         <div className="flex gap-2 justify-end">
           <Btn onClick={onClose} disabled={busy}>Cancel</Btn>
-          <Btn kind="danger" onClick={onConfirm} disabled={busy}>{busy ? <>Deleting <InlineDots color="#fff" /></> : confirmLabel}</Btn>
+          <Btn kind="danger" onClick={onConfirm} disabled={busy}>{busy ? <>{busyLabel} <InlineDots color="#fff" /></> : confirmLabel}</Btn>
         </div>
       </div>
     </Modal>
   );
 }
+
+/* ⋮ menu: one button per row that lists that row's actions, instead of a row of buttons.
+   items: [{ label, icon, onClick, danger, disabled, title, hidden, divider }]. Destructive items go
+   last and should ask to confirm themselves. The list is placed against the screen (not the row), so
+   scrolling tables and cards never cut it off; it flips up near the bottom of the screen. */
+function RowMenu({ items, label = "More actions", busy = false, size = 18 }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = React.useRef(null);
+  const listRef = React.useRef(null);
+  const shown = (items || []).filter((x) => x && !x.hidden);
+  const place = () => {
+    const r = btnRef.current && btnRef.current.getBoundingClientRect(); if (!r) return;
+    const w = 232, h = Math.min(shown.length * 40 + 12, 360);
+    const up = r.bottom + h + 8 > window.innerHeight && r.top - h - 8 > 0;
+    setPos({ top: up ? r.top - h - 4 : r.bottom + 4, left: Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)), width: w });
+  };
+  React.useEffect(() => {
+    if (!open) return;
+    place();
+    const close = (e) => { if (e.type === "keydown" ? e.key === "Escape" : !(listRef.current && listRef.current.contains(e.target)) && !(btnRef.current && btnRef.current.contains(e.target))) setOpen(false); };
+    const away = () => setOpen(false);
+    document.addEventListener("mousedown", close); document.addEventListener("touchstart", close); document.addEventListener("keydown", close);
+    window.addEventListener("resize", away); window.addEventListener("scroll", away, true);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("touchstart", close); document.removeEventListener("keydown", close); window.removeEventListener("resize", away); window.removeEventListener("scroll", away, true); };
+  }, [open]); // eslint-disable-line
+  if (!shown.length) return null;
+  return (
+    <>
+      <button ref={btnRef} type="button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} disabled={busy}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2, background: open ? C.canvas : "transparent", border: `1px solid ${open ? C.line : "transparent"}` }}>
+        {busy ? <InlineDots color={C.ink3} /> : <MoreVertical size={size} />}
+      </button>
+      {open && pos && (
+        <div ref={listRef} role="menu" className="fixed z-[60] rounded-xl p-1.5 shadow-lg overflow-y-auto" style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: 360, background: "#fff", border: `1px solid ${C.line}` }}>
+          {shown.map((x, i) => {
+            const Icon = x.icon;
+            return (
+              <React.Fragment key={x.label + i}>
+                {x.danger && i > 0 && !shown[i - 1].danger && <div className="my-1" style={{ borderTop: `1px solid ${C.line}` }} />}
+                <button role="menuitem" type="button" disabled={x.disabled} title={x.title || undefined}
+                  onClick={(e) => { e.stopPropagation(); setOpen(false); x.onClick && x.onClick(); }}
+                  className="w-full text-left text-sm rounded-lg px-3 py-2 flex items-center gap-2.5 hover:bg-[#F4F2EC]"
+                  style={{ color: x.danger ? C.dangerFg : C.ink, opacity: x.disabled ? 0.45 : 1, cursor: x.disabled ? "not-allowed" : "pointer" }}>
+                  {Icon ? <Icon size={15} /> : <span style={{ width: 15 }} />}<span className="flex-1 min-w-0">{x.label}</span>
+                </button>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+/* Searchable dropdown for long lists (every country, every currency). Type to filter; arrow keys
+   and Enter pick. options: [{ value, label, hint }]. */
+function PickList({ value, onChange, options, placeholder = "Select…", searchPlaceholder = "Type to search", className = "", style = {}, allowEmpty }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
+  const boxRef = React.useRef(null);
+  const listRef = React.useRef(null);
+  const cur = options.find((o) => o.value === value);
+  const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const nq = norm(q.trim());
+  const list = !nq ? options : options.filter((o) => norm(o.label).includes(nq) || norm(o.value) === nq || norm(o.hint).includes(nq))
+    .sort((a, b) => (norm(b.label).startsWith(nq) || norm(b.value) === nq) - (norm(a.label).startsWith(nq) || norm(a.value) === nq));
+  React.useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (!(boxRef.current && boxRef.current.contains(e.target))) setOpen(false); };
+    document.addEventListener("mousedown", close); document.addEventListener("touchstart", close);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("touchstart", close); };
+  }, [open]);
+  React.useEffect(() => { setHi(0); }, [q]);
+  React.useEffect(() => { const el = listRef.current && listRef.current.children[hi]; if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" }); }, [hi]);
+  const pick = (o) => { onChange(o ? o.value : ""); setOpen(false); setQ(""); };
+  const key = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, list.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); if (list[hi]) pick(list[hi]); }
+    else if (e.key === "Escape") { setOpen(false); setQ(""); }
+  };
+  return (
+    <div ref={boxRef} className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={open}
+        className={className + " flex items-center justify-between gap-2 text-left"} style={style}>
+        <span className="truncate" style={{ color: cur ? C.ink : C.ink3 }}>{cur ? cur.label : (value || placeholder)}</span>
+        <ChevronDown size={14} color={C.ink3} className="shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 z-[60] mt-1 rounded-xl shadow-lg" style={{ background: "#fff", border: `1px solid ${C.line}`, minWidth: 220 }}>
+          <div className="p-2" style={{ borderBottom: `1px solid ${C.line}` }}>
+            <div className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+              <Search size={14} color={C.ink3} />
+              <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={key} placeholder={searchPlaceholder} className="bg-transparent outline-none text-sm flex-1 min-w-0" />
+            </div>
+          </div>
+          <div ref={listRef} role="listbox" className="max-h-64 overflow-y-auto p-1">
+            {allowEmpty && !nq && <button type="button" onClick={() => pick(null)} className="w-full text-left text-sm rounded-lg px-3 py-1.5" style={{ color: C.ink3 }}>{placeholder}</button>}
+            {list.map((o, i) => (
+              <button key={o.value} type="button" role="option" aria-selected={o.value === value} onMouseEnter={() => setHi(i)} onClick={() => pick(o)}
+                className="w-full text-left text-sm rounded-lg px-3 py-1.5 flex items-center justify-between gap-3"
+                style={{ background: i === hi ? C.canvas : "transparent", fontWeight: o.value === value ? 600 : 400 }}>
+                <span className="truncate">{o.label}</span>{o.hint && <span className="text-xs shrink-0" style={{ color: C.ink3 }}>{o.hint}</span>}
+              </button>
+            ))}
+            {!list.length && <div className="text-sm px-3 py-3" style={{ color: C.ink3 }}>No match for "{q}"</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+const COUNTRY_OPTIONS = [{ value: "Remote – worldwide", label: "Remote – worldwide" }].concat(COUNTRIES.map((n) => ({ value: n, label: n, hint: COUNTRY_CURRENCY[n] })));
+const CURRENCY_OPTIONS = CURRENCIES.map((c) => ({ value: c, label: c + " – " + CURRENCY_NAMES[c], hint: curSymbol(c) !== c ? curSymbol(c) : "" }));
+// A saved value that isn't in the list (an old job, say) still shows and stays selectable.
+const withValue = (opts, v) => (!v || opts.some((o) => o.value === v) ? opts : [{ value: v, label: v }].concat(opts));
 
 /* Responsive data table: real table on desktop, cards on mobile */
 // Page numbers to show: first, last, and the pages around the current one, with gaps as "…".
@@ -2325,11 +2464,11 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
           )}
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={feeCur} onChange={(e) => setFeeCur(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={feeCur} onChange={setFeeCur} options={withValue(CURRENCY_OPTIONS, feeCur)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={incentiveCur} onChange={(e) => setIncentiveCur(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={incentiveCur} onChange={setIncentiveCur} options={withValue(CURRENCY_OPTIONS, incentiveCur)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
           </div>
           <div className="text-xs" style={{ color: C.ink3 }}>Prefilled from this role's billing settings — edit as needed before confirming.</div>
           <Btn kind="primary" full onClick={markPlaced}>Confirm placement</Btn>
@@ -3163,7 +3302,7 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
     <Modal open={open} onClose={onClose} title={"Fit review: " + first} wide>
       <div className="flex flex-col gap-3.5">
         <div className="flex items-center gap-3 flex-wrap">
-          <div className="min-w-0 flex-1"><div className="text-sm font-semibold">{job.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{job.client}{job.location ? " · " + job.location : ""}</div></div>
+          <div className="min-w-0 flex-1"><div className="text-sm font-semibold">{job.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{job.client}{jobPlace(job.location, job.country) ? " · " + jobPlace(job.location, job.country) : ""}</div></div>
           {review && <div className="text-2xl" style={{ ...SERIF }}>{review.fit}%</div>}
           {review && <Pill tone={VERDICT_TONE[review.verdict] || "neutral"}>{review.verdict}</Pill>}
         </div>
@@ -3485,6 +3624,7 @@ function InboxRow({ x, S, toast, canAct }) {
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [ask, setAsk] = useState(""); // which "are you sure" is open: delete / dismiss / unassign
   const job = S.jobs.find((j) => j.id === x.jobId);
   const staffName = (id) => ((S.users || []).find((u) => u.id === id) || {}).name || "the recruiter";
   const run = async (key, fn) => { setBusy(key); try { await fn(); } catch (e) { S.error(e.message || "Something went wrong"); } setBusy(""); };
@@ -3505,6 +3645,7 @@ function InboxRow({ x, S, toast, canAct }) {
   const followup = () => run("followup", async () => { const r = await S.inboxCall("followup", { applicationId: x.id }); toast("Follow-up sent to " + x.name.split(" ")[0] + (r.followups >= 2 ? " (that was the last one)" : "")); });
   const dismiss = () => run("dismiss", async () => { await S.inboxCall("dismiss", { applicationId: x.id }); toast("Dismissed " + x.name); });
   const restore = () => run("restore", async () => { await S.inboxCall("restore", { applicationId: x.id }); toast("Moved back to New"); });
+  const remove = () => run("delete", async () => { await S.inboxCall("delete", { applicationId: x.id }); toast("Deleted " + x.name + "'s application"); });
   // A referral is view-only until the person referred says they're interested.
   const waiting = x.source === "referral" && !x.interestAt && x.status === "new";
   const nextFollowupAt = (x.lastFollowupAt || x.at) + 864e5;
@@ -3527,45 +3668,45 @@ function InboxRow({ x, S, toast, canAct }) {
           </div>
         </button>
         <div className="flex flex-wrap items-center gap-2 md:justify-end">
-          {x.hasCv && <Btn icon={Download} onClick={openCv} disabled={!!busy} className={small}>{busy === "cv" ? <InlineDots /> : "CV"}</Btn>}
-          {waiting && (
-            <>
-              <Pill tone="warn">Waiting for {x.name.split(" ")[0]} to confirm interest</Pill>
-              {canAct && <Btn onClick={followup} disabled={!!busy || !canFollowUp} title={x.followups >= 2 ? "Two follow-ups already sent" : !canFollowUp ? "You can follow up a day after the last email" : ""} className={small}>{busy === "followup" ? <InlineDots /> : x.followups ? "Follow up again" : "Send follow-up"}</Btn>}
-              {canAct && <Btn onClick={dismiss} disabled={!!busy} className={small}>{busy === "dismiss" ? <InlineDots /> : "Dismiss"}</Btn>}
-            </>
-          )}
+          {waiting && <Pill tone="warn">Waiting for {x.name.split(" ")[0]} to confirm interest</Pill>}
+          {x.status === "new" && !waiting && x.source === "referral" && <Pill tone="em">Interested</Pill>}
           {x.status === "new" && !waiting && canAct && (
             <>
-              {x.source === "referral" && <Pill tone="em">Interested</Pill>}
               <StaffSelect S={S} value={rec} onChange={setRec} placeholder="Assign to…" />
               <Btn kind="primary" onClick={assign} disabled={!!busy || !rec} className={small}>{busy === "assign" ? <InlineDots color="#fff" /> : "Assign"}</Btn>
-              <Btn onClick={dismiss} disabled={!!busy} className={small}>{busy === "dismiss" ? <InlineDots /> : "Dismiss"}</Btn>
             </>
           )}
-          {x.status === "assigned" && (
+          {x.status === "assigned" && !moving && <Pill tone="em">Assigned{x.assignedName ? " to " + x.assignedName.split(" ")[0] : ""}</Pill>}
+          {x.status === "assigned" && canAct && moving && (
             <>
-              <Pill tone="em">Assigned{x.assignedName ? " to " + x.assignedName.split(" ")[0] : ""}</Pill>
-              {x.candidateId && <Btn onClick={() => S.openCandidate(x.candidateId)} className={small}>Open candidate</Btn>}
-              {canAct && !moving && <Btn onClick={() => { setMoving(true); setRec(""); }} disabled={!!busy} className={small}>Reassign</Btn>}
-              {canAct && !moving && <Btn onClick={unassign} disabled={!!busy} className={small}>{busy === "unassign" ? <InlineDots /> : "Unassign"}</Btn>}
-              {canAct && moving && (
-                <>
-                  <StaffSelect S={S} value={rec} onChange={setRec} placeholder="Reassign to…" exclude={x.assignedId} />
-                  <Btn kind="primary" onClick={reassign} disabled={!!busy || !rec} className={small}>{busy === "reassign" ? <InlineDots color="#fff" /> : "Save"}</Btn>
-                  <Btn onClick={() => setMoving(false)} className={small}>Cancel</Btn>
-                </>
-              )}
+              <StaffSelect S={S} value={rec} onChange={setRec} placeholder="Reassign to…" exclude={x.assignedId} />
+              <Btn kind="primary" onClick={reassign} disabled={!!busy || !rec} className={small}>{busy === "reassign" ? <InlineDots color="#fff" /> : "Save"}</Btn>
+              <Btn onClick={() => setMoving(false)} className={small}>Cancel</Btn>
             </>
           )}
-          {x.status === "dismissed" && (
-            <>
-              <Pill tone="neutral">Dismissed{x.handledBy ? " by " + x.handledBy.split(" ")[0] : ""}</Pill>
-              {canAct && <Btn onClick={restore} disabled={!!busy} className={small}>{busy === "restore" ? <InlineDots /> : "Restore"}</Btn>}
-            </>
-          )}
+          {x.status === "dismissed" && <Pill tone="neutral">Dismissed{x.handledBy ? " by " + x.handledBy.split(" ")[0] : ""}</Pill>}
+          <RowMenu label={"Actions for " + x.name} busy={!!busy && busy !== "assign" && busy !== "reassign"} items={[
+            { label: open ? "Hide details" : "View details", icon: Info, onClick: () => setOpen((v) => !v) },
+            { label: "Open CV", icon: Download, onClick: openCv, hidden: !x.hasCv },
+            { label: "Open candidate", icon: ExternalLink, onClick: () => S.openCandidate(x.candidateId), hidden: !(x.status === "assigned" && x.candidateId) },
+            { label: x.followups ? "Follow up again" : "Send follow-up", icon: MailPlus, onClick: followup, hidden: !(waiting && canAct), disabled: !canFollowUp,
+              title: x.followups >= 2 ? "Two follow-ups already sent" : !canFollowUp ? "You can follow up a day after the last email" : "" },
+            { label: "Reassign", icon: ArrowRightLeft, onClick: () => { setMoving(true); setRec(""); }, hidden: !(x.status === "assigned" && canAct) },
+            { label: "Restore to New", icon: RotateCcw, onClick: restore, hidden: !(x.status === "dismissed" && canAct) },
+            { label: "Unassign", icon: UserMinus, danger: true, onClick: () => setAsk("unassign"), hidden: !(x.status === "assigned" && canAct) },
+            { label: "Dismiss", icon: Ban, danger: true, onClick: () => setAsk("dismiss"), hidden: !(x.status === "new" && canAct) },
+            { label: "Delete", icon: Trash2, danger: true, onClick: () => setAsk("delete"), hidden: !canAct },
+          ]} />
         </div>
       </div>
+      <ConfirmModal open={!!ask} onClose={() => !busy && setAsk("")} busy={!!busy}
+        title={ask === "delete" ? "Delete " + x.name + "'s application?" : ask === "dismiss" ? "Dismiss " + x.name + "?" : "Unassign " + x.name + "?"}
+        body={ask === "delete" ? "This removes the application and the CV uploaded with it from the Inbox for good. " + (x.status === "assigned" ? "Their candidate profile stays as it is." : "This can't be undone.")
+          : ask === "dismiss" ? "It moves to Handled as dismissed. You can restore it later."
+          : "It goes back to New. " + x.name.split(" ")[0] + "'s candidate profile is kept, without a recruiter."}
+        confirmLabel={ask === "delete" ? "Delete" : ask === "dismiss" ? "Dismiss" : "Unassign"}
+        busyLabel={ask === "delete" ? "Deleting" : ask === "dismiss" ? "Dismissing" : "Unassigning"}
+        onConfirm={async () => { await (ask === "delete" ? remove() : ask === "dismiss" ? dismiss() : unassign()); setAsk(""); }} />
       {open && (
         <div className="rounded-xl px-4 py-3.5 flex flex-col gap-3 md:ml-12" style={{ background: C.canvas }}>
           <div className="grid sm:grid-cols-2 gap-3">
@@ -3853,11 +3994,10 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         </div>
         {(job.location || job.country || job.minPay || job.maxPay || job.commissionOnly || job.employmentType) && (
           <div className="flex flex-wrap gap-4 mb-4 text-sm" style={{ color: C.ink2 }}>
-            {job.location && <span>{job.location}</span>}
+            {jobPlace(job.location, job.country) && <span className="inline-flex items-center gap-1"><MapPin size={13} />{jobPlace(job.location, job.country)}</span>}
             {job.workSetup && <span>{job.workSetup}</span>}
             {job.employmentType && <span>{job.employmentType}</span>}
             {job.headcount > 1 && <span>{job.headcount} openings</span>}
-            {job.country && <span>Hiring in {job.country}</span>}
             {job.commissionOnly ? <span>Commission-only</span> : (job.minPay || job.maxPay) && <span>{job.minPay ? money(job.minPay, job.currency) : "?"} – {job.maxPay ? money(job.maxPay, job.currency) : "?"} / {(job.salaryPeriod || "Yearly").toLowerCase()}</span>}
           </div>
         )}
@@ -4224,10 +4364,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>Country</label>
-                <select value={country} onChange={(e) => { const v = e.target.value; setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} className={inp} style={inpStyle}>
-                  <option value="">Select a country…</option>
-                  {Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                <PickList value={country} onChange={(v) => { setCountry(v); if (COUNTRY_CURRENCY[v]) setCurrency(COUNTRY_CURRENCY[v]); }} options={withValue(COUNTRY_OPTIONS, country)} placeholder="Select a country…" searchPlaceholder="Search countries" className={inp} style={inpStyle} />
               </div>
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>City / state</label>
@@ -4243,7 +4380,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
               Commission-only role (no base salary)
             </label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary currency</label><select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary currency</label><PickList value={currency} onChange={setCurrency} options={withValue(CURRENCY_OPTIONS, currency)} searchPlaceholder="Search currency or code" className={inp} style={inpStyle} /></div>
               {!commissionOnly && (
                 <div>
                   <label className="text-xs font-medium" style={{ color: C.ink2 }}>Paid</label>
@@ -4299,7 +4436,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
               {billingType === "flat" && (
                 <div>
                   <label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label>
-                  <select value={billingCurrency} onChange={(e) => setBillingCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select>
+                  <PickList value={billingCurrency} onChange={setBillingCurrency} options={withValue(CURRENCY_OPTIONS, billingCurrency)} searchPlaceholder="Search currency or code" className={inp} style={inpStyle} />
                 </div>
               )}
             </div>
@@ -4333,7 +4470,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
               {incentiveType === "flat" && (
                 <div>
                   <label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label>
-                  <select value={incentiveCurrency} onChange={(e) => setIncentiveCurrency(e.target.value)} className={inp} style={inpStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c} ({curSymbol(c)})</option>)}</select>
+                  <PickList value={incentiveCurrency} onChange={setIncentiveCurrency} options={withValue(CURRENCY_OPTIONS, incentiveCurrency)} searchPlaceholder="Search currency or code" className={inp} style={inpStyle} />
                 </div>
               )}
             </div>
@@ -4861,7 +4998,7 @@ function ScheduleModal({ S, toast, onClose, edit, preset }) {
           <div><div className="text-[11px]" style={{ color: C.ink2 }}>Candidate{cand && cand.location ? " · " + cand.location : ""}</div>
             <select aria-label="Candidate's time zone" value={f.candTz} onChange={(e) => set("candTz", e.target.value)} className="text-xs rounded border bg-white px-1.5 py-1 mt-0.5 max-w-full" style={{ borderColor: C.line }}><option value="">Not sure</option>{TZ_OPTIONS.map(([z, l]) => <option key={z} value={z}>{l}</option>)}</select>
             {f.candTz && start && <div className="text-sm font-semibold mt-0.5">{hmIn(start, f.candTz)} {tzAbbr(start, f.candTz)}</div>}</div>
-          <div><div className="text-[11px]" style={{ color: C.ink2 }}>Client{job && job.location ? " · " + job.location : ""}</div>
+          <div><div className="text-[11px]" style={{ color: C.ink2 }}>Client{job && jobPlace(job.location, job.country) ? " · " + jobPlace(job.location, job.country) : ""}</div>
             <select aria-label="Client's time zone" value={f.clientTz} onChange={(e) => set("clientTz", e.target.value)} className="text-xs rounded border bg-white px-1.5 py-1 mt-0.5 max-w-full" style={{ borderColor: C.line }}><option value="">Not sure</option>{TZ_OPTIONS.map(([z, l]) => <option key={z} value={z}>{l}</option>)}</select>
             {f.clientTz && start && <div className="text-sm font-semibold mt-0.5">{hmIn(start, f.clientTz)} {tzAbbr(start, f.clientTz)}</div>}</div>
         </div>
@@ -5814,11 +5951,11 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className={sel} style={selStyle} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={feeCur} onChange={(e) => setFeeCur(e.target.value)} className={sel} style={selStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={feeCur} onChange={setFeeCur} options={withValue(CURRENCY_OPTIONS, feeCur)} searchPlaceholder="Search currency or code" className={sel} style={selStyle} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className={sel} style={selStyle} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><select value={incentiveCur} onChange={(e) => setIncentiveCur(e.target.value)} className={sel} style={selStyle}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={incentiveCur} onChange={setIncentiveCur} options={withValue(CURRENCY_OPTIONS, incentiveCur)} searchPlaceholder="Search currency or code" className={sel} style={selStyle} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Start date</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={sel} style={selStyle} /></div>
@@ -6558,14 +6695,11 @@ function AgencyTab({ toast, S }) {
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default currency</label>
-          <select value={defaultCurrency} onChange={(e) => setDefaultCurrency(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
-            {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <PickList value={defaultCurrency} onChange={setDefaultCurrency} options={withValue(CURRENCY_OPTIONS, defaultCurrency)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default hiring country</label>
-          <input list="harbor-default-countries" value={defaultCountry} onChange={(e) => { const v = e.target.value; setDefaultCountry(v); if (COUNTRY_CURRENCY[v]) setDefaultCurrency(COUNTRY_CURRENCY[v]); }} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-          <datalist id="harbor-default-countries">{Object.keys(COUNTRY_CURRENCY).map((c) => <option key={c} value={c} />)}</datalist>
+          <PickList value={defaultCountry} onChange={(v) => { setDefaultCountry(v); if (COUNTRY_CURRENCY[v]) setDefaultCurrency(COUNTRY_CURRENCY[v]); }} options={withValue(COUNTRY_OPTIONS, defaultCountry)} placeholder="Select a country…" searchPlaceholder="Search countries" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         </div>
       </div>
       <div className="text-xs" style={{ color: C.ink3 }}>New jobs default to this currency and country unless changed when posting.</div>
@@ -7377,7 +7511,7 @@ function ApplyPage({ slug }) {
 
   const pills = (
     <div className="flex flex-wrap gap-2 mt-3">
-      {job.location && <Pill tone="neutral"><MapPin size={11} className="mr-1" />{job.location}</Pill>}
+      {jobPlace(job.location, job.country) && <Pill tone="neutral"><MapPin size={11} className="mr-1" />{jobPlace(job.location, job.country)}</Pill>}
       {job.workSetup && <Pill tone="info">{job.workSetup}</Pill>}
       {job.employmentType && <Pill tone="neutral">{job.employmentType}</Pill>}
       {payText && <Pill tone="em">{payText}</Pill>}
@@ -7636,7 +7770,7 @@ function JobsBoard() {
                         style={{ borderColor: on ? C.em : C.line, boxShadow: on ? `inset 4px 0 0 ${C.em}` : undefined, background: "#fff" }}>
                         <div className="text-[17px] font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{j.title}</div>
                         <div className="text-sm mt-1" style={{ color: C.ink2 }}>{agency}</div>
-                        <div className="text-sm" style={{ color: C.ink2 }}>{j.location || (norm(j.workSetup) === "remote" ? "Remote" + (j.country ? ", " + j.country : "") : j.country || "")}</div>
+                        <div className="text-sm" style={{ color: C.ink2 }}>{jobPlace(j.location, j.country) || (norm(j.workSetup) === "remote" ? "Remote" : "")}</div>
                         <div className="flex flex-wrap gap-1.5 mt-2.5">
                           {metaChips(j).map((m, k) => <span key={k} className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: k === 0 && j.pay ? C.emTint : "#F3F2F1", color: k === 0 && j.pay ? C.em : C.ink2 }}>{m}</span>)}
                         </div>
@@ -7654,7 +7788,7 @@ function JobsBoard() {
                     <div className="p-6 border-b" style={{ borderColor: C.line, boxShadow: "0 4px 10px -8px rgba(20,32,27,0.2)" }}>
                       <a href={jobUrl(current.slug)} className="text-2xl font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{current.title}</a>
                       <div className="text-sm mt-1.5" style={{ color: C.ink2 }}>{agency}</div>
-                      <div className="text-sm" style={{ color: C.ink2 }}>{current.location || current.country || ""}{current.workSetup ? " · " + current.workSetup : ""}</div>
+                      <div className="text-sm" style={{ color: C.ink2 }}>{jobPlace(current.location, current.country)}{current.workSetup ? (jobPlace(current.location, current.country) ? " · " : "") + current.workSetup : ""}</div>
                       {(payLabel(current.pay) || current.employmentType) && <div className="text-sm mt-1" style={{ color: C.ink }}>{[payLabel(current.pay), current.employmentType].filter(Boolean).join(" · ")}</div>}
                       <div className="flex flex-wrap gap-2 mt-4">
                         <a href={jobUrl(current.slug, "go=apply")}><Btn kind="primary" className="!px-6">Apply now</Btn></a>
@@ -7672,7 +7806,7 @@ function JobsBoard() {
                       </div>
                       <div className="border-t pt-6" style={{ borderColor: C.line }}>
                         <div className="text-lg font-semibold mb-1">Location</div>
-                        <div className="text-sm flex items-center gap-1.5" style={{ color: C.ink2 }}><MapPin size={14} />{current.location || current.country || "Not specified"}</div>
+                        <div className="text-sm flex items-center gap-1.5" style={{ color: C.ink2 }}><MapPin size={14} />{jobPlace(current.location, current.country) || "Not specified"}</div>
                       </div>
                       <div className="border-t pt-6" style={{ borderColor: C.line }}>
                         <div className="text-lg font-semibold mb-3">Full job description</div>

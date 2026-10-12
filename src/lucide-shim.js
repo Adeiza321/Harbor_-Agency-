@@ -9,4 +9,5 @@ export {
   LuSettings as Settings, LuShield as Shield, LuPhone as Phone, LuCircleCheck as CheckCircle2,
   LuEllipsis as MoreHorizontal, LuUserPlus as UserPlus, LuPencil as Pencil, LuInfo as Info, LuCalendar as Calendar,
   LuCamera as Camera, LuUserRound as UserRound, LuMessageCircle as MessageCircle, LuArrowLeft as ArrowLeft, LuSendHorizontal as SendHorizontal, LuPaperclip as Paperclip, LuTrash2 as Trash2, LuFileText as FileText,
+  LuEllipsisVertical as MoreVertical, LuRotateCcw as RotateCcw, LuUserMinus as UserMinus, LuArrowRightLeft as ArrowRightLeft, LuExternalLink as ExternalLink, LuMailPlus as MailPlus, LuBan as Ban,
 } from "react-icons/lu";
