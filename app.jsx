@@ -7342,13 +7342,13 @@ function BillingPage({ role, toast, S }) {
         <SectionTitle size="text-3xl md:text-4xl" title="Billing" sub="Fees are invoiced once the guarantee period clears." />
         {role !== "recruiter" && <Btn kind="primary" icon={Plus} onClick={() => setOpen(true)}>New billing entry</Btn>}
       </div>
-      <PayoutTracker list={list} S={S} toast={toast} canEditGoal={role === "admin"} />
       <KPIGrid>
         <KPI dark label="Ready to invoice" value={count("Ready")} foot="Guarantee cleared" />
         <KPI label="In guarantee" value={count("Guarantee")} foot="Not billable yet" />
         <KPI label="Paid" value={count("Paid") + count("Invoiced")} foot="Invoiced or paid" />
         <KPI label="Fallout" value={count("Fallout")} foot="Left in guarantee" />
       </KPIGrid>
+      <PayoutTracker list={list} S={S} toast={toast} canEditGoal={role === "admin"} />
       {role !== "recruiter" && waiting.length > 0 && (
         <Card>
           <SectionTitle title="Waiting to be billed" sub={plural(waiting.length, "candidate") + " marked Placed or Hired without a billing entry"} size="text-xl" />
