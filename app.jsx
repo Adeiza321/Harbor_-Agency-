@@ -5475,6 +5475,28 @@ function TestEmailBtn({ kind, id, S, toast }) {
   return <Btn icon={Mail} onClick={go} disabled={busy}>{busy ? "Sending…" : "Email me a test"}</Btn>;
 }
 
+// What came back from Apollo on an email ProNext sent through a sequence (apollo-sync).
+const APOLLO_REPLY = {
+  willing_to_meet: "Wants to talk", follow_up_question: "Asked a question", person_referral: "Referred someone else",
+  out_of_office: "Out of office", already_left_company_or_not_right_person: "Wrong person or left the company",
+  not_interested: "Not interested", unsubscribe: "Asked to unsubscribe", none_of_the_above: "Replied",
+};
+function ApolloNote({ data }) {
+  const a = data && data.apollo;
+  if (!a || !a.event) return null;
+  const reply = a.event === "reply";
+  const good = reply && ["willing_to_meet", "follow_up_question", "person_referral"].includes(a.replyClass);
+  const text = reply ? "Replied: " + (APOLLO_REPLY[a.replyClass] || "Replied") : a.event === "unsubscribed" ? "Unsubscribed in Apollo" : "Email bounced";
+  return (
+    <div className="text-xs rounded-lg px-2.5 py-1.5 mt-1.5 flex items-center gap-1.5 flex-wrap" style={{ background: good ? C.emTint : reply ? C.canvas : C.dangerBg, color: good ? C.em : reply ? C.ink2 : C.dangerFg }}>
+      <MessageCircle size={13} className="shrink-0" />
+      <span className="font-medium">{text}</span>
+      {a.at && <span style={{ opacity: 0.8 }}>· {fdate(a.at)}</span>}
+      {reply && <span style={{ opacity: 0.8 }}>· read it in your outreach mailbox</span>}
+    </div>
+  );
+}
+
 function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged, onFindEmail }) {
   const [open, setOpen] = useState(false);
   const [subject, setSubject] = useState(p.subject || "");
@@ -5516,6 +5538,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {(jobLabel || (p.status === "archived" && d.archived_role)) && <div className="text-xs mt-1" style={{ color: C.ink3 }}>{p.status === "archived" ? "Found for" : "For"} {jobLabel || d.archived_role}</div>}
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
+          <ApolloNote data={d} />
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
           {found && checklist.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -5714,6 +5737,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
           <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>
             {l.contact_name ? <>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name}</span>{l.contact_role ? ", " + l.contact_role : ""}{l.contact_email ? " · " + l.contact_email : ""}</> : "No hiring contact listed on the posting."}
           </div>
+          <ApolloNote data={l.data} />
           {matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
               {matches.map((m, i) => { const c = S.cands.find((x) => x.id === m.candidate_id); return (
@@ -5984,6 +6008,11 @@ function CampaignsPage({ toast, S }) {
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" title="Outreach" sub="Candidates found outside ProNext for your live jobs, and hiring managers whose new postings fit your candidates." />
+        {/* Replies, unsubscribes and bounces come back from Apollo every 15 minutes; this checks now. */}
+        <Btn icon={RefreshCw} className="shrink-0 whitespace-nowrap self-start" disabled={busy === "apollo"} onClick={() => run("apollo", () => S.sb("/functions/v1/apollo-sync", { method: "POST", body: { action: "sync" }, timeout: 120000 }).then((r) => toast(
+          r.skipped ? r.skipped : r.applied ? [r.replies && r.replies + " repl" + (r.replies > 1 ? "ies" : "y"), r.unsubscribes && r.unsubscribes + " unsubscribe" + (r.unsubscribes > 1 ? "s" : ""), r.bounces && r.bounces + " bounce" + (r.bounces > 1 ? "s" : "")].filter(Boolean).join(", ") + " from Apollo" : "No new replies in Apollo")))}>
+          {busy === "apollo" ? "Checking Apollo…" : "Check Apollo for replies"}
+        </Btn>
       </div>
       {notice ? (
         <div className="rounded-xl px-4 py-3 text-sm flex items-start gap-2.5" style={{ background: C.warnBg, color: C.warnFg }}>
