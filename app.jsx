@@ -6164,6 +6164,12 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           <ApolloNote data={d} />
+          {found && (d.client_history === "past" || d.location_source === "") && (
+            <div className="flex flex-wrap gap-1 mt-1.5">
+              {d.client_history === "past" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }}>Worked at {(jobLabel || "").split(",").slice(-1)[0].trim() || "the client"} before</span>}
+              {d.location_source === "" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.canvas, color: C.ink3 }}>Location not confirmed</span>}
+            </div>
+          )}
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
           {found && checklist.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -8042,6 +8048,20 @@ function BillingPage({ role, toast, S }) {
   const [open, setOpen] = useState(false);
   const [delTarget, setDelTarget] = useState(null);
   const [delBusy, setDelBusy] = useState(false);
+  // Someone left inside the guarantee: Reflik either replaces (we find a replacement, whose own
+  // placement brings the payout) or doesn't bill.
+  const [fallout, setFallout] = useState(null);
+  const [foBusy, setFoBusy] = useState(false);
+  const doFallout = async (replacement) => {
+    const p = fallout; setFoBusy(true);
+    try {
+      await S.updatePlacement(p.id, { status: "Fallout", invoice: { ...(p.invoice || {}), fallout: { kind: replacement ? "replacement" : "no_billing", at: new Date().toISOString() } } });
+      if (replacement && p.recruiterId) await S.addTask({ title: "Find a replacement for " + p.name + (p.role ? " (" + p.role + ")" : ""), assignedTo: p.recruiterId, dueOn: addDays(ymdToday(), 14), candidateId: p.candidateId || null, jobId: p.jobId || null });
+      toast(replacement ? "Fallout recorded. Replacement task given to the recruiter." : "Fallout recorded: no billing for " + p.name);
+      setFallout(null); S.reload && S.reload();
+    } catch (e) { S.error(e.message); }
+    setFoBusy(false);
+  };
   const list = role === "recruiter" ? S.placements.filter((p) => p.recruiterId === S.me.id) : S.placements;
   const setSt = (id, st, msg) => { S.setPlacementStatus(id, st); toast(msg); };
   const count = (s) => list.filter((p) => p.status === s).length;
@@ -8099,7 +8119,7 @@ function BillingPage({ role, toast, S }) {
               ? <div><span className="font-medium">{money(placementMonthly(p), p.feeCurrency)}</span><span className="text-xs" style={{ color: C.ink3 }}> /month</span><div className="text-xs" style={{ color: C.ink3 }}>{money(p.hourlyRate, p.feeCurrency)}/hr · {p.hoursPerWeek || 40} hrs/wk</div></div>
               : <span className="font-medium">{p.fee}</span> }]),
             { key: "incentive", label: role === "recruiter" ? "YOUR EARNINGS" : "RECRUITER INCENTIVE", render: (p) => p.incentive ? <span className="text-sm">{p.incentive}</span> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
-            { key: "guarantee", label: "GUARANTEE", render: (p) => <span className="text-xs" style={{ color: C.ink2 }}>{p.payType === "monthly" ? "Contract · " + contractProgress(p) : p.guarantee}</span> },
+            { key: "guarantee", label: "GUARANTEE", render: (p) => <span className="text-xs" style={{ color: C.ink2 }}>{p.payType === "monthly" ? "Contract · " + contractProgress(p) : p.status === "Fallout" && p.invoice && p.invoice.fallout ? (p.invoice.fallout.kind === "replacement" ? "Left early · replacement owed" : "Left early · no billing") : p.guarantee}</span> },
             { key: "status", label: "STATUS", render: (p) => (
               <div className="flex items-center gap-2 flex-wrap">
                 <StatusPill status={p.status} />
@@ -8107,13 +8127,24 @@ function BillingPage({ role, toast, S }) {
                 {p.payType !== "monthly" && p.status === "Guarantee" && p.guarantee.startsWith("Cleared") && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Ready", "Guarantee cleared — ready to invoice for " + p.name); }} className="text-xs" style={{ color: C.em }}>Mark ready</button>}
                 {p.status === "Ready" && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Invoiced", "Invoice created for " + p.name); }} className="text-xs" style={{ color: C.em }}>Invoice</button>}
                 {p.status === "Invoiced" && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Paid", "Marked paid: " + p.name); }} className="text-xs" style={{ color: C.em }}>Mark paid</button>}
-                {p.payType !== "monthly" && ["Guarantee", "Ready"].includes(p.status) && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Fallout", "Marked as fallout: " + p.name); }} className="text-xs" style={{ color: C.dangerFg }}>Mark fallout</button>}
+                {p.payType !== "monthly" && ["Guarantee", "Ready"].includes(p.status) && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setFallout(p); }} className="text-xs" style={{ color: C.dangerFg }}>Mark fallout</button>}
               </div>
             ) },
             { key: "act", label: "", render: (p) => role === "admin" ? <button title="Delete billing entry" onClick={(e) => { e.stopPropagation(); setDelTarget(p); }} className="p-1" style={{ color: C.ink3 }}><X size={15} /></button> : null },
           ]}
         />
       </Card>
+      <Modal open={!!fallout} onClose={() => setFallout(null)} title={fallout ? fallout.name + " left within the guarantee" : ""}>
+        <div className="text-sm mb-4" style={{ color: C.ink2 }}>What happens with this placement?</div>
+        <div className="flex flex-col gap-2">
+          <button disabled={foBusy} onClick={() => doFallout(true)} className="rounded-xl border px-4 py-3 text-left" style={{ borderColor: C.line }}>
+            <div className="text-sm font-medium">Replacement</div><div className="text-xs" style={{ color: C.ink3 }}>We put forward a replacement. The recruiter gets a to-do (due in 2 weeks); the replacement's own billing entry brings the payout.</div>
+          </button>
+          <button disabled={foBusy} onClick={() => doFallout(false)} className="rounded-xl border px-4 py-3 text-left" style={{ borderColor: C.line }}>
+            <div className="text-sm font-medium">No billing</div><div className="text-xs" style={{ color: C.ink3 }}>Nothing is paid for this placement.</div>
+          </button>
+        </div>
+      </Modal>
       <NewBillingModal open={open} onClose={() => { setOpen(false); setPresetId(null); }} toast={toast} S={S} presetId={presetId} />
       {detail && <BillingDetailModal key={detail.id} p={detail} role={role} onClose={() => setDetailId(null)} toast={toast} S={S} />}
       <ConfirmModal

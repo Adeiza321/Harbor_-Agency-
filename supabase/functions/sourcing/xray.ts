@@ -13,7 +13,7 @@
 
 import { askAI } from "./ai.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
-import { jobCountryNames } from "./regions.ts";
+import { COUNTRY_NAMES, jobCountryNames } from "./regions.ts";
 import { fitsToPercent, sameCompany, type Settings } from "./common.ts";
 import { findGithubEmails } from "./emails.ts";
 import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
@@ -142,15 +142,19 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
   const list = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
   const sys = "You are a recruitment researcher reviewing search-engine results for people's public profiles (LinkedIn and technical sites) against one job. " +
     "You only see each result's title line and short snippet, not the full profile. Reply with STRICT JSON only: " +
-    "{\"people\": [{\"i\": number, \"name\": string, \"headline\": string, \"company\": string, \"location\": string, \"overview\": string, \"checklist\": [{\"item\": string, \"status\": \"met\" | \"unconfirmed\" | \"not met\", \"evidence\": string}], \"gaps\": string[], \"fit\": number, \"verdict\": \"Good fit\" | \"Possible fit\" | \"Not a fit\"}]}, one entry per person. " +
-    "name, headline (their current title), company (current employer) and location come ONLY from the result ('' when not shown). " +
+    "{\"people\": [{\"i\": number, \"name\": string, \"headline\": string, \"company\": string, \"location\": string, \"client_history\": \"current\" | \"past\" | \"none\", \"business\": boolean, \"overview\": string, \"checklist\": [{\"item\": string, \"status\": \"met\" | \"unconfirmed\" | \"not met\", \"evidence\": string}], \"gaps\": string[], \"fit\": number, \"verdict\": \"Good fit\" | \"Possible fit\" | \"Not a fit\"}]}, one entry per person. " +
+    "name, headline (their current title) and company (current employer) come ONLY from the result ('' when not shown). " +
+    "location: where they live or work NOW: the 'Location:' part of a LinkedIn snippet, or the place shown next to their current role. Never a past job's city, a school, or an employer's head office; '' when not shown. " +
+    "client_history: 'current' when the result shows them working at the hiring company now, 'past' when it shows they worked there before, otherwise 'none'. " +
+    "business: true when the result is a business, company, agency, brand or group page rather than one person, or when the person runs their own business (founder, co-founder, owner, CEO / managing director of their own company, self-employed agency owner); otherwise false. " +
     "overview: 1 to 2 short sentences on what the result shows about them that matters for this job. " +
     "checklist: exactly the job's checklist items given, in the same order and wording. 'met' only when the result clearly shows it; 'not met' only when the result clearly contradicts it (based somewhere else, a different field, clearly more junior or senior); otherwise 'unconfirmed'. evidence: a few words from the result, '' if none. " +
     "gaps: up to 4 short items: what is 'not met' first, then the most important 'unconfirmed' must-haves to check with them. " +
     "fit: a percentage from 0 to 100 (never a 0-10 score) for how promising they are to approach: matching title, seniority and field count most; each 'unconfirmed' item lowers it a little, each 'not met' a lot. " +
-    "verdict: 'Good fit' only when title, seniority and field match and nothing is 'not met'; 'Not a fit' when the field, level or location clearly doesn't match, or they work for the hiring company; otherwise 'Possible fit'. " +
+    "verdict: 'Good fit' only when title, seniority and field match, at least half the checklist is 'met' and nothing is 'not met'. 'Not a fit' when any of the first three checklist items (the core must-haves) is 'not met', when the field, level or title clearly doesn't match, when their current location is outside the search area, when they work for the hiring company now, or when business is true. Otherwise 'Possible fit'. " +
     "A search result can never prove everything, so never say 'Perfect fit'. For a GitHub result, judge technical skills from their bio, languages, repositories and followers.";
-  const head = jobBrief(job, false) + `\nHiring company (people who work there are 'Not a fit'): ${job.client || "(not given)"}` +
+  const head = jobBrief(job, false) + `\nHiring company (people who work there now are 'Not a fit'): ${job.client || "(not given)"}` +
+    `\nSearch area (where candidates must be based now): ${area?.summary || job.location || job.country || "(not set)"}` +
     `\n\nJob checklist:\n${p.checklist.map((c) => "- " + c).join("\n")}\n\nPeople (i | site | result title | snippet):\n`;
   const byKey = new Map<string, any>();
   const batches: Person[][] = [];
@@ -164,11 +168,40 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
     for (const r of res) if (r.status === "rejected") errors.push(errMsg(r.reason).slice(0, 200));
   }
 
-  // 5. Keep the best and save them next to Apollo's prospects.
+  // 5. Keep the best and save them next to Apollo's prospects. Checked here as well as by the AI:
+  //    their CURRENT location is in the search area (read from the result's "Location:" line when it
+  //    has one), the core must-haves aren't contradicted and at least one is shown, they don't work
+  //    at the hiring company now, and they're a person, not a business or a business owner.
+  // Someone is dropped only when their location clearly names a different country from the role's;
+  // a place we can't place (a city, "Greater ... Area") is kept and shown as not confirmed.
+  const allowed = new Set(jobCountryNames(job).map((x) => String(x || "").toLowerCase().trim()).filter(Boolean));
+  const ALIAS: Record<string, string> = { "usa": "united states", "u.s.": "united states", "uk": "united kingdom", "england": "united kingdom", "scotland": "united kingdom", "wales": "united kingdom", "uae": "united arab emirates" };
+  // Longest names first and whole words only, so "Nigeria" isn't read as "Niger".
+  const countries = [...new Set(Object.values(COUNTRY_NAMES).map((x) => String(x).toLowerCase()))].filter((x) => x.length > 3).sort((a, b) => b.length - a.length)
+    .map((c) => ({ c, re: new RegExp("(^|[^a-z])" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^a-z])") }));
+  const countryIn = (loc: string) => {
+    const l = " " + loc.toLowerCase().replace(/[()]/g, " ") + " ";
+    for (const [a, c] of Object.entries(ALIAS)) if (new RegExp("[\\s,]" + a.replace(/\./g, "\\.") + "[\\s,]").test(l)) return c;
+    return (countries.find((x) => x.re.test(l)) || { c: "" }).c;
+  };
+  const inArea = (loc: string) => { if (!allowed.size) return true; const c = countryIn(loc); return !c || allowed.has(c); };
+  const OWNER = /\b(founder|co-?founder|owner|proprietor|self[- ]employed|ceo\s*(&|and|\/)?\s*founder|managing director at (my|own))\b/i;
   const kept = list
-    .map((x) => ({ x, r: byKey.get(x.key) }))
+    .map((x) => {
+      const r = byKey.get(x.key);
+      if (!r) return { x, r };
+      const fromSnippet = (String(x.snippet || "").match(/(?:Location|Lives in|Based in)\s*[:：]\s*([^·|\n]{2,80})/i) || [])[1];
+      const loc = clip(fromSnippet || r.location, 120).trim();
+      return { x, r: { ...r, location: loc, locationSource: fromSnippet ? "profile" : loc ? "result" : "" } };
+    })
     .filter(({ r }) => r && r.verdict !== "Not a fit" && Number(r.fit) >= 40)
-    .filter(({ r }) => !sameCompany(r.company, job.client))
+    .filter(({ r }) => !sameCompany(r.company, job.client) && r.client_history !== "current")
+    .filter(({ r }) => r.business !== true && !OWNER.test(String(r.headline || "")))
+    .filter(({ r }) => !r.location || inArea(r.location))
+    .filter(({ r }) => {
+      const cl = Array.isArray(r.checklist) ? r.checklist : [];
+      return !cl.slice(0, 3).some((c: any) => c?.status === "not met") && (!cl.length || cl.some((c: any) => c?.status === "met"));
+    })
     .sort((a, b) => Number(b.r.fit) - Number(a.r.fit))
     .slice(0, perJob);
   const VERDICTS = ["Good fit", "Possible fit"];
@@ -185,7 +218,7 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
       linkedin_url: x.site === "linkedin" ? x.key : null,
       fit: Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0))), verdict: VERDICTS.includes(r.verdict) ? r.verdict : "Possible fit",
       fit_reason: clip(r.overview, 300) || null, status: "found",
-      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, overview: clip(r.overview, 400), checklist, gaps: (Array.isArray(r.gaps) ? r.gaps : []).slice(0, 4).map((g: unknown) => clip(g, 120)), snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
+      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: r.client_history === "past" ? "past" : "none", location_source: r.locationSource || "", overview: clip(r.overview, 400), checklist, gaps: (Array.isArray(r.gaps) ? r.gaps : []).slice(0, 4).map((g: unknown) => clip(g, 120)), snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
     };
   });
   let inserted: any[] = [];
