@@ -7023,6 +7023,75 @@ const contractProgress = (p, todayYmd = ymdToday()) => {
     : done >= months ? "Completed · " + months + " months" : (p.startDate && p.startDate > todayYmd ? "Starts " + fdate(p.startDate + "T12:00:00") : "Month " + Math.min(months, done + 1) + " of " + months);
 };
 
+/* Retention check-ins: a reminder to speak to the placed person at days 30, 60 and 80 of a
+   permanent start (before the 90-day payout), and at the end of each contract month. Marking one
+   done writes "Check-in day 30: <note>" to the candidate's history, which is how it's tracked.
+   Only the latest one due shows per placement. */
+const CHECKIN_DAYS = [30, 60, 80];
+function checkinsDue(cands, list, today = ymdToday()) {
+  const out = [];
+  list.forEach((p) => {
+    if (!p.candidateId || p.status === "Fallout" || !p.startDate) return;
+    const c = cands.find((x) => x.id === p.candidateId);
+    if (!c) return;
+    const done = (key) => (c.timeline || []).some((t) => String(t.t || "").startsWith(key + ":") || String(t.t || "") === key);
+    let last = null;
+    if (p.payType !== "monthly") {
+      if (p.status === "Paid") return;
+      CHECKIN_DAYS.forEach((d) => { const due = addDays(p.startDate, d), key = "Check-in day " + d; if (due <= today && !done(key)) last = { key: p.id + ":" + d, p, c, title: key, due, label: "Day " + d + " check-in · payout " + fdate((p.guaranteeEnds || addDays(p.startDate, 90)) + "T12:00:00") }; });
+    } else if (!p.endedOn) {
+      const months = p.contractMonths || CONTRACT_DEFAULT_MONTHS;
+      for (let m = 1; m < months; m++) { const due = addMonths(p.startDate, m), key = "Check-in month " + m; if (due <= today && !done(key)) last = { key: p.id + ":m" + m, p, c, title: key, due, label: "End of contract month " + m + " of " + months }; }
+    }
+    if (last) out.push(last);
+  });
+  return out.sort((a, b) => (a.due < b.due ? -1 : 1));
+}
+
+function CheckinsCard({ list, S, toast }) {
+  const due = checkinsDue(S.cands, list);
+  const [openKey, setOpenKey] = useState(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (!due.length) return null;
+  const today = ymdToday();
+  const save = (x) => {
+    setBusy(true);
+    S.sb("/rest/v1/candidate_timeline", { method: "POST", body: { candidate_id: x.c.id, title: x.title + ": " + (note.trim() || "All good") } })
+      .then(() => { toast("Check-in saved to " + x.c.name.split(" ")[0] + "'s history"); setOpenKey(null); setNote(""); S.reload && S.reload(); })
+      .catch((e) => S.error(e.message)).finally(() => setBusy(false));
+  };
+  return (
+    <Card>
+      <SectionTitle title="Check-ins due" sub="Talk to each placed person before their payout is at risk. Mark it done with a short note." size="text-xl" />
+      <div className="mt-2 flex flex-col">
+        {due.map((x, i) => {
+          const late = (new Date(today) - new Date(x.due)) / 864e5;
+          return (
+            <div key={x.key} className="py-2.5" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => S.openCandidate(x.c.id)}>
+                  <div className="text-sm font-medium truncate">{x.c.name}</div>
+                  <div className="text-xs" style={{ color: C.ink2 }}>{x.label}</div>
+                </div>
+                <span className="text-xs shrink-0" style={{ color: late > 3 ? C.dangerFg : C.ink3 }}>{late >= 1 ? "Due " + fdate(x.due + "T12:00:00") : "Due today"}</span>
+                <Btn onClick={() => S.openCandidate(x.c.id)}>Open</Btn>
+                <Btn kind="primary" onClick={() => { setOpenKey(openKey === x.key ? null : x.key); setNote(""); }}>Mark done</Btn>
+              </div>
+              {openKey === x.key && (
+                <div className="flex gap-2 mt-2">
+                  <input id={"checkin-" + x.key} value={note} onChange={(e) => setNote(e.target.value)} placeholder="How are they getting on? (optional)" className="flex-1 min-w-0 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+                  <Btn kind="primary" disabled={busy} onClick={() => save(x)}>{busy ? "Saving…" : "Save"}</Btn>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function PayoutTracker({ list, S, toast, canEditGoal }) {
   const goal = (S.settings && S.settings.revenueGoal) || { amount: 50000, currency: "USD", by: new Date().getFullYear() + "-12-31" };
   const [editing, setEditing] = useState(false);
@@ -7348,6 +7417,7 @@ function BillingPage({ role, toast, S }) {
         <KPI label="Paid" value={count("Paid") + count("Invoiced")} foot="Invoiced or paid" />
         <KPI label="Fallout" value={count("Fallout")} foot="Left in guarantee" />
       </KPIGrid>
+      <CheckinsCard list={list} S={S} toast={toast} />
       <PayoutTracker list={list} S={S} toast={toast} canEditGoal={role === "admin"} />
       {role !== "recruiter" && waiting.length > 0 && (
         <Card>
@@ -9882,6 +9952,8 @@ export default function App() {
   };
   const onPromote = (job) => setPromote({ open: true, job });
   const pendingQ = countFollowups(data.cands, "draft");
+  // Counts next to the menu items: unread messages, and retention check-ins due on your placements.
+  const badges = { messages: msgUnread, billing: checkinsDue(data.cands, role === "recruiter" ? data.placements.filter((p) => p.recruiterId === session.uid) : data.placements).length };
 
 
   const scope = role === "recruiter" ? "recruiter" : "all";
@@ -9912,13 +9984,13 @@ export default function App() {
   return (
     <div className="flex min-h-screen" style={{ background: C.canvas, color: C.ink, fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' }}>
       <TopProgressBar show={refreshing} />
-      <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={{ messages: msgUnread }} />
+      <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} />
         <div className="px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
-      <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={{ messages: msgUnread }} />
-      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={{ messages: msgUnread }} />
+      <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
+      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={badges} />
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
