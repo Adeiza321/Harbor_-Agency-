@@ -2143,11 +2143,6 @@ function OverviewRecOps({ S }) {
         <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <PaceCard S={S} />
-        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
-      </div>
-      <TeamToday S={S} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
         <SubmissionsCard S={S} />
         <AttentionList title="Needs attention" S={S} items={(() => {
@@ -2165,9 +2160,14 @@ function OverviewRecOps({ S }) {
           ];
         })()} />
       </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <PaceCard S={S} />
+        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
+      </div>
       <Card>
         <RecruiterPerformanceChart S={S} />
       </Card>
+      <TeamToday S={S} />
     </div>
   );
 }
@@ -2186,10 +2186,6 @@ function OverviewRecruiter({ S }) {
         <KPI label="My interviews" value={st.interviews} foot="in interview now" />
         <KPI label="My billed" value={st.billed} foot="after guarantee" />
       </KPIGrid>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <PaceCard S={S} recruiterId={S.me.id} />
-        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
-      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
         <AttentionList title="Your next steps" S={S} items={(() => {
@@ -2202,6 +2198,10 @@ function OverviewRecruiter({ S }) {
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
           ];
         })()} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <PaceCard S={S} recruiterId={S.me.id} />
+        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
       </div>
     </div>
   );
