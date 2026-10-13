@@ -4,9 +4,9 @@
 // the must-haves, and "I'm interested" / "Refer someone" buttons to the public job page.
 
 import { footerText, regionOf, countryCode, type Region } from "./regions.ts";
-import { emailHash, provider, sendMail, toHtml } from "./send.ts";
+import { emailHash, provider, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
-import { candidateEmail, introOf, mustHavesFor, payText, sourceText } from "./outreach.ts";
+import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceText } from "./outreach.ts";
 import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
 
 // "City, Country" without repeating a country the location already names (same as the app's jobPlace).
@@ -25,7 +25,14 @@ export const portalBase = () => (Deno.env.get("PORTAL_BASE_URL") || "https://rec
 export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "unsubscribe" | "delete" | "job") =>
   `${portalBase()}/?u=${token}&k=${kind}&a=${action}`;
 
-// Client emails (pitches to hiring managers) stay plain text with the footer underneath.
+// The pitch to a hiring manager in the house design (HTML), from the lead's drafted text.
+export function leadHtml(l: any, token: string, region: Region, s: Settings, agencyName: string, b: Brand) {
+  return clientEmail(b, { body: l.pitch_body, interestedUrl: linkFor(token, "l", "interested"), region, subject: l.pitch_subject || `Candidate for your ${l.job_title} role`,
+    senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
+    unsubUrl: linkFor(token, "l", "unsubscribe"), deleteUrl: linkFor(token, "l", "delete") });
+}
+
+// Plain-text version of a client pitch, with the footer underneath (sent alongside the HTML).
 export function finalBody(body: string, token: string, kind: "p" | "l", region: Region, s: Settings, agencyName: string, who: "candidate" | "client") {
   const text = String(body || "").replace(/\{\{INTERESTED_LINK\}\}/g, linkFor(token, kind, "interested"))
     .replace(/\{\{JOB_LINK\}\}/g, linkFor(token, kind, "job")).trim();
@@ -99,8 +106,7 @@ export async function sendLeadTest(admin: any, leadId: string, to: string, s: Se
   if (!l.pitch_body) throw new Error("This lead has no drafted email yet");
   const b = await loadBrand(admin);
   const region = (l.region as Region) || regionOf(countryCode(l.country));
-  const text = finalBody(l.pitch_body, "test-preview", "l", region, s, agencyName, "client");
-  const html = `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#14201B;">${toHtml(text)}</div>`;
+  const html = leadHtml(l, "test-preview", region, s, agencyName, b);
   const ok = await sendBrevo(b, { email: to }, "[TEST] " + (l.pitch_subject || `Candidate for your ${l.job_title} role`), html);
   if (!ok) throw new Error("Brevo didn't accept the test email");
   return { ok: true, to };
@@ -135,6 +141,7 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
   if (missing.length) throw new Error("Before emailing anyone, add your " + missing.join(" and ") + " in Outreach > Setup (required by anti-spam law).");
   const { data: rows } = await admin.from("leads").select("*").in("id", ids).in("status", ["new", "approved"]);
   let queued = 0;
+  const brand = await loadBrand(admin);
   for (const l of rows || []) {
     if (!l.contact_email || !l.pitch_body) continue;
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(l.contact_email)).maybeSingle();
@@ -143,7 +150,7 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
     const { error } = await admin.from("outreach_messages").insert({
       kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name,
       subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(l.pitch_body, l.unsub_token, "l", region, s, agencyName, "client"),
-      approved_by: approver,
+      html: leadHtml(l, l.unsub_token, region, s, agencyName, brand), approved_by: approver,
     });
     if (error) throw new Error(error.message);
     await admin.from("leads").update({ status: "queued" }).eq("id", l.id);
