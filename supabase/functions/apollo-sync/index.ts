@@ -6,7 +6,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 //   POST { action: "sync" } signed in (staff)  the "Check Apollo for replies" button
 //   POST { action: "tracking", days } (admins)  Email tracking > Apollo: every email in ProNext's
 //                                                sequences, live from Apollo: scheduled (and when),
-//                                                sent, opened, clicked, replied, bounced, not sent (why)
+//                                                sent, opened, clicked, replied, bounced, not sent (why),
+//                                                each email's step, each sequence's steps, and where
+//                                                each person is in the sequence (active/paused/finished)
 //   POST { action: "preview", contactId } (admins) the email ProNext gave Apollo for that person
 //
 // Reads Apollo's "search for outreach emails" (no credits) for ProNext's sequences over the last
@@ -54,6 +56,19 @@ async function apollo(path: string, q: URLSearchParams) {
     if (res.status === 429) { await sleep(attempt ? 20000 : 5000); continue; }
     const data = await res.json().catch(() => ({}));
     if (res.status === 403) throw new Error("Apollo refused: this needs a Master API key (Settings > Integrations > API).");
+    if (!res.ok) throw new Error("Apollo " + res.status + ": " + String(data?.error || data?.message || "").slice(0, 200));
+    return data;
+  }
+  throw new Error("Apollo is rate-limiting requests; try again in a minute");
+}
+
+async function apolloPost(path: string, body: Record<string, unknown>) {
+  const key = (Deno.env.get("APOLLO_API_KEY") || "").trim();
+  if (!key) throw new Error("Apollo isn't connected (APOLLO_API_KEY)");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(`${BASE}${path}`, { method: "POST", headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": key }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+    if (res.status === 429) { await sleep(attempt ? 20000 : 5000); continue; }
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error("Apollo " + res.status + ": " + String(data?.error || data?.message || "").slice(0, 200));
     return data;
   }
@@ -189,20 +204,17 @@ async function tracking(admin: any, days: number, withSample = false) {
   if (!seqs.length) return { ok: true, rows: [], warning: "No Apollo sequence is set (APOLLO_SEQUENCE_ID)." };
   const clientSeq = String(Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID") || "").trim();
   const min = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
-  const max = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
   const raw: any[] = [];
   let truncated = false;
   for (let page = 1; page <= 20; page++) {
     const q = new URLSearchParams();
     seqs.forEach((id) => q.append("emailer_campaign_ids[]", id));
-    q.set("emailer_message_date_range_mode", "due_at");
-    q.set("emailer_message_date_range[min]", min);
-    q.set("emailer_message_date_range[max]", max);
     q.set("per_page", "100");
     q.set("page", String(page));
     const d = await apollo("/emailer_messages/search", q);
     const list: any[] = Array.isArray(d?.emailer_messages) ? d.emailer_messages : [];
-    raw.push(...list);
+    // No date filter on Apollo's side: filtering by due date leaves out emails already sent.
+    raw.push(...list.filter((m) => String(m.status) === "scheduled" || String(m.completed_at || m.due_at || m.created_at || "") >= min));
     if (list.length < 100) break;
     if (page === 20) truncated = true;
   }
@@ -214,14 +226,51 @@ async function tracking(admin: any, days: number, withSample = false) {
       const q = new URLSearchParams();
       seqs.forEach((id) => q.append("emailer_campaign_ids[]", id));
       q.append("emailer_message_stats[]", stat);
-      q.set("emailer_message_date_range_mode", "due_at");
-      q.set("emailer_message_date_range[min]", min);
-      q.set("emailer_message_date_range[max]", max);
       q.set("per_page", "100");
       q.set("page", String(page));
       const d = await apollo("/emailer_messages/search", q);
       const list: any[] = Array.isArray(d?.emailer_messages) ? d.emailer_messages : [];
       for (const m of list) { const id = String(m.id); if (!flags.has(id)) flags.set(id, new Set()); flags.get(id)!.add(stat); }
+      if (list.length < 100) break;
+    }
+  }
+  // The sequences themselves (steps, daily cap) and where each person is in them.
+  const sequences: any[] = [];
+  const stepById = new Map<string, { position: number; seq: string }>();
+  const sampleSeq: any[] = [];
+  for (const id of seqs) {
+    try {
+      const c = await apollo("/emailer_campaigns/" + id, new URLSearchParams());
+      const camp = c?.emailer_campaign || {};
+      const touches: any[] = Array.isArray(c?.emailer_touches) ? c.emailer_touches : [];
+      const templates = new Map<string, any>((Array.isArray(c?.emailer_templates) ? c.emailer_templates : []).map((t: any) => [String(t.id), t]));
+      const steps = (Array.isArray(c?.emailer_steps) ? c.emailer_steps : []).map((x: any) => {
+        const touch = touches.find((t) => String(t.emailer_step_id) === String(x.id));
+        const tpl = touch ? templates.get(String(touch.emailer_template_id || "")) : null;
+        stepById.set(String(x.id), { position: Number(x.position) || 0, seq: id });
+        return { id: String(x.id), position: Number(x.position) || 0, type: String(x.type || ""), waitTime: Number(x.wait_time) || 0, waitMode: String(x.wait_mode || "minute"),
+          subject: String(tpl?.subject || ""), preview: String(tpl?.body_text || tpl?.body_html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 140) };
+      }).sort((a: any, b: any) => a.position - b.position);
+      if (withSample) sampleSeq.push({ touchKeys: touches[0] ? Object.keys(touches[0]).sort() : [], templateKeys: c?.emailer_templates?.[0] ? Object.keys(c.emailer_templates[0]).sort() : [] });
+      sequences.push({ id, name: String(camp.name || ""), active: !!camp.active, maxPerDay: camp.max_emails_per_day ?? null, kind: id === clientSeq ? "client" : "candidate", steps,
+        people: { active: 0, paused: 0, finished: 0, failed: 0, total: 0 } });
+    } catch (e) { sequences.push({ id, name: "", steps: [], error: String((e as Error).message || e), people: { active: 0, paused: 0, finished: 0, failed: 0, total: 0 } }); }
+  }
+  const where = new Map<string, any>(); // `${contactId}|${seqId}` -> status in that sequence
+  for (const id of seqs) {
+    for (let page = 1; page <= 20; page++) {
+      const d = await apolloPost("/contacts/search", { emailer_campaign_ids: [id], per_page: 100, page });
+      const list: any[] = Array.isArray(d?.contacts) ? d.contacts : [];
+      for (const ct of list) {
+        const st = (Array.isArray(ct.contact_campaign_statuses) ? ct.contact_campaign_statuses : []).find((x: any) => String(x.emailer_campaign_id) === id);
+        if (!st) continue;
+        const status = String(st.status || "").toLowerCase();
+        const step = stepById.get(String(st.current_step_id || ""));
+        const seq = sequences.find((x) => x.id === id);
+        if (seq) { seq.people.total++; if (status in seq.people) seq.people[status]++; }
+        where.set(String(ct.id) + "|" + id, { status, step: step?.position || Number(st.current_step_position) || null,
+          reason: String(st.inactive_reason || st.failure_reason || "").replace(/_/g, " "), finishedAt: st.finished_at || null, pausedAt: st.paused_at || null, addedAt: st.added_at || null });
+      }
       if (list.length < 100) break;
     }
   }
@@ -241,7 +290,7 @@ async function tracking(admin: any, days: number, withSample = false) {
     const f = flags.get(String(m.id)) || new Set<string>();
     const status = String(pick(m, ["status"]) || "").toLowerCase();
     const reason = String(pick(m, ["not_sent_reason", "failure_reason"]) || "");
-    const bounced = f.has("bounced") || !!pick(m, ["bounce"]) || status === "bounced";
+    const bounced = f.has("bounced") || !!pick(m, ["bounce"]) || status === "bounced" || /bounce/i.test(String(m.failure_reason || ""));
     const spam = f.has("spam_blocked") || !!pick(m, ["spam_blocked"]);
     const replied = !!pick(m, ["replied", "reply_class"]);
     const p = who.get(String(m.contact_id || ""));
@@ -253,12 +302,14 @@ async function tracking(admin: any, days: number, withSample = false) {
     else if (sentAt || status === "completed" || f.has("delivered")) state = "sent";
     else if (/draft|pause/.test(status)) state = "paused";
     const delayCd = String(pick(m, ["schedule_delayed_reason_details"]) || "");
+    const inSeq = where.get(String(m.contact_id || "") + "|" + String(m.emailer_campaign_id || "")) || null;
     return {
       id: String(m.id), contactId: String(m.contact_id || ""),
       to: String(pick(m, ["to_email"]) || ""), name: p?.name || String(pick(m, ["to_name"]) || ""), role: p?.role || "",
       kind: p?.kind || (clientSeq && String(m.emailer_campaign_id) === clientSeq ? "client" : "candidate"),
       from: String(pick(m, ["from_email"]) || ""), subject: String(pick(m, ["subject"]) || ""), sequence: String(pick(m, ["campaign_name"]) || ""),
-      step: Number(pick(m, ["campaign_position"]) || 0) || null, timeZone: String(pick(m, ["time_zone"]) || ""),
+      step: stepById.get(String(m.emailer_step_id || ""))?.position || Number(pick(m, ["campaign_position"]) || 0) || null,
+      sequenceId: String(m.emailer_campaign_id || ""), inSequence: inSeq, timeZone: String(pick(m, ["time_zone"]) || ""),
       state, apolloStatus: status, reason: NOT_SENT[reason] || reason.replace(/_/g, " "),
       delay: state === "scheduled" ? (DELAY[delayCd] || String(pick(m, ["schedule_delayed_reason"]) || "").replace(/ You can adjust.*$/, "")) : "",
       dueAt: pick(m, ["due_at"]), sentAt, createdAt: pick(m, ["created_at"]),
@@ -267,7 +318,7 @@ async function tracking(admin: any, days: number, withSample = false) {
     };
   });
   rows.sort((a, b) => String(b.sentAt || b.dueAt || "").localeCompare(String(a.sentAt || a.dueAt || "")));
-  return { ok: true, rows, truncated, fetchedAt: new Date().toISOString(), ...(withSample ? { sample: raw.slice(0, 3) } : {}) };
+  return { ok: true, rows, sequences, truncated, fetchedAt: new Date().toISOString(), ...(withSample ? { sample: raw.slice(0, 1), sampleSeq } : {}) };
 }
 
 Deno.serve(async (req: Request) => {

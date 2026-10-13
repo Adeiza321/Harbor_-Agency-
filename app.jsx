@@ -8530,6 +8530,7 @@ function ApolloTrackingView({ S, sw }) {
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
   const [kind, setKind] = useState("");
+  const [step, setStep] = useState("");
   const [q, setQ] = useState("");
   const [preview, setPreview] = useState(null);
   const load = async (d) => {
@@ -8541,10 +8542,20 @@ function ApolloTrackingView({ S, sw }) {
   const rows = (res && res.rows) || [];
   const problem = (r) => r.state === "bounced" || r.state === "spam" || r.state === "not_sent" || r.unsubscribed;
   const ql = q.trim().toLowerCase();
-  const shown = rows.filter((r) => (!kind || r.kind === kind)
+  const base = rows.filter((r) => (!kind || r.kind === kind)
     && (!ql || r.to.toLowerCase().includes(ql) || (r.name || "").toLowerCase().includes(ql) || (r.subject || "").toLowerCase().includes(ql) || (r.role || "").toLowerCase().includes(ql))
     && (filter === "all" || (filter === "scheduled" && (r.state === "scheduled" || r.state === "paused")) || (filter === "sent" && r.state === "sent")
       || (filter === "opened" && r.opened) || (filter === "clicked" && r.clicked) || (filter === "replied" && r.replied) || (filter === "problems" && problem(r))));
+  const baseAll = rows.filter((r) => (!kind || r.kind === kind)
+    && (!ql || r.to.toLowerCase().includes(ql) || (r.name || "").toLowerCase().includes(ql) || (r.subject || "").toLowerCase().includes(ql) || (r.role || "").toLowerCase().includes(ql)));
+  const shown = base.filter((r) => !step || String(r.step || 1) === step);
+  const seqs = (res && res.sequences) || [];
+  const stepsOf = (r) => ((seqs.find((x) => x.id === r.sequenceId) || seqs[0] || {}).steps || []);
+  const allSteps = [...new Set([...seqs.flatMap((x) => (x.steps || []).map((st) => st.position)), ...rows.map((r) => r.step || 1)])].filter(Boolean).sort((a, b) => a - b);
+  const waitText = (st) => (!st ? "" : st.position === 1 || !st.waitTime ? (st.position === 1 ? "sent straight away" : "straight after the last step")
+    : st.waitTime + " " + (st.waitMode === "day" ? "day" : st.waitMode === "hour" ? "hour" : "minute") + (st.waitTime === 1 ? "" : "s") + " after the last step");
+  const stepName = (n) => (n === 1 ? "First email" : "Follow-up " + (n - 1));
+  const SEQ_STATUS = { active: ["Active", "info"], paused: ["Paused", "warn"], finished: ["Finished", "neutral"], failed: ["Stopped", "danger"] };
   const sent = shown.filter((r) => r.state === "sent");
   const t = { all: shown.length, waiting: shown.filter((r) => r.state === "scheduled" || r.state === "paused").length, sent: sent.length,
     opened: shown.filter((r) => r.opened).length, clicked: shown.filter((r) => r.clicked).length, replied: shown.filter((r) => r.replied).length, problems: shown.filter(problem).length };
@@ -8612,6 +8623,58 @@ function ApolloTrackingView({ S, sw }) {
         {tile("Replied", res ? t.replied : "…", pct(t.replied), t.replied ? C.em : undefined)}
         {tile("Problems", res ? t.problems : "…", "bounced, blocked, not sent or unsubscribed", t.problems ? C.dangerFg : undefined)}
       </div>
+      {seqs.filter((x) => (x.steps || []).length).map((sq) => {
+        const mine = baseAll.filter((r) => r.sequenceId === sq.id || (!r.sequenceId && sq === seqs[0]));
+        const pp = sq.people || {};
+        return (
+          <Card key={sq.id}>
+            <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-2 mb-3">
+              <div>
+                <div className="text-xs font-medium" style={{ color: C.ink3 }}>{sq.kind === "client" ? "CLIENT SEQUENCE" : "CANDIDATE SEQUENCE"}</div>
+                <div className="text-lg" style={{ ...SERIF, color: C.ink }}>{sq.name || "Apollo sequence"}{!sq.active && <span className="ml-2 align-middle"><Pill tone="warn">Not active in Apollo</Pill></span>}</div>
+              </div>
+              <div className="text-xs flex gap-3 flex-wrap" style={{ color: C.ink2 }}>
+                <span><b style={{ color: C.ink }}>{pp.total || 0}</b> people in it</span>
+                <span><b style={{ color: C.ink }}>{pp.active || 0}</b> active</span>
+                {pp.paused > 0 && <span><b style={{ color: C.warnFg }}>{pp.paused}</b> paused</span>}
+                <span><b style={{ color: C.ink }}>{pp.finished || 0}</b> finished</span>
+                {pp.failed > 0 && <span><b style={{ color: C.dangerFg }}>{pp.failed}</b> stopped</span>}
+              </div>
+            </div>
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-sm" style={{ minWidth: 640 }}>
+                <thead><tr className="text-xs text-left" style={{ color: C.ink3 }}>
+                  {["STEP", "WHEN", "ON THIS STEP NOW", "WAITING", "SENT", "OPENED", "CLICKED", "REPLIED", "PROBLEMS"].map((h) => <th key={h} className="font-medium px-1 py-2 whitespace-nowrap">{h}</th>)}
+                </tr></thead>
+                <tbody>
+                  {sq.steps.map((st) => {
+                    const rs = mine.filter((r) => (r.step || 1) === st.position);
+                    const sentN = rs.filter((r) => r.state === "sent").length;
+                    const p = (n) => (sentN ? <span className="text-xs ml-1" style={{ color: C.ink3 }}>{Math.round((n / sentN) * 100)}%</span> : null);
+                    const op = rs.filter((r) => r.opened).length, cl = rs.filter((r) => r.clicked).length, rp = rs.filter((r) => r.replied).length, pr = rs.filter(problem).length;
+                    const here = [...new Set(rows.filter((r) => r.inSequence && r.inSequence.status === "active" && r.inSequence.step === st.position && (r.sequenceId === sq.id || !r.sequenceId)).map((r) => r.contactId))].length;
+                    const on = step === String(st.position);
+                    return (
+                      <tr key={st.id} onClick={() => setStep(on ? "" : String(st.position))} className="cursor-pointer" style={{ borderTop: `1px solid ${C.line}`, background: on ? C.emTint : undefined }} title={on ? "Show all steps" : "Show only this step below"}>
+                        <td className="px-1 py-2.5"><div className="font-medium" style={{ color: C.ink }}>Step {st.position}</div><div className="text-xs" style={{ color: C.ink2 }} title={st.preview}>{stepName(st.position)}{st.type && st.type !== "auto_email" ? " · " + st.type.replace(/_/g, " ") : ""}</div></td>
+                        <td className="px-1 py-2.5 text-xs" style={{ color: C.ink2 }}>{waitText(st)}</td>
+                        <td className="px-1 py-2.5">{here}</td>
+                        <td className="px-1 py-2.5" style={{ color: rs.filter((r) => r.state === "scheduled").length ? C.warnFg : C.ink }}>{rs.filter((r) => r.state === "scheduled" || r.state === "paused").length}</td>
+                        <td className="px-1 py-2.5">{sentN}</td>
+                        <td className="px-1 py-2.5">{op}{p(op)}</td>
+                        <td className="px-1 py-2.5">{cl}{p(cl)}</td>
+                        <td className="px-1 py-2.5" style={{ color: rp ? C.em : C.ink }}>{rp}{p(rp)}</td>
+                        <td className="px-1 py-2.5" style={{ color: pr ? C.dangerFg : C.ink }}>{pr}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="text-xs mt-2" style={{ color: C.ink3 }}>Click a step to see only its emails below. Follow-ups stop on their own when someone replies, unsubscribes or bounces.</div>
+          </Card>
+        );
+      })}
       <Card>
         <div className="flex flex-col md:flex-row gap-2.5 md:items-center mb-4">
           <div className="flex gap-1.5 flex-wrap">
@@ -8622,6 +8685,10 @@ function ApolloTrackingView({ S, sw }) {
           <div className="flex gap-2 md:ml-auto">
             <select value={kind} onChange={(e) => setKind(e.target.value)} className="text-sm rounded-lg border px-2.5 py-1.5 bg-white" style={{ borderColor: C.line }}>
               <option value="">Candidates and clients</option><option value="candidate">Candidates</option><option value="client">Clients</option>
+            </select>
+            <select value={step} onChange={(e) => setStep(e.target.value)} className="text-sm rounded-lg border px-2.5 py-1.5 bg-white" style={{ borderColor: C.line }} aria-label="Sequence step">
+              <option value="">All steps</option>
+              {allSteps.map((n) => <option key={n} value={String(n)}>Step {n} · {stepName(n)}</option>)}
             </select>
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, role or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
           </div>
@@ -8634,8 +8701,11 @@ function ApolloTrackingView({ S, sw }) {
             onRowClick={(r) => setPreview(r)}
             empty={rows.length ? "No emails match these filters." : "No emails in ProNext's Apollo sequences in this period."}
             columns={[
-              { key: "to", label: "PERSON", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
-              { key: "subj", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="text-sm truncate" style={{ color: C.ink, maxWidth: 280 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}><Pill>{r.kind === "client" ? "Client pitch" : "Candidate"}</Pill>{r.role && <span className="truncate" style={{ maxWidth: 200 }}>{r.role}</span>}{r.step > 1 && <span>· step {r.step}</span>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
+              { key: "to", label: "PERSON", render: (r) => { const w = r.inSequence; const t = w && (SEQ_STATUS[w.status] || [w.status, "neutral"]); const total = stepsOf(r).length;
+                return <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div>
+                  {w && <div className="mt-1 flex items-center gap-1.5 flex-wrap" title={w.reason ? "Reason: " + w.reason : ""}><Pill tone={t[1]}>{t[0]}</Pill><span className="text-xs" style={{ color: C.ink3 }}>{w.status === "active" && w.step ? "on step " + w.step + (total ? " of " + total : "") : w.reason ? w.reason : ""}</span></div>}</div>; } },
+              { key: "subj", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="text-sm truncate" style={{ color: C.ink, maxWidth: 280 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}><Pill>{r.kind === "client" ? "Client pitch" : "Candidate"}</Pill>{r.role && <span className="truncate" style={{ maxWidth: 200 }}>{r.role}</span>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
+              { key: "step", label: "STEP", render: (r) => { const n = r.step || 1; const st = stepsOf(r).find((x) => x.position === n); return <div className="whitespace-nowrap"><div className="text-sm" style={{ color: C.ink }}>Step {n}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }} title={st ? waitText(st) : ""}>{stepName(n)}</div></div>; } },
               { key: "status", label: "STATUS", render: statusCell },
               { key: "open", label: "OPENED", render: (r) => yes(r.opened, "Opened") },
               { key: "click", label: "CLICKED", render: (r) => yes(r.clicked, "Clicked") },
