@@ -1552,10 +1552,6 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
       <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>{collapsed ? <NavList items={items.map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <NavList items={[...items, ...extra]} page={page} setPage={setPage} dark badges={badges} />}</div>
       {!collapsed && (
         <div className="px-3 pb-3 pt-3 shrink-0">
-          <div className="rounded-xl p-3.5 mb-3" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)" }}>
-            <div className="flex items-center gap-2 mb-1"><Sparkles size={15} color={C.lime} /><span className="text-xs font-medium text-white">AI needs your approval</span></div>
-            <div className="text-xs" style={{ color: "#A9BBB1" }}>{pendingQ} sets of screening questions are waiting for approval.</div>
-          </div>
           <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: "#A9BBB1", border: "1px solid rgba(255,255,255,0.12)" }}>Sign out</button>
         </div>
       )}
