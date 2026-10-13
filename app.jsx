@@ -1686,6 +1686,189 @@ function statsOf(S, forRecruiter) {
   return { placed: c.filter((x) => x.status === "Placed").length, total: c.length, interviews: c.filter((x) => x.status === "Interview").length, billed: sumByCurrency(billable, "feeNum", "feeCurrency"), ready: pl.filter((p) => p.status === "Ready").length, month: new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase() };
 }
 
+/* ---- AI assistant -----------------------------------------------------------------------------
+   Ask it to post jobs, schedule interviews, leave feedback, message candidates, move stages, set
+   reminders or draft emails. It only PROPOSES: every action is a card with Approve / Decline, and
+   approving runs the app's own action with your permissions. Opening it shows a free summary of
+   what's due (no AI used). The conversation is kept for this browser tab only. */
+const ASSIST_KEY = "pronext.assistant";
+function assistantContext(S) {
+  const staff = S.role === "admin" || S.role === "recops";
+  const cands = (staff ? S.cands : S.cands.filter((c) => c.recruiterId === S.me.id)).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0)).slice(0, 200);
+  return {
+    me: { name: S.me.name, role: ROLE_LABEL[S.role] || S.role }, today: ymdToday(), tz: MY_TZ,
+    jobs: S.jobs.filter((j) => j.status !== "Closed").slice(0, 80).map((j) => { const f = suggestBilling(j, null); return { id: j.id, role: j.role, client: j.client, fee: f.fee ? money(f.fee, f.feeCurrency) + (j.billingFrequency === "Monthly" ? "/month" : "") : "" }; }),
+    candidates: cands.map((c) => ({ id: c.id, name: c.name, role: c.role, status: c.status, links: (c.jobLinks || []).filter((l) => l.response !== "declined").map((l) => ({ jobId: l.jobId, stage: l.stage })) })),
+    users: (S.users || []).filter((u) => u.status === "Active").map((u) => ({ id: u.id, name: u.name, role: u.roleKey })),
+  };
+}
+function assistantLink(S, candId, jobId) {
+  const c = S.cands.find((x) => x.id === candId);
+  if (!c) return { c: null, link: null };
+  const links = c.jobLinks || [];
+  const link = jobId ? links.find((l) => l.jobId === jobId) : links.find((l) => l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)) || links[0];
+  return { c, link: link || null };
+}
+function proposalSummary(S, p) {
+  const i = p.input || {}, cand = S.cands.find((c) => c.id === i.candidate_id), job = S.jobs.find((j) => j.id === i.job_id);
+  const who = cand ? cand.name : "a candidate", role = job ? job.role + " (" + job.client + ")" : "";
+  switch (p.tool) {
+    case "propose_job_draft": return { icon: Briefcase, title: "Create a draft job: " + (i.role || "") + (i.client ? " at " + i.client : ""), detail: [i.location, i.work_setup, i.employment_type, i.fee_amount ? "fee " + (i.fee_type === "percent" ? i.fee_amount + "%" : money(i.fee_amount, i.currency || "USD")) + (i.contract ? "/month" : "") : ""].filter(Boolean).join(" · ") || "You review and publish it." };
+    case "propose_interview": return { icon: Calendar, title: "Schedule " + (i.round || "an interview") + " with " + who, detail: [i.date, i.time, i.timezone || MY_TZ, (i.duration_min || 30) + " min", i.location_type === "phone" ? "phone" : i.location_type === "in_person" ? "in person" : i.location_type === "link" ? "video link" : "Google Meet", role, i.notify_candidate === false ? "candidate not emailed" : "candidate emailed"].filter(Boolean).join(" · ") };
+    case "propose_note": return { icon: Pencil, title: "Add feedback to " + who + "'s profile", detail: i.text };
+    case "propose_message": return { icon: MessageCircle, title: "Message " + who + (role ? " about " + role : ""), detail: i.text };
+    case "propose_stage": return { icon: ArrowRightLeft, title: "Move " + who + " to " + i.stage + (role ? " on " + role : ""), detail: "" };
+    case "propose_task": { const u = (S.users || []).find((x) => x.id === i.assigned_to); return { icon: ListTodo, title: (u && u.id !== S.me.id ? "Give " + u.name + " a task: " : "Remind you: ") + (i.title || ""), detail: i.due_on ? "Due " + fdate(i.due_on + "T12:00:00") : "No due date" }; }
+    default: return { icon: Sparkles, title: p.tool, detail: "" };
+  }
+}
+async function runProposal(S, p) {
+  const i = p.input || {};
+  const staff = S.role === "admin" || S.role === "recops";
+  if (p.tool === "propose_job_draft") {
+    const id = uid(), cur = (i.currency || "USD").toUpperCase();
+    S.setJobs((l) => [{ id, role: i.role, client: i.client, location: i.location || "", workSetup: i.work_setup || "", employmentType: i.employment_type || null, headcount: 1,
+      description: i.description || "", currency: cur, country: i.country || "", minPay: i.min_pay || null, maxPay: i.max_pay || null,
+      billingType: i.fee_type === "percent" ? "percent" : "flat", billingAmount: i.fee_amount || null, billingCurrency: cur,
+      billingFrequency: i.contract ? "Monthly" : "One-off", billingMonths: i.contract ? (i.contract_months || CONTRACT_DEFAULT_MONTHS) : null,
+      screeningQuestions: [], status: "Draft", createdAt: Date.now(), engagedIds: [] }, ...l]);
+    setTimeout(() => S.openJob(id), 600);
+    return "Draft job created. Check it and set it to Open to publish.";
+  }
+  if (p.tool === "propose_task") {
+    await S.addTask({ title: i.title, dueOn: i.due_on || null, assignedTo: staff && i.assigned_to ? i.assigned_to : S.me.id });
+    return "Added to To-do.";
+  }
+  const { c, link } = assistantLink(S, i.candidate_id, i.job_id);
+  if (!c) throw new Error("I couldn't find that candidate.");
+  if (p.tool === "propose_note") {
+    await S.sb("/rest/v1/candidate_comments", { method: "POST", body: { candidate_id: c.id, author_id: S.me.id, body: i.text } });
+    S.reload && S.reload();
+    return "Feedback added to " + c.name + "'s profile.";
+  }
+  if (p.tool === "propose_message") {
+    if (!link) throw new Error(c.name + " isn't on a role yet, so there's no chat to send it in.");
+    await S.sendMessageQuiet(link.id, i.text);
+    S.reload && S.reload();
+    return "Sent to " + c.name + ".";
+  }
+  if (p.tool === "propose_stage") {
+    if (!link) throw new Error(c.name + " isn't on that role.");
+    await S.setStage(link.id, i.stage);
+    return c.name + " moved to " + i.stage + ".";
+  }
+  if (p.tool === "propose_interview") {
+    const tz = i.timezone || MY_TZ, lt = ["meet", "phone", "link", "in_person"].includes(i.location_type) ? i.location_type : "meet";
+    const start = zonedToUtc(i.date, i.time, tz);
+    if (!start || isNaN(start)) throw new Error("That date or time didn't make sense. Try again with a date and time.");
+    const notify = i.notify_candidate !== false;
+    await S.iv("create", { round: i.round || "1st round", starts_at: new Date(start).toISOString(), duration_min: Number(i.duration_min) || 30, location_type: lt,
+      location: lt === "meet" ? null : (i.location || null), notes: i.notes || null, recruiter_id: S.me.id, scheduler_tz: tz, send_reminders: notify,
+      candidate_id: c.id, job_id: (link && link.jobId) || i.job_id || null, link_id: link ? link.id : null, moveStage: !!link, notifyCandidate: notify });
+    return "Interview scheduled" + (notify ? " and " + c.name.split(" ")[0] + " has been emailed." : ".");
+  }
+  throw new Error("I don't know how to do that yet.");
+}
+function AssistantPanel({ S, badges }) {
+  const desktop = useDesktop();
+  const [open, setOpen] = useState(false);
+  const [msgs, setMsgs] = useState(() => { try { return JSON.parse(sessionStorage.getItem(ASSIST_KEY + S.me.id) || "[]"); } catch (e) { return []; } });
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const scrollRef = React.useRef(null);
+  useEffect(() => { try { sessionStorage.setItem(ASSIST_KEY + S.me.id, JSON.stringify(msgs.slice(-40))); } catch (e) { /* fine */ } }, [msgs]); // eslint-disable-line
+  useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [msgs.length, busy, open]);
+  // The free summary of what's due, shown at the top of the panel.
+  const today = ymdToday();
+  const myTasks = (S.tasks || []).filter((t) => t.assignedTo === S.me.id && t.status === "open" && t.dueOn && t.dueOn <= today);
+  const myCheckins = checkinsDue(S.cands, S.role === "recruiter" ? S.placements.filter((p) => p.recruiterId === S.me.id) : S.placements);
+  const myIvs = (S.interviews || []).filter((iv) => iv.status === "scheduled" && iv.recruiterId === S.me.id && ymdOf(new Date(iv.start)) === today).sort((a, b) => a.start - b.start);
+  const unread = (badges && badges.messages) || 0;
+  const send = async (q) => {
+    const ask = (q || text).trim();
+    if (!ask || busy) return;
+    setText("");
+    const next = [...msgs, { role: "user", content: ask }];
+    setMsgs(next); setBusy(true);
+    try {
+      const history = next.map((m) => ({ role: m.role, content: m.content + (m.proposals && m.proposals.length ? "\n[Proposed: " + m.proposals.map((p) => proposalSummary(S, p).title + " (" + (p.state || "waiting") + ")").join("; ") + "]" : "") }));
+      const r = await S.sb("/functions/v1/assistant", { method: "POST", body: { messages: history, context: assistantContext(S) }, timeout: 90000 });
+      setMsgs((m) => [...m, { role: "assistant", content: r.text || "", proposals: (r.proposals || []).map((p) => ({ ...p, state: "waiting" })) }]);
+    } catch (e) { setMsgs((m) => [...m, { role: "assistant", content: e.message || "Something went wrong. Try again.", error: true }]); }
+    setBusy(false);
+  };
+  const decide = async (mi, pi, approve) => {
+    const setP = (patch) => setMsgs((m) => m.map((x, a) => (a !== mi ? x : { ...x, proposals: x.proposals.map((p, b) => (b !== pi ? p : { ...p, ...patch })) })));
+    if (!approve) { setP({ state: "declined" }); return; }
+    setP({ state: "working" });
+    try { const note = await runProposal(S, msgs[mi].proposals[pi]); setP({ state: "approved", note }); }
+    catch (e) { setP({ state: "failed", note: e.message || "That didn't work." }); }
+  };
+  const copy = (t) => { try { navigator.clipboard.writeText(t).then(() => S.toast("Copied")).catch(() => S.toast("Select the text and copy it")); } catch (e) { S.toast("Select the text and copy it"); } };
+  const chips = ["What should I focus on today?", "Draft a follow-up email to a candidate", "Remind me tomorrow at 9 to check in with my placements"];
+  const due = myTasks.length + myCheckins.length + myIvs.length + (unread ? 1 : 0);
+  const panelStyle = desktop ? { position: "fixed", right: 24, bottom: 88, width: 400, height: "min(640px, calc(100vh - 120px))", zIndex: 45 } : { position: "fixed", inset: 0, zIndex: 60 };
+  return (
+    <>
+      {!(open && !desktop) && (
+        <button onClick={() => setOpen((v) => !v)} aria-label={open ? "Close assistant" : "Open assistant"} className="fixed rounded-full flex items-center justify-center shadow-lg"
+          style={{ right: desktop ? 24 : 16, bottom: desktop ? 24 : 76, width: 52, height: 52, background: C.side, color: C.lime, zIndex: 46 }}>
+          {open ? <X size={20} /> : <Sparkles size={20} />}
+          {!open && due > 0 && <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full text-[11px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{due}</span>}
+        </button>
+      )}
+      {open && (
+        <div className="flex flex-col overflow-hidden" style={{ ...panelStyle, background: "#fff", borderRadius: desktop ? 16 : 0, border: desktop ? `1px solid ${C.line}` : "none", boxShadow: "0 16px 40px rgba(20,32,27,0.18)" }}>
+          <div className="flex items-center gap-2.5 px-4 py-3 shrink-0" style={{ background: C.side, color: "#fff" }}>
+            <Sparkles size={18} color={C.lime} />
+            <div className="flex-1 min-w-0"><div className="text-sm font-semibold">Assistant</div><div className="text-[11px]" style={{ color: "#A9BBB1" }}>Nothing happens until you approve it</div></div>
+            {msgs.length > 0 && <button onClick={() => setMsgs([])} className="text-xs" style={{ color: "#A9BBB1" }}>Clear</button>}
+            <button onClick={() => setOpen(false)} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center"><X size={18} /></button>
+          </div>
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3" style={{ background: C.canvas }}>
+            <div className="rounded-xl p-3 text-sm" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+              <div className="font-medium mb-1">Hi {S.me.first || S.me.name.split(" ")[0]}, here's what's due</div>
+              {due === 0 && <div style={{ color: C.ink2 }}>Nothing due right now.</div>}
+              {myIvs.map((iv) => <div key={iv.id} style={{ color: C.ink2 }}>• {hmIn(iv.start, MY_TZ)} interview with {iv.candidateName}{iv.roleTitle ? " (" + iv.roleTitle + ")" : ""}</div>)}
+              {myTasks.slice(0, 5).map((t) => <div key={t.id} style={{ color: t.dueOn < today ? C.dangerFg : C.ink2 }}>• {t.title}{t.dueOn < today ? " (overdue)" : ""}</div>)}
+              {myTasks.length > 5 && <div style={{ color: C.ink3 }}>…and {myTasks.length - 5} more in To-do</div>}
+              {myCheckins.slice(0, 3).map((x) => <div key={x.key} style={{ color: C.ink2 }}>• Check in with {x.c.name} ({x.label.split(" · ")[0].toLowerCase()})</div>)}
+              {unread > 0 && <div style={{ color: C.ink2 }}>• {plural(unread, "unread message")}</div>}
+            </div>
+            {msgs.length === 0 && <div className="flex flex-wrap gap-1.5">{chips.map((c) => <button key={c} onClick={() => send(c)} className="text-xs rounded-full border px-3 py-1.5 text-left" style={{ borderColor: C.line, background: "#fff", color: C.ink2 }}>{c}</button>)}</div>}
+            {msgs.map((m, mi) => (
+              <div key={mi} className={"flex flex-col gap-2 " + (m.role === "user" ? "items-end" : "items-start")}>
+                {m.content && (
+                  <div className="rounded-2xl px-3.5 py-2.5 text-sm max-w-[90%] whitespace-pre-wrap" style={m.role === "user" ? { background: C.em, color: "#fff" } : { background: "#fff", border: `1px solid ${C.line}`, color: m.error ? C.dangerFg : C.ink }}>
+                    {m.content}
+                    {m.role === "assistant" && !m.error && m.content.length > 120 && <div className="mt-1.5"><button onClick={() => copy(m.content)} className="text-xs font-medium" style={{ color: C.em }}>Copy</button></div>}
+                  </div>
+                )}
+                {(m.proposals || []).map((p, pi) => { const sm = proposalSummary(S, p), Icon = sm.icon; return (
+                  <div key={pi} className="rounded-xl p-3 w-full" style={{ background: "#fff", border: `1px solid ${p.state === "approved" ? C.em : p.state === "failed" ? C.dangerFg : C.line}` }}>
+                    <div className="flex items-start gap-2"><Icon size={16} color={C.em} className="shrink-0 mt-0.5" /><div className="min-w-0 flex-1"><div className="text-sm font-medium">{sm.title}</div>{sm.detail && <div className="text-xs mt-0.5 whitespace-pre-wrap" style={{ color: C.ink2 }}>{sm.detail}</div>}</div></div>
+                    {p.state === "waiting" && <div className="flex gap-2 mt-2.5 justify-end"><Btn onClick={() => decide(mi, pi, false)}>Decline</Btn><Btn kind="primary" icon={Check} onClick={() => decide(mi, pi, true)}>Approve</Btn></div>}
+                    {p.state === "working" && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Working <InlineDots /></div>}
+                    {p.state === "approved" && <div className="text-xs mt-2" style={{ color: C.em }}>✓ {p.note || "Done"}</div>}
+                    {p.state === "declined" && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Declined</div>}
+                    {p.state === "failed" && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{p.note}</div>}
+                  </div>
+                ); })}
+              </div>
+            ))}
+            {busy && <div className="text-sm" style={{ color: C.ink3 }}>Thinking <InlineDots /></div>}
+          </div>
+          <div className="p-3 flex gap-2 shrink-0" style={{ borderTop: `1px solid ${C.line}` }}>
+            <textarea id="assistant-input" rows={1} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+              placeholder="Ask me to post a job, set an interview, remind you…" className="flex-1 min-w-0 rounded-xl border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: "#FAF8F3", maxHeight: 120 }} />
+            <button onClick={() => send()} disabled={busy || !text.trim()} aria-label="Send" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy || !text.trim() ? 0.5 : 1 }}><SendHorizontal size={17} /></button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ---- To-do list -------------------------------------------------------------------------------
    Your own tasks plus ones an Admin / Rec Ops assigned you. Tick to mark done, X to dismiss.
    Admins and Rec Ops can assign a task to anyone and see everyone's. */
@@ -10242,6 +10425,7 @@ export default function App() {
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
       <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={badges} />
+      <AssistantPanel S={S} badges={badges} />
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
