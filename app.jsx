@@ -2180,7 +2180,7 @@ function OverviewRecruiter({ S }) {
         <KPI dark label="My placements" value={st.placed} foot="all time" />
         <KPI label="My candidates" value={st.total} foot="on file" />
         <KPI label="My interviews" value={st.interviews} foot="in interview now" />
-        <KPI label="My billed" value={st.billed} foot="after guarantee" />
+        <KPI label="My earnings" value={sumByCurrency(S.placements.filter((p) => p.recruiterId === S.me.id && ["Ready", "Invoiced", "Paid"].includes(p.status) && p.incentiveNum), "incentiveNum", "incentiveCurrency")} foot="your incentive, after guarantee" />
       </KPIGrid>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
@@ -7514,6 +7514,36 @@ function CheckinsCard({ list, S, toast }) {
   );
 }
 
+/* A recruiter's own Billing view: their incentive on each placement (never the client fee),
+   paid once the placement's guarantee clears. */
+function EarningsCard({ list }) {
+  const today = ymdToday();
+  const items = list.flatMap((p) => payoutSchedule(p, today));
+  const curs = [...new Set(items.map((x) => x.currency))];
+  const total = (f) => curs.map((c) => money(items.filter((x) => x.currency === c && f(x)).reduce((a, x) => a + (x.amount || 0), 0), c)).join(" + ") || money(0, "USD");
+  const upcoming = items.filter((x) => !x.received).sort((a, b) => (a.date < b.date ? -1 : 1)).slice(0, 6);
+  return (
+    <Card>
+      <div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>YOUR EARNINGS</div>
+      <div className="text-2xl md:text-3xl mt-1" style={{ ...SERIF }}>{total(() => true)}</div>
+      <div className="text-xs mt-1" style={{ color: C.ink2 }}>Your incentive on your placements. Each one is due when its guarantee period clears.</div>
+      <div className="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs" style={{ color: C.ink2 }}>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle" style={{ background: C.em }} />Paid out {total((x) => x.received)}</span>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle" style={{ background: "#BFE0D0" }} />Still to come {total((x) => !x.received)}</span>
+      </div>
+      <div className="text-xs font-semibold tracking-widest mt-5 mb-2" style={{ color: C.ink3 }}>COMING UP</div>
+      {upcoming.length === 0 && <div className="text-sm" style={{ color: C.ink3 }}>Nothing due yet. Your earnings show here once a placement of yours is billed.</div>}
+      {upcoming.map((x, i) => (
+        <div key={x.key} className="flex items-center gap-3 py-2" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+          <div className="w-14 shrink-0 text-xs" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{fdate(x.date + "T12:00:00")}</div>
+          <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{x.p.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{x.p.role}</div></div>
+          <div className="text-sm font-medium shrink-0" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}</div>
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 function PayoutTracker({ list, S, toast, canEditGoal }) {
   const goal = (S.settings && S.settings.revenueGoal) || { amount: 50000, currency: "USD", by: new Date().getFullYear() + "-12-31" };
   const [editing, setEditing] = useState(false);
@@ -7720,8 +7750,8 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
             </>
           )}
           <div><L>DATE BILLED</L><div className="text-sm mt-1">{p.billedAt ? new Date(p.billedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "Not billed yet"}</div></div>
-          <div><L>{isContract ? "PER MONTH" : "CLIENT FEE"}</L><div className="text-sm mt-1 font-medium">{isContract ? money(contractMonthly(num(rate), num(hours) || 40), p.feeCurrency) + " · " + money(contractMonthly(num(rate), num(hours) || 40) * (Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS), p.feeCurrency) + " in total" : p.fee}</div></div>
-          <div><L>RECRUITER DUE</L><div className="text-sm mt-1">{p.incentive || "–"}{rec ? " · " + rec.name : ""}</div></div>
+          {staff && <div><L>{isContract ? "PER MONTH" : "CLIENT FEE"}</L><div className="text-sm mt-1 font-medium">{isContract ? money(contractMonthly(num(rate), num(hours) || 40), p.feeCurrency) + " · " + money(contractMonthly(num(rate), num(hours) || 40) * (Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS), p.feeCurrency) + " in total" : p.fee}</div></div>}
+          <div><L>{staff ? "RECRUITER DUE" : "YOUR EARNINGS"}</L><div className="text-sm mt-1">{p.incentive || "–"}{rec ? " · " + rec.name : ""}</div></div>
         </div>
         <div>
           {isContract ? <div className="text-xs" style={{ color: C.ink3 }}>CONTRACT · {contractProgress({ ...p, startDate, endedOn: endedOn || null, contractMonths: Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS }).toUpperCase()}</div> : <>
@@ -7840,7 +7870,9 @@ function BillingPage({ role, toast, S }) {
         <KPI label="Fallout" value={count("Fallout")} foot="Left in guarantee" />
       </KPIGrid>
       <CheckinsCard list={list} S={S} toast={toast} />
-      <PayoutTracker list={list} S={S} toast={toast} canEditGoal={role === "admin"} />
+      {role === "recruiter"
+        ? <EarningsCard list={list.filter((p) => p.incentiveNum).map((p) => ({ ...p, feeNum: p.incentiveNum, feeCurrency: p.incentiveCurrency, payType: "one_off", guaranteeEnds: p.payType === "monthly" ? (p.startDate || p.guaranteeEnds) : p.guaranteeEnds }))} />
+        : <PayoutTracker list={list} S={S} toast={toast} canEditGoal={role === "admin"} />}
       {role !== "recruiter" && waiting.length > 0 && (
         <Card>
           <SectionTitle title="Waiting to be billed" sub={plural(waiting.length, "candidate") + " marked Placed or Hired without a billing entry"} size="text-xl" />
@@ -7863,10 +7895,10 @@ function BillingPage({ role, toast, S }) {
           columns={[
             { key: "name", label: "PLACEMENT", render: (p) => <div><div className="font-medium">{p.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{p.role}</div></div> },
             { key: "recruiter", label: "RECRUITER", render: (p) => p.recruiter ? <Avatar init={p.recruiter} tone={PEOPLE_TONE[p.recruiter]} size={26} /> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
-            { key: "fee", label: "CLIENT FEE", render: (p) => p.payType === "monthly"
+            ...(role === "recruiter" ? [] : [{ key: "fee", label: "CLIENT FEE", render: (p) => p.payType === "monthly"
               ? <div><span className="font-medium">{money(placementMonthly(p), p.feeCurrency)}</span><span className="text-xs" style={{ color: C.ink3 }}> /month</span><div className="text-xs" style={{ color: C.ink3 }}>{money(p.hourlyRate, p.feeCurrency)}/hr · {p.hoursPerWeek || 40} hrs/wk</div></div>
-              : <span className="font-medium">{p.fee}</span> },
-            { key: "incentive", label: "RECRUITER INCENTIVE", render: (p) => p.incentive ? <span className="text-sm">{p.incentive}</span> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
+              : <span className="font-medium">{p.fee}</span> }]),
+            { key: "incentive", label: role === "recruiter" ? "YOUR EARNINGS" : "RECRUITER INCENTIVE", render: (p) => p.incentive ? <span className="text-sm">{p.incentive}</span> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
             { key: "guarantee", label: "GUARANTEE", render: (p) => <span className="text-xs" style={{ color: C.ink2 }}>{p.payType === "monthly" ? "Contract · " + contractProgress(p) : p.guarantee}</span> },
             { key: "status", label: "STATUS", render: (p) => (
               <div className="flex items-center gap-2 flex-wrap">
