@@ -1951,61 +1951,119 @@ function TodoPage({ toast, S }) {
   );
 }
 
-/* ---- Weekly pace: this week's submissions and placements against targets ------------------- */
-const weekStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); };
+/* ---- Periods shared by Team pace, Roles worth your time and Team ------------------------------
+   This week / last week / this month / last month / this year / last year / custom dates.
+   Targets are set per month and shared out by working days (Mon-Fri), so 4 placements a month is
+   about 1 a week; a share that rounds below 1 (4 a month, on a single day) is "not applicable". */
+const PERIODS = [["this_week", "This week"], ["last_week", "Last week"], ["this_month", "This month"], ["last_month", "Last month"], ["this_year", "This year"], ["last_year", "Last year"], ["custom", "Custom"]];
+function periodBounds(key, custom) {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  let from, to;
+  if (key === "last_week") { from = new Date(mon); from.setDate(mon.getDate() - 7); to = new Date(mon); }
+  else if (key === "this_month") { from = new Date(d.getFullYear(), d.getMonth(), 1); to = new Date(d.getFullYear(), d.getMonth() + 1, 1); }
+  else if (key === "last_month") { from = new Date(d.getFullYear(), d.getMonth() - 1, 1); to = new Date(d.getFullYear(), d.getMonth(), 1); }
+  else if (key === "this_year") { from = new Date(d.getFullYear(), 0, 1); to = new Date(d.getFullYear() + 1, 0, 1); }
+  else if (key === "last_year") { from = new Date(d.getFullYear() - 1, 0, 1); to = new Date(d.getFullYear(), 0, 1); }
+  else if (key === "custom" && custom && custom.from && custom.to) { from = new Date(custom.from + "T00:00:00"); to = new Date(custom.to + "T00:00:00"); to.setDate(to.getDate() + 1); }
+  else if (key === "custom") { from = new Date(d); to = new Date(d); to.setDate(d.getDate() + 1); }
+  else { from = new Date(mon); to = new Date(mon); to.setDate(mon.getDate() + 7); }
+  return { from: from.getTime(), to: to.getTime() };
+}
+const workdays = (from, to) => { let n = 0; for (let t = new Date(from); t.getTime() < to; t.setDate(t.getDate() + 1)) { const w = t.getDay(); if (w > 0 && w < 6) n++; } return n; };
+// Average working days in a month (261 a year / 12).
+const WORKDAYS_PER_MONTH = 21.75;
+// A monthly target's share of a period: null when it rounds below 1 (not applicable).
+function periodTarget(monthly, from, to) {
+  if (!monthly) return null;
+  const v = monthly * workdays(from, to) / WORKDAYS_PER_MONTH;
+  return v < 0.5 ? null : Math.round(v);
+}
+function PeriodSelect({ value, onChange, custom, setCustom, id }) {
+  const inp = "rounded-lg border px-2 py-1.5 text-xs outline-none";
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} aria-label="Period" className={inp} style={{ borderColor: C.line, background: "#fff" }}>
+        {PERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+      {value === "custom" && <>
+        <input type="date" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} aria-label="From" className={inp} style={{ borderColor: C.line }} />
+        <span className="text-xs" style={{ color: C.ink3 }}>to</span>
+        <input type="date" value={custom.to} onChange={(e) => setCustom({ ...custom, to: e.target.value })} aria-label="To" className={inp} style={{ borderColor: C.line }} />
+      </>}
+    </div>
+  );
+}
+const usePeriod = (initial = "this_week") => {
+  const [key, setKey] = useState(initial);
+  const [custom, setCustom] = useState({ from: ymdToday(), to: ymdToday() });
+  return { key, setKey, custom, setCustom, ...periodBounds(key, custom), label: (PERIODS.find((p) => p[0] === key) || [])[1] || "" };
+};
+// Monthly targets (older saved weekly targets are converted: x 4.35 weeks).
+const monthlyTargets = (S) => {
+  const g = (S.settings && S.settings.revenueGoal) || {};
+  if (g.monthly) return { submissions: 40, placements: 4, ...g.monthly };
+  if (g.weekly) return { submissions: Math.round((g.weekly.submissions || 0) * 4.35), placements: Math.round((g.weekly.placements || 0) * 4.35) };
+  return { submissions: 40, placements: 4 };
+};
+
+/* ---- Team pace: submissions and placements in a period against the targets ------------------ */
 function PaceCard({ S, recruiterId }) {
+  const pr = usePeriod("this_week");
   const goal = (S.settings && S.settings.revenueGoal) || {};
-  const tg = { submissions: 10, placements: 1, ...(goal.weekly || {}) };
+  const tm = monthlyTargets(S);
   const [edit, setEdit] = useState(false);
-  const [f, setF] = useState({ submissions: String(tg.submissions), placements: String(tg.placements) });
-  const from = weekStart();
+  const [f, setF] = useState({ submissions: String(tm.submissions), placements: String(tm.placements) });
+  const { from, to } = pr;
+  const inP = (t) => t && t >= from && t < to;
   const cands = recruiterId ? S.cands.filter((c) => c.recruiterId === recruiterId) : S.cands;
-  const subs = cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.submittedAt && l.submittedAt >= from).length, 0);
-  const places = (recruiterId ? S.placements.filter((p) => p.recruiterId === recruiterId) : S.placements).filter((p) => p.createdAt >= from && p.status !== "Fallout").length;
-  const ivs = (S.interviews || []).filter((i) => i.start >= from && i.start < from + 7 * 864e5 && (!recruiterId || i.recruiterId === recruiterId)).length;
-  // Expected so far: the share of the working week (Mon-Fri) that has passed.
-  const day = (new Date().getDay() + 6) % 7; // 0 = Monday
-  const share = Math.min(1, (Math.min(day, 4) + (day > 4 ? 1 : new Date().getHours() / 24)) / 5);
-  const row = (label, n, target) => {
-    const ok = target ? n >= Math.floor(target * share) : true;
-    return (
-      <div>
-        <div className="flex items-center justify-between text-sm"><span>{label}</span><span style={{ fontVariantNumeric: "tabular-nums" }}><b>{n}</b> of {target}</span></div>
-        <div className="h-2 rounded-full mt-1.5 overflow-hidden" style={{ background: C.canvas }}><div className="h-full rounded-full" style={{ width: Math.min(100, target ? (n / target) * 100 : 0) + "%", background: ok ? C.em : "#D9A23B" }} /></div>
-      </div>
-    );
-  };
-  const behind = (tg.submissions && subs < Math.floor(tg.submissions * share)) || (tg.placements && places < Math.floor(tg.placements * share));
-  const save = () => S.saveRevenueGoal({ ...goal, weekly: { submissions: Math.round(num(f.submissions)) || 0, placements: Math.round(num(f.placements)) || 0 } }).then(() => setEdit(false)).catch(() => {});
+  const subs = cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => inP(l.submittedAt)).length, 0);
+  const places = (recruiterId ? S.placements.filter((p) => p.recruiterId === recruiterId) : S.placements).filter((p) => inP(p.createdAt) && p.status !== "Fallout").length;
+  const ivs = (S.interviews || []).filter((i) => inP(i.start) && (!recruiterId || i.recruiterId === recruiterId)).length;
+  const tSubs = periodTarget(tm.submissions, from, to), tPlace = periodTarget(tm.placements, from, to);
+  // How much of the period's working time has passed (all of it for a past period).
+  const now = Date.now(), total = workdays(from, to) || 1;
+  const share = now >= to ? 1 : now <= from ? 0 : Math.min(1, (workdays(from, new Date(new Date().setHours(0, 0, 0, 0)).getTime()) + Math.min(1, new Date().getHours() / 18)) / total);
+  const ok = (n, t) => t == null || n >= Math.floor(t * share);
+  const row = (label, n, t) => (
+    <div>
+      <div className="flex items-center justify-between text-sm"><span>{label}</span><span style={{ fontVariantNumeric: "tabular-nums" }}><b>{n}</b>{t == null ? <span style={{ color: C.ink3 }}> · target n/a</span> : " of " + t}</span></div>
+      <div className="h-2 rounded-full mt-1.5 overflow-hidden" style={{ background: C.canvas }}><div className="h-full rounded-full" style={{ width: (t ? Math.min(100, (n / t) * 100) : 0) + "%", background: ok(n, t) ? C.em : "#D9A23B" }} /></div>
+    </div>
+  );
+  const behind = !ok(subs, tSubs) || !ok(places, tPlace);
+  const save = () => S.saveRevenueGoal({ ...goal, monthly: { submissions: Math.round(num(f.submissions)) || 0, placements: Math.round(num(f.placements)) || 0 } }).then(() => setEdit(false)).catch(() => {});
   return (
     <Card>
-      <div className="flex items-start justify-between gap-2">
-        <div><div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>THIS WEEK</div><div className="text-lg mt-0.5" style={{ ...SERIF }}>{recruiterId ? "Your pace" : "Team pace"}</div></div>
-        <Pill tone={behind ? "warn" : "em"}>{behind ? "Behind" : "On track"}</Pill>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div><div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>{pr.label.toUpperCase()}</div><div className="text-lg mt-0.5" style={{ ...SERIF }}>{recruiterId ? "Your pace" : "Team pace"}</div></div>
+        {tSubs != null || tPlace != null ? <Pill tone={behind ? "warn" : "em"}>{behind ? "Behind" : now >= to ? "Hit" : "On track"}</Pill> : null}
       </div>
+      <div className="mt-2"><PeriodSelect id="pace-period" value={pr.key} onChange={pr.setKey} custom={pr.custom} setCustom={pr.setCustom} /></div>
       <div className="flex flex-col gap-3 mt-3">
-        {row("Submissions", subs, tg.submissions)}
-        {row("Placements", places, tg.placements)}
-        <div className="text-xs" style={{ color: C.ink3 }}>{plural(ivs, "interview")} this week · targets reset every Monday.</div>
+        {row("Submissions", subs, tSubs)}
+        {row("Placements", places, tPlace)}
+        <div className="text-xs" style={{ color: C.ink3 }}>{plural(ivs, "interview")} · targets are {tm.submissions} submissions and {tm.placements} placements a month, shared out by working day.</div>
       </div>
       {S.role === "admin" && !recruiterId && (edit ? (
         <div className="flex items-end gap-2 mt-3 flex-wrap">
-          <div className="flex flex-col"><label htmlFor="pace-s" className="text-xs" style={{ color: C.ink2 }}>Submissions a week</label><input id="pace-s" value={f.submissions} onChange={(e) => setF({ ...f, submissions: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-24" style={{ borderColor: C.line }} /></div>
-          <div className="flex flex-col"><label htmlFor="pace-p" className="text-xs" style={{ color: C.ink2 }}>Placements a week</label><input id="pace-p" value={f.placements} onChange={(e) => setF({ ...f, placements: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-24" style={{ borderColor: C.line }} /></div>
+          <div className="flex flex-col"><label htmlFor="pace-s" className="text-xs" style={{ color: C.ink2 }}>Submissions a month</label><input id="pace-s" value={f.submissions} onChange={(e) => setF({ ...f, submissions: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-24" style={{ borderColor: C.line }} /></div>
+          <div className="flex flex-col"><label htmlFor="pace-p" className="text-xs" style={{ color: C.ink2 }}>Placements a month</label><input id="pace-p" value={f.placements} onChange={(e) => setF({ ...f, placements: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-24" style={{ borderColor: C.line }} /></div>
           <Btn kind="primary" onClick={save}>Save</Btn>
         </div>
-      ) : <button onClick={() => setEdit(true)} className="text-xs mt-3" style={{ color: C.em }}>Change weekly targets</button>)}
+      ) : <button onClick={() => { setF({ submissions: String(tm.submissions), placements: String(tm.placements) }); setEdit(true); }} className="text-xs mt-3" style={{ color: C.em }}>Change monthly targets</button>)}
     </Card>
   );
 }
 
 /* ---- Role picker: which open roles are worth the most effort ---------------------------------
-   Value: the job's fee (a contract: monthly fee x months, 6 by default). Chance: a rough guide from
-   the pipeline — people already moving on the role, strong fits not yet put forward, and whether
-   anyone has reached interview. Ranked by value x chance. */
-// earnings: a recruiter's view, valued by their own incentive instead of the client fee.
-function rolePicks(S, earnings) {
-  return S.jobs.filter((j) => j.status === "Open").map((j) => {
+   Value: the job's fee (a contract: monthly fee x months, 6 by default); for a recruiter, their own
+   incentive. Chance: a rough guide from the pipeline in the chosen period — people moving on the
+   role, strong fits not yet put forward, and whether anyone reached interview. Ranked by value x chance.
+   Open roles count, plus on-hold or closed ones that had candidates moving in the period. */
+function rolePicks(S, earnings, from, to) {
+  const inP = (t) => !from || (t && t >= from && t < to);
+  return S.jobs.filter((j) => j.status !== "Draft" && (j.createdAt || 0) < (to || Infinity)).map((j) => {
     const s = suggestBilling(j, null);
     const monthlyJob = earnings ? j.incentiveFrequency === "Monthly" : j.billingFrequency === "Monthly";
     const months = earnings ? (j.incentiveMonths || CONTRACT_DEFAULT_MONTHS) : (j.billingMonths || CONTRACT_DEFAULT_MONTHS);
@@ -2013,26 +2071,30 @@ function rolePicks(S, earnings) {
     let active = 0, late = 0, fits = 0;
     S.cands.forEach((c) => {
       const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
-      if (l) { if (l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)) { active++; if (["Interview", "Offer", "Placed"].includes(l.stage)) late++; } }
+      if (l) { if (l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage) && inP(l.createdAt || l.submittedAt)) { active++; if (["Interview", "Offer", "Placed"].includes(l.stage)) late++; } }
       else if ((c.matches || []).some((m) => m.job_id === j.id && (m.fit || 0) >= 60)) fits++;
     });
     const chance = Math.min(0.85, 0.08 + active * 0.1 + fits * 0.05 + (late ? 0.2 : 0));
     return { j, value, currency: earnings ? s.incentiveCurrency : s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
-  }).sort((a, b) => b.expected - a.expected || b.value - a.value);
+  }).filter((x) => x.j.status === "Open" || x.active > 0).sort((a, b) => b.expected - a.expected || b.value - a.value);
 }
 function RolePicker({ S, earnings }) {
-  const picks = rolePicks(S, earnings).slice(0, 6);
+  const pr = usePeriod("this_month");
+  const picks = rolePicks(S, earnings, pr.from, pr.to).slice(0, 6);
   return (
     <Card>
-      <div className="flex items-center gap-2"><Target size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Roles worth your time</div></div>
-      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{earnings ? "Open roles ranked by what you'd earn × a rough chance of filling them from your pipeline." : "Open roles ranked by what they pay × a rough chance of filling them from your pipeline."}</div>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2"><Target size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Roles worth your time</div></div>
+        <PeriodSelect id="roles-period" value={pr.key} onChange={pr.setKey} custom={pr.custom} setCustom={pr.setCustom} />
+      </div>
+      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{earnings ? "Roles ranked by what you'd earn" : "Roles ranked by what they pay"} × a rough chance of filling them, from the pipeline in {pr.label.toLowerCase()}.</div>
       <div className="mt-3 flex flex-col">
-        {picks.length === 0 && <div className="text-sm py-3" style={{ color: C.ink3 }}>No open roles.</div>}
+        {picks.length === 0 && <div className="text-sm py-3" style={{ color: C.ink3 }}>No roles open in this period.</div>}
         {picks.map((x, i) => (
           <button key={x.j.id} onClick={() => S.openJob(x.j.id)} className="flex items-center gap-3 py-2.5 text-left" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
             <div className="w-6 text-sm shrink-0" style={{ color: C.ink3, fontVariantNumeric: "tabular-nums" }}>{i + 1}</div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">{x.j.role} <span className="font-normal" style={{ color: C.ink3 }}>· {x.j.client}</span></div>
+              <div className="text-sm font-medium truncate">{x.j.role} <span className="font-normal" style={{ color: C.ink3 }}>· {x.j.client}{x.j.status !== "Open" ? " · " + x.j.status : ""}</span></div>
               <div className="text-xs truncate" style={{ color: C.ink2 }}>{plural(x.active, "candidate")} in play{x.late ? ", " + x.late + " at interview or later" : ""}{x.fits ? " · " + plural(x.fits, "strong fit") + " not put forward yet" : ""}</div>
             </div>
             <div className="text-right shrink-0">
@@ -2046,47 +2108,48 @@ function RolePicker({ S, earnings }) {
   );
 }
 
-/* ---- Team today: what each recruiter did in a day, scored and banded -------------------------
+/* ---- Team: what each recruiter got done in a period, scored and banded ----------------------
    Points: placement 10, submission 3, interview held 2, candidate added 1, task done 1, and (for
-   Admins, who can see the activity log) 0.5 for any other logged action. 15+ productive, 5-14
-   fairly productive, under 5 unproductive. */
-function teamDay(S, dayOffset = 0) {
-  const d0 = new Date(); d0.setHours(0, 0, 0, 0); d0.setDate(d0.getDate() - dayOffset);
-  const from = d0.getTime(), to = from + 864e5, inDay = (t) => t && t >= from && t < to;
+   Admins, who can see the activity log) 0.5 for any other logged action. Per working day: 15+
+   productive, 5-14 fairly productive, under 5 unproductive (so a week needs 5 times that). */
+function teamPeriod(S, from, to) {
+  const inP = (t) => t && t >= from && t < to;
+  const days = Math.max(1, workdays(from, Math.min(to, new Date(new Date().setHours(24, 0, 0, 0)).getTime())));
   const people = (S.users || []).filter((u) => u.status === "Active" && ["recruiter", "recops"].includes(u.roleKey));
   return people.map((u) => {
     const mine = S.cands.filter((c) => c.recruiterId === u.id);
-    const added = mine.filter((c) => inDay(c.createdAt)).length;
-    const subs = mine.reduce((n, c) => n + (c.jobLinks || []).filter((l) => inDay(l.submittedAt)).length, 0);
-    const ivs = (S.interviews || []).filter((i) => i.recruiterId === u.id && inDay(i.start)).length;
-    const places = S.placements.filter((p) => p.recruiterId === u.id && inDay(p.createdAt)).length;
-    const tasks = (S.tasks || []).filter((t) => t.assignedTo === u.id && t.status === "done" && inDay(t.doneAt)).length;
-    const logged = (S.auditLog || []).filter((a) => a.actorId === u.id && inDay(a.createdAt)).length;
+    const added = mine.filter((c) => inP(c.createdAt)).length;
+    const subs = mine.reduce((n, c) => n + (c.jobLinks || []).filter((l) => inP(l.submittedAt)).length, 0);
+    const ivs = (S.interviews || []).filter((i) => i.recruiterId === u.id && inP(i.start)).length;
+    const places = S.placements.filter((p) => p.recruiterId === u.id && inP(p.createdAt)).length;
+    const tasks = (S.tasks || []).filter((t) => t.assignedTo === u.id && t.status === "done" && inP(t.doneAt)).length;
+    const logged = (S.auditLog || []).filter((a) => a.actorId === u.id && inP(a.createdAt)).length;
     const score = places * 10 + subs * 3 + ivs * 2 + added + tasks + logged * 0.5;
-    const band = score >= 15 ? "Productive" : score >= 5 ? "Fairly productive" : "Unproductive";
-    return { u, added, subs, ivs, places, tasks, logged, score, band };
+    const perDay = score / days;
+    const band = perDay >= 15 ? "Productive" : perDay >= 5 ? "Fairly productive" : "Unproductive";
+    return { u, added, subs, ivs, places, tasks, logged, score, perDay, band };
   }).sort((a, b) => b.score - a.score);
 }
 function TeamToday({ S }) {
-  const [off, setOff] = useState(0);
-  const rows = teamDay(S, off);
+  const pr = usePeriod("this_week");
+  const rows = teamPeriod(S, pr.from, pr.to);
   if (!rows.length) return null;
   const tone = { Productive: "em", "Fairly productive": "warn", Unproductive: "danger" };
   return (
     <Card>
       <div className="flex items-start justify-between gap-2 flex-wrap">
-        <div><div className="flex items-center gap-2"><Trophy size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Team {off ? "yesterday" : "today"}</div></div>
-          <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>What each recruiter got done, ranked. Placement 10 pts, submission 3, interview 2, candidate added or task done 1.</div></div>
-        <Tabs tabs={[{ key: 0, label: "Today" }, { key: 1, label: "Yesterday" }]} active={off} setActive={setOff} />
+        <div><div className="flex items-center gap-2"><Trophy size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Team · {pr.label.toLowerCase()}</div></div>
+          <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>What each recruiter got done, ranked. Placement 10 pts, submission 3, interview 2, candidate added or task done 1. Bands use points per working day.</div></div>
+        <PeriodSelect id="team-period" value={pr.key} onChange={pr.setKey} custom={pr.custom} setCustom={pr.setCustom} />
       </div>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>
-          <thead><tr className="text-xs text-left" style={{ color: C.ink3 }}><th className="py-1.5 font-medium">RECRUITER</th><th className="font-medium">PLACED</th><th className="font-medium">SUBMITTED</th><th className="font-medium">INTERVIEWS</th><th className="font-medium">ADDED</th><th className="font-medium">TASKS</th><th className="font-medium">SCORE</th><th></th></tr></thead>
+          <thead><tr className="text-xs text-left" style={{ color: C.ink3 }}><th className="py-1.5 font-medium">RECRUITER</th><th className="font-medium">PLACED</th><th className="font-medium">SUBMITTED</th><th className="font-medium">INTERVIEWS</th><th className="font-medium">ADDED</th><th className="font-medium">TASKS</th><th className="font-medium">SCORE</th><th className="font-medium">PER DAY</th><th></th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.u.id} style={{ borderTop: `1px solid ${C.line}` }}>
                 <td className="py-2 pr-3 whitespace-nowrap">{r.u.name}</td><td>{r.places}</td><td>{r.subs}</td><td>{r.ivs}</td><td>{r.added}</td><td>{r.tasks}</td>
-                <td className="font-medium">{Math.round(r.score * 10) / 10}</td><td className="py-2 whitespace-nowrap"><Pill tone={tone[r.band]}>{r.band}</Pill></td>
+                <td className="font-medium">{Math.round(r.score * 10) / 10}</td><td>{Math.round(r.perDay * 10) / 10}</td><td className="py-2 whitespace-nowrap"><Pill tone={tone[r.band]}>{r.band}</Pill></td>
               </tr>
             ))}
           </tbody>
