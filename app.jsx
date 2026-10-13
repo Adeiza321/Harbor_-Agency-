@@ -2003,11 +2003,13 @@ function PaceCard({ S, recruiterId }) {
    Value: the job's fee (a contract: monthly fee x months, 6 by default). Chance: a rough guide from
    the pipeline — people already moving on the role, strong fits not yet put forward, and whether
    anyone has reached interview. Ranked by value x chance. */
-function rolePicks(S) {
+// earnings: a recruiter's view, valued by their own incentive instead of the client fee.
+function rolePicks(S, earnings) {
   return S.jobs.filter((j) => j.status === "Open").map((j) => {
     const s = suggestBilling(j, null);
-    const monthlyJob = j.billingFrequency === "Monthly";
-    const value = (Number(s.fee) || 0) * (monthlyJob ? (j.billingMonths || CONTRACT_DEFAULT_MONTHS) : 1);
+    const monthlyJob = earnings ? j.incentiveFrequency === "Monthly" : j.billingFrequency === "Monthly";
+    const months = earnings ? (j.incentiveMonths || CONTRACT_DEFAULT_MONTHS) : (j.billingMonths || CONTRACT_DEFAULT_MONTHS);
+    const value = (Number(earnings ? s.incentive : s.fee) || 0) * (monthlyJob ? months : 1);
     let active = 0, late = 0, fits = 0;
     S.cands.forEach((c) => {
       const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
@@ -2015,15 +2017,15 @@ function rolePicks(S) {
       else if ((c.matches || []).some((m) => m.job_id === j.id && (m.fit || 0) >= 60)) fits++;
     });
     const chance = Math.min(0.85, 0.08 + active * 0.1 + fits * 0.05 + (late ? 0.2 : 0));
-    return { j, value, currency: s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
+    return { j, value, currency: earnings ? s.incentiveCurrency : s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
   }).sort((a, b) => b.expected - a.expected || b.value - a.value);
 }
-function RolePicker({ S }) {
-  const picks = rolePicks(S).slice(0, 6);
+function RolePicker({ S, earnings }) {
+  const picks = rolePicks(S, earnings).slice(0, 6);
   return (
     <Card>
       <div className="flex items-center gap-2"><Target size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Roles worth your time</div></div>
-      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Open roles ranked by what they pay × a rough chance of filling them from your pipeline.</div>
+      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{earnings ? "Open roles ranked by what you'd earn × a rough chance of filling them from your pipeline." : "Open roles ranked by what they pay × a rough chance of filling them from your pipeline."}</div>
       <div className="mt-3 flex flex-col">
         {picks.length === 0 && <div className="text-sm py-3" style={{ color: C.ink3 }}>No open roles.</div>}
         {picks.map((x, i) => (
@@ -2034,7 +2036,7 @@ function RolePicker({ S }) {
               <div className="text-xs truncate" style={{ color: C.ink2 }}>{plural(x.active, "candidate")} in play{x.late ? ", " + x.late + " at interview or later" : ""}{x.fits ? " · " + plural(x.fits, "strong fit") + " not put forward yet" : ""}</div>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-sm font-medium" style={{ fontVariantNumeric: "tabular-nums" }}>{x.value ? money(x.value, x.currency) : "Fee not set"}</div>
+              <div className="text-sm font-medium" style={{ fontVariantNumeric: "tabular-nums" }}>{x.value ? money(x.value, x.currency) : earnings ? "Incentive not set" : "Fee not set"}</div>
               <div className="text-xs" style={{ color: C.ink3 }}>{x.contract ? "contract · " : ""}{Math.round(x.chance * 100)}% chance</div>
             </div>
           </button>
@@ -2197,7 +2199,7 @@ function OverviewRecruiter({ S }) {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         <PaceCard S={S} recruiterId={S.me.id} />
-        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
+        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} earnings /></div>
       </div>
     </div>
   );
