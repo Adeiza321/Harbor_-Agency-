@@ -199,7 +199,30 @@ const CITY_STATE_OPTIONS = {
   Australia: ["Sydney, NSW", "Melbourne, VIC", "Brisbane, QLD", "Perth, WA", "Remote, Australia"],
 };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true };
+const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false };
+
+// New-message chime: two short soft notes made in the browser (no sound file to load).
+// Browsers only allow sound after the person has clicked or typed on the page once, so the
+// first click "unlocks" it (see unlockChime).
+let chimeCtx = null;
+function unlockChime() {
+  try { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; chimeCtx = chimeCtx || new AC(); if (chimeCtx.state === "suspended") chimeCtx.resume(); } catch (e) { /* no sound */ }
+}
+function playChime() {
+  try {
+    unlockChime(); if (!chimeCtx) return;
+    const t = chimeCtx.currentTime;
+    [[880, 0], [1318.5, 0.13]].forEach(([freq, delay]) => {
+      const o = chimeCtx.createOscillator(), g = chimeCtx.createGain();
+      o.type = "sine"; o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, t + delay);
+      g.gain.exponentialRampToValueAtTime(0.16, t + delay + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + delay + 0.38);
+      o.connect(g); g.connect(chimeCtx.destination);
+      o.start(t + delay); o.stop(t + delay + 0.42);
+    });
+  } catch (e) { /* no sound */ }
+}
 const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null });
 
 function mapAll(d) {
@@ -1322,12 +1345,33 @@ function AccountTab({ S, toast }) {
   );
 }
 
+function MsgPrefRow({ label, sub, on, onToggle, extra }) {
+  return (
+    <div role="button" tabIndex={0} onClick={onToggle} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
+      className="py-3 flex items-center justify-between gap-3 text-left cursor-pointer" style={{ borderTop: `1px solid ${C.line}` }}>
+      <div><div className="text-sm font-medium flex items-center gap-2">{label} {extra}</div><div className="text-xs" style={{ color: C.ink2 }}>{sub}</div></div>
+      <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: on ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${on ? "ml-auto" : ""}`} /></div>
+    </div>
+  );
+}
+
 function NotificationsTab({ S, toast }) {
   const [prefs, setPrefs] = useState({ ...DEFAULT_NOTIF_PREFS, ...(S.me.notificationPrefs || {}) });
   const [busy, setBusy] = useState(false);
   const dirty = JSON.stringify(prefs) !== JSON.stringify({ ...DEFAULT_NOTIF_PREFS, ...(S.me.notificationPrefs || {}) });
   const toggle = (k) => setPrefs((p) => ({ ...p, [k]: !p[k] }));
   const save = () => { setBusy(true); S.updateNotificationPrefs(prefs).then(() => toast("Notification preferences saved")).catch(() => {}).finally(() => setBusy(false)); };
+  const hasNotif = typeof Notification !== "undefined";
+  const [deskBlocked, setDeskBlocked] = useState(hasNotif && Notification.permission === "denied");
+  // Turning desktop alerts on asks the browser for permission first.
+  const toggleDesktop = async () => {
+    if (prefs.msgDesktop) { toggle("msgDesktop"); return; }
+    if (!hasNotif) { toast("This browser doesn't support desktop alerts"); return; }
+    let perm = Notification.permission;
+    if (perm === "default") { try { perm = await Notification.requestPermission(); } catch (e) { perm = "denied"; } }
+    if (perm === "granted") setPrefs((p) => ({ ...p, msgDesktop: true }));
+    else setDeskBlocked(true);
+  };
   return (
     <Card>
       <SectionTitle title="In-app notifications" sub="Choose which activity shows up in your notification bell." size="text-lg" />
@@ -1340,6 +1384,13 @@ function NotificationsTab({ S, toast }) {
         ))}
       </div>
       <div className="text-xs mt-3" style={{ color: C.ink3 }}>Email alerts aren't set up yet — these preferences will also cover email once they are.</div>
+      <div className="mt-6"><SectionTitle title="New messages" sub="When a candidate replies to you. The number of unread messages always shows next to Messages in the menu." size="text-lg" /></div>
+      <div className="flex flex-col gap-1 mt-4">
+        <MsgPrefRow label="Play a sound" sub="A short chime when a new message arrives." on={prefs.msgSound} onToggle={() => toggle("msgSound")}
+          extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
+        <MsgPrefRow label="Desktop alerts" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when a message arrives while ProNext is in another tab."}
+          on={prefs.msgDesktop && !deskBlocked} onToggle={toggleDesktop} />
+      </div>
       <Btn kind="primary" className="mt-4" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save preferences"}</Btn>
     </Card>
   );
@@ -1445,7 +1496,7 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
 }
 
 /* Sidebar (desktop) + Mobile bottom nav + More sheet */
-function NavList({ items, page, setPage, dark, onNavigate }) {
+function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
   return (
     <div className="flex flex-col gap-1">
       {items.map((it) => {
@@ -1462,8 +1513,12 @@ function NavList({ items, page, setPage, dark, onNavigate }) {
                 : { background: active ? C.emTint : "transparent", color: active ? C.em : C.ink2, fontWeight: active ? 500 : 400 }
             }
           >
-            <Icon size={18} />
-            <span className="flex-1">{it.label}</span>
+            <span className="relative shrink-0">
+              <Icon size={18} />
+              {!it.label && badges[it.key] > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />}
+            </span>
+            {it.label && <span className="flex-1">{it.label}</span>}
+            {it.label && badges[it.key] > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0" style={{ background: "#D9573B", color: "#fff" }} aria-label={badges[it.key] + " unread"}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}
           </button>
         );
       })}
@@ -1471,7 +1526,7 @@ function NavList({ items, page, setPage, dark, onNavigate }) {
   );
 }
 
-function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
+function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
   const desktop = useDesktop();
   const [collapsed, setCollapsed] = useState(false);
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
@@ -1486,7 +1541,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
       </div>
       {!collapsed && <div className="px-4 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>WORKSPACE</div>}
       {/* The menu scrolls on short screens so the sign-out and profile below always stay in view. */}
-      <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>{collapsed ? <NavList items={items.map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark /> : <NavList items={[...items, ...extra]} page={page} setPage={setPage} dark />}</div>
+      <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>{collapsed ? <NavList items={items.map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <NavList items={[...items, ...extra]} page={page} setPage={setPage} dark badges={badges} />}</div>
       {!collapsed && (
         <div className="px-3 pb-3 pt-3 shrink-0">
           <div className="rounded-xl p-3.5 mb-3" style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)" }}>
@@ -1509,7 +1564,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut }) {
   );
 }
 
-function MobileBottomNav({ role, page, setPage, onMore }) {
+function MobileBottomNav({ role, page, setPage, onMore, badges = {} }) {
   const desktop = useDesktop();
   const items = MOBILE_TABS[role];
   return (
@@ -1519,20 +1574,22 @@ function MobileBottomNav({ role, page, setPage, onMore }) {
         const Icon = it.icon;
         return (
           <button key={it.key} onClick={() => setPage(it.key)} className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5">
-            <Icon size={20} color={active ? C.em : C.ink3} />
+            <span className="relative"><Icon size={20} color={active ? C.em : C.ink3} />{badges[it.key] > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}</span>
             <span className="leading-none" style={{ fontSize: 10, color: active ? C.em : C.ink3, fontWeight: active ? 600 : 400 }}>{it.label}</span>
           </button>
         );
       })}
       <button onClick={onMore} className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5">
-        <MoreHorizontal size={20} color={C.ink3} />
+        {/* Pages not on the bottom bar (Messages, for one) put their count on More. */}
+        {(() => { const n = Object.keys(badges).filter((k) => !items.some((it) => it.key === k)).reduce((a, k) => a + (badges[k] || 0), 0);
+          return <span className="relative"><MoreHorizontal size={20} color={C.ink3} />{n > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{n > 99 ? "99+" : n}</span>}</span>; })()}
         <span className="leading-none" style={{ fontSize: 10, color: C.ink3 }}>More</span>
       </button>
     </div>
   );
 }
 
-function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut }) {
+function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }) {
   const desktop = useDesktop();
   if (!open || desktop) return null;
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
@@ -1542,7 +1599,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut }) {
       <div className="absolute inset-0" style={{ background: "rgba(20,32,27,0.45)" }} onClick={onClose} />
       <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl p-5 overflow-y-auto" style={{ background: "#fff", maxHeight: "80vh" }}>
         <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: C.line }} />
-        <NavList items={[...items, ...extra]} page={page} setPage={setPage} onNavigate={onClose} />
+        <NavList items={[...items, ...extra]} page={page} setPage={setPage} onNavigate={onClose} badges={badges} />
         <div className="pt-3 mt-3" style={{ borderTop: `1px solid ${C.line}` }}>
           <button onClick={() => { setPage("myProfile"); onClose(); }} className="w-full flex items-center gap-2.5 text-left rounded-xl px-3 py-2.5">
             <Avatar init={me.init} src={me.avatarUrl} tone="em" size={32} />
@@ -2289,7 +2346,8 @@ const candidateChatApi = (token, linkId, staffId) => {
   };
 };
 const staffChatApi = (S, linkId) => ({
-  load: (read) => S.sb("/rest/v1/rpc/staff_chat", { method: "POST", body: { p_link_id: linkId, p_read: !!read } }),
+  load: (read) => S.sb("/rest/v1/rpc/staff_chat", { method: "POST", body: { p_link_id: linkId, p_read: !!read } })
+    .then((p) => { if (read && p && (p.messages || []).some((m) => m.sender === "candidate" && m.readAt && Date.now() - new Date(m.readAt).getTime() < 8000)) window.dispatchEvent(new Event("harbor:messages-read")); return p; }),
   send: (text) => S.sendMessageQuiet(linkId, text),
   // Upload first, then post through send-message so the candidate is emailed too.
   sendFile: async (file, caption) => {
@@ -3841,7 +3899,7 @@ function MessagesPage({ toast, S }) {
     .sort((a, b) => b.unread - a.unread || b.at - a.at);
 
   const openThread = allThreads.find((t) => t.link.id === openId) || null;
-  const open = (t) => { setOpenId(t.link.id); if (t.unread) S.markThreadRead(t.link.id).catch(() => {}); };
+  const open = (t) => { setOpenId(t.link.id); if (t.unread) S.markThreadRead(t.link.id).then(() => window.dispatchEvent(new Event("harbor:messages-read"))).catch(() => {}); };
 
   const cq = composeSearch.trim().toLowerCase();
   const composeList = allThreads
@@ -9152,6 +9210,42 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
+  // New messages: every 15 seconds (and when the tab comes back into view) count the unread
+  // candidate replies in your own conversations. The count shows next to Messages and in the
+  // tab title; anything new plays a chime and, if you turned them on, shows a desktop alert.
+  const [msgUnread, setMsgUnread] = useState(0);
+  const alertRef = React.useRef({ seen: null, session: null, onNew: null, last: 0 });
+  alertRef.current.session = session;
+  React.useEffect(() => {
+    if (status !== "ready") return;
+    let stop = false;
+    const check = async () => {
+      const r = alertRef.current, s = r.session;
+      if (!s || stop || Date.now() - r.last < 4000) return;
+      r.last = Date.now();
+      try {
+        const rows = await sbFetch("/rest/v1/candidate_job_messages?select=id,link_id,body,attachment_name,created_at&sender=eq.candidate&recruiter_read_at=is.null&deleted_at=is.null&order=created_at.desc&limit=200", { token: s.token });
+        if (stop || !Array.isArray(rows)) return;
+        setMsgUnread(rows.length);
+        const fresh = r.seen ? rows.filter((m) => !r.seen.has(m.id)) : [];
+        r.seen = new Set(rows.map((m) => m.id));
+        if (fresh.length && r.onNew) r.onNew(fresh);
+      } catch (e) { /* try again next time */ }
+    };
+    check();
+    const t = setInterval(check, 15000);
+    const onVis = () => { if (document.visibilityState === "visible") check(); };
+    const onRead = () => { alertRef.current.last = 0; check(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("harbor:messages-read", onRead);
+    window.addEventListener("pointerdown", unlockChime, { once: true });
+    return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("harbor:messages-read", onRead); };
+  }, [status]); // eslint-disable-line
+  React.useEffect(() => {
+    if (isPublic || setupToken) return;
+    document.title = (msgUnread > 0 ? "(" + msgUnread + ") " : "") + "ProNext";
+  }, [msgUnread]); // eslint-disable-line
+
   if (isPublic) return <PublicRoot />;
   if (setupToken) return <AccountSetup token={setupToken} onDone={() => { window.history.replaceState({}, "", "/"); setSetupToken(""); }} />;
 
@@ -9170,6 +9264,22 @@ export default function App() {
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
   const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner };
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => S.error(e.message)).finally(() => setRefreshing(false)); };
+  alertRef.current.onNew = (fresh) => {
+    const prefs = { ...DEFAULT_NOTIF_PREFS, ...(me.notificationPrefs || {}) };
+    const who = (m) => { const c = data.cands.find((x) => x.jobLinks.some((l) => l.id === m.link_id)); return c ? c.name : "a candidate"; };
+    const first = fresh[0];
+    const title = fresh.length > 1 ? fresh.length + " new messages" : "New message from " + who(first);
+    const body = fresh.length > 1 ? "From " + [...new Set(fresh.map(who))].slice(0, 3).join(", ") : (first.body || (first.attachment_name ? "📎 " + first.attachment_name : ""));
+    if (prefs.msgSound) playChime();
+    if (document.visibilityState === "visible") toast(title);
+    else if (prefs.msgDesktop && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        const n = new Notification(title, { body: String(body).slice(0, 140), tag: "pronext-messages", icon: "/assets/icon.png" });
+        n.onclick = () => { window.focus(); setPage("messages"); n.close(); };
+      } catch (e) { /* not shown */ }
+    }
+    reload();
+  };
   const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { S.error(e.message); throw e; } };
   const aiCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
@@ -9585,13 +9695,13 @@ export default function App() {
   return (
     <div className="flex min-h-screen" style={{ background: C.canvas, color: C.ink, fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' }}>
       <TopProgressBar show={refreshing} />
-      <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} />
+      <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={{ messages: msgUnread }} />
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} />
         <div className="px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
-      <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} />
-      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} />
+      <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={{ messages: msgUnread }} />
+      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={{ messages: msgUnread }} />
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
