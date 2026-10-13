@@ -21,7 +21,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 //   unsubscribed -> "unsubscribed" + do-not-email list;   bounced -> prospect "bounced" (lead: noted)
 // Status only moves while the person is still at the emailed stage, so a recruiter's later
 // decision (converted, rejected, meeting...) is never overwritten. Unsubscribes always apply.
-// The reply itself is read in the outreach mailbox (Apollo doesn't expose its text here).
+// The reply itself (text, subject, sender) is read from the email's activities in Apollo and kept on
+// the prospect/lead (data.apollo.reply), so it shows on the Outreach card. Automatic replies (out of
+// office, "company in liquidation, email X instead") are often misclassed by Apollo as a referral or
+// a question: they're marked auto and never move anyone to Interested/Replied. For a real referral,
+// any email addresses in the reply (not the sender's or ours) are listed as referred.
+// Each sync also fills in the text for up to 15 recent replies that don't have it yet (and undoes an
+// Interested/Replied that an automatic reply caused, while nobody has changed it since).
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -75,6 +81,49 @@ async function apolloPost(path: string, body: Record<string, unknown>) {
   throw new Error("Apollo is rate-limiting requests; try again in a minute");
 }
 
+// ---- The reply's own text, from the email's activities in Apollo (no credits) ----
+const AUTO_SUBJECT = /^\s*(automatic reply|auto[- ]?reply|autoreply|auto:|out of (the )?office|ooo\b|away from (the )?office|abwesenheitsnotiz|r[ée]ponse automatique|respuesta autom[áa]tica|risposta automatica|automatisch antwoord)/i;
+const AUTO_TEXT = /^\s*(this is an auto(mated|matic)[- ]?(reply|response|message)|i('| a)m (currently )?(out of (the )?office|away|on (annual )?leave))/i;
+const decode = (t: string) => t.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&#x27;/g, "'")
+  .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+function htmlToText(h: string) {
+  return decode(h.replace(/<(style|script|head)[\s\S]*?<\/\1>/gi, "").replace(/<blockquote[\s\S]*$/i, "")
+    .replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|tr|li|h\d)>/gi, "\n").replace(/<[^>]+>/g, ""));
+}
+function cleanReply(t: string) {
+  let s = t.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/\r/g, "");
+  // Stop at the quoted email or the legal footer.
+  const cut = s.search(/\n\s*(On .{4,200}wrote:|-{2,}\s*Original Message|From: .+\n|Sent from my |>\s|Disclaimer\b|This e-?mail (may|and any|is|has been)|Please consider the environment|Registered in England)/i);
+  if (cut > 0) s = s.slice(0, cut);
+  return s.split("\n").map((l) => l.trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, 2000);
+}
+type Reply = { text: string; subject: string; from: string; fromName: string; at: string; auto: boolean; referred: string[] };
+async function readReply(messageId: string): Promise<Reply | null> {
+  const a = await apollo("/emailer_messages/" + messageId + "/activities", new URLSearchParams());
+  const ours = String(a?.emailer_message?.from_email || "").toLowerCase();
+  const ourDomain = ours.split("@")[1] || "";
+  const list = (Array.isArray(a?.activities) ? a.activities : []).map((x: any) => x?.emailer_message)
+    .filter((m: any) => m?.id && m.type !== "outreach_automatic_email" && String(m.from_email || "").toLowerCase() !== ours)
+    .sort((x: any, y: any) => String(x.completed_at || x.created_at || "").localeCompare(String(y.completed_at || y.created_at || "")));
+  const m = list[list.length - 1];
+  if (!m) return null;
+  // The activity's text is cut short; the email itself has the full HTML.
+  let text = String(m.body_text || "");
+  try {
+    const full = (await apollo("/emailer_messages/" + m.id, new URLSearchParams()))?.emailer_message || {};
+    const fromHtml = full.body_html ? htmlToText(String(full.body_html)) : "";
+    const t = String(full.body_text || "");
+    text = fromHtml.length > t.length ? fromHtml : (t || text);
+  } catch (_) { /* keep the short text */ }
+  text = cleanReply(text);
+  const subject = String(m.subject || "").slice(0, 300);
+  const from = String(m.from_email || "").toLowerCase();
+  const auto = AUTO_SUBJECT.test(subject) || AUTO_TEXT.test(text);
+  const referred = auto ? [] : [...new Set((text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map((e) => e.toLowerCase()))]
+    .filter((e) => e !== from && e !== ours && !(ourDomain && e.endsWith("@" + ourDomain)) && !/^(no-?reply|mailer-daemon|postmaster)@/.test(e)).slice(0, 5);
+  return { text, subject, from, fromName: String(m.from_name || ""), at: String(m.completed_at || m.created_at || ""), auto, referred };
+}
+
 type Ev = { id: string; kind: "reply" | "unsubscribed" | "bounced"; contactId: string; email: string; replyClass: string; at: string; sequenceId: string };
 
 // Emails in our sequences over the window, filtered one way (a reply class list, or a stat).
@@ -108,7 +157,7 @@ async function suppress(admin: any, email: string, reason: string) {
   if (email) await admin.from("outreach_suppressions").upsert({ email_norm: await emailHash(email), reason }, { onConflict: "email_norm" });
 }
 
-async function applyEvent(admin: any, ev: Ev) {
+async function applyEvent(admin: any, ev: Ev, reply: Reply | null = null) {
   // Who it went to: the outreach message Apollo sent (contact id), else the address.
   let prospectId: string | null = null, leadId: string | null = null;
   if (ev.contactId) {
@@ -124,7 +173,9 @@ async function applyEvent(admin: any, ev: Ev) {
     }
   }
   const unsub = ev.kind === "unsubscribed" || ev.replyClass === "unsubscribe";
-  const note = { event: ev.kind, replyClass: ev.replyClass || null, at: ev.at, syncedAt: new Date().toISOString() };
+  const auto = !!reply?.auto && !unsub;
+  const note: Record<string, unknown> = { event: ev.kind, replyClass: ev.replyClass || null, at: ev.at, syncedAt: new Date().toISOString() };
+  if (ev.kind === "reply") { note.messageId = ev.id.split(":")[0]; note.replyChecked = true; if (reply) note.reply = reply; }
   let changed = "";
 
   if (prospectId) {
@@ -133,6 +184,7 @@ async function applyEvent(admin: any, ev: Ev) {
       let next = "";
       if (unsub) next = p.status === "converted" ? "" : "unsubscribed";
       else if (ev.kind === "bounced") next = EMAILED_PROSPECT.includes(p.status) ? "bounced" : "";
+      else if (auto) next = "";
       else if (POSITIVE.has(ev.replyClass)) next = EMAILED_PROSPECT.includes(p.status) ? "interested" : "";
       else if (NEGATIVE.has(ev.replyClass)) next = EMAILED_PROSPECT.includes(p.status) ? "not_interested" : "";
       const upd: Record<string, unknown> = { data: { ...(p.data || {}), apollo: note }, updated_at: new Date().toISOString() };
@@ -145,6 +197,7 @@ async function applyEvent(admin: any, ev: Ev) {
     if (l) {
       let next = "";
       if (unsub) next = l.status === "won" ? "" : "unsubscribed";
+      else if (auto) next = "";
       else if (POSITIVE.has(ev.replyClass)) next = EMAILED_LEAD.includes(l.status) ? "replied" : "";
       else if (NEGATIVE.has(ev.replyClass)) next = EMAILED_LEAD.includes(l.status) ? "lost" : "";
       const upd: Record<string, unknown> = { data: { ...(l.data || {}), apollo: note }, updated_at: new Date().toISOString() };
@@ -178,14 +231,44 @@ async function sync(admin: any) {
   for (const ev of events) {
     if (done.has(ev.id)) continue;
     done.add(ev.id);
-    const r = await applyEvent(admin, ev);
+    let reply: Reply | null = null;
+    if (ev.kind === "reply") { try { reply = await readReply(ev.id.split(":")[0]); } catch (e) { console.error("apollo reply text", ev.id, String((e as Error)?.message || e)); } }
+    const r = await applyEvent(admin, ev, reply);
     await admin.from("apollo_events").insert({ id: ev.id, kind: ev.kind, reply_class: ev.replyClass || null, contact_id: ev.contactId || null,
       email: ev.email || null, sequence_id: ev.sequenceId || null, at: ev.at, prospect_id: r.prospectId, lead_id: r.leadId, status_change: r.changed || null });
     applied++;
     if (ev.kind === "reply") replies++; else if (ev.kind === "unsubscribed") unsubscribes++; else bounces++;
     if (r.changed) changes.push(r.changed);
   }
-  return { ok: true, checked: events.length, applied, replies, unsubscribes, bounces, statusChanges: changes.length };
+  const filled = await backfillReplies(admin);
+  return { ok: true, checked: events.length, applied, replies, unsubscribes, bounces, statusChanges: changes.length, repliesFilled: filled };
+}
+
+// Replies synced before ProNext read their text (or whose read failed): fill in up to 15 per run.
+async function backfillReplies(admin: any) {
+  const since = new Date(Date.now() - 30 * 864e5).toISOString();
+  const { data: evs } = await admin.from("apollo_events").select("id,at,prospect_id,lead_id,status_change").eq("kind", "reply").gte("at", since).order("at", { ascending: false }).limit(200);
+  let filled = 0;
+  for (const ev of evs || []) {
+    if (filled >= 15) break;
+    const table = ev.prospect_id ? "prospects" : ev.lead_id ? "leads" : "";
+    if (!table) continue;
+    const { data: row } = await admin.from(table).select("id,status,data").eq("id", ev.prospect_id || ev.lead_id).maybeSingle();
+    const note = row?.data?.apollo;
+    // Only the reply this person's card is showing, and only once.
+    if (!row || !note || note.event !== "reply" || note.replyChecked || Math.abs(new Date(note.at).getTime() - new Date(ev.at).getTime()) > 2000) continue;
+    let reply: Reply | null = null;
+    try { reply = await readReply(String(ev.id).split(":")[0]); } catch (e) { console.error("apollo reply backfill", ev.id, String((e as Error)?.message || e)); continue; }
+    const upd: Record<string, unknown> = { data: { ...row.data, apollo: { ...note, messageId: String(ev.id).split(":")[0], replyChecked: true, ...(reply ? { reply } : {}) } }, updated_at: new Date().toISOString() };
+    // An automatic reply moved them to Interested/Replied: put them back, unless someone has moved them on since.
+    if (reply?.auto && ((table === "prospects" && ev.status_change === "prospect:interested" && row.status === "interested") || (table === "leads" && ev.status_change === "lead:replied" && row.status === "replied"))) {
+      upd.status = "contacted";
+      (upd.data as any).apollo.autoUndone = true;
+    }
+    await admin.from(table).update(upd).eq("id", row.id);
+    filled++;
+  }
+  return filled;
 }
 
 

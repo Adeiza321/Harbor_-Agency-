@@ -4376,6 +4376,7 @@ function InboxRow({ x, S, toast, canAct }) {
   const remove = () => run("delete", async () => { await S.inboxCall("delete", { applicationId: x.id }); toast("Deleted " + x.name + "'s application"); });
   // A referral is view-only until the person referred says they're interested.
   const waiting = x.source === "referral" && !x.interestAt && x.status === "new";
+  const viaOutreach = !!(x.referrer && x.referrer.via && x.referrer.via.kind === "outreach");
   const nextFollowupAt = (x.lastFollowupAt || x.at) + 864e5;
   const canFollowUp = waiting && x.followups < 2 && Date.now() >= nextFollowupAt;
   const small = "!px-3 !py-1.5 text-xs";
@@ -4389,10 +4390,10 @@ function InboxRow({ x, S, toast, canAct }) {
             <div className="font-medium flex items-center gap-1.5">{x.name}<ChevronDown size={14} color={C.ink3} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} /></div>
             <div className="text-xs" style={{ color: C.ink2 }}>{job ? job.role + " · " + job.client : x.role}</div>
             <div className="text-xs mt-1 flex flex-wrap gap-x-3 gap-y-1" style={{ color: C.ink3 }}>
-              <span>{SOURCE_LABEL[x.source] || x.source}</span><span>{x.when}</span>
+              <span>{SOURCE_LABEL[x.source] || x.source}{viaOutreach ? " from an outreach email" : ""}</span><span>{x.when}</span>
               {x.email && <span>{x.email}</span>}
             </div>
-            {x.referrer && <div className="text-xs mt-1.5 rounded-lg px-2.5 py-1.5" style={{ background: C.emTint, color: C.ink2 }}>Referred by <b style={{ color: C.ink }}>{x.referrer.name}</b>{x.referrer.email ? " (" + x.referrer.email + ")" : ""}</div>}
+            {x.referrer && <div className="text-xs mt-1.5 rounded-lg px-2.5 py-1.5" style={{ background: C.emTint, color: C.ink2 }}>Referred by <b style={{ color: C.ink }}>{x.referrer.name}</b>{x.referrer.email ? " (" + x.referrer.email + ")" : ""}{viaOutreach ? (x.referrer.via.prospect_name ? ", who we reached out to as " + x.referrer.via.prospect_name : ", from one of our outreach emails") : ""}</div>}
           </div>
         </button>
         <div className="flex flex-wrap items-center gap-2 md:justify-end">
@@ -4445,6 +4446,7 @@ function InboxRow({ x, S, toast, canAct }) {
             {detail("Came in", (SOURCE_LABEL[x.source] || x.source) + " · " + x.when)}
             {detail("CV", x.hasCv ? x.cvName || "Uploaded" : "Not uploaded yet")}
             {x.referrer && detail("Referred by", x.referrer.name + (x.referrer.email ? " · " + x.referrer.email : ""))}
+            {viaOutreach && detail("Outreach", x.referrer.via.prospect_name ? "Referred from our outreach email to " + x.referrer.via.prospect_name + " (Outreach page)" : "Referred from an outreach email")}
             {x.source === "referral" && detail("Interest", x.interestAt ? "Said they're interested, " + fdate(x.interestAt) : "Not confirmed yet" + (x.followups ? " · " + x.followups + " follow-up" + (x.followups > 1 ? "s" : "") + " sent" + (x.lastFollowupAt ? ", last " + fdate(x.lastFollowupAt) : "") : ""))}
             {x.status === "assigned" && detail("Assigned", (x.assignedName || "") + (x.handledBy ? " · by " + x.handledBy : "") + (x.handledAt ? ", " + fdate(x.handledAt) : ""))}
             {x.status === "dismissed" && detail("Dismissed", (x.handledBy ? "By " + x.handledBy : "") + (x.handledAt ? ", " + fdate(x.handledAt) : "") + (x.note ? ": " + x.note : ""))}
@@ -4467,8 +4469,16 @@ function InboxPage({ toast, S }) {
   const [tab, setTab] = useState("new");
   const [linksOpen, setLinksOpen] = useState(false);
   const canAct = S.me.roleKey === "admin" || S.me.roleKey === "recops";
-  const fresh = S.inbox.filter((x) => x.status === "new").sort((a, b) => b.at - a.at);
-  const handled = S.inbox.filter((x) => x.status !== "new").sort((a, b) => (b.handledAt || b.at) - (a.handledAt || a.at));
+  // Filter by how it came in: referrals (any), anything from outreach (applied or referred from an
+  // outreach email), or one source.
+  const [src, setSrc] = useState("");
+  const fromOutreach = (x) => x.source === "outreach" || !!(x.referrer && x.referrer.via && x.referrer.via.kind === "outreach");
+  const srcMatch = (x) => !src || (src === "outreach" ? fromOutreach(x) : src === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === src);
+  const fresh = S.inbox.filter((x) => x.status === "new" && srcMatch(x)).sort((a, b) => b.at - a.at);
+  const handled = S.inbox.filter((x) => x.status !== "new" && srcMatch(x)).sort((a, b) => (b.handledAt || b.at) - (a.handledAt || a.at));
+  const srcCount = (k) => S.inbox.filter((x) => k === "outreach" ? fromOutreach(x) : k === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === k).length;
+  const srcOpts = [["referral", "Referrals"], ["outreach_referral", "Referrals from outreach"], ["outreach", "From outreach (applied or referred)"],
+    ...[...new Set(S.inbox.map((x) => x.source))].filter((k) => k && k !== "referral" && k !== "outreach").map((k) => [k, SOURCE_LABEL[k] || k])];
   const list = tab === "new" ? fresh : handled;
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -4478,10 +4488,16 @@ function InboxPage({ toast, S }) {
         <Btn icon={Send} onClick={() => setLinksOpen(true)}>Apply links</Btn>
       </div>
       <Card>
-        <Tabs tabs={[{ key: "new", label: "New (" + fresh.length + ")" }, { key: "handled", label: "Handled (" + handled.length + ")" }]} active={tab} setActive={setTab} />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <Tabs tabs={[{ key: "new", label: "New (" + fresh.length + ")" }, { key: "handled", label: "Handled (" + handled.length + ")" }]} active={tab} setActive={setTab} />
+          <select value={src} onChange={(e) => setSrc(e.target.value)} className="text-sm rounded-lg border px-2.5 py-2 bg-white self-start sm:self-auto" style={{ borderColor: C.line }} aria-label="Came in from">
+            <option value="">All sources</option>
+            {srcOpts.map(([k, l]) => <option key={k} value={k}>{l} ({srcCount(k)})</option>)}
+          </select>
+        </div>
         {!canAct && tab === "new" && fresh.length > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>Rec Ops or an Admin assigns new applications.</div>}
         <div className="mt-2">
-          {list.length === 0 && <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>{tab === "new" ? "Nothing new. Applications from the apply page arrive here." : "Nothing handled yet."}</div>}
+          {list.length === 0 && <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>{src ? "Nothing here for this source." : tab === "new" ? "Nothing new. Applications from the apply page arrive here." : "Nothing handled yet."}</div>}
           {list.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />)}
         </div>
       </Card>
@@ -6106,19 +6122,49 @@ const APOLLO_REPLY = {
   out_of_office: "Out of office", already_left_company_or_not_right_person: "Wrong person or left the company",
   not_interested: "Not interested", unsubscribe: "Asked to unsubscribe", none_of_the_above: "Replied",
 };
+// An automatic reply (out of office, "the company has closed, email X") that Apollo classed as
+// something else: shown as automatic, and it doesn't count as interest.
+const isAutoReply = (a) => !!(a && a.reply && a.reply.auto);
+const isReferralReply = (a) => !!(a && a.event === "reply" && a.replyClass === "person_referral" && !isAutoReply(a));
 function ApolloNote({ data }) {
+  const [show, setShow] = useState(false);
   const a = data && data.apollo;
-  if (!a || !a.event) return null;
-  const reply = a.event === "reply";
-  const good = reply && ["willing_to_meet", "follow_up_question", "person_referral"].includes(a.replyClass);
-  const text = reply ? "Replied: " + (APOLLO_REPLY[a.replyClass] || "Replied") : a.event === "unsubscribed" ? "Unsubscribed in Apollo" : "Email bounced";
+  const refs = data && Array.isArray(data.referrals) ? data.referrals : [];
+  if ((!a || !a.event) && !refs.length) return null;
+  const reply = !!a && a.event === "reply";
+  const auto = isAutoReply(a);
+  const r = reply && a.reply ? a.reply : null;
+  const good = reply && !auto && ["willing_to_meet", "follow_up_question", "person_referral"].includes(a.replyClass);
+  const text = !a || !a.event ? "" : auto ? "Automatic reply" + (a.replyClass && a.replyClass !== "out_of_office" ? " (Apollo read it as \u201c" + (APOLLO_REPLY[a.replyClass] || "a reply") + "\u201d)" : "")
+    : reply ? "Replied: " + (APOLLO_REPLY[a.replyClass] || "Replied") : a.event === "unsubscribed" ? "Unsubscribed in Apollo" : "Email bounced";
   return (
-    <div className="text-xs rounded-lg px-2.5 py-1.5 mt-1.5 flex items-center gap-1.5 flex-wrap" style={{ background: good ? C.emTint : reply ? C.canvas : C.dangerBg, color: good ? C.em : reply ? C.ink2 : C.dangerFg }}>
-      <MessageCircle size={13} className="shrink-0" />
-      <span className="font-medium">{text}</span>
-      {a.at && <span style={{ opacity: 0.8 }}>· {fdate(a.at)}</span>}
-      {reply && <span style={{ opacity: 0.8 }}>· read it in your outreach mailbox</span>}
-    </div>
+    <>
+      {text && (
+        <div className="text-xs rounded-lg px-2.5 py-1.5 mt-1.5 flex flex-col gap-1" style={{ background: good ? C.emTint : reply ? C.canvas : C.dangerBg, color: good ? C.em : reply ? C.ink2 : C.dangerFg }}>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <MessageCircle size={13} className="shrink-0" />
+            <span className="font-medium">{text}</span>
+            {a.at && <span style={{ opacity: 0.8 }}>· {fdate(a.at)}</span>}
+            {r && r.text && <button className="underline" onClick={() => setShow((v) => !v)}>{show ? "Hide reply" : "Read reply"}</button>}
+            {reply && !r && <span style={{ opacity: 0.8 }}>· {a.replyChecked ? "read it in your outreach mailbox" : "fetching the reply text…"}</span>}
+          </div>
+          {auto && a.autoUndone && <div style={{ color: C.ink3 }}>They were moved back to Contacted, since nobody actually replied.</div>}
+          {r && !auto && r.referred && r.referred.length > 0 && <div style={{ color: C.ink }}><span className="font-medium">Referred:</span> {r.referred.join(", ")}</div>}
+          {r && show && (
+            <div className="rounded-md px-2.5 py-2 mt-0.5" style={{ background: "#fff", color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+              {r.subject && <div className="font-medium mb-1">{r.subject}</div>}
+              <div style={{ color: C.ink3 }} className="mb-1.5">From {r.fromName ? r.fromName + " · " : ""}{r.from}</div>
+              {r.text}
+            </div>
+          )}
+        </div>
+      )}
+      {refs.length > 0 && (
+        <div className="text-xs rounded-lg px-2.5 py-1.5 mt-1.5" style={{ background: C.emTint, color: C.ink2 }}>
+          <span className="font-medium" style={{ color: C.em }}>Referred {refs.length === 1 ? "someone" : refs.length + " people"} with the outreach email's form:</span> {refs.map((x) => x.name).join(", ")} · in the Inbox
+        </div>
+      )}
+    </>
   );
 }
 
@@ -6531,7 +6577,7 @@ function CampaignsPage({ toast, S }) {
   // Search and filters (kept while switching between the status tabs), and pages of up to 50.
   const [q, setQ] = useState("");
   const [showFilters, setShowFilters] = useState(false);
-  const [fl, setFl] = useState({ role: "", job: "", source: "", email: "", fit: 0, country: "", channel: "" });
+  const [fl, setFl] = useState({ role: "", job: "", source: "", email: "", fit: 0, country: "", channel: "", reply: "" });
   const setF = (k, v) => setFl((x) => ({ ...x, [k]: v }));
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
@@ -6564,9 +6610,18 @@ function CampaignsPage({ toast, S }) {
     && (!fl.job || p.job_id === fl.job)
     && (!fl.source || (fl.source === "pool" ? !!(p.data && p.data.pool) : p.source === fl.source))
     && (!fl.email || (fl.email === "with" ? !!p.email : !p.email))
-    && (!fl.fit || (Number(p.fit) || 0) >= fl.fit);
+    && (!fl.fit || (Number(p.fit) || 0) >= fl.fit)
+    && (!fl.reply || replyMatch(p.data || {}, fl.reply));
   const lMatch = (l) => (!ql || [l.job_title, l.company, l.location, l.contact_name, l.contact_email].some((v) => low(v).includes(ql)))
     && (!fl.role || low(l.job_title).trim() === low(fl.role)) && (!fl.country || l.country === fl.country) && (!fl.channel || l.channel === fl.channel);
+  // Replies: anyone who referred someone (in a reply or with the email's form), replied at all, or
+  // sent only an automatic reply.
+  function replyMatch(d, k) {
+    const a = d.apollo || {};
+    if (k === "referred") return isReferralReply(a) || (Array.isArray(d.referrals) && d.referrals.length > 0);
+    if (k === "auto") return isAutoReply(a);
+    return a.event === "reply" && !isAutoReply(a);
+  }
   const pAll = (prospects || []).filter(pMatch);
   const lAll = (leads || []).filter(lMatch);
   const pfx = tab === "pool" ? "pool" : pf;
@@ -6577,7 +6632,7 @@ function CampaignsPage({ toast, S }) {
   const pages = Math.max(1, Math.ceil(curList.length / size));
   const curPage = Math.min(page, pages);
   const pageOf = (list) => list.slice((curPage - 1) * size, curPage * size);
-  const nFilters = (tab === "leads" ? [fl.role, fl.country, fl.channel] : [fl.role, fl.job, fl.source, fl.email, fl.fit]).filter(Boolean).length;
+  const nFilters = (tab === "leads" ? [fl.role, fl.country, fl.channel] : [fl.role, fl.job, fl.source, fl.email, fl.fit, fl.reply]).filter(Boolean).length;
   // Distinct roles, case-insensitive, first spelling kept.
   const roleOpts = (vals) => { const m = new Map(); vals.map((v) => String(v || "").trim()).filter(Boolean).forEach((v) => { if (!m.has(v.toLowerCase())) m.set(v.toLowerCase(), v); }); return [...m.values()].sort((a, b) => a.localeCompare(b)); };
   const roleSelect = (vals) => (
@@ -6627,7 +6682,10 @@ function CampaignsPage({ toast, S }) {
           <select value={fl.fit} onChange={(e) => setF("fit", Number(e.target.value))} className={selCls} style={{ borderColor: C.line }} aria-label="Fit">
             <option value={0}>Any fit</option>{[50, 60, 70, 80].map((n) => <option key={n} value={n}>{n}% fit or more</option>)}
           </select>
-          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, role: "", job: "", source: "", email: "", fit: 0 }))}>Clear filters</button>}
+          <select value={fl.reply} onChange={(e) => setF("reply", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Replies">
+            <option value="">Any reply or none</option><option value="replied">Replied</option><option value="referred">Referred someone</option><option value="auto">Automatic replies</option>
+          </select>
+          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, role: "", job: "", source: "", email: "", fit: 0, reply: "" }))}>Clear filters</button>}
         </div>
       ))}
     </div>
@@ -9610,7 +9668,7 @@ function ApplyPage({ slug }) {
     }
     setBusy(true); setErr("");
     try {
-      const payload = { ft: Date.now() - formOpenedAt.current, link_slug: slug, source: referring ? "referral" : source, pt: !referring && source === "outreach" ? params.get("pt") || "" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
+      const payload = { ft: Date.now() - formOpenedAt.current, link_slug: slug, source: referring ? "referral" : source, pt: source === "outreach" ? params.get("pt") || "" : "", via: source === "outreach" ? "outreach" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
         answers: referring ? [] : answers, ...(cv ? { cv: { name: cv.name, data: cv.data } } : {}),
         ...(referring ? { referrer: { name: ref.name.trim(), email: ref.email.trim(), note: ref.note.trim() } } : {}) };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });

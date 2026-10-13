@@ -18,7 +18,10 @@ import { newReferralToken, referralEmail } from "./referral.ts";
 // Someone can refer at most 10 people a day. Bots are kept out by a hidden field, a minimum time
 // on the form, and limits per network (10 an hour, 30 a day) and overall (150 in 10 minutes).
 // An application from an outreach email's "I'm interested" button carries the prospect's token
-// (pt), which marks that prospect as interested.
+// (pt), which marks that prospect as interested. A referral from an outreach email ("Refer someone",
+// via=outreach) is tagged with the prospect who referred (by pt, or for older emails without one,
+// by the referrer's email): referrer.via = {kind:"outreach", prospect_id, prospect_name}, and the
+// prospect's card lists who they referred (prospects.data.referrals).
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -80,7 +83,10 @@ Deno.serve(async (req: Request) => {
 
     // Referrals: someone recommending a friend from the apply page. The friend is the applicant;
     // who referred them is kept with the application ({name, email, note}).
-    let referrer: { name: string; email: string; note: string } | null = null;
+    let referrer: { name: string; email: string; note: string; via?: { kind: string; prospect_id: string | null; prospect_name: string | null } } | null = null;
+    const pt = String(body.pt || "").trim();
+    const ptOk = /^[A-Za-z0-9_-]{8,64}$/.test(pt);
+    let referringProspect: { id: string; full_name: string | null; data: any } | null = null;
     if (source === "referral" && body.referrer && typeof body.referrer === "object") {
       const rn = String(body.referrer.name || "").trim().slice(0, 200), re = String(body.referrer.email || "").trim().toLowerCase().slice(0, 320);
       if (!rn) return json({ error: "Enter your name" }, 400);
@@ -90,6 +96,14 @@ Deno.serve(async (req: Request) => {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const { count: byReferrer } = await admin.from("applications").select("id", { count: "exact", head: true }).eq("referrer->>email", re).gte("created_at", since);
       if ((byReferrer || 0) >= 10) return json({ error: "You've already sent several referrals today. Please try again tomorrow." }, 429);
+      if (body.via === "outreach" || ptOk) {
+        if (ptOk) referringProspect = (await admin.from("prospects").select("id,full_name,data").eq("unsub_token", pt).maybeSingle()).data;
+        if (!referringProspect) {
+          const rePattern = re.replace(/[\\%_]/g, (c) => "\\" + c);
+          referringProspect = (await admin.from("prospects").select("id,full_name,data").ilike("email", rePattern).not("contacted_at", "is", null).order("contacted_at", { ascending: false }).limit(1).maybeSingle()).data;
+        }
+        referrer.via = { kind: "outreach", prospect_id: referringProspect?.id || null, prospect_name: referringProspect?.full_name || null };
+      }
     }
 
     if (!name || name.length > 200) return json({ error: "Enter a valid name" }, 400);
@@ -182,9 +196,15 @@ Deno.serve(async (req: Request) => {
       else await admin.from("applications").update({ resume_path: path, resume_name: cv.name }).eq("id", appId);
     }
 
+    // Outreach "Refer someone": the prospect's card shows who they referred.
+    if (referringProspect) {
+      const list = Array.isArray(referringProspect.data?.referrals) ? referringProspect.data.referrals : [];
+      const entry = { name, application_id: appId, role: resolvedRoleTitle, at: new Date().toISOString() };
+      await admin.from("prospects").update({ data: { ...(referringProspect.data || {}), referrals: [...list.filter((x: any) => x?.application_id !== appId), entry].slice(-20) } }).eq("id", referringProspect.id);
+    }
+
     // Outreach "I'm interested": that prospect is now interested.
-    const pt = String(body.pt || "").trim();
-    if (source === "outreach" && /^[A-Za-z0-9_-]{8,64}$/.test(pt)) {
+    if (source === "outreach" && ptOk) {
       await admin.from("prospects").update({ status: "interested" }).eq("unsub_token", pt).in("status", ["found", "approved", "queued", "contacted"]);
     }
 
