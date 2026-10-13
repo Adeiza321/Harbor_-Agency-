@@ -6164,10 +6164,11 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           <ApolloNote data={d} />
-          {found && (d.client_history === "past" || d.location_source === "") && (
+          {found && (d.client_history === "past" || d.location_source === "" || d.remote_worker) && (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {d.client_history === "past" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }}>Worked at {(jobLabel || "").split(",").slice(-1)[0].trim() || "the client"} before</span>}
               {d.location_source === "" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.canvas, color: C.ink3 }}>Location not confirmed</span>}
+              {d.remote_worker && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }} title="Their profile may show their employer's country rather than where they live">Works remotely: confirm where they live</span>}
             </div>
           )}
           {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}

@@ -142,9 +142,10 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
   const list = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
   const sys = "You are a recruitment researcher reviewing search-engine results for people's public profiles (LinkedIn and technical sites) against one job. " +
     "You only see each result's title line and short snippet, not the full profile. Reply with STRICT JSON only: " +
-    "{\"people\": [{\"i\": number, \"name\": string, \"headline\": string, \"company\": string, \"location\": string, \"client_history\": \"current\" | \"past\" | \"none\", \"business\": boolean, \"overview\": string, \"checklist\": [{\"item\": string, \"status\": \"met\" | \"unconfirmed\" | \"not met\", \"evidence\": string}], \"gaps\": string[], \"fit\": number, \"verdict\": \"Good fit\" | \"Possible fit\" | \"Not a fit\"}]}, one entry per person. " +
+    "{\"people\": [{\"i\": number, \"name\": string, \"headline\": string, \"company\": string, \"location\": string, \"client_history\": \"current\" | \"past\" | \"none\", \"business\": boolean, \"remote\": boolean, \"overview\": string, \"checklist\": [{\"item\": string, \"status\": \"met\" | \"unconfirmed\" | \"not met\", \"evidence\": string}], \"gaps\": string[], \"fit\": number, \"verdict\": \"Good fit\" | \"Possible fit\" | \"Not a fit\"}]}, one entry per person. " +
     "name, headline (their current title) and company (current employer) come ONLY from the result ('' when not shown). " +
     "location: where they live or work NOW: the 'Location:' part of a LinkedIn snippet, or the place shown next to their current role. Never a past job's city, a school, or an employer's head office; '' when not shown. " +
+    "remote: true when the result shows they work remotely (a remote role, 'Remote', 'remotely', work from home) or work for an employer in another country than where they live; otherwise false. A remote worker's shown location may be their employer's, not where they live. " +
     "client_history: 'current' when the result shows them working at the hiring company now, 'past' when it shows they worked there before, otherwise 'none'. " +
     "business: true when the result is a business, company, agency, brand or group page rather than one person, or when the person runs their own business (founder, co-founder, owner, CEO / managing director of their own company, self-employed agency owner); otherwise false. " +
     "overview: 1 to 2 short sentences on what the result shows about them that matters for this job. " +
@@ -192,7 +193,12 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
       if (!r) return { x, r };
       const fromSnippet = (String(x.snippet || "").match(/(?:Location|Lives in|Based in)\s*[:：]\s*([^·|\n]{2,80})/i) || [])[1];
       const loc = clip(fromSnippet || r.location, 120).trim();
-      return { x, r: { ...r, location: loc, locationSource: fromSnippet ? "profile" : loc ? "result" : "" } };
+      // Remote workers get a closer look: the location they show may be their employer's (UK, US)
+      // while they live elsewhere, so it never counts as confirmed and they can't be a 'Good fit'
+      // until someone checks where they're based.
+      const remote = r.remote === true || /\bremote(ly)?\b|work(ing)? from home|\bwfh\b/i.test(String(r.headline || "") + " " + String(x.title || "") + " " + String(x.snippet || ""));
+      const fit = remote ? Math.max(0, Number(r.fit || 0) - 10) : r.fit;
+      return { x, r: { ...r, fit, verdict: remote && r.verdict === "Good fit" ? "Possible fit" : r.verdict, remote, location: loc, locationSource: remote ? "remote" : fromSnippet ? "profile" : loc ? "result" : "" } };
     })
     .filter(({ r }) => r && r.verdict !== "Not a fit" && Number(r.fit) >= 40)
     .filter(({ r }) => !sameCompany(r.company, job.client) && r.client_history !== "current")
@@ -218,7 +224,7 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
       linkedin_url: x.site === "linkedin" ? x.key : null,
       fit: Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0))), verdict: VERDICTS.includes(r.verdict) ? r.verdict : "Possible fit",
       fit_reason: clip(r.overview, 300) || null, status: "found",
-      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: r.client_history === "past" ? "past" : "none", location_source: r.locationSource || "", overview: clip(r.overview, 400), checklist, gaps: (Array.isArray(r.gaps) ? r.gaps : []).slice(0, 4).map((g: unknown) => clip(g, 120)), snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
+      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: r.client_history === "past" ? "past" : "none", location_source: r.locationSource || "", remote_worker: !!r.remote, overview: clip(r.overview, 400), checklist, gaps: (Array.isArray(r.gaps) ? r.gaps : []).slice(0, 4).map((g: unknown) => clip(g, 120)), snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
     };
   });
   let inserted: any[] = [];
