@@ -6,6 +6,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 //   upload  recruiter / staff (signed in): stores the file and returns it; the message itself is
 //           then posted through send-message, which also emails the candidate
 //   urls    either side: short-lived links (1 hour) for the files in one conversation
+// A conversation is one staff member and one candidate about one role: staff only reach files
+// in their own conversations; a candidate names the person (staffId) they're sending to.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -36,6 +38,7 @@ Deno.serve(async (req: Request) => {
 
     // Who is asking: a candidate with their portal token, or a signed-in Pronext user.
     let side: "candidate" | "recruiter";
+    let staffId = "";   // whose conversation: the signed-in staff member, or who the candidate is talking to
     if (body.token) {
       const token = String(body.token);
       if (token.length < 12) return json({ error: "This link isn't valid" }, 403);
@@ -44,6 +47,10 @@ Deno.serve(async (req: Request) => {
       const { data: link } = await admin.from("candidate_jobs").select("id").eq("id", linkId).eq("candidate_id", cand.id).maybeSingle();
       if (!link) return json({ error: "This conversation is no longer available" }, 404);
       side = "candidate";
+      const asked = /^[0-9a-f-]{36}$/i.test(String(body.staffId || "")) ? String(body.staffId) : null;
+      const { data: s, error: sErr } = await admin.rpc("portal_thread_staff", { p_link_id: linkId, p_staff: asked });
+      if (sErr || !s) return json({ error: "This conversation is no longer available" }, 404);
+      staffId = String(s);
     } else {
       const jwt = (req.headers.get("Authorization") || "").replace("Bearer ", "");
       const { data: caller } = await admin.auth.getUser(jwt);
@@ -52,12 +59,13 @@ Deno.serve(async (req: Request) => {
       const { data: ok } = await asUser.rpc("can_chat", { p_link_id: linkId });
       if (!ok) return json({ error: "You don't have access to this conversation" }, 403);
       side = "recruiter";
+      staffId = caller.user.id;
     }
 
     if (body.action === "urls") {
       const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 100);
       if (!ids.length) return json({ ok: true, urls: {} });
-      const { data: rows } = await admin.from("candidate_job_messages").select("id,attachment_path").eq("link_id", linkId).in("id", ids).not("attachment_path", "is", null);
+      const { data: rows } = await admin.from("candidate_job_messages").select("id,attachment_path").eq("link_id", linkId).eq("staff_id", staffId).in("id", ids).not("attachment_path", "is", null);
       const list = rows || [];
       if (!list.length) return json({ ok: true, urls: {} });
       const { data: signed } = await admin.storage.from("chat-files").createSignedUrls(list.map((r: any) => r.attachment_path), 3600);
@@ -89,7 +97,7 @@ Deno.serve(async (req: Request) => {
     const caption = String(body.caption || "").trim().slice(0, 4000);
     const now = new Date().toISOString();
     const { data: msg, error } = await admin.from("candidate_job_messages").insert({
-      link_id: linkId, sender: "candidate", body: caption, candidate_read_at: now,
+      link_id: linkId, sender: "candidate", staff_id: staffId, body: caption, candidate_read_at: now,
       attachment_path: path, attachment_name: name, attachment_type: type, attachment_size: bytes.length,
     }).select("id").single();
     if (error) { await admin.storage.from("chat-files").remove([path]); return json({ error: error.message }, 500); }

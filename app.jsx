@@ -1987,7 +1987,7 @@ const readChatFile = (file) => new Promise((resolve, reject) => {
    title, subtitle, avatarSrc, avatarInit, onBack (shows the back arrow), onProfile (makes the
    header open the person's profile), onClose (called on unmount so the parent can refresh
    unread counts), headerExtra (node under the header), emptyText, peerName */
-function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, onBack, onProfile, onClose, headerExtra, emptyText, peerName, linksClickable = false, className = "", style }) {
+function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarInit, onBack, onProfile, onClose, headerExtra, emptyText, peerName, linksClickable = false, className = "", style }) {
   const [actionsFor, setActionsFor] = useState(null);  // message whose Copy / Delete row is open
   const [confirmDel, setConfirmDel] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);     // header menu (Clear chat)
@@ -2034,7 +2034,7 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
         apiRef.current.urls(need).then((u) => setUrls((x) => ({ ...x, ...(u || {}) }))).catch(() => need.forEach((id) => asked.current.delete(id)));
       }
     } catch (e) { setErr(e.message || "Couldn't load messages"); }
-  }, [linkId, mine]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [linkId, room, mine]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setMsgs(null); setPending([]); setPeerTypingAt(0); setUrls({}); setAttach(null);
@@ -2044,7 +2044,9 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
     const tick = setInterval(() => setTick((n) => n + 1), 1000);
     const onVis = () => { if (visible()) load(); };
     document.addEventListener("visibilitychange", onVis);
-    rt.current = rtChannel("chat-" + linkId, (event, payload) => {
+    // One realtime room per conversation (role + staff member), so typing and "seen" in one
+    // person's chat never show in another's.
+    rt.current = rtChannel("chat-" + (room || linkId), (event, payload) => {
       if (payload && payload.who === mine) return;
       if (event === "typing") setPeerTypingAt(Date.now());
       else if (event === "msg") { setPeerTypingAt(0); load(); }
@@ -2056,7 +2058,7 @@ function ChatRoom({ linkId, mine, api, title, subtitle, avatarSrc, avatarInit, o
       rt.current = null;
       if (closeRef.current) closeRef.current();
     };
-  }, [linkId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [linkId, room]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const all = [...(msgs || []), ...pending];
   const lastPeerAt = (msgs || []).filter((m) => m.sender !== mine).reduce((a, m) => Math.max(a, new Date(m.createdAt).getTime()), 0);
@@ -2273,15 +2275,19 @@ const chatFileCall = async (body) => {
   if (!r.ok) throw new Error(j.error || "Couldn't send the file. Please try again.");
   return j;
 };
-const candidateChatApi = (token, linkId) => ({
-  load: (read) => sbFetch("/rest/v1/rpc/candidate_chat", { method: "POST", body: { p_token: token, p_link_id: linkId, p_read: !!read } }),
-  send: (text) => sbFetch("/rest/v1/rpc/candidate_send_message", { method: "POST", body: { p_token: token, p_link_id: linkId, p_body: text } }),
-  sendFile: (file, caption) => chatFileCall({ action: "send", token, linkId, name: file.name, type: file.type, data: file.data, caption }),
-  urls: (ids) => chatFileCall({ action: "urls", token, linkId, ids }).then((j) => j.urls || {}),
-  del: (id) => sbFetch("/rest/v1/rpc/candidate_delete_message", { method: "POST", body: { p_token: token, p_message_id: id } }),
-  clear: () => sbFetch("/rest/v1/rpc/candidate_clear_chat", { method: "POST", body: { p_token: token, p_link_id: linkId } }),
-  typing: () => sbFetch("/rest/v1/rpc/candidate_typing", { method: "POST", body: { p_token: token, p_link_id: linkId } }),
-});
+// A candidate's conversation is with one person (staffId) about one role (linkId).
+const candidateChatApi = (token, linkId, staffId) => {
+  const st = staffId ? { p_staff: staffId } : {};
+  return {
+    load: (read) => sbFetch("/rest/v1/rpc/candidate_chat", { method: "POST", body: { p_token: token, p_link_id: linkId, p_read: !!read, ...st } }),
+    send: (text) => sbFetch("/rest/v1/rpc/candidate_send_message", { method: "POST", body: { p_token: token, p_link_id: linkId, p_body: text, ...st } }),
+    sendFile: (file, caption) => chatFileCall({ action: "send", token, linkId, staffId, name: file.name, type: file.type, data: file.data, caption }),
+    urls: (ids) => chatFileCall({ action: "urls", token, linkId, staffId, ids }).then((j) => j.urls || {}),
+    del: (id) => sbFetch("/rest/v1/rpc/candidate_delete_message", { method: "POST", body: { p_token: token, p_message_id: id } }),
+    clear: () => sbFetch("/rest/v1/rpc/candidate_clear_chat", { method: "POST", body: { p_token: token, p_link_id: linkId, ...st } }),
+    typing: () => sbFetch("/rest/v1/rpc/candidate_typing", { method: "POST", body: { p_token: token, p_link_id: linkId, ...st } }),
+  };
+};
 const staffChatApi = (S, linkId) => ({
   load: (read) => S.sb("/rest/v1/rpc/staff_chat", { method: "POST", body: { p_link_id: linkId, p_read: !!read } }),
   send: (text) => S.sendMessageQuiet(linkId, text),
@@ -2450,7 +2456,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       {panel === "msg" && msgLink && (
         <div className="fixed inset-0 z-50 flex justify-center" style={{ background: "rgba(20,32,27,0.45)" }} onClick={(e) => { if (e.target === e.currentTarget) setPanel(null); }}>
           <div className="w-full md:max-w-2xl flex flex-col" style={{ height: "100dvh" }}>
-            <ChatRoom key={msgLink.id} linkId={msgLink.id} mine="recruiter" api={staffChatApi(S, msgLink.id)} className="flex-1"
+            <ChatRoom key={msgLink.id} linkId={msgLink.id} room={msgLink.id + "-" + S.me.id} mine="recruiter" api={staffChatApi(S, msgLink.id)} className="flex-1"
               title={candidate.name} avatarSrc={candidate.photoUrl} avatarInit={initialsOf(candidate.name)}
               subtitle={(() => { const j = S.jobs.find((x) => x.id === msgLink.jobId); return j ? j.role + " · " + j.client : "Role"; })()}
               onBack={() => setPanel(null)} onClose={() => S.reload && S.reload()}
@@ -3891,7 +3897,7 @@ function MessagesPage({ toast, S }) {
           {!openThread ? (
             <div className="text-sm text-center py-10" style={{ color: C.ink3 }}>Pick a conversation on the left, or tap + to start one.</div>
           ) : (
-            <ChatRoom key={openThread.link.id} linkId={openThread.link.id} mine="recruiter" api={staffChatApi(S, openThread.link.id)} className="h-full"
+            <ChatRoom key={openThread.link.id} linkId={openThread.link.id} room={openThread.link.id + "-" + S.me.id} mine="recruiter" api={staffChatApi(S, openThread.link.id)} className="h-full"
               title={openThread.cand.name} avatarSrc={openThread.cand.photoUrl} avatarInit={initialsOf(openThread.cand.name)}
               subtitle={openThread.job ? openThread.job.role + " · " + openThread.job.client : "Role"}
               onBack={() => setOpenId(null)} onClose={() => S.reload && S.reload()}
@@ -8048,13 +8054,14 @@ function PortalPhoto({ src, name, token, onChanged, onError }) {
   );
 }
 
-// Full-screen messages: the list of conversations (one per role), then the chat itself.
-function PortalChat({ token, convos, recruiter, startId, onClose }) {
-  const [openId, setOpenId] = useState(startId || (convos.length === 1 ? convos[0].linkId : null));
-  const open = convos.find((c) => c.linkId === openId) || null;
-  const recName = (recruiter && recruiter.name) || "Your recruiter";
-  // "Recruiter" for a recruiter, "TA manager" for Rec Ops and Admins.
-  const recTitle = (recruiter && recruiter.title) || "Recruiter";
+// Full-screen messages: the list of conversations (one per person per role), then the chat itself.
+// Each conversation is private between the candidate and that one person.
+const chatKey = (c) => c.linkId + ":" + (c.staffId || "");
+function PortalChat({ token, chats, startLink, onClose }) {
+  const first = startLink ? chats.find((c) => c.linkId === startLink) : chats.length === 1 ? chats[0] : null;
+  const [openKey, setOpenKey] = useState(first ? chatKey(first) : null);
+  const open = chats.find((c) => chatKey(c) === openKey) || null;
+  const nameOf = (c) => c.name || "Your recruiter";
   useEffect(() => {
     const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
@@ -8063,11 +8070,12 @@ function PortalChat({ token, convos, recruiter, startId, onClose }) {
     <div className="fixed inset-0 z-50 flex justify-center" style={{ background: "rgba(20,32,27,0.45)" }}>
       <div className="w-full md:max-w-2xl flex flex-col" style={{ height: "100dvh", background: "#fff" }}>
         {open ? (
-          <ChatRoom key={open.linkId} linkId={open.linkId} mine="candidate" api={candidateChatApi(token, open.linkId)} className="flex-1"
-            title={recName} subtitle={recTitle} linksClickable
-            avatarSrc={recruiter && recruiter.photo} avatarInit={initialsOf(recName)}
-            onBack={() => (convos.length > 1 && !startId ? setOpenId(null) : onClose())} peerName={recName}
-            emptyText={"Send " + recName + " a message about " + open.role + ". They'll get it straight away."} />
+          <ChatRoom key={chatKey(open)} linkId={open.linkId} room={open.staffId ? open.linkId + "-" + open.staffId : open.linkId} mine="candidate"
+            api={candidateChatApi(token, open.linkId, open.staffId)} className="flex-1"
+            title={nameOf(open)} subtitle={(open.title || "Recruiter") + " · " + open.role} linksClickable
+            avatarSrc={open.photo} avatarInit={initialsOf(nameOf(open))}
+            onBack={() => (chats.length > 1 ? setOpenKey(null) : onClose())} peerName={nameOf(open)}
+            emptyText={"Send " + nameOf(open) + " a message about " + open.role + ". They'll get it straight away."} />
         ) : (
           <>
             <div className="flex items-center gap-2.5 px-3 py-3 shrink-0" style={{ background: C.side, color: "#fff" }}>
@@ -8075,16 +8083,16 @@ function PortalChat({ token, convos, recruiter, startId, onClose }) {
               <div className="text-base font-semibold">Messages</div>
             </div>
             <div className="flex-1 overflow-y-auto">
-              {convos.map((c) => (
-                <button key={c.linkId} onClick={() => setOpenId(c.linkId)} className="w-full text-left px-4 py-3 flex items-center gap-3" style={{ borderBottom: `1px solid ${C.line}` }}>
-                  <Avatar init={initialsOf(recName)} tone="em" size={46} src={(recruiter && recruiter.photo) || undefined} />
+              {chats.map((c) => (
+                <button key={chatKey(c)} onClick={() => setOpenKey(chatKey(c))} className="w-full text-left px-4 py-3 flex items-center gap-3" style={{ borderBottom: `1px solid ${C.line}` }}>
+                  <Avatar init={initialsOf(nameOf(c))} tone="em" size={46} src={c.photo || undefined} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[15px] font-medium truncate">{c.role}</span>
+                      <span className="text-[15px] font-medium truncate">{nameOf(c)} <span className="font-normal" style={{ color: C.ink3 }}>· {c.role}</span></span>
                       {c.lastMessage && <span className="text-xs shrink-0" style={{ color: c.unread ? C.em : C.ink3 }}>{chatDay(c.lastMessage.createdAt) === "Today" ? chatTime(c.lastMessage.createdAt) : chatDay(c.lastMessage.createdAt)}</span>}
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + (c.lastMessage.deleted ? "Message deleted" : c.lastMessage.body || "📎 " + (c.lastMessage.file || "File")) : c.company + " · with " + recName}</span>
+                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + (c.lastMessage.deleted ? "Message deleted" : c.lastMessage.body || "📎 " + (c.lastMessage.file || "File")) : (c.title || "Recruiter") + " · " + c.company}</span>
                       {c.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}>{c.unread}</span>}
                     </div>
                   </div>
@@ -8133,8 +8141,13 @@ function CandidatePortal({ data, token, onChanged }) {
   // Older applications recorded before roles were linked, shown if they aren't already listed.
   const pastOnly = (c.endorsements || []).filter((e) => !apps.some((a) => a.role === e.role && a.company === e.company));
   const convos = apps.filter((a) => a.response !== "declined");
-  const unread = convos.reduce((n, a) => n + (a.unread || 0), 0);
   const recName = c.recruiter && c.recruiter.name;
+  // One chat per person per role. Older pages without 'chats' fall back to one per role.
+  const chats = Array.isArray(c.chats) ? c.chats : convos.map((a) => ({ linkId: a.linkId, staffId: null, role: a.role, company: a.company,
+    name: recName, photo: c.recruiter && c.recruiter.photo, title: c.recruiter && c.recruiter.title, unread: a.unread, lastMessage: a.lastMessage }));
+  const unread = chats.reduce((n, x) => n + (x.unread || 0), 0);
+  const people = [...new Set(chats.map((x) => x.name).filter(Boolean))];
+  const chatName = (linkId) => { const x = chats.find((y) => y.linkId === linkId); return (x && x.name) || recName || "your recruiter"; };
 
   return (
     <div className="min-h-screen" style={{ background: C.canvas }}>
@@ -8153,14 +8166,14 @@ function CandidatePortal({ data, token, onChanged }) {
                 {recName ? <>Your {((c.recruiter && c.recruiter.title) || "Recruiter") === "TA manager" ? "TA manager" : "recruiter"} is <b style={{ color: C.ink }}>{recName}</b>.</> : "Here is where your applications stand."}
               </div>
               <div className="mt-3 flex justify-center sm:justify-start">
-                <button onClick={() => convos.length && setChat({})} disabled={!convos.length}
+                <button onClick={() => chats.length && setChat({})} disabled={!chats.length}
                   className="relative inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold"
-                  style={{ background: C.em, color: "#fff", opacity: convos.length ? 1 : 0.55 }}>
-                  <MessageCircle size={17} /> Message{recName ? " " + recName : " your recruiter"}
+                  style={{ background: C.em, color: "#fff", opacity: chats.length ? 1 : 0.55 }}>
+                  <MessageCircle size={17} /> {people.length > 1 ? "Messages" : "Message " + (people[0] || recName || "your recruiter")}
                   {unread > 0 && <span className="absolute -top-2 -right-2 min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center" style={{ background: C.dangerFg, color: "#fff" }}>{unread}</span>}
                 </button>
               </div>
-              {!convos.length && <div className="text-xs mt-2" style={{ color: C.ink3 }}>You can message your recruiter once you're on a role.</div>}
+              {!chats.length && <div className="text-xs mt-2" style={{ color: C.ink3 }}>You can message your recruiter once you're on a role.</div>}
             </div>
           </div>
         </Card>
@@ -8237,7 +8250,7 @@ function CandidatePortal({ data, token, onChanged }) {
                       )}
                       {a.response !== "declined" && (
                         <button onClick={() => setChat({ startId: a.linkId })} className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium" style={{ color: C.em }}>
-                          <MessageCircle size={15} /> Message {recName || "your recruiter"} about this role
+                          <MessageCircle size={15} /> Message {chatName(a.linkId)} about this role
                         </button>
                       )}
                     </div>
@@ -8277,7 +8290,7 @@ function CandidatePortal({ data, token, onChanged }) {
           )}
         </Card>
       </div>
-      {chat && token && <PortalChat token={token} convos={convos} recruiter={c.recruiter} startId={chat.startId} onClose={() => { setChat(null); if (onChanged) onChanged(); }} />}
+      {chat && token && <PortalChat token={token} chats={chats} startLink={chat.startId} onClose={() => { setChat(null); if (onChanged) onChanged(); }} />}
     </div>
   );
 }
