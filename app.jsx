@@ -8175,13 +8175,13 @@ function safeEmailHtml(html) {
     .replace(/\shref\s*=/gi, " data-href=")
     .replace(/<head([^>]*)>/i, '<head$1><style>a{cursor:default!important}</style>');
 }
-function EmailPreviewModal({ row, onClose, S }) {
+function EmailPreviewModal({ row, onClose, S, load }) {
   const [p, setP] = useState(null);
   const [err, setErr] = useState("");
   const [h, setH] = useState(500);
   useEffect(() => {
     if (!row) return; setP(null); setErr("");
-    S.emailPreview(row.id).then(setP, (e) => setErr(e.message || "Couldn't load this email"));
+    (load ? load(row) : S.emailPreview(row.id)).then(setP, (e) => setErr(e.message || "Couldn't load this email"));
   }, [row && row.id]); // eslint-disable-line
   if (!row) return null;
   const when = (d) => (d ? new Date(d).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }) : "");
@@ -8189,7 +8189,7 @@ function EmailPreviewModal({ row, onClose, S }) {
     <Modal open onClose={onClose} title="Email preview" wide>
       <div className="rounded-xl p-3.5 mb-3 text-sm" style={{ background: C.canvas }}>
         <div className="flex gap-2"><span className="w-14 shrink-0" style={{ color: C.ink3 }}>To</span><span style={{ color: C.ink }}><b>{row.name || (p && p.name) || row.to}</b> &lt;{row.to}&gt;</span></div>
-        <div className="flex gap-2 mt-1"><span className="w-14 shrink-0" style={{ color: C.ink3 }}>Sent</span><span style={{ color: C.ink }}>{when((p && p.date) || row.sentAt)}</span></div>
+        <div className="flex gap-2 mt-1"><span className="w-14 shrink-0" style={{ color: C.ink3 }}>{row.state === "scheduled" ? "Due" : "Sent"}</span><span style={{ color: C.ink }}>{when(row.state === "scheduled" ? row.dueAt : row.state ? row.sentAt : (p && p.date) || row.sentAt)}</span></div>
         <div className="flex gap-2 mt-1"><span className="w-14 shrink-0" style={{ color: C.ink3 }}>Subject</span><span style={{ color: C.ink }}>{(p && p.subject) || row.subject}</span></div>
       </div>
       {err && <div className="text-sm flex items-start gap-2 py-6" style={{ color: C.ink2 }}><Info size={16} className="shrink-0 mt-0.5" />{err}</div>}
@@ -8202,7 +8202,24 @@ function EmailPreviewModal({ row, onClose, S }) {
     </Modal>
   );
 }
+// Email tracking has two views, switched at the top: Brevo (emails the app sends itself) and
+// Apollo (outreach emails sent through Apollo sequences).
 function EmailTrackingPage({ S }) {
+  const [src, setSrc] = useState(() => { try { return localStorage.getItem("harbor.emailSrc") || "brevo"; } catch (e) { return "brevo"; } });
+  const pick = (k) => { setSrc(k); try { localStorage.setItem("harbor.emailSrc", k); } catch (e) {} };
+  const sw = (
+    <div className="inline-flex rounded-xl border p-1 self-start" style={{ borderColor: C.line, background: "#fff" }} role="tablist" aria-label="Email source">
+      {[["brevo", "Brevo", "App emails"], ["apollo", "Apollo", "Outreach sequences"]].map(([k, l, sub]) => (
+        <button key={k} role="tab" aria-selected={src === k} onClick={() => pick(k)} className="rounded-lg px-4 py-1.5 text-sm font-medium text-left"
+          style={{ background: src === k ? C.em : "transparent", color: src === k ? "#fff" : C.ink2 }}>
+          {l}<span className="hidden sm:inline text-xs font-normal ml-1.5" style={{ opacity: 0.8 }}>{sub}</span>
+        </button>
+      ))}
+    </div>
+  );
+  return src === "apollo" ? <ApolloTrackingView S={S} sw={sw} /> : <BrevoTrackingView S={S} sw={sw} />;
+}
+function BrevoTrackingView({ S, sw }) {
   const [days, setDays] = useState(30);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState("");
@@ -8239,8 +8256,9 @@ function EmailTrackingPage({ S }) {
   );
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Emails sent to candidates: messages, interviews, applications, referrals and outreach." />
+      {sw}
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 -mt-1">
+        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Emails the app sends to candidates through Brevo: messages, interviews, applications and referrals." />
         <div className="flex gap-2 items-center">
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
             <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last 12 months</option>
@@ -8298,6 +8316,142 @@ function EmailTrackingPage({ S }) {
         </div>
       </Card>
       <EmailPreviewModal row={preview} onClose={() => setPreview(null)} S={S} />
+    </div>
+  );
+}
+
+// Email tracking > Apollo: every email in ProNext's Apollo sequences, read live from Apollo
+// (apollo-sync "tracking"): when each is due and why it's waiting, sent, opened, clicked, replied,
+// and anything Apollo didn't send. "Sent" in Outreach means handed to Apollo; this shows what
+// Apollo actually did with it.
+const APOLLO_FILTERS = [["all", "All"], ["scheduled", "Waiting to send"], ["sent", "Sent"], ["opened", "Opened"], ["clicked", "Clicked"], ["replied", "Replied"], ["problems", "Problems"]];
+function ApolloTrackingView({ S, sw }) {
+  const [days, setDays] = useState(30);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState("all");
+  const [kind, setKind] = useState("");
+  const [q, setQ] = useState("");
+  const [preview, setPreview] = useState(null);
+  const load = async (d) => {
+    setBusy(true); setErr("");
+    try { setRes(await S.apolloTracking(d)); } catch (e) { setErr(e.message || "Couldn't load Apollo's emails"); }
+    setBusy(false);
+  };
+  useEffect(() => { load(days); }, [days]); // eslint-disable-line
+  const rows = (res && res.rows) || [];
+  const problem = (r) => r.state === "bounced" || r.state === "spam" || r.state === "not_sent" || r.unsubscribed;
+  const ql = q.trim().toLowerCase();
+  const shown = rows.filter((r) => (!kind || r.kind === kind)
+    && (!ql || r.to.toLowerCase().includes(ql) || (r.name || "").toLowerCase().includes(ql) || (r.subject || "").toLowerCase().includes(ql) || (r.role || "").toLowerCase().includes(ql))
+    && (filter === "all" || (filter === "scheduled" && (r.state === "scheduled" || r.state === "paused")) || (filter === "sent" && r.state === "sent")
+      || (filter === "opened" && r.opened) || (filter === "clicked" && r.clicked) || (filter === "replied" && r.replied) || (filter === "problems" && problem(r))));
+  const sent = shown.filter((r) => r.state === "sent");
+  const t = { all: shown.length, waiting: shown.filter((r) => r.state === "scheduled" || r.state === "paused").length, sent: sent.length,
+    opened: shown.filter((r) => r.opened).length, clicked: shown.filter((r) => r.clicked).length, replied: shown.filter((r) => r.replied).length, problems: shown.filter(problem).length };
+  const pct = (n) => (t.sent ? Math.round((n / t.sent) * 100) + "% of sent" : "–");
+  const when = (d) => (d ? new Date(d).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "");
+  const limited = rows.filter((r) => r.state === "scheduled" && /limit/i.test(r.delay || "")).length;
+  const overdue = rows.filter((r) => r.state === "scheduled" && r.dueAt && new Date(r.dueAt).getTime() < Date.now() - 30 * 60000).length;
+  const mailboxes = [...new Set(rows.map((r) => r.from).filter(Boolean))];
+  const lastDue = rows.filter((r) => r.state === "scheduled" && r.dueAt).map((r) => r.dueAt).sort().pop();
+  const tile = (label, n, sub, tone) => (
+    <Card className="!p-4">
+      <div className="text-xs font-medium" style={{ color: C.ink2 }}>{label}</div>
+      <div className="text-2xl mt-1" style={{ ...SERIF, color: tone || C.ink }}>{n}</div>
+      <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{sub}</div>
+    </Card>
+  );
+  const yes = (on, label, at) => on
+    ? <span className="inline-flex items-center gap-1 text-xs" style={{ color: C.em }} title={at ? label + " " + when(at) : label}><CheckCircle2 size={14} />Yes</span>
+    : <span className="text-xs" style={{ color: C.ink3 }}>—</span>;
+  const statusCell = (r) => {
+    if (r.state === "sent") return <div><Pill tone="em">Sent</Pill><div className="text-xs mt-1 whitespace-nowrap" style={{ color: C.ink2 }}>{when(r.sentAt)}</div></div>;
+    if (r.state === "bounced") return <Pill tone="danger">Bounced</Pill>;
+    if (r.state === "spam") return <Pill tone="danger">Blocked as spam</Pill>;
+    if (r.state === "not_sent") return <div><Pill tone="danger">Not sent</Pill>{r.reason && <div className="text-xs mt-1" style={{ color: C.ink2 }}>{r.reason}</div>}</div>;
+    if (r.state === "paused") return <Pill tone="warn">Paused in Apollo</Pill>;
+    const late = r.dueAt && new Date(r.dueAt).getTime() < Date.now();
+    return (
+      <div>
+        <Pill tone={late || r.delay ? "warn" : "info"}>{late ? "Overdue" : "Scheduled"}</Pill>
+        <div className="text-xs mt-1 whitespace-nowrap" style={{ color: C.ink2 }}>{late ? "was due " : "due "}{when(r.dueAt)}</div>
+        {r.delay && <div className="text-xs mt-0.5" style={{ color: C.warnFg }}>{r.delay}</div>}
+      </div>
+    );
+  };
+  return (
+    <div className="flex flex-col gap-5 md:gap-6">
+      {sw}
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 -mt-1">
+        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Outreach emails sent through Apollo sequences, live from Apollo: when each goes out, and what happened after." />
+        <div className="flex gap-2 items-center">
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
+            <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last 12 months</option>
+          </select>
+          <Btn onClick={() => load(days)} disabled={busy} title="Check Apollo again now">{busy ? "Loading…" : "Refresh"}</Btn>
+        </div>
+      </div>
+      {err && <Card><div className="text-sm flex items-start gap-2" style={{ color: C.dangerFg }}><AlertTriangle size={16} className="shrink-0 mt-0.5" />{err}</div></Card>}
+      {res && res.warning && <div className="text-xs" style={{ color: C.warnFg }}>{res.warning}</div>}
+      {res && res.fetchedAt && <div className="text-xs -mt-3" style={{ color: C.ink3 }}>Checked with Apollo {ago(res.fetchedAt)}{mailboxes.length ? " · sending from " + mailboxes.join(", ") : ""}.</div>}
+      {(limited > 0 || overdue > 0) && (
+        <div className="rounded-xl p-3.5 text-sm flex items-start gap-2.5" style={{ background: C.warnBg, color: C.warnFg }}>
+          <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+          <div>
+            <b>{limited || overdue} {(limited || overdue) === 1 ? "email is" : "emails are"} waiting in Apollo{limited ? " because the mailbox's hourly sending limit was reached" : " past their due time"}.</b>
+            {lastDue && <> The last one is due {when(lastDue)}.</>}
+            {" "}Apollo only sends inside the sequence's schedule (weekdays, in the recipient's time zone) and within each mailbox's hourly and daily limits. To send faster, raise the limits in Apollo → Settings → Mailboxes, or link another mailbox.
+          </div>
+        </div>
+      )}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        {tile("Waiting to send", res ? t.waiting : "…", "scheduled in Apollo", t.waiting ? C.warnFg : undefined)}
+        {tile("Sent", res ? t.sent : "…", kind || filter !== "all" || ql ? "matching your filters" : "in the last " + days + " days")}
+        {tile("Opened", res ? t.opened : "…", pct(t.opened))}
+        {tile("Clicked", res ? t.clicked : "…", pct(t.clicked))}
+        {tile("Replied", res ? t.replied : "…", pct(t.replied), t.replied ? C.em : undefined)}
+        {tile("Problems", res ? t.problems : "…", "bounced, blocked, not sent or unsubscribed", t.problems ? C.dangerFg : undefined)}
+      </div>
+      <Card>
+        <div className="flex flex-col md:flex-row gap-2.5 md:items-center mb-4">
+          <div className="flex gap-1.5 flex-wrap">
+            {APOLLO_FILTERS.map(([k, l]) => (
+              <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1.5 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : "#fff", color: filter === k ? C.em : C.ink2 }}>{l}</button>
+            ))}
+          </div>
+          <div className="flex gap-2 md:ml-auto">
+            <select value={kind} onChange={(e) => setKind(e.target.value)} className="text-sm rounded-lg border px-2.5 py-1.5 bg-white" style={{ borderColor: C.line }}>
+              <option value="">Candidates and clients</option><option value="candidate">Candidates</option><option value="client">Clients</option>
+            </select>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, role or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          </div>
+        </div>
+        {!res && busy ? <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>Checking Apollo <InlineDots /></div> : (
+          <DataTable
+            keyField="id"
+            rows={shown}
+            pageSize={25}
+            onRowClick={(r) => setPreview(r)}
+            empty={rows.length ? "No emails match these filters." : "No emails in ProNext's Apollo sequences in this period."}
+            columns={[
+              { key: "to", label: "PERSON", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
+              { key: "subj", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="text-sm truncate" style={{ color: C.ink, maxWidth: 280 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}><Pill>{r.kind === "client" ? "Client pitch" : "Candidate"}</Pill>{r.role && <span className="truncate" style={{ maxWidth: 200 }}>{r.role}</span>}{r.step > 1 && <span>· step {r.step}</span>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
+              { key: "status", label: "STATUS", render: statusCell },
+              { key: "open", label: "OPENED", render: (r) => yes(r.opened, "Opened") },
+              { key: "click", label: "CLICKED", render: (r) => yes(r.clicked, "Clicked") },
+              { key: "reply", label: "REPLIED", render: (r) => r.replied ? <Pill tone={/not_interested|unsubscribe|already_left/.test(r.replyClass) ? "warn" : "em"}>{APOLLO_REPLY[r.replyClass] || "Replied"}</Pill> : <span className="text-xs" style={{ color: C.ink3 }}>—</span> },
+              { key: "view", label: "PREVIEW", render: (r) => <button onClick={(e) => { e.stopPropagation(); setPreview(r); }} className="text-xs font-medium whitespace-nowrap" style={{ color: C.em }}>View email</button> },
+            ]}
+          />
+        )}
+        <div className="text-xs mt-4" style={{ color: C.ink3 }}>
+          "Sent" in Outreach means ProNext handed the email to Apollo; this page shows when Apollo actually sends it. Opens are counted when images load, so real opens can be higher; clicks and replies are reliable. Replies are read in the mailbox; ProNext moves the person's status for you within 15 minutes.
+          {res && res.truncated ? " Showing the most recent 2,000 emails only — choose a shorter period to see it in full." : ""}
+        </div>
+      </Card>
+      <EmailPreviewModal row={preview} onClose={() => setPreview(null)} S={S} load={(r) => S.apolloPreview(r.contactId)} />
     </div>
   );
 }
@@ -10196,6 +10350,17 @@ export default function App() {
     emailTracking: async (days, refresh) => {
       const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ days, refresh: !!refresh }) });
       const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load the email log");
+      return j;
+    },
+    /* Email tracking > Apollo: ProNext's Apollo sequence emails, live from Apollo (apollo-sync). */
+    apolloTracking: async (days) => {
+      const r = await fetch(SB_URL + "/functions/v1/apollo-sync", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "tracking", days }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load Apollo's emails");
+      return j;
+    },
+    apolloPreview: async (contactId) => {
+      const r = await fetch(SB_URL + "/functions/v1/apollo-sync", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "preview", contactId }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load this email");
       return j;
     },
     emailPreview: async (messageId) => {

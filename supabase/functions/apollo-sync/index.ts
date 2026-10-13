@@ -4,6 +4,10 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // sequences, so a reply never sits unseen in Apollo.
 //   POST { action: "sync" } + x-harbor-ops     every 15 minutes (pg_cron, harbor-apollo-sync)
 //   POST { action: "sync" } signed in (staff)  the "Check Apollo for replies" button
+//   POST { action: "tracking", days } (admins)  Email tracking > Apollo: every email in ProNext's
+//                                                sequences, live from Apollo: scheduled (and when),
+//                                                sent, opened, clicked, replied, bounced, not sent (why)
+//   POST { action: "preview", contactId } (admins) the email ProNext gave Apollo for that person
 //
 // Reads Apollo's "search for outreach emails" (no credits) for ProNext's sequences over the last
 // 30 days: emails with a reply (any reply class), unsubscribed, or bounced. Each event is applied
@@ -169,6 +173,103 @@ async function sync(admin: any) {
   return { ok: true, checked: events.length, applied, replies, unsubscribes, bounces, statusChanges: changes.length };
 }
 
+
+// ---- Email tracking: every email in ProNext's sequences, read live from Apollo (no credits) ----
+const pick = (m: any, keys: string[]) => { for (const k of keys) { const v = m?.[k]; if (v !== undefined && v !== null && v !== "") return v; } return null; };
+const NOT_SENT: Record<string, string> = {
+  contact_stage_safeguard: "Contact stage safeguard", same_account_reply: "Someone at their company replied", account_stage_safeguard: "Account stage safeguard",
+  email_unverified: "Email not verified", snippets_missing: "Missing personalisation", personalized_opener_missing: "Missing personalisation",
+  thread_reply_original_email_missing: "Original email missing", no_active_email_account: "No active mailbox", email_format_invalid: "Invalid email address",
+  ownership_permission: "Permission", email_service_provider_delivery_failure: "Mail provider refused it", sendgrid_dropped_email: "Dropped", mailgun_dropped_email: "Dropped",
+  gdpr_compliance: "GDPR safeguard", not_valid_hard_bounce_detected: "Hard bounce", other_safeguard: "Apollo safeguard", new_job_change_detected: "Changed jobs", email_on_global_bounce_list: "On Apollo's bounce list",
+};
+
+async function tracking(admin: any, days: number, withSample = false) {
+  const seqs = [...new Set([Deno.env.get("APOLLO_SEQUENCE_ID"), Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID")].map((x) => String(x || "").trim()).filter(Boolean))];
+  if (!seqs.length) return { ok: true, rows: [], warning: "No Apollo sequence is set (APOLLO_SEQUENCE_ID)." };
+  const clientSeq = String(Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID") || "").trim();
+  const min = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const max = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+  const raw: any[] = [];
+  let truncated = false;
+  for (let page = 1; page <= 20; page++) {
+    const q = new URLSearchParams();
+    seqs.forEach((id) => q.append("emailer_campaign_ids[]", id));
+    q.set("emailer_message_date_range_mode", "due_at");
+    q.set("emailer_message_date_range[min]", min);
+    q.set("emailer_message_date_range[max]", max);
+    q.set("per_page", "100");
+    q.set("page", String(page));
+    const d = await apollo("/emailer_messages/search", q);
+    const list: any[] = Array.isArray(d?.emailer_messages) ? d.emailer_messages : [];
+    raw.push(...list);
+    if (list.length < 100) break;
+    if (page === 20) truncated = true;
+  }
+  // Opened / clicked / bounced etc. aren't on the email itself; Apollo filters by them instead.
+  const STATS = ["delivered", "opened", "clicked", "bounced", "spam_blocked", "unsubscribed", "failed_other"];
+  const flags = new Map<string, Set<string>>();
+  if (raw.length) for (const stat of STATS) {
+    for (let page = 1; page <= 20; page++) {
+      const q = new URLSearchParams();
+      seqs.forEach((id) => q.append("emailer_campaign_ids[]", id));
+      q.append("emailer_message_stats[]", stat);
+      q.set("emailer_message_date_range_mode", "due_at");
+      q.set("emailer_message_date_range[min]", min);
+      q.set("emailer_message_date_range[max]", max);
+      q.set("per_page", "100");
+      q.set("page", String(page));
+      const d = await apollo("/emailer_messages/search", q);
+      const list: any[] = Array.isArray(d?.emailer_messages) ? d.emailer_messages : [];
+      for (const m of list) { const id = String(m.id); if (!flags.has(id)) flags.set(id, new Set()); flags.get(id)!.add(stat); }
+      if (list.length < 100) break;
+    }
+  }
+  // Who each email went to in ProNext (name, role or company), by Apollo contact id.
+  const ids = [...new Set(raw.map((m) => String(m.contact_id || "")).filter(Boolean))];
+  const who = new Map<string, { name: string; role: string; kind: string; messageId: string }>();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await admin.from("outreach_messages").select("id,provider_ref,to_name,kind,created_at,prospects(full_name,jobs(role_title)),leads(contact_name,company)")
+      .eq("provider", "apollo").in("provider_ref", ids.slice(i, i + 200)).order("created_at", { ascending: true });
+    for (const r of data || []) who.set(String(r.provider_ref), {
+      name: r.prospects?.full_name || r.leads?.contact_name || r.to_name || "",
+      role: r.prospects?.jobs?.role_title || r.leads?.company || "", kind: r.kind || "", messageId: r.id,
+    });
+  }
+  const DELAY: Record<string, string> = { hourly_limit_reached: "Mailbox hourly limit reached", daily_limit_reached: "Mailbox daily limit reached" };
+  const rows = raw.map((m) => {
+    const f = flags.get(String(m.id)) || new Set<string>();
+    const status = String(pick(m, ["status"]) || "").toLowerCase();
+    const reason = String(pick(m, ["not_sent_reason", "failure_reason"]) || "");
+    const bounced = f.has("bounced") || !!pick(m, ["bounce"]) || status === "bounced";
+    const spam = f.has("spam_blocked") || !!pick(m, ["spam_blocked"]);
+    const replied = !!pick(m, ["replied", "reply_class"]);
+    const p = who.get(String(m.contact_id || ""));
+    const sentAt = pick(m, ["completed_at"]);
+    let state = "scheduled";
+    if (bounced) state = "bounced";
+    else if (spam) state = "spam";
+    else if (f.has("failed_other") || /fail|not_sent|cancel/.test(status) || (reason && !sentAt)) state = "not_sent";
+    else if (sentAt || status === "completed" || f.has("delivered")) state = "sent";
+    else if (/draft|pause/.test(status)) state = "paused";
+    const delayCd = String(pick(m, ["schedule_delayed_reason_details"]) || "");
+    return {
+      id: String(m.id), contactId: String(m.contact_id || ""),
+      to: String(pick(m, ["to_email"]) || ""), name: p?.name || String(pick(m, ["to_name"]) || ""), role: p?.role || "",
+      kind: p?.kind || (clientSeq && String(m.emailer_campaign_id) === clientSeq ? "client" : "candidate"),
+      from: String(pick(m, ["from_email"]) || ""), subject: String(pick(m, ["subject"]) || ""), sequence: String(pick(m, ["campaign_name"]) || ""),
+      step: Number(pick(m, ["campaign_position"]) || 0) || null, timeZone: String(pick(m, ["time_zone"]) || ""),
+      state, apolloStatus: status, reason: NOT_SENT[reason] || reason.replace(/_/g, " "),
+      delay: state === "scheduled" ? (DELAY[delayCd] || String(pick(m, ["schedule_delayed_reason"]) || "").replace(/ You can adjust.*$/, "")) : "",
+      dueAt: pick(m, ["due_at"]), sentAt, createdAt: pick(m, ["created_at"]),
+      opened: f.has("opened"), clicked: f.has("clicked"), delivered: f.has("delivered") || (state === "sent" && !bounced),
+      replied, replyClass: String(pick(m, ["reply_class"]) || ""), unsubscribed: f.has("unsubscribed"),
+    };
+  });
+  rows.sort((a, b) => String(b.sentAt || b.dueAt || "").localeCompare(String(a.sentAt || a.dueAt || "")));
+  return { ok: true, rows, truncated, fetchedAt: new Date().toISOString(), ...(withSample ? { sample: raw.slice(0, 3) } : {}) };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
@@ -178,14 +279,23 @@ Deno.serve(async (req: Request) => {
     if (opsKey) {
       const { data: tok } = await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
-    } else {
+    }
+    const body = await req.json().catch(() => ({}));
+    if (!opsKey) {
       const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
       const { data: caller } = await admin.auth.getUser(jwt);
       if (!caller?.user) return json({ error: "Not signed in" }, 401);
-      const { data: me } = await admin.from("profiles").select("status").eq("id", caller.user.id).single();
+      const { data: me } = await admin.from("profiles").select("role,status").eq("id", caller.user.id).single();
       if (!me || me.status !== "Active") return json({ error: "Your account isn't active" }, 403);
+      if ((body.action === "tracking" || body.action === "preview") && me.role !== "admin") return json({ error: "Only admins can see email tracking" }, 403);
     }
-    const body = await req.json().catch(() => ({}));
+    if (body.action === "tracking") return json(await tracking(admin, Math.max(1, Math.min(365, Number(body.days) || 30)), !!opsKey && !!body.sample));
+    if (body.action === "preview") {
+      const { data: m } = await admin.from("outreach_messages").select("to_email,to_name,subject,body,html,sent_at,created_at").eq("provider", "apollo")
+        .eq("provider_ref", String(body.contactId || "")).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (!m) return json({ error: "ProNext has no copy of this email (it may have been written in Apollo)." }, 404);
+      return json({ subject: m.subject, html: m.html || "<pre style='font-family:Arial;white-space:pre-wrap'>" + String(m.body || "").replace(/[&<>]/g, (c: string) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" } as any)[c]) + "</pre>", name: m.to_name, date: m.sent_at || m.created_at });
+    }
     if (body.action !== "sync") return json({ error: "Unknown action" }, 400);
     return json(await sync(admin));
   } catch (e) {
