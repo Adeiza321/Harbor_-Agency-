@@ -278,7 +278,9 @@ function mapAll(d) {
   const today = new Date();
   const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
     startDate: p.start_date || null, guaranteeDays: p.guarantee_days != null ? p.guarantee_days : null, guaranteeEnds: p.guarantee_ends || null,
-    billedAt: p.billed_at ? new Date(p.billed_at).getTime() : null, invoice: p.invoice || {}, incentiveCurrency: p.recruiter_incentive_currency || p.fee_currency || "NGN" }));
+    billedAt: p.billed_at ? new Date(p.billed_at).getTime() : null, invoice: p.invoice || {}, incentiveCurrency: p.recruiter_incentive_currency || p.fee_currency || "NGN",
+    payType: p.pay_type === "monthly" ? "monthly" : "one_off", hourlyRate: p.hourly_rate != null ? Number(p.hourly_rate) : null,
+    hoursPerWeek: p.hours_per_week != null ? Number(p.hours_per_week) : 40, contractMonths: p.contract_months || null, endedOn: p.ended_on || null }));
   const campaigns = d.campaigns.map((c) => ({ id: c.id, name: c.name, meta: pname(c.created_by).split(" ")[0] + " \u00b7 " + fdate(c.created_at), audience: c.audience ? c.audience.toLocaleString() : "-", delivered: c.delivered ? c.delivered.toLocaleString() : "-", opened: c.opened_pct || 0, status: c.status }));
   const ads = d.ads.map((a) => ({ id: a.id, job: a.job_title, client: a.client || "", channels: a.channels, payerType: a.payer_type, payer: a.payer_type === "agency" ? "Agency" : pname(a.created_by) + " (recruiter)", budget: naira(a.budget), spent: naira(a.spent), apps: a.applicants, status: a.status }));
   const set = d.settings || {};
@@ -310,7 +312,8 @@ function mapAll(d) {
   return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears, jobViews,
     settings: { name: set.agency_name || "ProNext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
-      integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30 } };
+      integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30,
+      revenueGoal: { amount: 50000, currency: "USD", by: new Date().getFullYear() + "-12-31", ...(set.revenue_goal || {}) } } };
 }
 function buildTeam(users, cands, placements) {
   return users.filter((u) => u.status === "Active" && (u.roleKey === "recruiter" || u.roleKey === "recops")).map((u) => {
@@ -6859,6 +6862,12 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
   const [incentiveCur, setIncentiveCur] = useState("NGN");
   const [startDate, setStartDate] = useState(() => ymdToday());
   const [gDays, setGDays] = useState(String(S.settings.guaranteeDays != null ? S.settings.guaranteeDays : 60));
+  // Permanent: one fee after the guarantee. Contract: hourly rate x hours a week, paid monthly.
+  const [payType, setPayType] = useState("one_off");
+  const [rate, setRate] = useState("");
+  const [hours, setHours] = useState("40");
+  const [months, setMonths] = useState(String(CONTRACT_DEFAULT_MONTHS));
+  const monthly = contractMonthly(num(rate), num(hours) || 40);
   const [busy, setBusy] = useState(false);
   const cand = S.cands.find((c) => c.id === candId) || null;
   const job = S.jobs.find((j) => j.id === jobId) || null;
@@ -6876,19 +6885,29 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
     setJobId(j ? j.id : "");
     const s = suggestBilling(j, c ? c.pay : null);
     setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency);
+    termsFrom(j);
+  };
+  const termsFrom = (j) => {
+    if (j && j.billingFrequency === "Monthly") { setPayType("monthly"); setMonths(String(j.billingMonths || CONTRACT_DEFAULT_MONTHS)); }
+    else if (j) setPayType("one_off");
   };
   const pickJob = (id) => {
     setJobId(id);
     const j = S.jobs.find((x) => x.id === id);
     const s = suggestBilling(j, cand ? cand.pay : null);
     setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency);
+    termsFrom(j);
   };
   const submit = async () => {
     if (!cand) { toast("Pick a candidate"); return; }
-    if (!num(fee)) { toast("Enter the client fee"); return; }
+    const contract = payType === "monthly";
+    if (contract && !num(rate)) { toast("Enter the hourly rate you earn"); return; }
+    if (!contract && !num(fee)) { toast("Enter the client fee"); return; }
     setBusy(true);
     try {
-      await S.insertPlacement({ name: cand.name, role: job ? job.role + ", " + job.client : cand.role, candidateId: cand.id, jobId: job ? job.id : null, recruiterId: cand.recruiterId, recruiterInit: cand.recruiterInit, fee: num(fee), feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur , startDate, guaranteeDays: gDays === "" ? null : Math.max(0, Number(gDays) || 0)});
+      await S.insertPlacement({ name: cand.name, role: job ? job.role + ", " + job.client : cand.role, candidateId: cand.id, jobId: job ? job.id : null, recruiterId: cand.recruiterId, recruiterInit: cand.recruiterInit, fee: contract ? monthly : num(fee), feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur, startDate,
+        guaranteeDays: contract ? 0 : gDays === "" ? null : Math.max(0, Number(gDays) || 0),
+        ...(contract ? { payType: "monthly", hourlyRate: num(rate), hoursPerWeek: num(hours) || 40, contractMonths: Math.max(1, Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS) } : {}) });
       toast("Billing entry created"); setCandId(""); setJobId(""); setFee(""); setIncentive(""); onClose();
     } catch (e) { S.error(e.message || "Could not create billing entry"); }
     setBusy(false);
@@ -6913,19 +6932,43 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
             {S.jobs.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
           </select>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className={sel} style={selStyle} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={feeCur} onChange={setFeeCur} options={withValue(CURRENCY_OPTIONS, feeCur)} searchPlaceholder="Search currency or code" className={sel} style={selStyle} /></div>
+        <div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>How it pays</label>
+          <div className="grid grid-cols-2 gap-2 mt-1.5">
+            {[["one_off", "Permanent", "One payout after the guarantee"], ["monthly", "Contract", "Paid monthly, per hour worked"]].map(([k, t, sub]) => (
+              <button key={k} type="button" onClick={() => { setPayType(k); if (k === "monthly" && !job && feeCur === "NGN") setFeeCur(((S.settings.revenueGoal || {}).currency) || "USD"); }} className="rounded-lg border px-3 py-2 text-left" style={{ borderColor: payType === k ? C.em : C.line, background: payType === k ? C.emTint : "#fff" }}>
+                <div className="text-sm font-medium" style={{ color: payType === k ? C.em : C.ink }}>{t}</div><div className="text-xs" style={{ color: C.ink3 }}>{sub}</div>
+              </button>
+            ))}
+          </div>
         </div>
+        {payType === "monthly" ? (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label htmlFor="bill-rate" className="text-xs font-medium" style={{ color: C.ink2 }}>Hourly rate you earn</label><input id="bill-rate" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="e.g. 4" className={sel} style={selStyle} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={feeCur} onChange={setFeeCur} options={withValue(CURRENCY_OPTIONS, feeCur)} searchPlaceholder="Search currency or code" className={sel} style={selStyle} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label htmlFor="bill-hours" className="text-xs font-medium" style={{ color: C.ink2 }}>Hours a week</label><input id="bill-hours" type="number" min="1" max="80" value={hours} onChange={(e) => setHours(e.target.value)} className={sel} style={selStyle} /></div>
+              <div><label htmlFor="bill-months" className="text-xs font-medium" style={{ color: C.ink2 }}>Contract length (months)</label><input id="bill-months" type="number" min="1" max="60" value={months} onChange={(e) => setMonths(e.target.value)} className={sel} style={selStyle} /></div>
+            </div>
+            {num(rate) > 0 && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.em }}>About <b>{money(monthly, feeCur)}</b> a month, <b>{money(monthly * (Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS), feeCur)}</b> over {Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS} months.</div>}
+          </>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className={sel} style={selStyle} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={feeCur} onChange={setFeeCur} options={withValue(CURRENCY_OPTIONS, feeCur)} searchPlaceholder="Search currency or code" className={sel} style={selStyle} /></div>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className={sel} style={selStyle} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={incentiveCur} onChange={setIncentiveCur} options={withValue(CURRENCY_OPTIONS, incentiveCur)} searchPlaceholder="Search currency or code" className={sel} style={selStyle} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Start date</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={sel} style={selStyle} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee (days)</label><input type="number" min="0" value={gDays} onChange={(e) => setGDays(e.target.value)} className={sel} style={selStyle} /></div>
+          {payType !== "monthly" && <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee (days)</label><input type="number" min="0" value={gDays} onChange={(e) => setGDays(e.target.value)} className={sel} style={selStyle} /></div>}
         </div>
-        <div className="text-xs" style={{ color: C.ink3 }}>0 days means no guarantee: the entry is ready to invoice straight away.</div>
+        <div className="text-xs" style={{ color: C.ink3 }}>{payType === "monthly" ? "Each month is paid a month after it starts, from the start date." : "The payout is due when the guarantee ends (Reflik: 90 days). 0 days means it's ready to invoice straight away."}</div>
         {job && <div className="text-xs" style={{ color: C.ink3 }}>Prefilled from {job.role}'s billing settings — edit as needed.</div>}
         <Btn kind="primary" full disabled={busy} onClick={submit}>{busy ? <>Creating <InlineDots color="#fff" /></> : "Create billing entry"}</Btn>
       </div>
@@ -6944,6 +6987,123 @@ const longDate = (ymd) => ymd ? new Date(ymd + "T00:00:00").toLocaleDateString("
 const money2 = (n, cur) => { try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: cur || "NGN", currencyDisplay: "narrowSymbol", minimumFractionDigits: 2 }).format(Number(n || 0)); } catch (e) { return (cur || "") + " " + Number(n || 0).toFixed(2); } };
 const esc = (v) => String(v == null ? "" : v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const BILLING_STATUSES = [["Guarantee", "In guarantee"], ["Ready", "Ready to invoice"], ["Invoiced", "Invoiced"], ["Paid", "Paid"], ["Fallout", "Fallout"]];
+
+/* ---- Payouts --------------------------------------------------------------------------------
+   Permanent (one_off): one payout of the fee when the guarantee clears (start + guarantee days).
+   Contract (monthly):  hourly rate x hours a week x 52 / 12 each month, for contract_months
+   (default 6), paid a month in arrears; stops at ended_on (the last month is pro-rated). */
+const CONTRACT_DEFAULT_MONTHS = 6;
+const addMonths = (ymd, n) => { const d = new Date((ymd || ymdToday()) + "T00:00:00"); const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); return ymdOf(d); };
+const contractMonthly = (rate, hoursPerWeek) => Math.round((Number(rate) || 0) * (Number(hoursPerWeek) || 40) * 52 / 12 * 100) / 100;
+const placementMonthly = (p) => contractMonthly(p.hourlyRate, p.hoursPerWeek);
+function payoutSchedule(p, todayYmd = ymdToday()) {
+  const start = p.startDate || (p.createdAt ? ymdOf(new Date(p.createdAt)) : todayYmd);
+  if (p.payType !== "monthly") {
+    if (p.status === "Fallout") return [];
+    const date = p.guaranteeEnds || addDays(start, p.guaranteeDays != null ? p.guaranteeDays : 90);
+    return [{ key: p.id, p, date, amount: p.feeNum || 0, currency: p.feeCurrency, label: (p.guaranteeDays ? p.guaranteeDays + "-day" : "Placement") + " payout", received: p.status === "Paid" }];
+  }
+  const monthly = placementMonthly(p), months = p.contractMonths || CONTRACT_DEFAULT_MONTHS;
+  const end = p.endedOn || (p.status === "Fallout" ? todayYmd : null);
+  const out = [];
+  for (let i = 1; i <= months; i++) {
+    const from = addMonths(start, i - 1), to = addMonths(start, i);
+    if (end && end < from) break;
+    let amount = monthly;
+    if (end && end < to) { const span = (new Date(to) - new Date(from)) / 864e5, worked = (new Date(end) - new Date(from)) / 864e5 + 1; amount = Math.round(monthly * Math.max(0, Math.min(1, worked / span)) * 100) / 100; }
+    out.push({ key: p.id + ":" + i, p, date: to, amount, currency: p.feeCurrency, label: "Contract month " + i + " of " + months, received: to <= todayYmd, month: i, months });
+  }
+  return out;
+}
+const contractProgress = (p, todayYmd = ymdToday()) => {
+  const s = payoutSchedule(p, todayYmd);
+  const done = s.filter((x) => x.received).length, months = p.contractMonths || CONTRACT_DEFAULT_MONTHS;
+  const ended = p.endedOn || p.status === "Fallout";
+  return ended ? "Ended " + (p.endedOn ? fdate(p.endedOn + "T12:00:00") : "") + " · " + done + " month" + (done === 1 ? "" : "s") + " paid"
+    : done >= months ? "Completed · " + months + " months" : (p.startDate && p.startDate > todayYmd ? "Starts " + fdate(p.startDate + "T12:00:00") : "Month " + Math.min(months, done + 1) + " of " + months);
+};
+
+function PayoutTracker({ list, S, toast, canEditGoal }) {
+  const goal = (S.settings && S.settings.revenueGoal) || { amount: 50000, currency: "USD", by: new Date().getFullYear() + "-12-31" };
+  const [editing, setEditing] = useState(false);
+  const [g, setG] = useState({ amount: String(goal.amount || ""), currency: goal.currency || "USD", by: goal.by || "" });
+  const [busy, setBusy] = useState(false);
+  const today = ymdToday();
+  const items = list.flatMap((p) => payoutSchedule(p, today));
+  const cur = goal.currency || "USD";
+  const mine = items.filter((x) => x.currency === cur);
+  const otherCur = [...new Set(items.filter((x) => x.currency !== cur).map((x) => x.currency))];
+  // Locked in: everything owed on placements that started by the goal date (paid out later or not).
+  const startedBy = (x) => (x.p.startDate || today) <= goal.by;
+  const sum = (arr) => arr.reduce((a, x) => a + (x.amount || 0), 0);
+  const received = sum(mine.filter((x) => x.received));
+  const locked = sum(mine.filter(startedBy));
+  const arrivesByGoal = sum(mine.filter((x) => x.date <= goal.by));
+  const target = Number(goal.amount) || 0;
+  const pctRecv = target ? Math.min(100, (received / target) * 100) : 0;
+  const pctLocked = target ? Math.min(100, (locked / target) * 100) : 0;
+  const upcoming = items.filter((x) => !x.received).sort((a, b) => (a.date < b.date ? -1 : 1)).slice(0, 6);
+  const activeContracts = list.filter((p) => p.payType === "monthly" && payoutSchedule(p, today).some((x) => !x.received) && !(p.startDate && p.startDate > today) && p.feeCurrency === cur);
+  const monthlyNow = activeContracts.reduce((a, p) => a + placementMonthly(p), 0);
+  const save = () => {
+    const amount = num(g.amount);
+    if (!amount || !g.by) { toast("Enter an amount and a date"); return; }
+    setBusy(true);
+    S.saveRevenueGoal({ amount, currency: g.currency, by: g.by }).then(() => { setEditing(false); toast("Goal saved"); }).catch(() => {}).finally(() => setBusy(false));
+  };
+  const inp = "rounded-lg border px-3 py-2 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  return (
+    <Card>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>PAYOUTS</div>
+          <div className="text-2xl md:text-3xl mt-1" style={{ ...SERIF }}>{money(locked, cur)} <span className="text-base" style={{ color: C.ink3, fontFamily: "inherit" }}>locked in of {money(target, cur)}</span></div>
+          <div className="text-xs mt-1" style={{ color: C.ink2 }}>Goal by {longDate(goal.by)} · placements that start by then count, even when they pay out later.</div>
+        </div>
+        {canEditGoal && !editing && <button onClick={() => { setG({ amount: String(goal.amount || ""), currency: cur, by: goal.by || "" }); setEditing(true); }} className="text-xs font-medium self-start" style={{ color: C.em }}>Change goal</button>}
+      </div>
+      {editing && (
+        <div className="flex flex-wrap items-end gap-2 mt-3">
+          <div className="flex flex-col"><label htmlFor="goal-amt" className="text-xs" style={{ color: C.ink2 }}>Amount</label><input id="goal-amt" value={g.amount} onChange={(e) => setG({ ...g, amount: e.target.value })} className={inp + " w-32"} style={inpS} /></div>
+          <div className="flex flex-col"><label className="text-xs" style={{ color: C.ink2 }}>Currency</label><PickList value={g.currency} onChange={(v) => setG({ ...g, currency: v })} options={withValue(CURRENCY_OPTIONS, g.currency)} searchPlaceholder="Search currency" className={inp + " w-28"} style={inpS} /></div>
+          <div className="flex flex-col"><label htmlFor="goal-by" className="text-xs" style={{ color: C.ink2 }}>By</label><input id="goal-by" type="date" value={g.by} onChange={(e) => setG({ ...g, by: e.target.value })} className={inp} style={inpS} /></div>
+          <Btn kind="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</Btn><Btn onClick={() => setEditing(false)}>Cancel</Btn>
+        </div>
+      )}
+      <div className="mt-4 h-3 rounded-full overflow-hidden relative" style={{ background: C.canvas }} role="img" aria-label={"Received " + money(received, cur) + ", locked in " + money(locked, cur) + " of " + money(target, cur)}>
+        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: pctLocked + "%", background: "#BFE0D0" }} />
+        <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: pctRecv + "%", background: C.em }} />
+      </div>
+      <div className="flex flex-wrap gap-x-5 gap-y-1 mt-2 text-xs" style={{ color: C.ink2 }}>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle" style={{ background: C.em }} />Received {money(received, cur)}</span>
+        <span><span className="inline-block w-2.5 h-2.5 rounded-full mr-1.5 align-middle" style={{ background: "#BFE0D0" }} />Locked in {money(locked, cur)}</span>
+        <span>Arrives by {fdate(goal.by + "T12:00:00")}: {money(arrivesByGoal, cur)}</span>
+        {target > 0 && <span>Still to find: {money(Math.max(0, target - locked), cur)}</span>}
+      </div>
+      <div className="grid md:grid-cols-2 gap-4 mt-5">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold tracking-widest mb-2" style={{ color: C.ink3 }}>COMING UP</div>
+          {upcoming.length === 0 && <div className="text-sm" style={{ color: C.ink3 }}>No payouts waiting. They appear here as soon as a placement is billed.</div>}
+          {upcoming.map((x, i) => (
+            <div key={x.key} className="flex items-center gap-3 py-2" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              <div className="w-14 shrink-0 text-xs" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{fdate(x.date + "T12:00:00")}</div>
+              <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{x.p.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{x.label}</div></div>
+              <div className="text-sm font-medium shrink-0" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs font-semibold tracking-widest mb-2" style={{ color: C.ink3 }}>CONTRACTS</div>
+          <div className="text-xl" style={{ fontVariantNumeric: "tabular-nums" }}>{money(monthlyNow, cur)}<span className="text-sm" style={{ color: C.ink3 }}> a month</span></div>
+          <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{activeContracts.length ? "From " + plural(activeContracts.length, "active contractor") + ", paid monthly." : "No active contractors yet. Add one with New billing entry → Contract."}</div>
+          <div className="text-xs mt-3" style={{ color: C.ink3 }}>Contract months count as received once each month has passed. Permanent payouts count as received when marked Paid.</div>
+          {otherCur.length > 0 && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Placements in {otherCur.join(", ")} aren't added to the {cur} goal.</div>}
+        </div>
+      </div>
+    </Card>
+  );
+}
 const COMPANY_FIELDS = [["name", "Company name"], ["address", "Address"], ["email", "Email"], ["phone", "Phone"], ["taxId", "Tax ID / RC number"], ["bankName", "Bank name"], ["accountName", "Account name"], ["accountNumber", "Account number"], ["swift", "SWIFT / BIC"], ["sortCode", "Sort code / routing"]];
 
 /* The invoice as a printable page. Opens in a print window; "Save as PDF" there downloads it. */
@@ -6985,6 +7145,11 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
   const [gDays, setGDays] = useState(String(p.guaranteeDays != null ? p.guaranteeDays : S.settings.guaranteeDays != null ? S.settings.guaranteeDays : 60));
   const [status, setStatus] = useState(p.status);
   const [busy, setBusy] = useState("");
+  const isContract = p.payType === "monthly";
+  const [rate, setRate] = useState(p.hourlyRate != null ? String(p.hourlyRate) : "");
+  const [hours, setHours] = useState(String(p.hoursPerWeek || 40));
+  const [months, setMonths] = useState(String(p.contractMonths || CONTRACT_DEFAULT_MONTHS));
+  const [endedOn, setEndedOn] = useState(p.endedOn || "");
   const days = Math.max(0, Number(gDays) || 0);
   const ends = addDays(startDate, days);
   const t0 = new Date(startDate + "T00:00:00").getTime(), t1 = new Date(ends + "T00:00:00").getTime(), now = Date.now();
@@ -7015,7 +7180,9 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
   const saveDetails = async () => {
     setBusy("details");
     try {
-      const patch = { start_date: startDate, guarantee_days: days, guarantee_ends: ends };
+      const patch = isContract
+        ? { start_date: startDate, hourly_rate: num(rate) || null, hours_per_week: num(hours) || 40, contract_months: Math.max(1, Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS), ended_on: endedOn || null, fee: contractMonthly(num(rate), num(hours) || 40) }
+        : { start_date: startDate, guarantee_days: days, guarantee_ends: ends };
       let st = status;
       if (days === 0 && st === "Guarantee") st = "Ready";
       if (st !== p.status) patch.status = st;
@@ -7048,13 +7215,25 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
         <div className="text-sm -mt-3" style={{ color: C.ink2 }}>{p.role}</div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3">
           <div><L>START DATE</L>{staff ? <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{longDate(startDate)}</div>}</div>
-          <div><L>GUARANTEE (DAYS)</L>{staff ? <input type="number" min="0" value={gDays} onChange={(e) => setGDays(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{days} days</div>}</div>
-          <div><L>GUARANTEE ENDS</L><div className="text-sm mt-1">{days === 0 ? "No guarantee" : longDate(ends)}</div></div>
+          {isContract ? (
+            <>
+              <div><L>HOURLY RATE ({p.feeCurrency})</L>{staff ? <input value={rate} onChange={(e) => setRate(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{money(p.hourlyRate, p.feeCurrency)}</div>}</div>
+              <div><L>HOURS A WEEK</L>{staff ? <input type="number" min="1" max="80" value={hours} onChange={(e) => setHours(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{p.hoursPerWeek || 40}</div>}</div>
+              <div><L>CONTRACT (MONTHS)</L>{staff ? <input type="number" min="1" max="60" value={months} onChange={(e) => setMonths(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{p.contractMonths || CONTRACT_DEFAULT_MONTHS}</div>}</div>
+              <div><L>ENDED EARLY ON</L>{staff ? <input type="date" value={endedOn} onChange={(e) => setEndedOn(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{endedOn ? longDate(endedOn) : "–"}</div>}</div>
+            </>
+          ) : (
+            <>
+              <div><L>GUARANTEE (DAYS)</L>{staff ? <input type="number" min="0" value={gDays} onChange={(e) => setGDays(e.target.value)} className={inp} style={inpS} /> : <div className="text-sm">{days} days</div>}</div>
+              <div><L>GUARANTEE ENDS</L><div className="text-sm mt-1">{days === 0 ? "No guarantee" : longDate(ends)}</div></div>
+            </>
+          )}
           <div><L>DATE BILLED</L><div className="text-sm mt-1">{p.billedAt ? new Date(p.billedAt).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "Not billed yet"}</div></div>
-          <div><L>CLIENT FEE</L><div className="text-sm mt-1 font-medium">{p.fee}</div></div>
+          <div><L>{isContract ? "PER MONTH" : "CLIENT FEE"}</L><div className="text-sm mt-1 font-medium">{isContract ? money(contractMonthly(num(rate), num(hours) || 40), p.feeCurrency) + " · " + money(contractMonthly(num(rate), num(hours) || 40) * (Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS), p.feeCurrency) + " in total" : p.fee}</div></div>
           <div><L>RECRUITER DUE</L><div className="text-sm mt-1">{p.incentive || "–"}{rec ? " · " + rec.name : ""}</div></div>
         </div>
         <div>
+          {isContract ? <div className="text-xs" style={{ color: C.ink3 }}>CONTRACT · {contractProgress({ ...p, startDate, endedOn: endedOn || null, contractMonths: Math.round(num(months)) || CONTRACT_DEFAULT_MONTHS }).toUpperCase()}</div> : <>
           <div className="flex justify-between text-xs mb-1.5" style={{ color: C.ink3 }}>
             <span>{days === 0 ? "NO GUARANTEE PERIOD" : !started ? "GUARANTEE STARTS " + longDate(startDate).toUpperCase() : pct >= 100 ? "GUARANTEE CLEARED" : "GUARANTEE · DAY " + dayN + " OF " + days}</span>
             <span>{days > 0 && started && pct < 100 ? left + " day" + (left === 1 ? "" : "s") + " left" : ""}</span>
@@ -7063,6 +7242,7 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
             <div className="h-full rounded-full" style={{ width: pct + "%", background: barColor, transition: "width .3s" }} />
           </div>
           <div className="flex justify-between text-xs mt-1" style={{ color: C.ink2 }}><span>{longDate(startDate)}</span><span>{days === 0 ? "" : longDate(ends)}</span></div>
+          </>}
         </div>
         {staff && (
           <div className="flex items-center gap-2 flex-wrap">
@@ -7162,6 +7342,7 @@ function BillingPage({ role, toast, S }) {
         <SectionTitle size="text-3xl md:text-4xl" title="Billing" sub="Fees are invoiced once the guarantee period clears." />
         {role !== "recruiter" && <Btn kind="primary" icon={Plus} onClick={() => setOpen(true)}>New billing entry</Btn>}
       </div>
+      <PayoutTracker list={list} S={S} toast={toast} canEditGoal={role === "admin"} />
       <KPIGrid>
         <KPI dark label="Ready to invoice" value={count("Ready")} foot="Guarantee cleared" />
         <KPI label="In guarantee" value={count("Guarantee")} foot="Not billable yet" />
@@ -7190,16 +7371,19 @@ function BillingPage({ role, toast, S }) {
           columns={[
             { key: "name", label: "PLACEMENT", render: (p) => <div><div className="font-medium">{p.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{p.role}</div></div> },
             { key: "recruiter", label: "RECRUITER", render: (p) => p.recruiter ? <Avatar init={p.recruiter} tone={PEOPLE_TONE[p.recruiter]} size={26} /> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
-            { key: "fee", label: "CLIENT FEE", render: (p) => <span className="font-medium">{p.fee}</span> },
+            { key: "fee", label: "CLIENT FEE", render: (p) => p.payType === "monthly"
+              ? <div><span className="font-medium">{money(placementMonthly(p), p.feeCurrency)}</span><span className="text-xs" style={{ color: C.ink3 }}> /month</span><div className="text-xs" style={{ color: C.ink3 }}>{money(p.hourlyRate, p.feeCurrency)}/hr · {p.hoursPerWeek || 40} hrs/wk</div></div>
+              : <span className="font-medium">{p.fee}</span> },
             { key: "incentive", label: "RECRUITER INCENTIVE", render: (p) => p.incentive ? <span className="text-sm">{p.incentive}</span> : <span className="text-xs" style={{ color: C.ink3 }}>–</span> },
-            { key: "guarantee", label: "GUARANTEE", render: (p) => <span className="text-xs" style={{ color: C.ink2 }}>{p.guarantee}</span> },
+            { key: "guarantee", label: "GUARANTEE", render: (p) => <span className="text-xs" style={{ color: C.ink2 }}>{p.payType === "monthly" ? "Contract · " + contractProgress(p) : p.guarantee}</span> },
             { key: "status", label: "STATUS", render: (p) => (
               <div className="flex items-center gap-2 flex-wrap">
                 <StatusPill status={p.status} />
-                {p.status === "Guarantee" && p.guarantee.startsWith("Cleared") && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Ready", "Guarantee cleared — ready to invoice for " + p.name); }} className="text-xs" style={{ color: C.em }}>Mark ready</button>}
+                {p.payType === "monthly" && !p.endedOn && p.status !== "Fallout" && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); S.updatePlacement(p.id, { ended_on: ymdToday() }).then(() => { toast("Contract ended today for " + p.name + ". Months already worked still count."); S.reload && S.reload(); }).catch((er) => S.error(er.message)); }} className="text-xs" style={{ color: C.dangerFg }}>End contract</button>}
+                {p.payType !== "monthly" && p.status === "Guarantee" && p.guarantee.startsWith("Cleared") && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Ready", "Guarantee cleared — ready to invoice for " + p.name); }} className="text-xs" style={{ color: C.em }}>Mark ready</button>}
                 {p.status === "Ready" && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Invoiced", "Invoice created for " + p.name); }} className="text-xs" style={{ color: C.em }}>Invoice</button>}
                 {p.status === "Invoiced" && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Paid", "Marked paid: " + p.name); }} className="text-xs" style={{ color: C.em }}>Mark paid</button>}
-                {["Guarantee", "Ready"].includes(p.status) && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Fallout", "Marked as fallout: " + p.name); }} className="text-xs" style={{ color: C.dangerFg }}>Mark fallout</button>}
+                {p.payType !== "monthly" && ["Guarantee", "Ready"].includes(p.status) && role !== "recruiter" && <button onClick={(e) => { e.stopPropagation(); setSt(p.id, "Fallout", "Marked as fallout: " + p.name); }} className="text-xs" style={{ color: C.dangerFg }}>Mark fallout</button>}
               </div>
             ) },
             { key: "act", label: "", render: (p) => role === "admin" ? <button title="Delete billing entry" onClick={(e) => { e.stopPropagation(); setDelTarget(p); }} className="p-1" style={{ color: C.ink3 }}><X size={15} /></button> : null },
@@ -9419,10 +9603,13 @@ export default function App() {
       const gDays = p.guaranteeDays != null && p.guaranteeDays !== "" ? Math.max(0, Number(p.guaranteeDays)) : (data.settings.guaranteeDays != null ? data.settings.guaranteeDays : 60);
       const startDate = p.startDate || ymdToday();
       const guaranteeEnds = addDays(startDate, gDays);
-      const row = { id: uid(), name: p.name, role: p.role, candidateId: p.candidateId || null, jobId: p.jobId || null, recruiterId: p.recruiterId || null, recruiter: p.recruiterInit || "", fee: money(p.fee, p.feeCurrency), feeNum: Number(p.fee) || 0, feeCurrency: p.feeCurrency || "NGN", incentive: p.incentive != null && p.incentive !== "" ? money(p.incentive, p.incentiveCurrency) : null, incentiveNum: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, guarantee: "Ends " + fdate(guaranteeEnds), status: gDays === 0 ? "Ready" : "Guarantee", createdAt: Date.now(), startDate, guaranteeDays: gDays, guaranteeEnds, billedAt: null, invoice: {} };
+      const row = { id: uid(), name: p.name, role: p.role, candidateId: p.candidateId || null, jobId: p.jobId || null, recruiterId: p.recruiterId || null, recruiter: p.recruiterInit || "", fee: money(p.fee, p.feeCurrency), feeNum: Number(p.fee) || 0, feeCurrency: p.feeCurrency || "NGN", incentive: p.incentive != null && p.incentive !== "" ? money(p.incentive, p.incentiveCurrency) : null, incentiveNum: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, guarantee: "Ends " + fdate(guaranteeEnds), status: gDays === 0 ? "Ready" : "Guarantee", createdAt: Date.now(), startDate, guaranteeDays: gDays, guaranteeEnds, billedAt: null, invoice: {},
+        payType: p.payType === "monthly" ? "monthly" : "one_off", hourlyRate: p.hourlyRate || null, hoursPerWeek: p.hoursPerWeek || 40, contractMonths: p.contractMonths || null, endedOn: null };
+      // Contract terms are only sent for contracts, so permanent placements save the same way as before.
+      const contract = row.payType === "monthly" ? { pay_type: "monthly", hourly_rate: p.hourlyRate || null, hours_per_week: p.hoursPerWeek || 40, contract_months: p.contractMonths || null } : {};
       setData((d) => ({ ...d, placements: [row, ...d.placements] }));
       try {
-        await call("/rest/v1/placements", { method: "POST", body: { id: row.id, candidate_name: p.name, role_desc: p.role, candidate_id: p.candidateId || null, job_id: p.jobId || null, recruiter_id: p.recruiterId || null, fee: Number(p.fee) || 0, fee_currency: p.feeCurrency || "NGN", recruiter_incentive: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, recruiter_incentive_currency: p.incentiveCurrency || null, guarantee_ends: guaranteeEnds, start_date: startDate, guarantee_days: gDays, status: gDays === 0 ? "Ready" : "Guarantee" } });
+        await call("/rest/v1/placements", { method: "POST", body: { id: row.id, candidate_name: p.name, role_desc: p.role, candidate_id: p.candidateId || null, job_id: p.jobId || null, recruiter_id: p.recruiterId || null, fee: Number(p.fee) || 0, fee_currency: p.feeCurrency || "NGN", recruiter_incentive: p.incentive != null && p.incentive !== "" ? Number(p.incentive) : null, recruiter_incentive_currency: p.incentiveCurrency || null, guarantee_ends: guaranteeEnds, start_date: startDate, guarantee_days: gDays, status: gDays === 0 ? "Ready" : "Guarantee", ...contract } });
         logAudit("created", "placement", row.id, p.name + (p.role ? " — " + p.role : "") + " (" + row.fee + ")");
         // Being billed IS being placed — a candidate can't sit at "Rejected"/anything
         // else while a placement exists for them, or Billing and their own status
@@ -9527,6 +9714,7 @@ export default function App() {
       logAudit("deleted", "user", id, u ? u.name : ""); reload();
     },
     settings: data.settings,
+    saveRevenueGoal: (g) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { revenue_goal: g } }).then(() => logAudit("updated", "agency_settings", "1", "Revenue goal set to " + money(g.amount, g.currency) + " by " + g.by)),
     saveSettings: (v) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { agency_name: v.name, guarantee_days: v.guaranteeDays, ai_screening: v.ai, default_currency: v.defaultCurrency, default_country: v.defaultCountry, retention_days: v.retentionDays || null, integrations: v.integrations || {}, company: v.company || {}, invoice_prefix: v.invoicePrefix || "INV", idle_timeout_minutes: Math.min(480, Math.max(5, Number(v.idleMinutes) || 30)) } }).then(() => logAudit("updated", "agency_settings", "1", "Agency settings changed")),
     auditLog: data.auditLog,
     /* Deletes rejected candidates older than the retention window (data-privacy tab computes the eligible list). */
