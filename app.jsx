@@ -7,7 +7,7 @@ import {
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
-  KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck,
+  KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
 } from "lucide-react";
 
 /* Design tokens */
@@ -199,7 +199,7 @@ const CITY_STATE_OPTIONS = {
   Australia: ["Sydney, NSW", "Melbourne, VIC", "Brisbane, QLD", "Perth, WA", "Remote, Australia"],
 };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false };
+const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true };
 
 // New-message chime: two short soft notes made in the browser (no sound file to load).
 // Browsers only allow sound after the person has clicked or typed on the page once, so the
@@ -309,7 +309,9 @@ function mapAll(d) {
   // Conversations you cleared: messages up to that moment are hidden on your screen only.
   const chatClears = Object.fromEntries((d.chatClears || []).map((x) => [x.link_id, new Date(x.cleared_at).getTime()]));
   const jobViews = Object.fromEntries((Array.isArray(d.jobViews) ? d.jobViews : []).map((v) => [v.job_id, v]));
-  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears, jobViews,
+  const tasks = (Array.isArray(d.tasks) ? d.tasks : []).map((t) => ({ id: t.id, title: t.title, notes: t.notes || "", assignedTo: t.assigned_to, createdBy: t.created_by, dueOn: t.due_on || null,
+    status: t.status, candidateId: t.candidate_id || null, jobId: t.job_id || null, createdAt: new Date(t.created_at).getTime(), doneAt: t.done_at ? new Date(t.done_at).getTime() : null }));
+  return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears, jobViews, tasks,
     settings: { name: set.agency_name || "ProNext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
       integrations: set.integrations || {}, company: set.company || {}, invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30,
@@ -1245,6 +1247,7 @@ const NAV_RECOPS = [
   { key: "candidates", label: "Candidates", icon: Users },
   { key: "inbox", label: "Inbox", icon: InboxIcon },
   { key: "messages", label: "Messages", icon: MessageSquare },
+  { key: "todo", label: "To-do", icon: ListTodo },
   { key: "jobs", label: "Jobs", icon: Briefcase },
   { key: "interviews", label: "Interviews", icon: Calendar },
   { key: "campaigns", label: "Outreach", icon: Send },
@@ -1260,6 +1263,7 @@ const NAV_RECRUITER = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "candidates", label: "My candidates", icon: Users },
   { key: "messages", label: "Messages", icon: MessageSquare },
+  { key: "todo", label: "To-do", icon: ListTodo },
   { key: "jobs", label: "Jobs", icon: Briefcase },
   { key: "interviews", label: "Interviews", icon: Calendar },
   { key: "campaigns", label: "Outreach", icon: Send },
@@ -1391,6 +1395,7 @@ function NotificationsTab({ S, toast }) {
       <div className="flex flex-col gap-1 mt-4">
         <MsgPrefRow label="Play a sound" sub="A short chime when a new message arrives." on={prefs.msgSound} onToggle={() => toggle("msgSound")}
           extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
+        <MsgPrefRow label="Email me" sub="An email when a candidate replies to you (one per burst of messages), with a link straight to the chat." on={prefs.msgEmail !== false} onToggle={() => toggle("msgEmail")} />
         <MsgPrefRow label="Desktop alerts" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when a message arrives while ProNext is in another tab."}
           on={prefs.msgDesktop && !deskBlocked} onToggle={toggleDesktop} />
       </div>
@@ -1681,6 +1686,235 @@ function statsOf(S, forRecruiter) {
   return { placed: c.filter((x) => x.status === "Placed").length, total: c.length, interviews: c.filter((x) => x.status === "Interview").length, billed: sumByCurrency(billable, "feeNum", "feeCurrency"), ready: pl.filter((p) => p.status === "Ready").length, month: new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase() };
 }
 
+/* ---- To-do list -------------------------------------------------------------------------------
+   Your own tasks plus ones an Admin / Rec Ops assigned you. Tick to mark done, X to dismiss.
+   Admins and Rec Ops can assign a task to anyone and see everyone's. */
+function TodoPage({ toast, S }) {
+  const staff = S.role === "admin" || S.role === "recops";
+  const [title, setTitle] = useState("");
+  const [due, setDue] = useState("");
+  const [who, setWho] = useState(S.me.id);
+  const [busy, setBusy] = useState(false);
+  const [view, setView] = useState("mine"); // mine | assigned | everyone
+  const [showClosed, setShowClosed] = useState(false);
+  const people = assignableStaff(S);
+  const nameOf = (id) => (id === S.me.id ? "you" : ((S.users || []).find((u) => u.id === id) || {}).name || "someone");
+  const today = ymdToday();
+  const all = S.tasks || [];
+  const scoped = view === "mine" ? all.filter((t) => t.assignedTo === S.me.id) : view === "assigned" ? all.filter((t) => t.createdBy === S.me.id && t.assignedTo !== S.me.id) : all;
+  const open = scoped.filter((t) => t.status === "open").sort((a, b) => (a.dueOn || "9999") < (b.dueOn || "9999") ? -1 : (a.dueOn || "9999") > (b.dueOn || "9999") ? 1 : b.createdAt - a.createdAt);
+  const closed = scoped.filter((t) => t.status !== "open").sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0)).slice(0, 50);
+  const groups = [
+    ["Overdue", open.filter((t) => t.dueOn && t.dueOn < today)],
+    ["Today", open.filter((t) => t.dueOn === today)],
+    ["Coming up", open.filter((t) => t.dueOn && t.dueOn > today)],
+    ["No date", open.filter((t) => !t.dueOn)],
+  ].filter(([, l]) => l.length);
+  const add = () => {
+    if (!title.trim()) return;
+    setBusy(true);
+    S.addTask({ title: title.trim(), dueOn: due || null, assignedTo: staff ? who : S.me.id })
+      .then(() => { toast(who !== S.me.id && staff ? "Task assigned to " + nameOf(who) : "Task added"); setTitle(""); setDue(""); })
+      .catch(() => {}).finally(() => setBusy(false));
+  };
+  const setSt = (t, st) => S.setTaskStatus(t.id, st).then(() => toast(st === "done" ? "Done" : st === "dismissed" ? "Dismissed" : "Back on your list")).catch(() => {});
+  const inp = "rounded-lg border px-3 py-2.5 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const Row = ({ t }) => {
+    const late = t.status === "open" && t.dueOn && t.dueOn < today;
+    return (
+      <div className="flex items-start gap-3 py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
+        <button onClick={() => setSt(t, t.status === "done" ? "open" : "done")} aria-label={t.status === "done" ? "Mark not done" : "Mark done"}
+          className="w-5 h-5 mt-0.5 rounded-md border flex items-center justify-center shrink-0" style={{ borderColor: t.status === "done" ? C.em : C.ink3, background: t.status === "done" ? C.em : "#fff" }}>
+          {t.status === "done" && <Check size={13} color="#fff" />}
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm" style={{ textDecoration: t.status !== "open" ? "line-through" : "none", color: t.status !== "open" ? C.ink3 : C.ink }}>{t.title}</div>
+          <div className="text-xs mt-0.5 flex flex-wrap gap-x-2" style={{ color: C.ink3 }}>
+            {t.dueOn && <span style={{ color: late ? C.dangerFg : C.ink3 }}>{late ? "Was due " : "Due "}{fdate(t.dueOn + "T12:00:00")}</span>}
+            {t.createdBy && t.createdBy !== t.assignedTo && <span>From {nameOf(t.createdBy)}</span>}
+            {view !== "mine" && <span>For {nameOf(t.assignedTo)}</span>}
+            {t.status === "dismissed" && <span>Dismissed</span>}
+          </div>
+        </div>
+        {t.status === "open"
+          ? <button onClick={() => setSt(t, "dismissed")} title="Dismiss: no longer needed" aria-label="Dismiss" className="p-1 shrink-0" style={{ color: C.ink3 }}><X size={15} /></button>
+          : t.status === "dismissed" && <button onClick={() => setSt(t, "open")} className="text-xs shrink-0" style={{ color: C.em }}>Restore</button>}
+      </div>
+    );
+  };
+  return (
+    <div className="flex flex-col gap-5 md:gap-6">
+      <SectionTitle size="text-3xl md:text-4xl" title="To-do" sub={staff ? "Your tasks, and tasks you've given the team." : "Your tasks, including ones your manager assigned you."} />
+      <Card>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input id="todo-title" value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") add(); }} placeholder="Add a task, e.g. Call Lucas about his notice period" className={inp + " flex-1 min-w-0"} style={inpS} />
+          <input id="todo-due" type="date" value={due} onChange={(e) => setDue(e.target.value)} className={inp} style={inpS} aria-label="Due date" />
+          {staff && <select id="todo-who" value={who} onChange={(e) => setWho(e.target.value)} className={inp} style={inpS} aria-label="Assign to">
+            {people.map((u) => <option key={u.id} value={u.id}>{u.id === S.me.id ? "Me" : u.name}</option>)}
+          </select>}
+          <Btn kind="primary" icon={Plus} disabled={busy || !title.trim()} onClick={add}>{staff && who !== S.me.id ? "Assign" : "Add"}</Btn>
+        </div>
+        {staff && <div className="mt-4"><Tabs tabs={[{ key: "mine", label: "Mine" }, { key: "assigned", label: "Assigned by me" }, { key: "everyone", label: "Everyone" }]} active={view} setActive={setView} /></div>}
+        <div className="mt-3">
+          {groups.length === 0 && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Nothing to do here. Add a task above.</div>}
+          {groups.map(([label, list]) => (
+            <div key={label} className="mt-2">
+              <div className="text-xs font-semibold tracking-widest" style={{ color: label === "Overdue" ? C.dangerFg : C.ink3 }}>{label.toUpperCase()} · {list.length}</div>
+              {list.map((t) => <Row key={t.id} t={t} />)}
+            </div>
+          ))}
+          {closed.length > 0 && <button onClick={() => setShowClosed((v) => !v)} className="text-xs mt-4" style={{ color: C.em }}>{showClosed ? "Hide" : "Show"} done and dismissed ({closed.length})</button>}
+          {showClosed && closed.map((t) => <Row key={t.id} t={t} />)}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+/* ---- Weekly pace: this week's submissions and placements against targets ------------------- */
+const weekStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); };
+function PaceCard({ S, recruiterId }) {
+  const goal = (S.settings && S.settings.revenueGoal) || {};
+  const tg = { submissions: 10, placements: 1, ...(goal.weekly || {}) };
+  const [edit, setEdit] = useState(false);
+  const [f, setF] = useState({ submissions: String(tg.submissions), placements: String(tg.placements) });
+  const from = weekStart();
+  const cands = recruiterId ? S.cands.filter((c) => c.recruiterId === recruiterId) : S.cands;
+  const subs = cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.submittedAt && l.submittedAt >= from).length, 0);
+  const places = (recruiterId ? S.placements.filter((p) => p.recruiterId === recruiterId) : S.placements).filter((p) => p.createdAt >= from && p.status !== "Fallout").length;
+  const ivs = (S.interviews || []).filter((i) => i.start >= from && i.start < from + 7 * 864e5 && (!recruiterId || i.recruiterId === recruiterId)).length;
+  // Expected so far: the share of the working week (Mon-Fri) that has passed.
+  const day = (new Date().getDay() + 6) % 7; // 0 = Monday
+  const share = Math.min(1, (Math.min(day, 4) + (day > 4 ? 1 : new Date().getHours() / 24)) / 5);
+  const row = (label, n, target) => {
+    const ok = target ? n >= Math.floor(target * share) : true;
+    return (
+      <div>
+        <div className="flex items-center justify-between text-sm"><span>{label}</span><span style={{ fontVariantNumeric: "tabular-nums" }}><b>{n}</b> of {target}</span></div>
+        <div className="h-2 rounded-full mt-1.5 overflow-hidden" style={{ background: C.canvas }}><div className="h-full rounded-full" style={{ width: Math.min(100, target ? (n / target) * 100 : 0) + "%", background: ok ? C.em : "#D9A23B" }} /></div>
+      </div>
+    );
+  };
+  const behind = (tg.submissions && subs < Math.floor(tg.submissions * share)) || (tg.placements && places < Math.floor(tg.placements * share));
+  const save = () => S.saveRevenueGoal({ ...goal, weekly: { submissions: Math.round(num(f.submissions)) || 0, placements: Math.round(num(f.placements)) || 0 } }).then(() => setEdit(false)).catch(() => {});
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-2">
+        <div><div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>THIS WEEK</div><div className="text-lg mt-0.5" style={{ ...SERIF }}>{recruiterId ? "Your pace" : "Team pace"}</div></div>
+        <Pill tone={behind ? "warn" : "em"}>{behind ? "Behind" : "On track"}</Pill>
+      </div>
+      <div className="flex flex-col gap-3 mt-3">
+        {row("Submissions", subs, tg.submissions)}
+        {row("Placements", places, tg.placements)}
+        <div className="text-xs" style={{ color: C.ink3 }}>{plural(ivs, "interview")} this week · targets reset every Monday.</div>
+      </div>
+      {S.role === "admin" && !recruiterId && (edit ? (
+        <div className="flex items-end gap-2 mt-3 flex-wrap">
+          <div className="flex flex-col"><label htmlFor="pace-s" className="text-xs" style={{ color: C.ink2 }}>Submissions a week</label><input id="pace-s" value={f.submissions} onChange={(e) => setF({ ...f, submissions: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-24" style={{ borderColor: C.line }} /></div>
+          <div className="flex flex-col"><label htmlFor="pace-p" className="text-xs" style={{ color: C.ink2 }}>Placements a week</label><input id="pace-p" value={f.placements} onChange={(e) => setF({ ...f, placements: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-24" style={{ borderColor: C.line }} /></div>
+          <Btn kind="primary" onClick={save}>Save</Btn>
+        </div>
+      ) : <button onClick={() => setEdit(true)} className="text-xs mt-3" style={{ color: C.em }}>Change weekly targets</button>)}
+    </Card>
+  );
+}
+
+/* ---- Role picker: which open roles are worth the most effort ---------------------------------
+   Value: the job's fee (a contract: monthly fee x months, 6 by default). Chance: a rough guide from
+   the pipeline — people already moving on the role, strong fits not yet put forward, and whether
+   anyone has reached interview. Ranked by value x chance. */
+function rolePicks(S) {
+  return S.jobs.filter((j) => j.status === "Open").map((j) => {
+    const s = suggestBilling(j, null);
+    const monthlyJob = j.billingFrequency === "Monthly";
+    const value = (Number(s.fee) || 0) * (monthlyJob ? (j.billingMonths || CONTRACT_DEFAULT_MONTHS) : 1);
+    let active = 0, late = 0, fits = 0;
+    S.cands.forEach((c) => {
+      const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
+      if (l) { if (l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)) { active++; if (["Interview", "Offer", "Placed"].includes(l.stage)) late++; } }
+      else if ((c.matches || []).some((m) => m.job_id === j.id && (m.fit || 0) >= 60)) fits++;
+    });
+    const chance = Math.min(0.85, 0.08 + active * 0.1 + fits * 0.05 + (late ? 0.2 : 0));
+    return { j, value, currency: s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
+  }).sort((a, b) => b.expected - a.expected || b.value - a.value);
+}
+function RolePicker({ S }) {
+  const picks = rolePicks(S).slice(0, 6);
+  return (
+    <Card>
+      <div className="flex items-center gap-2"><Target size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Roles worth your time</div></div>
+      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Open roles ranked by what they pay × a rough chance of filling them from your pipeline.</div>
+      <div className="mt-3 flex flex-col">
+        {picks.length === 0 && <div className="text-sm py-3" style={{ color: C.ink3 }}>No open roles.</div>}
+        {picks.map((x, i) => (
+          <button key={x.j.id} onClick={() => S.openJob(x.j.id)} className="flex items-center gap-3 py-2.5 text-left" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+            <div className="w-6 text-sm shrink-0" style={{ color: C.ink3, fontVariantNumeric: "tabular-nums" }}>{i + 1}</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium truncate">{x.j.role} <span className="font-normal" style={{ color: C.ink3 }}>· {x.j.client}</span></div>
+              <div className="text-xs truncate" style={{ color: C.ink2 }}>{plural(x.active, "candidate")} in play{x.late ? ", " + x.late + " at interview or later" : ""}{x.fits ? " · " + plural(x.fits, "strong fit") + " not put forward yet" : ""}</div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="text-sm font-medium" style={{ fontVariantNumeric: "tabular-nums" }}>{x.value ? money(x.value, x.currency) : "Fee not set"}</div>
+              <div className="text-xs" style={{ color: C.ink3 }}>{x.contract ? "contract · " : ""}{Math.round(x.chance * 100)}% chance</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/* ---- Team today: what each recruiter did in a day, scored and banded -------------------------
+   Points: placement 10, submission 3, interview held 2, candidate added 1, task done 1, and (for
+   Admins, who can see the activity log) 0.5 for any other logged action. 15+ productive, 5-14
+   fairly productive, under 5 unproductive. */
+function teamDay(S, dayOffset = 0) {
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0); d0.setDate(d0.getDate() - dayOffset);
+  const from = d0.getTime(), to = from + 864e5, inDay = (t) => t && t >= from && t < to;
+  const people = (S.users || []).filter((u) => u.status === "Active" && ["recruiter", "recops"].includes(u.roleKey));
+  return people.map((u) => {
+    const mine = S.cands.filter((c) => c.recruiterId === u.id);
+    const added = mine.filter((c) => inDay(c.createdAt)).length;
+    const subs = mine.reduce((n, c) => n + (c.jobLinks || []).filter((l) => inDay(l.submittedAt)).length, 0);
+    const ivs = (S.interviews || []).filter((i) => i.recruiterId === u.id && inDay(i.start)).length;
+    const places = S.placements.filter((p) => p.recruiterId === u.id && inDay(p.createdAt)).length;
+    const tasks = (S.tasks || []).filter((t) => t.assignedTo === u.id && t.status === "done" && inDay(t.doneAt)).length;
+    const logged = (S.auditLog || []).filter((a) => a.actorId === u.id && inDay(a.createdAt)).length;
+    const score = places * 10 + subs * 3 + ivs * 2 + added + tasks + logged * 0.5;
+    const band = score >= 15 ? "Productive" : score >= 5 ? "Fairly productive" : "Unproductive";
+    return { u, added, subs, ivs, places, tasks, logged, score, band };
+  }).sort((a, b) => b.score - a.score);
+}
+function TeamToday({ S }) {
+  const [off, setOff] = useState(0);
+  const rows = teamDay(S, off);
+  if (!rows.length) return null;
+  const tone = { Productive: "em", "Fairly productive": "warn", Unproductive: "danger" };
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div><div className="flex items-center gap-2"><Trophy size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Team {off ? "yesterday" : "today"}</div></div>
+          <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>What each recruiter got done, ranked. Placement 10 pts, submission 3, interview 2, candidate added or task done 1.</div></div>
+        <Tabs tabs={[{ key: 0, label: "Today" }, { key: 1, label: "Yesterday" }]} active={off} setActive={setOff} />
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>
+          <thead><tr className="text-xs text-left" style={{ color: C.ink3 }}><th className="py-1.5 font-medium">RECRUITER</th><th className="font-medium">PLACED</th><th className="font-medium">SUBMITTED</th><th className="font-medium">INTERVIEWS</th><th className="font-medium">ADDED</th><th className="font-medium">TASKS</th><th className="font-medium">SCORE</th><th></th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.u.id} style={{ borderTop: `1px solid ${C.line}` }}>
+                <td className="py-2 pr-3 whitespace-nowrap">{r.u.name}</td><td>{r.places}</td><td>{r.subs}</td><td>{r.ivs}</td><td>{r.added}</td><td>{r.tasks}</td>
+                <td className="font-medium">{Math.round(r.score * 10) / 10}</td><td className="py-2 whitespace-nowrap"><Pill tone={tone[r.band]}>{r.band}</Pill></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 function OverviewRecOps({ S }) {
   const [period, setPeriod] = useState("Monthly");
   const st = statsOf(S);
@@ -1726,6 +1960,11 @@ function OverviewRecOps({ S }) {
         <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <PaceCard S={S} />
+        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
+      </div>
+      <TeamToday S={S} />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
         <SubmissionsCard S={S} />
         <AttentionList title="Needs attention" S={S} items={(() => {
@@ -1764,6 +2003,10 @@ function OverviewRecruiter({ S }) {
         <KPI label="My interviews" value={st.interviews} foot="in interview now" />
         <KPI label="My billed" value={st.billed} foot="after guarantee" />
       </KPIGrid>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <PaceCard S={S} recruiterId={S.me.id} />
+        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
         <AttentionList title="Your next steps" S={S} items={(() => {
@@ -9365,7 +9608,7 @@ async function loadAll(token) {
   // Reaching a recruiter's app is what "delivered" means for candidate messages (two grey ticks).
   // Sent alongside the data, not before it, so it never delays the dashboard.
   sbFetch("/rest/v1/rpc/staff_mark_delivered", { method: "POST", token }).catch(() => {});
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -9380,8 +9623,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/interviews?select=*&order=starts_at.asc", { token }).catch(() => []), // RLS: same reach as candidates
     sbFetch("/rest/v1/chat_clears?select=link_id,cleared_at", { token }).catch(() => []), // RLS: your own "clear chat" marks only
     sbFetch("/rest/v1/rpc/job_view_stats", { method: "POST", token }).catch(() => []), // views + applications per job
+    sbFetch("/rest/v1/tasks?select=*&order=created_at.desc&limit=1000", { token }).catch(() => []), // to-do list (RLS: yours, ones you assigned, or all for Admin / Rec Ops)
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews });
+  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks });
 }
 
 export default function App() {
@@ -9649,6 +9893,11 @@ export default function App() {
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
       setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
     jobs: data.jobs, updateJob, jobViews: data.jobViews || {},
+    tasks: data.tasks || [],
+    openJob: (id) => { setCandId(null); setJobId(id); setPageRaw("jobDetail"); },
+    addTask: (t) => call("/rest/v1/tasks", { method: "POST", body: { title: t.title, notes: t.notes || null, assigned_to: t.assignedTo || session.uid, due_on: t.dueOn || null, candidate_id: t.candidateId || null, job_id: t.jobId || null } }),
+    setTaskStatus: (id, status) => call("/rest/v1/tasks?id=eq." + id, { method: "PATCH", body: { status, done_at: status === "open" ? null : new Date().toISOString() } }),
+    deleteTask: (id) => call("/rest/v1/tasks?id=eq." + id, { method: "DELETE" }),
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, work_setup: j.workSetup || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,
@@ -9953,7 +10202,8 @@ export default function App() {
   const onPromote = (job) => setPromote({ open: true, job });
   const pendingQ = countFollowups(data.cands, "draft");
   // Counts next to the menu items: unread messages, and retention check-ins due on your placements.
-  const badges = { messages: msgUnread, billing: checkinsDue(data.cands, role === "recruiter" ? data.placements.filter((p) => p.recruiterId === session.uid) : data.placements).length };
+  const myTasksDue = (data.tasks || []).filter((t) => t.assignedTo === session.uid && t.status === "open" && t.dueOn && t.dueOn <= ymdToday()).length;
+  const badges = { messages: msgUnread, todo: myTasksDue, billing: checkinsDue(data.cands, role === "recruiter" ? data.placements.filter((p) => p.recruiterId === session.uid) : data.placements).length };
 
 
   const scope = role === "recruiter" ? "recruiter" : "all";
@@ -9967,6 +10217,7 @@ export default function App() {
   else if (page === "uploadCandidates") content = <AddCandidate setPage={setPage} toast={toast} S={S} initialJobId={addCandidateJobId} />;
   else if (page === "inbox") content = <InboxPage toast={toast} S={S} />;
   else if (page === "messages") content = <MessagesPage toast={toast} S={S} />;
+  else if (page === "todo") content = <TodoPage toast={toast} S={S} />;
   else if (page === "jobs") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "postJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "editJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} editJob={data.jobs.find((j) => j.id === jobId)} />;
