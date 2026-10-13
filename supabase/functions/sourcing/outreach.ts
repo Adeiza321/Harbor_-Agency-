@@ -7,7 +7,7 @@
 
 import { askAI } from "./ai.ts";
 import { anonymizeJd } from "./common.ts";
-import { esc, type Brand } from "./brand.ts";
+import { button, emailShell, esc, type Brand } from "./brand.ts";
 import type { Region } from "./regions.ts";
 
 export type MustHaves = { key: string; summary: string; items: string[] };
@@ -88,8 +88,6 @@ export function sourceText(p: any): string {
   return "your work profile in Apollo.io, a business contact database";
 }
 
-const P = "margin:0 0 14px;font-size:15px;line-height:1.6;color:#14201B;font-family:Arial,Helvetica,sans-serif;";
-
 export function candidateEmail(m: CandidateMail): { text: string; html: string } {
   const b = m.brand;
   const meta = [m.role.location, m.role.workSetup, m.role.employmentType].filter(Boolean)
@@ -113,44 +111,62 @@ export function candidateEmail(m: CandidateMail): { text: string; html: string }
   t.push("Not interested? Unsubscribe: " + m.unsubUrl);
   const text = t.join("\n").replace(/\n{3,}/g, "\n\n");
 
-  // ---- HTML (tables and inline styles, so it lines up in Gmail, Outlook and on phones) ----
-  const mark = b.logo
-    ? `<img src="${esc(b.logo)}" alt="${esc(b.name)}" height="32" style="height:32px;max-width:180px;display:block;border:0;">`
-    : `<span style="font-family:Georgia,'Times New Roman',serif;font-size:20px;color:#14201B;">${esc(b.name)}</span>`;
-  const metaHtml = meta.map((x) => esc(x)).join(" &nbsp;·&nbsp; ");
-  const btn = (href: string, label: string, solid: boolean) =>
-    `<td style="padding:0 10px 10px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" bgcolor="${solid ? b.color : "#ffffff"}" style="border-radius:10px;${solid ? "" : `border:1.5px solid ${b.color};`}">` +
-    `<a href="${esc(href)}" style="display:inline-block;padding:${solid ? "13px 22px" : "11.5px 20px"};white-space:nowrap;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:${solid ? "#ffffff" : b.color};text-decoration:none;border-radius:10px;">${esc(label)}</a></td></tr></table></td>`;
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="x-apple-disable-message-reformatting"><title>${esc(m.role.title)}</title></head>
-<body style="margin:0;padding:0;background:#F3EFE7;">
-<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${esc(m.role.title + (meta.length ? " · " + meta.join(" · ") : ""))}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#F3EFE7" style="background:#F3EFE7;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
-<tr><td style="padding:0 4px 16px;">${mark}</td></tr>
-<tr><td bgcolor="#ffffff" style="background:#ffffff;border:1px solid #E6E1D6;border-radius:16px;padding:28px 28px 20px;">
-${m.paragraphs.map((p) => `<p style="${P}">${esc(p)}</p>`).join("\n")}
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 18px;"><tr><td bgcolor="#F6F4EE" style="background:#F6F4EE;border-radius:12px;padding:18px 20px;">
-<div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:1px;font-weight:bold;color:${b.color};margin:0 0 6px;">THE ROLE</div>
-<div style="font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:bold;color:#14201B;line-height:1.35;margin:0 0 6px;">${esc(m.role.title)}</div>
-${metaHtml ? `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#56605A;line-height:1.5;">${metaHtml}</div>` : ""}
-${m.role.pay ? `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#14201B;line-height:1.5;margin-top:4px;"><b>Pay:</b> ${esc(m.role.pay)}</div>` : ""}
-${m.summary ? `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#14201B;line-height:1.55;margin-top:10px;">${esc(m.summary)}</div>` : ""}
-</td></tr></table>
-${m.mustHaves.length ? `<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:#14201B;margin:0 0 8px;">Must-have requirements</div>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">${m.mustHaves.map((x) =>
-    `<tr><td valign="top" style="padding:0 10px 7px 2px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:${b.color};">&#10003;</td><td valign="top" style="padding:0 0 7px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#14201B;">${esc(x)}</td></tr>`).join("")}</table>` : ""}
-<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${btn(m.applyUrl, "I'm interested", true)}${btn(m.referUrl, "Refer someone", false)}</tr></table>
-<p style="margin:4px 0 18px;font-size:13px;line-height:1.5;color:#56605A;font-family:Arial,Helvetica,sans-serif;">Not quite right for you? If you know someone who'd be great, we'd love an introduction.</p>
-<p style="margin:0;font-size:15px;line-height:1.5;color:#14201B;font-family:Arial,Helvetica,sans-serif;">${esc(signName)}${m.senderTitle ? `<br><span style="color:#56605A;font-size:13px;">${esc(m.senderTitle)}${m.agency ? ", " + esc(m.agency) : ""}</span>` : ""}</p>
-</td></tr>
-<tr><td align="center" style="padding:18px 16px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.6;color:#56605A;text-align:center;">
-${esc([m.senderName, m.senderTitle].filter(Boolean).join(", "))}${m.agency ? " &middot; " + esc(m.agency) : ""}<br>
-${m.address ? esc(m.address) + "<br>" : ""}
-${why ? `<span style="color:#8A8578;">${esc(why)}</span><br>` : ""}
-<a href="${esc(m.unsubUrl)}" style="color:#56605A;text-decoration:underline;">Unsubscribe</a>${why ? ` &nbsp;&middot;&nbsp; <a href="${esc(m.deleteUrl)}" style="color:#56605A;text-decoration:underline;">Delete my details</a>` : ""}
-</td></tr>
-</table>
-</td></tr></table>
-</body></html>`;
+  // ---- HTML: the same design as every other ProNext candidate email (brand.ts emailShell) ----
+  const html = emailShell(b, m.role.title + (meta.length ? " · " + meta.join(" · ") : ""),
+    noteHtml(b, m.paragraphs) +
+    `<div style="margin-top:16px;padding:14px 16px;background:#F3EFE7;border-radius:10px;">
+<div style="font-family:Arial,sans-serif;font-size:11px;letter-spacing:.06em;color:#56605A;margin-bottom:6px;">THE ROLE</div>
+<div style="font-size:17px;line-height:1.35;">${esc(m.role.title)}</div>
+${meta.length ? `<div style="font-family:Arial,sans-serif;font-size:13px;color:#56605A;line-height:1.5;margin-top:4px;">${meta.map((x) => esc(x)).join(" &middot; ")}</div>` : ""}
+${m.role.pay ? `<div style="font-family:Arial,sans-serif;font-size:13px;line-height:1.5;margin-top:2px;"><b>Pay:</b> ${esc(m.role.pay)}</div>` : ""}
+${m.summary ? `<div style="font-size:14px;line-height:1.55;margin-top:8px;">${esc(m.summary)}</div>` : ""}
+</div>
+${m.mustHaves.length ? `<div style="font-size:15px;margin-top:16px;margin-bottom:6px;">Must-have requirements</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0">${m.mustHaves.map((x) =>
+      `<tr><td valign="top" style="padding:0 8px 5px 0;font-size:14px;line-height:1.55;color:${b.color};">&#10003;</td><td valign="top" style="padding:0 0 5px;font-size:14px;line-height:1.55;">${esc(x)}</td></tr>`).join("")}</table>` : ""}
+${button(b, m.applyUrl, "I'm interested")}
+<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Not quite right for you? If you know someone who'd be great, <a href="${esc(m.referUrl)}" style="color:${b.color};">refer them here</a>.</div>
+${signHtml(signName, m.senderTitle, m.agency)}`,
+    undefined, undefined,
+    footerHtml(b, { sender: [m.senderName, m.senderTitle].filter(Boolean).join(", "), agency: m.agency, address: m.address,
+      why: why || "You are receiving this email because we think this role fits your experience.", unsubUrl: m.unsubUrl, deleteUrl: why ? m.deleteUrl : "" }));
   return { text, html };
+}
+
+// ---- Pieces shared by candidate outreach and client pitches, in the house email style ----
+// The note's first paragraph ("Hi Sarah,") becomes the heading, like every other ProNext email.
+function noteHtml(b: Brand, paragraphs: string[]) {
+  const ps = [...paragraphs];
+  const hi = ps.length && /^(hi|hello|dear)\b[^.!?]{0,40},?$/i.test(ps[0]) ? ps.shift()! : "";
+  return (hi ? `<div style="font-size:20px;margin-bottom:8px;">${esc(hi)}</div>` : "") +
+    ps.map((p, i) => `<div style="font-size:15px;line-height:1.6;${i || hi ? "margin-top:12px;" : ""}">${esc(p)}</div>`).join("\n");
+}
+function signHtml(name: string, title: string, agency: string) {
+  if (!name) return "";
+  const sub = [title, agency].filter(Boolean).join(", ");
+  return `<div style="font-size:15px;line-height:1.5;margin-top:20px;">${esc(name)}${sub ? `<br><span style="font-family:Arial,sans-serif;font-size:13px;color:#56605A;">${esc(sub)}</span>` : ""}</div>`;
+}
+export function footerHtml(b: Brand, f: { sender: string; agency: string; address: string; why: string; unsubUrl: string; deleteUrl?: string }) {
+  const a = (href: string, label: string) => `<a href="${esc(href)}" style="color:#56605A;text-decoration:underline;">${label}</a>`;
+  return [
+    esc([f.sender, f.agency].filter(Boolean).join(" · ")) + (f.address ? "<br>" + esc(f.address) : ""),
+    `<div style="margin-top:6px;">${esc(f.why)} If you wish to unsubscribe, ${a(f.unsubUrl, "click here")}.${f.deleteUrl ? " To have your details deleted, " + a(f.deleteUrl, "click here") + "." : ""}</div>`,
+  ].join("");
+}
+
+// The pitch to a hiring manager, in the same design. Its "Interested? Click here: <link>" line
+// becomes the button; the footer carries the sender details, notice and unsubscribe links.
+export function clientEmail(b: Brand, o: { body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string }) {
+  const { paragraphs, signoff } = introOf(String(o.body || ""));
+  const lines = paragraphs.filter((p) => !/click here|\{\{INTERESTED_LINK\}\}/i.test(p));
+  const html = emailShell(b, o.subject,
+    noteHtml(b, lines) +
+    button(b, o.interestedUrl, "I'm interested") +
+    `<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Or just reply to this email.</div>` +
+    signHtml(signoff || o.senderName.split(" ")[0] || "", o.senderTitle, o.agency),
+    undefined, undefined,
+    footerHtml(b, { sender: [o.senderName, o.senderTitle].filter(Boolean).join(", "), agency: o.agency, address: o.address,
+      why: o.region !== "US" ? "Why you're getting this: your company advertised this role publicly and we have a matching candidate. We use only your name, role and work email, only for this purpose." : "You are receiving this email because your company advertised this role publicly.",
+      unsubUrl: o.unsubUrl, deleteUrl: o.region !== "US" ? o.deleteUrl : "" }));
+  return html;
 }
