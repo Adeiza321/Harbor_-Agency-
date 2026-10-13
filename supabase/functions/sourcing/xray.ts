@@ -185,6 +185,7 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
     for (const [a, c] of Object.entries(ALIAS)) if (new RegExp("[\\s,]" + a.replace(/\./g, "\\.") + "[\\s,]").test(l)) return c;
     return (countries.find((x) => x.re.test(l)) || { c: "" }).c;
   };
+  const jobRemote = /remote/i.test(String(job.work_setup || "")) || /remote/i.test(String(job.location || ""));
   const inArea = (loc: string) => { if (!allowed.size) return true; const c = countryIn(loc); return !c || allowed.has(c); };
   const OWNER = /\b(founder|co-?founder|owner|proprietor|self[- ]employed|ceo\s*(&|and|\/)?\s*founder|managing director at (my|own))\b/i;
   const kept = list
@@ -196,7 +197,11 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
       // Remote workers get a closer look: the location they show may be their employer's (UK, US)
       // while they live elsewhere, so it never counts as confirmed and they can't be a 'Good fit'
       // until someone checks where they're based.
-      const remote = r.remote === true || /\bremote(ly)?\b|work(ing)? from home|\bwfh\b/i.test(String(r.headline || "") + " " + String(x.title || "") + " " + String(x.snippet || ""));
+      const remoteSigns = r.remote === true || /\bremote(ly)?\b|work(ing)? from home|\bwfh\b/i.test(String(r.headline || "") + " " + String(x.title || "") + " " + String(x.snippet || ""));
+      // On a remote role, working remotely is expected: no closer look when they show a location
+      // inside the role's country (or the role is open worldwide).
+      const c = loc ? countryIn(loc) : "";
+      const remote = remoteSigns && !(jobRemote && (!allowed.size || (c && allowed.has(c))));
       const fit = remote ? Math.max(0, Number(r.fit || 0) - 10) : r.fit;
       return { x, r: { ...r, fit, verdict: remote && r.verdict === "Good fit" ? "Possible fit" : r.verdict, remote, location: loc, locationSource: remote ? "remote" : fromSnippet ? "profile" : loc ? "result" : "" } };
     })
