@@ -13,6 +13,7 @@ import { searchEngines, searchUsage } from "./search.ts";
 import { autoFindEmails, findEmails } from "./emails.ts";
 import { matchPool } from "./pool.ts";
 import { pdlKey } from "./pdl.ts";
+import { contactoutKey } from "./contactout.ts";
 import { sourcePdl } from "./pdl_source.ts";
 
 // Sourcing and outreach for Pronext.
@@ -43,6 +44,7 @@ function connections() {
   return {
     anthropic: !!Deno.env.get("ANTHROPIC_API_KEY"),
     apollo: !!apolloKey(),
+    contactout: !!contactoutKey(),
     pdl: !!pdlKey(),
     theirstack: !!theirstackKey(),
     sender: provider(),
@@ -306,7 +308,7 @@ Deno.serve(async (req: Request) => {
       // doesn't wait for the next run (and looks up anyone asked for, whatever their fit), within the daily cap.
       const o = { jobId: body.jobId ? String(body.jobId) : null, ids };
       if (!o.jobId && !ids.length) return json({ error: "jobId or ids is required" }, 400);
-      if (!apolloKey()) return json({ ok: false, notConnected: "apollo", message: "Apollo isn't connected yet. Add the APOLLO_API_KEY secret to look up emails." });
+      if (!apolloKey() && !contactoutKey()) return json({ ok: false, notConnected: "apollo", message: "No email source is connected. Add the CONTACTOUT_API_KEY or APOLLO_API_KEY secret to look up emails." });
       return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName, o)) });
     }
 
