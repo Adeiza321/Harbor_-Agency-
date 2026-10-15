@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-// Files and pictures in candidate <-> recruiter chats. Stored in the private `chat-files` bucket
+// Files, pictures and voice messages in candidate <-> recruiter chats. Stored in the private `chat-files` bucket
 // at <link id>/<time>-<name>; nobody reads the bucket directly, only through here.
 //   send    candidate (portal token): stores the file and posts it as their message
 //   upload  recruiter / staff (signed in): stores the file and returns it; the message itself is
@@ -24,6 +24,8 @@ const TYPES = new Set([
   "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   "application/vnd.ms-powerpoint", "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  // Voice messages recorded in the chat.
+  "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/aac", "audio/x-m4a", "audio/wav",
 ]);
 
 Deno.serve(async (req: Request) => {
@@ -78,7 +80,7 @@ Deno.serve(async (req: Request) => {
     if (body.action === "send" && side !== "candidate") return json({ error: "Use send-message to post as a recruiter" }, 400);
     if (body.action === "upload" && side !== "recruiter") return json({ error: "Not allowed" }, 403);
 
-    const type = String(body.type || "").toLowerCase();
+    const type = String(body.type || "").toLowerCase().split(";")[0].trim();
     if (!TYPES.has(type)) return json({ error: "That kind of file can't be sent. Try a picture, PDF, Word, Excel, PowerPoint or text file." }, 400);
     const name = String(body.name || "file").replace(/[\\/\u0000-\u001f]/g, "").trim().slice(0, 120) || "file";
     let bytes: Uint8Array;

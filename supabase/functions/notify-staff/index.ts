@@ -48,7 +48,7 @@ Deno.serve(async (req: Request) => {
       `<div style="font-size:20px;margin-bottom:8px;">Hi ${esc(first)},</div>
        <div style="font-size:15px;line-height:1.6;"><b>${esc(cand)}</b> sent you a message about <b>${esc(role)}</b>:</div>
        ${preview ? `<div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;font-style:italic;line-height:1.5;">&ldquo;${esc(preview)}&rdquo;</div>` : ""}
-       ${m.attachment_name ? `<div style="margin-top:10px;font-size:14px;">&#128206; ${esc(m.attachment_name)}</div>` : ""}
+       ${m.attachment_name ? `<div style="margin-top:10px;font-size:14px;">${/^Voice message\b/.test(m.attachment_name) ? "&#127908; " + esc(m.attachment_name.replace(/\.[a-z0-9]+$/i, "")) : "&#128206; " + esc(m.attachment_name)}</div>` : ""}
        ${button(brand, APP_URL + "/?page=messages", "Reply in ProNext")}
        <div style="font-size:12px;color:#8A8578;margin-top:18px;">You can turn these emails off in ProNext: My profile, Notifications.</div>`,
       "You're receiving this because a candidate replied to you in " + brand.name + ".");

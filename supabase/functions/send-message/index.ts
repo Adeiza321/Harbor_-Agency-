@@ -187,12 +187,13 @@ Deno.serve(async (req: Request) => {
       else if (optedOut) why = "The candidate unsubscribed from emails";
       else {
         const preview = text.length > 160 ? text.slice(0, 160) + "…" : text;
-        const what = file ? (text ? "a message and a file" : "a file") : "a message";
+        const voice = !!file && /^Voice message\b/.test(file.attachment_name);
+        const what = file ? (voice ? (text ? "a message and a voice message" : "a voice message") : (text ? "a message and a file" : "a file")) : "a message";
         const html = emailShell(brand, "You have a message from your recruiter",
           `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
            <div style="font-size:15px;line-height:1.6;">${esc(recruiterName)} sent you ${what} about <b>${esc(roleLabel)}</b>:</div>
            ${text ? `<div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;font-style:italic;line-height:1.5;">&ldquo;${esc(preview)}&rdquo;</div>` : ""}
-           ${file ? `<div style="margin-top:10px;font-size:14px;line-height:1.5;">&#128206; ${esc(file.attachment_name)} <span style="color:#8A8578;">(open it on your candidate page)</span></div>` : ""}
+           ${file ? `<div style="margin-top:10px;font-size:14px;line-height:1.5;">${voice ? "&#127908;" : "&#128206;"} ${esc(voice ? file.attachment_name.replace(/\.[a-z0-9]+$/i, "") : file.attachment_name)} <span style="color:#8A8578;">(${voice ? "listen to it" : "open it"} on your candidate page)</span></div>` : ""}
            ${button(brand, portalUrl, "Reply")}`, undefined, unsubUrl);
         result = await sendTracked(brand, { email: cand.email, name: cand.name }, "You have a message from your recruiter", html);
       }

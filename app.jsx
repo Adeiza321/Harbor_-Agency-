@@ -8,6 +8,7 @@ import {
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
   KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
+  Smile, SmilePlus, Mic, Play, Pause,
 } from "lucide-react";
 
 /* Design tokens */
@@ -2704,7 +2705,8 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
        one tick = sent, two ticks = it reached the recruiter's dashboard, lime = read
    "typing…" travels over a Supabase Realtime broadcast on chat-<linkId> (instant) and a
    chat_typing heartbeat the 3-second poll reads (works even if the socket can't connect).
-   Files and pictures go through the chat-file function into the private chat-files bucket. */
+   Files, pictures and voice messages go through the chat-file function into the private chat-files
+   bucket. Reactions: tap a message to react (one per side per message, staff_react / candidate_react). */
 
 // Minimal Supabase Realtime (Phoenix) client: broadcast only, reconnects on its own.
 function rtChannel(topic, onEvent) {
@@ -2744,7 +2746,66 @@ const chatDay = (d) => {
 };
 const fileSize = (n) => (!n ? "" : n < 1024 ? n + " B" : n < 1048576 ? Math.round(n / 1024) + " KB" : (n / 1048576).toFixed(1) + " MB");
 const isImage = (type) => /^image\/(jpeg|png|webp|gif)$/.test(type || "");
-const filePreview = (m) => (!m ? "" : m.deleted ? "Message deleted" : m.body || (m.file ? "📎 " + (m.file.name || "File") : ""));
+const isAudio = (type) => /^audio\//.test(type || "");
+// Voice messages are saved as "Voice message (m:ss).<ext>", so the length is known without loading the audio.
+const isVoiceName = (name) => /^Voice message\b/.test(String(name || ""));
+const voiceSecs = (name) => { const x = /\((\d+):(\d\d)\)/.exec(String(name || "")); return x ? Number(x[1]) * 60 + Number(x[2]) : 0; };
+const mmss = (s) => { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const fileLabel = (name) => (isVoiceName(name) ? "🎤 Voice message" : "📎 " + (name || "File"));
+const filePreview = (m) => (!m ? "" : m.deleted ? "Message deleted" : m.body || (m.file ? fileLabel(m.file.name) : ""));
+// Reactions either side can put on a message (the database only accepts these).
+const CHAT_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏", "👏", "🎉"];
+// The smiley picker in the message box.
+const CHAT_EMOJI = ["😀", "😃", "😄", "😁", "😊", "🙂", "😉", "😍", "🥰", "😎", "🤩", "🥳", "😅", "😂", "🤣", "😇", "🤔", "🙃", "😌", "😴", "😮", "😢", "😭", "😬", "🙄", "😤", "🤞", "👍", "👎", "👏", "🙌", "🙏", "💪", "👋", "🤝", "✌️", "👌", "❤️", "💚", "💙", "🔥", "⭐", "✨", "🎉", "🎊", "💯", "✅", "❌", "📌", "📅", "⏰", "💼", "📄", "📞", "💡", "🚀", "☕", "🌟"];
+
+// A voice message: play / pause, a bar you can tap to jump, and the length.
+function VoiceNote({ url, name, mine }) {
+  const ref = React.useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [pos, setPos] = useState(0);
+  const [dur, setDur] = useState(voiceSecs(name));
+  const toggle = (e) => {
+    e.stopPropagation();
+    const a = ref.current; if (!a || !url) return;
+    if (a.paused) a.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); else { a.pause(); setPlaying(false); }
+  };
+  const seek = (e) => {
+    e.stopPropagation();
+    const a = ref.current; if (!a || !url || !dur) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    a.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur; setPos(a.currentTime);
+  };
+  const pct = dur ? Math.min(100, (pos / dur) * 100) : 0;
+  return (
+    <div className="flex items-center gap-2.5 mb-1 py-0.5" style={{ minWidth: 210 }} onClick={(e) => e.stopPropagation()}>
+      <button onClick={toggle} disabled={!url} aria-label={playing ? "Pause voice message" : "Play voice message"}
+        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: mine ? C.lime : C.em, color: mine ? C.side : "#fff", opacity: url ? 1 : 0.5 }}>
+        {playing ? <Pause size={16} /> : <Play size={16} style={{ marginLeft: 2 }} />}
+      </button>
+      <div className="flex-1 min-w-0">
+        <div onClick={seek} className="h-5 flex items-center cursor-pointer" role="slider" aria-label="Position" aria-valuenow={Math.round(pos)} aria-valuemax={Math.round(dur)}>
+          <div className="w-full h-1 rounded-full relative" style={{ background: mine ? "rgba(255,255,255,0.25)" : C.line }}>
+            <div className="absolute left-0 top-0 h-1 rounded-full" style={{ width: pct + "%", background: mine ? C.lime : C.em }} />
+            <div className="absolute w-3 h-3 rounded-full -top-1" style={{ left: "calc(" + pct + "% - 6px)", background: mine ? C.lime : C.em }} />
+          </div>
+        </div>
+        <div className="text-[11px] flex items-center gap-1" style={{ opacity: 0.75 }}><Mic size={11} /> {mmss(playing || pos ? pos : dur)}</div>
+      </div>
+      {url && <audio ref={ref} src={url} preload="metadata"
+        onLoadedMetadata={(e) => { const d = e.currentTarget.duration; if (isFinite(d) && d > 0) setDur(d); }}
+        onTimeUpdate={(e) => setPos(e.currentTarget.currentTime)}
+        onEnded={() => { setPlaying(false); setPos(0); }} onPause={() => setPlaying(false)} />}
+    </div>
+  );
+}
+
+// Records a voice message in the browser. Prefers MP4/AAC (plays everywhere, iPhones included),
+// then WebM/Opus. Returns null where the browser can't record.
+const voiceMime = () => {
+  if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return null;
+  return ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((t) => { try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; } }) || "";
+};
+const MAX_VOICE_SECS = 300;
 
 // Brand look: deep green for your own messages, white cards for theirs, on the canvas colour.
 const CHAT = { mine: C.side, mineMeta: "rgba(255,255,255,0.62)", theirs: "#FFFFFF", wall: C.canvas, read: C.lime, bad: "#FF9B85" };
@@ -2800,6 +2861,7 @@ function MsgText({ text, clickable, mine }) {
 }
 
 function ChatAttachment({ file, url, mine, onLoad }) {
+  if (isAudio(file.type)) return <VoiceNote url={url} name={file.name} mine={mine} />;
   if (isImage(file.type)) {
     return url
       ? <a href={url} target="_blank" rel="noreferrer" className="block -mx-1 -mt-0.5 mb-1"><img src={url} alt={file.name} loading="lazy" decoding="async" onLoad={onLoad} className="rounded-xl block max-h-72 w-auto max-w-full object-cover" /></a>
@@ -2847,7 +2909,7 @@ const readChatFile = (file) => new Promise((resolve, reject) => {
 
 /* props:
    linkId, mine ("candidate" | "recruiter"),
-   api: { load(read) -> payload, send(text), sendFile(file, caption), urls(ids) -> { id: url }, typing() }
+   api: { load(read) -> payload, send(text), sendFile(file, caption), urls(ids) -> { id: url }, typing(), react(id, emoji) }
    title, subtitle, avatarSrc, avatarInit, onBack (shows the back arrow), onProfile (makes the
    header open the person's profile), onClose (called on unmount so the parent can refresh
    unread counts), headerExtra (node under the header), emptyText, peerName */
@@ -2864,6 +2926,9 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
   const [text, setText] = useState("");
   const [attach, setAttach] = useState(null); // { name, type, data, size } waiting to be sent
   const [urls, setUrls] = useState({});
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [rec, setRec] = useState(null);       // voice message being recorded: { start }
+  const recRef = React.useRef(null);          // { recorder, stream, chunks, start, mime, cancelled }
   const [, setTick] = useState(0);
   const apiRef = React.useRef(api); apiRef.current = api;
   const closeRef = React.useRef(onClose); closeRef.current = onClose;
@@ -2914,9 +2979,10 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
       if (payload && payload.who === mine) return;
       if (event === "typing") setPeerTypingAt(Date.now());
       else if (event === "msg") { setPeerTypingAt(0); load(); }
-      else if (event === "seen") load();
+      else if (event === "seen" || event === "react") load();
     });
     return () => {
+      const r = recRef.current; if (r) { r.cancelled = true; try { r.recorder.stop(); } catch (e) { /* stopped */ } r.stream.getTracks().forEach((t) => t.stop()); recRef.current = null; }
       clearInterval(poll); clearInterval(tick); document.removeEventListener("visibilitychange", onVis);
       if (rt.current) rt.current.close();
       rt.current = null;
@@ -2953,11 +3019,12 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
     if (inputRef.current) inputRef.current.focus();
   };
   // Sends the typed text and/or the picked file; a failed send stays in the list with a retry.
-  const send = async (retry) => {
-    const item = retry || { id: "tmp" + Date.now() + Math.random().toString(36).slice(2, 6), sender: mine, body: text.trim(), file: attach, createdAt: new Date().toISOString() };
+  // voice: a recorded voice message, sent on its own (whatever is typed stays in the box).
+  const send = async (retry, voice) => {
+    const item = retry || { id: "tmp" + Date.now() + Math.random().toString(36).slice(2, 6), sender: mine, body: voice ? "" : text.trim(), file: voice || attach, createdAt: new Date().toISOString() };
     if (!item.body && !item.file) return;
     setPending((p) => (retry ? p.map((m) => (m.id === item.id ? { ...m, failed: false, pending: true } : m)) : [...p, { ...item, pending: true }]));
-    if (!retry) { setText(""); setAttach(null); if (inputRef.current) inputRef.current.style.height = "auto"; }
+    if (!retry && !voice) { setText(""); setAttach(null); setEmojiOpen(false); if (inputRef.current) inputRef.current.style.height = "auto"; }
     atBottom.current = true;
     lastTypingSent.current = 0;
     try {
@@ -2974,6 +3041,80 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
 
   const canSend = !!(text.trim() || attach);
   const notify = (t) => { setFlash(t); setTimeout(() => setFlash(""), 1800); };
+
+  // Smiley picker: puts the emoji where the cursor is.
+  const addEmoji = (em) => {
+    const el = inputRef.current;
+    const a = el && typeof el.selectionStart === "number" ? el.selectionStart : text.length;
+    const b = el && typeof el.selectionEnd === "number" ? el.selectionEnd : text.length;
+    onType(text.slice(0, a) + em + text.slice(b));
+    setTimeout(() => { if (el) { el.focus(); try { el.setSelectionRange(a + em.length, a + em.length); } catch (e) { /* fine */ } } }, 0);
+  };
+
+  // Reactions: one per person per message; picking the same one again takes it off.
+  const react = async (m, em) => {
+    setActionsFor(null);
+    const cur = (m.reactions || {})[mine] || "";
+    const next = cur === em ? "" : em;
+    setMsgs((list) => (list || []).map((x) => {
+      if (x.id !== m.id) return x;
+      const r = { ...(x.reactions || {}) }; if (next) r[mine] = next; else delete r[mine];
+      return { ...x, reactions: r };
+    }));
+    try { await apiRef.current.react(m.id, next); if (rt.current) rt.current.send("react", { who: mine }); }
+    catch (e) { setErr(e.message || "Couldn't add the reaction"); }
+    load();
+  };
+
+  // Voice messages: tap the mic to record, then send or bin it. Up to 5 minutes.
+  const canRecord = voiceMime() !== null && !!api.sendFile;
+  const startRec = async () => {
+    if (rec || recRef.current) return;
+    setErr(""); setEmojiOpen(false);
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
+    catch (e) { setErr(e && e.name === "NotAllowedError" ? "Allow the microphone for this site to send voice messages." : "No microphone found."); return; }
+    const want = voiceMime();
+    let recorder;
+    try { recorder = new MediaRecorder(stream, { ...(want ? { mimeType: want } : {}), audioBitsPerSecond: 64000 }); }
+    catch (e) { try { recorder = new MediaRecorder(stream); } catch (x) { stream.getTracks().forEach((t) => t.stop()); setErr("This browser can't record voice messages."); return; } }
+    const r = { recorder, stream, chunks: [], start: Date.now(), cancelled: false };
+    recRef.current = r;
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) r.chunks.push(e.data); };
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      recRef.current = null; setRec(null);
+      if (r.cancelled) return;
+      const secs = (Date.now() - r.start) / 1000;
+      if (secs < 1) { notify("Too short. Tap the mic and talk, then press send."); return; }
+      const type = String(recorder.mimeType || want || "audio/webm").split(";")[0];
+      const blob = new Blob(r.chunks, { type });
+      if (blob.size > MAX_CHAT_FILE) { setErr("That voice message is too long to send."); return; }
+      const ext = type === "audio/mp4" ? "m4a" : type === "audio/ogg" ? "ogg" : type === "audio/mpeg" ? "mp3" : "webm";
+      const fr = new FileReader();
+      fr.onload = () => send(null, { name: "Voice message (" + mmss(secs) + ")." + ext, type, data: String(fr.result).split(",")[1], size: blob.size, localUrl: URL.createObjectURL(blob) });
+      fr.readAsDataURL(blob);
+    };
+    recorder.start(1000);
+    setRec({ start: r.start });
+    if (rt.current) rt.current.send("typing", { who: mine });
+  };
+  const stopRec = (cancel) => {
+    const r = recRef.current; if (!r) return;
+    r.cancelled = !!cancel;
+    try { r.recorder.stop(); } catch (e) { r.stream.getTracks().forEach((t) => t.stop()); recRef.current = null; setRec(null); }
+  };
+  const recSecs = rec ? (Date.now() - rec.start) / 1000 : 0;
+  // Stop at 5 minutes and send what's there; keep showing "typing" to the other side meanwhile.
+  useEffect(() => {
+    if (!rec) return;
+    if (recSecs >= MAX_VOICE_SECS) stopRec(false);
+    else if (Date.now() - lastTypingSent.current > 2500) {
+      lastTypingSent.current = Date.now();
+      if (rt.current) rt.current.send("typing", { who: mine });
+      Promise.resolve(apiRef.current.typing && apiRef.current.typing()).catch(() => {});
+    }
+  }); // eslint-disable-line react-hooks/exhaustive-deps
   const copyMsg = async (m) => {
     const t = m.body || (m.file ? m.file.name : "");
     try { await navigator.clipboard.writeText(t); notify("Copied"); }
@@ -3034,7 +3175,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
         )}
       </div>
       {headerExtra}
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 min-h-0 overflow-y-auto px-3 md:px-6 py-4 flex flex-col gap-1">
+      <div ref={scrollRef} onScroll={onScroll} onPointerDown={() => emojiOpen && setEmojiOpen(false)} className="flex-1 min-h-0 overflow-y-auto px-3 md:px-6 py-4 flex flex-col gap-1">
         {msgs === null && !err && <div className="m-auto"><InlineDots color={C.ink3} /></div>}
         {err && msgs === null && <div className="m-auto text-sm text-center px-6" style={{ color: C.dangerFg }}>{err}</div>}
         {msgs !== null && all.length === 0 && (
@@ -3065,7 +3206,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
                     <div className="italic text-sm flex items-center gap-1.5"><X size={13} /> {isMine ? "You deleted this message" : "This message was deleted"}</div>
                   ) : (
                     <>
-                      {m.file && <ChatAttachment file={m.file} url={urls[m.id]} mine={isMine} onLoad={stick} />}
+                      {m.file && <ChatAttachment file={m.file} url={urls[m.id] || m.file.localUrl} mine={isMine} onLoad={stick} />}
                       {m.body && <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}><MsgText text={m.body} clickable={linksClickable} mine={isMine} /></div>}
                     </>
                   )}
@@ -3073,6 +3214,33 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
                     {chatTime(m.createdAt)}{isMine && !m.deleted && <MsgTicks m={m} />}
                   </div>
                 </div>
+                {!m.deleted && m.reactions && Object.keys(m.reactions).length > 0 && (() => {
+                  const groups = {};
+                  Object.entries(m.reactions).forEach(([who, em]) => { (groups[em] = groups[em] || []).push(who); });
+                  const whoName = (w) => (w === mine ? "You" : (peerName || title || "They").split(" ")[0]);
+                  return (
+                    <div className="flex gap-1 -mt-1.5 relative" style={isMine ? { marginRight: 10 } : { marginLeft: 10 }}>
+                      {Object.entries(groups).map(([em, whos]) => (
+                        <button key={em} onClick={() => (whos.includes(mine) ? react(m, em) : (setActionsFor(m.id), setConfirmDel(null)))}
+                          title={whos.map(whoName).join(" and ") + (whos.includes(mine) ? " · tap to remove yours" : "")}
+                          className="rounded-full px-1.5 h-6 text-[13px] leading-none flex items-center gap-0.5"
+                          style={{ background: "#fff", border: `1px solid ${whos.includes(mine) ? C.em : C.line}`, boxShadow: "0 1px 2px rgba(20,32,27,0.08)" }}>
+                          {em}{whos.length > 1 && <span className="text-[11px]" style={{ color: C.ink2 }}>{whos.length}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
+                {actionsFor === m.id && !m.deleted && api.react && !m.pending && !m.failed && !String(m.id).startsWith("tmp") && confirmDel !== m.id && (
+                  <div className="flex items-center gap-0.5 mt-1 rounded-full px-1 py-0.5" role="group" aria-label="React"
+                    style={{ background: "#fff", border: `1px solid ${C.line}`, boxShadow: "0 4px 14px rgba(20,32,27,0.12)" }}>
+                    {CHAT_REACTIONS.map((em) => (
+                      <button key={em} onClick={() => react(m, em)} aria-label={"React with " + em} title={(m.reactions || {})[mine] === em ? "Remove reaction" : "React"}
+                        className="w-8 h-8 rounded-full text-[18px] leading-none flex items-center justify-center"
+                        style={{ background: (m.reactions || {})[mine] === em ? C.emTint : "transparent" }}>{em}</button>
+                    ))}
+                  </div>
+                )}
                 {actionsFor === m.id && !m.deleted && (
                   <div className="flex items-center gap-1 mt-1 text-xs">
                     {confirmDel === m.id ? (
@@ -3113,20 +3281,53 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
             <button onClick={() => setAttach(null)} aria-label="Remove file" className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2 }}><X size={14} /></button>
           </div>
         )}
+        {emojiOpen && !rec && (
+          <>
+            <div className="mb-2 rounded-2xl p-2 grid gap-0.5" role="dialog" aria-label="Pick an emoji"
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(38px, 1fr))", maxHeight: 200, overflowY: "auto", background: "#fff", border: `1px solid ${C.line}`, boxShadow: "0 8px 24px rgba(20,32,27,0.14)" }}>
+              {CHAT_EMOJI.map((em) => (
+                <button key={em} onClick={() => addEmoji(em)} aria-label={em} className="h-9 rounded-lg text-[22px] leading-none flex items-center justify-center hover:bg-black/5">{em}</button>
+              ))}
+            </div>
+          </>
+        )}
+        {rec ? (
+          <div className="flex items-center gap-2">
+            <button onClick={() => stopRec(true)} aria-label="Delete recording" title="Delete recording"
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: C.canvas, color: C.dangerFg }}><Trash2 size={18} /></button>
+            <div className="flex-1 flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 text-[15px]" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+              <span className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse" style={{ background: "#D9573B" }} />
+              <span className="font-medium tabular-nums" style={{ color: C.ink }}>{mmss(recSecs)}</span>
+              <span className="text-sm truncate" style={{ color: C.ink2 }}>Recording… {recSecs > MAX_VOICE_SECS - 30 ? "(sends at 5:00)" : ""}</span>
+            </div>
+            <button onClick={() => stopRec(false)} aria-label="Send voice message" title="Send voice message"
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}><SendHorizontal size={18} /></button>
+          </div>
+        ) : (
         <div className="flex items-end gap-2">
           <button onClick={() => fileRef.current && fileRef.current.click()} aria-label="Attach a file or picture" title="Attach a file or picture"
             className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: C.canvas, color: C.ink2 }}><Paperclip size={18} /></button>
           <input ref={fileRef} type="file" className="hidden" onChange={pickFile}
             accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" />
+          <button onClick={() => setEmojiOpen((o) => !o)} aria-label="Add an emoji" title="Add an emoji"
+            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: emojiOpen ? C.emTint : C.canvas, color: emojiOpen ? C.em : C.ink2 }}><Smile size={18} /></button>
           <textarea ref={inputRef} value={text} rows={1} onChange={(e) => onType(e.target.value)} placeholder={attach ? "Add a caption (optional)" : "Write a message"}
-            enterKeyHint={isTouchDevice() ? "enter" : "send"} onKeyDown={(e) => { if (enterSends(e)) { e.preventDefault(); send(); } }}
+            enterKeyHint={isTouchDevice() ? "enter" : "send"} onKeyDown={(e) => { if (e.key === "Escape" && emojiOpen) { setEmojiOpen(false); return; } if (enterSends(e)) { e.preventDefault(); send(); } }}
             onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }}
-            className="flex-1 resize-none rounded-2xl border px-4 py-2.5 text-[15px] outline-none" style={{ borderColor: C.line, background: "#FAF8F3", color: C.ink, maxHeight: 120 }} />
-          <button onClick={() => send()} disabled={!canSend} aria-label="Send"
-            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: canSend ? C.em : C.line, color: "#fff" }}>
-            <SendHorizontal size={18} />
-          </button>
+            className="flex-1 min-w-0 w-0 resize-none rounded-2xl border px-4 py-2.5 text-[15px] outline-none" style={{ borderColor: C.line, background: "#FAF8F3", color: C.ink, maxHeight: 120 }} />
+          {canSend || !canRecord ? (
+            <button onClick={() => send()} disabled={!canSend} aria-label="Send"
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: canSend ? C.em : C.line, color: "#fff" }}>
+              <SendHorizontal size={18} />
+            </button>
+          ) : (
+            <button onClick={startRec} aria-label="Record a voice message" title="Record a voice message"
+              className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}>
+              <Mic size={18} />
+            </button>
+          )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -3148,6 +3349,7 @@ const candidateChatApi = (token, linkId, staffId) => {
     sendFile: (file, caption) => chatFileCall({ action: "send", token, linkId, staffId, name: file.name, type: file.type, data: file.data, caption }),
     urls: (ids) => chatFileCall({ action: "urls", token, linkId, staffId, ids }).then((j) => j.urls || {}),
     del: (id) => sbFetch("/rest/v1/rpc/candidate_delete_message", { method: "POST", body: { p_token: token, p_message_id: id } }),
+    react: (id, emoji) => sbFetch("/rest/v1/rpc/candidate_react", { method: "POST", body: { p_token: token, p_message_id: id, p_emoji: emoji || "" } }),
     clear: () => sbFetch("/rest/v1/rpc/candidate_clear_chat", { method: "POST", body: { p_token: token, p_link_id: linkId, ...st } }),
     typing: () => sbFetch("/rest/v1/rpc/candidate_typing", { method: "POST", body: { p_token: token, p_link_id: linkId, ...st } }),
   };
@@ -3163,6 +3365,7 @@ const staffChatApi = (S, linkId) => ({
   },
   urls: (ids) => S.sb("/functions/v1/chat-file", { method: "POST", body: { action: "urls", linkId, ids } }).then((j) => j.urls || {}),
   del: (id) => S.sb("/rest/v1/rpc/staff_delete_message", { method: "POST", body: { p_message_id: id } }),
+  react: (id, emoji) => S.sb("/rest/v1/rpc/staff_react", { method: "POST", body: { p_message_id: id, p_emoji: emoji || "" } }),
   clear: () => S.sb("/rest/v1/rpc/staff_clear_chat", { method: "POST", body: { p_link_id: linkId } }),
   typing: () => S.sb("/rest/v1/rpc/staff_typing", { method: "POST", body: { p_link_id: linkId } }),
 });
@@ -9592,7 +9795,7 @@ function PortalChat({ token, chats, startLink, onClose }) {
                       {c.lastMessage && <span className="text-xs shrink-0" style={{ color: c.unread ? C.em : C.ink3 }}>{chatDay(c.lastMessage.createdAt) === "Today" ? chatTime(c.lastMessage.createdAt) : chatDay(c.lastMessage.createdAt)}</span>}
                     </div>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + (c.lastMessage.deleted ? "Message deleted" : c.lastMessage.body || "📎 " + (c.lastMessage.file || "File")) : (c.title || "Recruiter") + " · " + c.company}</span>
+                      <span className="text-sm truncate" style={{ color: C.ink2 }}>{c.lastMessage ? (c.lastMessage.sender === "candidate" ? "You: " : "") + (c.lastMessage.deleted ? "Message deleted" : c.lastMessage.body || fileLabel(c.lastMessage.file)) : (c.title || "Recruiter") + " · " + c.company}</span>
                       {c.unread > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}>{c.unread}</span>}
                     </div>
                   </div>
@@ -10713,7 +10916,7 @@ export default function App() {
     const who = (m) => { const c = data.cands.find((x) => x.jobLinks.some((l) => l.id === m.link_id)); return c ? c.name : "a candidate"; };
     const first = fresh[0];
     const title = fresh.length > 1 ? fresh.length + " new messages" : "New message from " + who(first);
-    const body = fresh.length > 1 ? "From " + [...new Set(fresh.map(who))].slice(0, 3).join(", ") : (first.body || (first.attachment_name ? "📎 " + first.attachment_name : ""));
+    const body = fresh.length > 1 ? "From " + [...new Set(fresh.map(who))].slice(0, 3).join(", ") : (first.body || (first.attachment_name ? fileLabel(first.attachment_name) : ""));
     if (prefs.msgSound) playChime();
     if (document.visibilityState === "visible") toast(title);
     else if (prefs.msgDesktop && typeof Notification !== "undefined" && Notification.permission === "granted") {
