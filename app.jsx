@@ -6403,6 +6403,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
               {canApprove && <Btn kind="primary" icon={Send} onClick={approveOne} disabled={!!acting}>{acting === "approve" ? "Approving…" : "Approve"}</Btn>}
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} openKey={manualKey} noButton />}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
+              {p.status === "rejected" && <Btn kind="primary" icon={RefreshCw} onClick={() => onStatus("found")}>Put back in pool</Btn>}
               <RowMenu label={"More actions for " + name} busy={acting === "test"} items={[
                 { label: "Email me a test", icon: Mail, onClick: testOne, hidden: !(S && p.email && p.body) },
                 { label: "Send it myself", icon: Send, onClick: () => setManualKey((k) => k + 1), hidden: !(S && p.email && ["found", "approved", "queued"].includes(p.status)) },
@@ -6422,7 +6423,11 @@ function JobSourcingCard({ job, S, toast }) {
   const [row, setRow] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  const [prospects, setProspects] = useState([]);
+  const [prospects0, setProspects] = useState([]);
+  // Skipped people leave this job's list; "Skipped" shows them, and Put back returns them.
+  const [showSkipped, setShowSkipped] = useState(false);
+  const skipped = prospects0.filter((p) => p.status === "rejected");
+  const prospects = showSkipped ? skipped : prospects0.filter((p) => p.status !== "rejected");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState({});
   const [pPage, setPPage] = useState(1);
@@ -6517,8 +6522,10 @@ function JobSourcingCard({ job, S, toast }) {
       </div>
       {src.pool && src.pool.matched > 0 && job.status !== "Closed" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>Talent pool: {plural(src.pool.matched, "person", "people")} from earlier roles added for approval · {fdate(src.pool.at)}</div>}
       {canRun && job.status === "Closed" && prospects.some((p) => p.status === "archived") && <div className="text-sm mt-4 rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>This role is closed. {plural(prospects.filter((p) => p.status === "archived").length, "person", "people")} found for it moved to the talent pool: any emails still waiting were cancelled and Apollo follow-ups stopped. They come back automatically when a new role fits them.</div>}
-      {canRun && prospects.length > 0 && (
+      {canRun && (prospects.length > 0 || skipped.length > 0) && (
         <div className="mt-4">
+          {(skipped.length > 0 || showSkipped) && <div className="flex justify-end mb-1"><button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => { setShowSkipped((v) => !v); setPPage(1); }}>{showSkipped ? "Back to people found" : "Skipped " + skipped.length}</button></div>}
+          {showSkipped && <div className="text-xs mb-2" style={{ color: C.ink2 }}>People you skipped for this role. Put back in pool returns them to the list above as Needs approval.</div>}
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
             <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} email{waiting.length === 1 ? "" : "s"} waiting for approval{toContact ? " · " + toContact + " to contact on LinkedIn or their site" : ""}</span></div>
             {noEmail.length > 0 && <span className="text-xs inline-flex items-center gap-1.5" style={{ color: C.ink2 }} title="The best matches are looked up in Apollo by their LinkedIn profile every 10 minutes, within the daily limit in Outreach setup; GitHub public emails are free"><Mail size={13} /> Finding emails automatically · {noEmail.length} without one yet</span>}
@@ -6753,7 +6760,7 @@ function CampaignsPage({ toast, S }) {
   const jobLabel = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? j.role + ", " + j.client : ""; };
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
-  const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced", "rejected"], pool: ["archived"] };
+  const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced"], skipped: ["rejected"], pool: ["archived"] };
   const lGroups = { new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
   const low = (v) => String(v || "").toLowerCase();
   // Role = the job title, across clients (e.g. every "Senior Accountant" role); Job = one job.
@@ -6869,7 +6876,7 @@ function CampaignsPage({ toast, S }) {
       {(tab === "candidates" || tab === "pool") && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed. When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
+            {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed. When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["skipped", "Skipped"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
             {pfx === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
               <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
