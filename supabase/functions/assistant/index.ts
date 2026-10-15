@@ -14,7 +14,8 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // Each call's token and web-search use is logged to public.ai_usage (feature 'assistant').
 // Morning brief (ops token, cron "harbor-morning-brief" on weekday mornings): { action: "brief_next" }
 // writes one person's brief as a saved conversation (kind 'brief') with its proposed actions waiting
-// for approval, a few people per call. Those runs use the service role, so recruiter scoping is
+// for approval, a few people per call. End-of-day round-up (cron "harbor-assistant-roundup"):
+// { action: "roundup_next" }, the same way (kind 'roundup'), and posted to assistant_updates. Those runs use the service role, so recruiter scoping is
 // applied in the lookups themselves (me.scoped) instead of by row security.
 
 const cors = {
@@ -342,23 +343,36 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
 
 const BRIEF_ASK = "Give me my morning brief. In a few short lines: what changed since yesterday, which roles are closest to a hire and what's blocking each, and the 3 most important things to do today to get a hire. Propose the actions for those 3 things (emails, messages, interviews, reminders) so I can approve them. If nothing needs doing, say so in one line.";
 
-// Weekday mornings: the next few active people without today's brief get one, saved as a conversation.
-async function briefNext(admin: any, key: string, max: number) {
+const ROUNDUP_ASK = "Give me my end-of-day round-up. In a few short lines: what moved today on my candidates and roles (new candidates, stage changes, replies, interviews, client feedback, placements), what's still waiting on someone and who, and the 3 things to pick up first tomorrow. Propose reminders (propose_task, due tomorrow) for those 3 things so I can approve them. If nothing happened today, say so in one line.";
+
+// Weekday mornings (brief) and evenings (round-up): the next few active people without today's one
+// get it, saved as a conversation (kind 'brief' / 'roundup'). The round-up also lands in the
+// person's assistant updates (badge, sound, and an email if they don't open ProNext), and is
+// skipped for anyone who turned it off (assistRoundup) or turned assistant updates off.
+async function briefNext(admin: any, key: string, max: number, kind: "brief" | "roundup" = "brief") {
   const tz = "Africa/Lagos";
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const startUtc = new Date(Date.now() - 20 * 3600e3).toISOString();
-  const { data: people } = await admin.from("profiles").select("id,full_name,role,status").eq("status", "Active").in("role", ["admin", "recops", "recruiter"]);
-  const { data: done } = await admin.from("assistant_threads").select("user_id").eq("kind", "brief").gte("created_at", startUtc);
+  const startUtc = new Date(Date.now() - (kind === "brief" ? 20 : 12) * 3600e3).toISOString();
+  const ask = kind === "brief" ? BRIEF_ASK : ROUNDUP_ASK;
+  const { data: people } = await admin.from("profiles").select("id,full_name,role,status,notification_prefs").eq("status", "Active").in("role", ["admin", "recops", "recruiter"]);
+  const { data: done } = await admin.from("assistant_threads").select("user_id").eq("kind", kind).gte("created_at", startUtc);
   const have = new Set((done || []).map((d: any) => d.user_id));
-  const todo = (people || []).filter((p: any) => !have.has(p.id));
+  const wants = (p: any) => kind === "brief" || ((p.notification_prefs || {}).assistRoundup !== false && (p.notification_prefs || {}).assistUpdates !== false);
+  const todo = (people || []).filter((p: any) => !have.has(p.id) && wants(p));
   const out: any[] = [];
   for (const p of todo.slice(0, max)) {
-    const me = { ...p, scoped: p.role === "recruiter" };
-    const r = await runAgent({ admin, db: admin, me, key, mode: "work", messages: [{ role: "user", content: BRIEF_ASK }], page: {}, tz, forceModel: FAST });
+    const me = { id: p.id, full_name: p.full_name, role: p.role, status: p.status, scoped: p.role === "recruiter" };
+    const r = await runAgent({ admin, db: admin, me, key, mode: "work", messages: [{ role: "user", content: ask }], page: {}, tz, forceModel: FAST });
     if (r.error) { out.push({ id: p.id, error: r.error }); if (r.status === 402) break; continue; }
     const label = new Intl.DateTimeFormat("en-GB", { timeZone: tz, day: "numeric", month: "short" }).format(new Date());
-    await admin.from("assistant_threads").insert({ user_id: p.id, kind: "brief", mode: "work", title: "Morning brief · " + label,
-      messages: [{ role: "user", content: BRIEF_ASK }, { role: "assistant", content: r.text, proposals: r.proposals.map((x: any) => ({ ...x, state: x.tool === "propose_email" ? "draft" : "waiting" })) }] });
+    const { data: th } = await admin.from("assistant_threads").insert({ user_id: p.id, kind, mode: "work", title: (kind === "brief" ? "Morning brief · " : "End-of-day round-up · ") + label,
+      messages: [{ role: "user", content: ask }, { role: "assistant", content: r.text, proposals: r.proposals.map((x: any) => ({ ...x, state: x.tool === "propose_email" ? "draft" : "waiting" })) }] }).select("id").single();
+    if (kind === "roundup" && th?.id) {
+      const { error: uErr } = await admin.rpc("push_update", { p_user: p.id, p_kind: "roundup", p_title: "Your end-of-day round-up · " + label,
+        p_body: String(r.text || "").slice(0, 1800) + (r.proposals.length ? "\n\n" + r.proposals.length + " reminder" + (r.proposals.length === 1 ? "" : "s") + " waiting for your approval in ProNext." : ""),
+        p_link: { threadId: th.id }, p_dedupe: "roundup:" + today, p_covered: false, p_actor: null });
+      if (uErr) console.error("roundup update", uErr.message);
+    }
     out.push({ id: p.id, ok: true, proposals: r.proposals.length });
   }
   return { ok: true, today, done: out, remaining: Math.max(0, todo.length - out.length) };
@@ -381,6 +395,7 @@ Deno.serve(async (req: Request) => {
       const { data: tok } = await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
       if (body.action === "brief_next") return json(await briefNext(admin, key, Math.min(Number(body.max) || 2, 4)));
+      if (body.action === "roundup_next") return json(await briefNext(admin, key, Math.min(Number(body.max) || 2, 4), "roundup"));
       if (!body.selftest_profile) return json({ error: "Unknown ops action" }, 400);
       ({ data: me } = await admin.from("profiles").select("id,full_name,role,status").eq("id", body.selftest_profile).single());
       if (!me) return json({ error: "No such profile" }, 404);

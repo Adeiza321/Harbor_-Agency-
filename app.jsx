@@ -202,7 +202,7 @@ const CITY_STATE_OPTIONS = {
   Australia: ["Sydney, NSW", "Melbourne, VIC", "Brisbane, QLD", "Perth, WA", "Remote, Australia"],
 };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true, assistSound: true, roleEmail: true, activityEmail: true };
+const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true, assistSound: true, roleEmail: true, activityEmail: true, assistUpdates: true, assistRoundup: true, assistEmail: true, assistDesktop: false };
 
 // Notification sound: a bright, rounded two-note "ba-ding" (a mallet-like tone rising a fifth),
 // made in the browser so there's no sound file to load. Used for new messages and when the
@@ -1482,14 +1482,15 @@ function NotificationsTab({ S, toast }) {
   const hasNotif = typeof Notification !== "undefined";
   const [deskBlocked, setDeskBlocked] = useState(hasNotif && Notification.permission === "denied");
   // Turning desktop alerts on asks the browser for permission first.
-  const toggleDesktop = async () => {
-    if (prefs.msgDesktop) { toggle("msgDesktop"); return; }
+  const toggleDesktop = async (key = "msgDesktop") => {
+    if (prefs[key]) { toggle(key); return; }
     if (!hasNotif) { toast("This browser doesn't support desktop alerts"); return; }
     let perm = Notification.permission;
     if (perm === "default") { try { perm = await Notification.requestPermission(); } catch (e) { perm = "denied"; } }
-    if (perm === "granted") setPrefs((p) => ({ ...p, msgDesktop: true }));
+    if (perm === "granted") setPrefs((p) => ({ ...p, [key]: true }));
     else setDeskBlocked(true);
   };
+  const assistOn = prefs.assistUpdates !== false;
   return (
     <Card>
       <SectionTitle title="In-app notifications" sub="Choose which activity shows up in your notification bell." size="text-lg" />
@@ -1506,12 +1507,21 @@ function NotificationsTab({ S, toast }) {
       <div className="flex flex-col gap-1 mt-4">
         <MsgPrefRow label="Play a sound" sub="A short “ba-ding” when a new message arrives." on={prefs.msgSound} onToggle={() => toggle("msgSound")}
           extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
-        <MsgPrefRow label="Assistant sound" sub="The same sound when the assistant replies to you or finishes something you approved." on={prefs.assistSound !== false} onToggle={() => toggle("assistSound")} />
         <MsgPrefRow label="Email me" sub="An email when a candidate replies to you (one per burst of messages), with a link straight to the chat." on={prefs.msgEmail !== false} onToggle={() => toggle("msgEmail")} />
         {S.role === "recruiter" && <MsgPrefRow label="Activity emails" sub="An email when someone else moves your candidates, books or changes their interviews, gives you a task, assigns you a candidate or leaves a note; plus team placements and congratulations." on={prefs.activityEmail !== false} onToggle={() => toggle("activityEmail")} />}
         {S.role === "recruiter" && <MsgPrefRow label="Role emails" sub="An email when a new role opens, when a role goes on hold, reopens or closes, and when a role is added to your worklist." on={prefs.roleEmail !== false} onToggle={() => toggle("roleEmail")} />}
         <MsgPrefRow label="Desktop alerts" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when a message arrives while ProNext is in another tab."}
-          on={prefs.msgDesktop && !deskBlocked} onToggle={toggleDesktop} />
+          on={prefs.msgDesktop && !deskBlocked} onToggle={() => toggleDesktop("msgDesktop")} />
+      </div>
+      <div className="mt-6"><SectionTitle title="Assistant updates" sub="The assistant keeps you posted about your own candidates, roles and tasks: replies, people interested in your outreach, stage changes and client feedback, X-ray searches and other jobs finishing, interview and task reminders, and a round-up at the end of each weekday." size="text-lg" /></div>
+      <div className="flex flex-col gap-1 mt-4">
+        <MsgPrefRow label="Updates from the assistant" sub="They appear in the assistant panel (the ✨ button) with a red badge." on={assistOn} onToggle={() => toggle("assistUpdates")} />
+        {assistOn && <MsgPrefRow label="End-of-day round-up" sub="Weekdays around 5:30pm: what moved today and what to pick up first tomorrow, with reminders to approve." on={prefs.assistRoundup !== false} onToggle={() => toggle("assistRoundup")} />}
+        <MsgPrefRow label="Assistant sound" sub="The “ba-ding” when an update arrives, when the assistant replies to you, or when it finishes something you approved." on={prefs.assistSound !== false} onToggle={() => toggle("assistSound")}
+          extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
+        {assistOn && <MsgPrefRow label="Email me updates I haven't seen" sub="If you don't see an update in ProNext within a few minutes, it's emailed to you (several at once go in one email). Things another email already tells you about aren't emailed twice." on={prefs.assistEmail !== false} onToggle={() => toggle("assistEmail")} />}
+        {assistOn && <MsgPrefRow label="Desktop pop-ups" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when an update arrives while ProNext is in another tab."}
+          on={!!prefs.assistDesktop && !deskBlocked} onToggle={() => toggleDesktop("assistDesktop")} />}
       </div>
       <Btn kind="primary" className="mt-4" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save preferences"}</Btn>
     </Card>
@@ -1897,11 +1907,14 @@ async function runProposal(S, p) {
 const gmailComposeUrl = (to, subject, body) => "https://mail.google.com/mail/?view=cm&fs=1" + (to ? "&to=" + encodeURIComponent(to) : "") + "&su=" + encodeURIComponent(subject || "") + "&body=" + encodeURIComponent(String(body || "").slice(0, 6000));
 // Ask the assistant from anywhere in the app: window.dispatchEvent(new CustomEvent("pronext-assistant", { detail: { text, jobId } })).
 const askAssistant = (text, extra) => { try { window.dispatchEvent(new CustomEvent("pronext-assistant", { detail: { text, ...(extra || {}) } })); } catch (e) { /* old browser */ } };
-function AssistantPanel({ S, badges, pageCtx }) {
+function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRefreshUpdates, goUpdate }) {
   const desktop = useDesktop();
   const [open, setOpen] = useState(false);
   const [threads, setThreads] = useState(null);
   const [showList, setShowList] = useState(false);
+  const [showUpdates, setShowUpdates] = useState(false);
+  const [freshIds, setFreshIds] = useState(() => new Set()); // unseen when you opened the updates
+  const unseenUpdates = updates.filter((u) => !u.seen_at).length;
   const [threadId, setThreadId] = useState(() => { try { return sessionStorage.getItem(ASSIST_KEY + ".thread." + S.me.id) || null; } catch (e) { return null; } });
   const [msgs, setMsgs] = useState([]);
   const [mode, setMode] = useState("work");
@@ -1922,6 +1935,7 @@ function AssistantPanel({ S, badges, pageCtx }) {
   useEffect(() => {
     if (!open) return;
     loadThreads();
+    if (unseenUpdates > 0 && !msgs.length) { openUpdates(); return; }
     if (freshBrief && !msgs.length) { openThread(freshBrief); return; }
     if (threadId && !msgs.length) S.sb("/rest/v1/assistant_threads?select=messages,mode&id=eq." + threadId).then((r) => { if (r && r[0]) { setMsgs(r[0].messages || []); setMode(r[0].mode || "work"); } else setThreadId(null); }).catch(() => {});
   }, [open]); // eslint-disable-line
@@ -1936,9 +1950,9 @@ function AssistantPanel({ S, badges, pageCtx }) {
       loadThreads();
     } catch (e) { /* the chat still works; it just isn't saved */ }
   };
-  const newChat = () => { setThreadId(null); setThreadJob(null); setMsgs([]); setShowList(false); setMode("work"); };
+  const newChat = () => { setThreadId(null); setThreadJob(null); setMsgs([]); setShowList(false); setShowUpdates(false); setMode("work"); };
   const openThread = (t) => {
-    setShowList(false); setThreadId(t.id); setThreadJob(t.job_id || null); setMsgs([]);
+    setShowList(false); setShowUpdates(false); setThreadId(t.id); setThreadJob(t.job_id || null); setMsgs([]);
     S.sb("/rest/v1/assistant_threads?select=messages,mode&id=eq." + t.id).then((r) => { if (r && r[0]) { setMsgs(r[0].messages || []); setMode(r[0].mode || "work"); } }).catch(() => {});
     if (t.kind === "brief" && !t.seen_at) S.sb("/rest/v1/assistant_threads?id=eq." + t.id, { method: "PATCH", body: { seen_at: new Date().toISOString() } }).then(loadThreads).catch(() => {});
   };
@@ -2015,11 +2029,41 @@ function AssistantPanel({ S, badges, pageCtx }) {
   useEffect(() => {
     try { const u = new URL(window.location.href); if (u.searchParams.get("gmail") === "connected") { u.searchParams.delete("gmail"); window.history.replaceState(null, "", u.toString()); S.toast("Gmail connected. Save to Gmail drafts now works on email cards."); } } catch (e) { /* ignore */ }
   }, []); // eslint-disable-line
+  // Updates view: what the assistant told you about; opening it marks them seen (they keep a
+  // "New" mark until you leave the view).
+  const openUpdates = () => {
+    setFreshIds(new Set(updates.filter((u) => !u.seen_at).map((u) => u.id)));
+    setShowUpdates(true); setShowList(false);
+    if (onRefreshUpdates) onRefreshUpdates();
+    if (onUpdatesSeen) onUpdatesSeen();
+  };
+  const pickUpdate = (u) => {
+    const l = u.link || {};
+    if (l.threadId) { setShowUpdates(false); openThread({ id: l.threadId, kind: u.kind }); return; }
+    if (goUpdate) goUpdate(l);
+    if (!desktop) setOpen(false);
+  };
+  // From a desktop pop-up, or a link in an update email (?assistant=<conversation id>).
+  useEffect(() => {
+    const f = () => { setOpen(true); openUpdates(); };
+    window.addEventListener("pronext-assistant-updates", f);
+    return () => window.removeEventListener("pronext-assistant-updates", f);
+  }); // eslint-disable-line
+  useEffect(() => {
+    try {
+      const u = new URL(window.location.href), id = u.searchParams.get("assistant");
+      if (!id) return;
+      u.searchParams.delete("assistant"); window.history.replaceState(null, "", u.toString());
+      setOpen(true); setShowUpdates(false);
+      if (/^[0-9a-f-]{36}$/i.test(id)) setTimeout(() => openThread({ id, kind: "roundup" }), 0);
+      else setTimeout(openUpdates, 300);
+    } catch (e) { /* ignore */ }
+  }, []); // eslint-disable-line
   const onJob = pageCtx && pageCtx.jobId ? S.jobs.find((j) => j.id === pageCtx.jobId) : null;
   const chips = mode === "brainstorm"
     ? ["Why are we losing candidates at offer stage?", "How do we win more fintech clients in the UK?", "What should we charge for contract roles?"]
     : [onJob ? "Close this role: what's blocking " + onJob.role + " and what do we do this week?" : "Which roles are closest to closing, and what's blocking each?", "What should I focus on today to get a hire?", "Draft an email to chase a client for feedback on my submitted candidates"];
-  const due = myTasks.length + myCheckins.length + myIvs.length + (unread ? 1 : 0) + (freshBrief ? 1 : 0);
+  const due = myTasks.length + myCheckins.length + myIvs.length + (unread ? 1 : 0) + (freshBrief ? 1 : 0) + unseenUpdates;
   const panelStyle = desktop ? { position: "fixed", right: 24, bottom: 88, width: 440, height: "min(700px, calc(100vh - 120px))", zIndex: 45 } : { position: "fixed", inset: 0, zIndex: 60 };
   const shownThreads = (threads || []).filter((t) => (!q.trim() || t.title.toLowerCase().includes(q.trim().toLowerCase()))
     && (filter === "all" || (filter === "brief" ? t.kind === "brief" : onJob && t.job_id === onJob.id)));
@@ -2035,12 +2079,46 @@ function AssistantPanel({ S, badges, pageCtx }) {
       {open && (
         <div className="flex flex-col overflow-hidden" style={{ ...panelStyle, background: "#fff", borderRadius: desktop ? 16 : 0, border: desktop ? `1px solid ${C.line}` : "none", boxShadow: "0 16px 40px rgba(20,32,27,0.18)" }}>
           <div className="flex items-center gap-2 px-3 py-3 shrink-0" style={{ background: C.side, color: "#fff" }}>
-            <button onClick={() => setShowList((v) => !v)} aria-label="Conversations" title="Saved conversations" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showList ? "rgba(255,255,255,0.12)" : "transparent" }}><ListTodo size={17} /></button>
+            <button onClick={() => { setShowList((v) => !v); setShowUpdates(false); }} aria-label="Conversations" title="Saved conversations" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showList ? "rgba(255,255,255,0.12)" : "transparent" }}><ListTodo size={17} /></button>
+            <button onClick={() => (showUpdates ? setShowUpdates(false) : openUpdates())} aria-label="Updates" title="Updates from the assistant" className="relative w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showUpdates ? "rgba(255,255,255,0.12)" : "transparent" }}>
+              <Bell size={17} />
+              {unseenUpdates > 0 && <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{unseenUpdates > 9 ? "9+" : unseenUpdates}</span>}
+            </button>
             <div className="flex-1 min-w-0"><div className="text-sm font-semibold">Assistant</div><div className="text-[11px] truncate" style={{ color: "#A9BBB1" }}>{mode === "brainstorm" ? "Brainstorm: thinking with you, no actions" : "Looks things up itself · nothing happens until you approve"}</div></div>
             <button onClick={newChat} className="text-xs rounded-full px-2.5 py-1" style={{ border: "1px solid rgba(255,255,255,0.25)", color: "#fff" }}>+ New</button>
             <button onClick={() => setOpen(false)} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center"><X size={18} /></button>
           </div>
-          {showList ? (
+          {showUpdates ? (
+            <div className="flex-1 overflow-y-auto px-3 py-3" style={{ background: C.canvas }}>
+              <div className="flex items-center justify-between mb-2 px-1">
+                <div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>UPDATES · LAST 7 DAYS</div>
+                <button onClick={() => { S.goProfile("notifications"); if (!desktop) setOpen(false); }} className="text-xs font-medium" style={{ color: C.em }}>Settings</button>
+              </div>
+              {!updates.length && (
+                <div className="rounded-xl p-4 text-sm text-center" style={{ background: "#fff", border: `1px dashed ${C.line}`, color: C.ink2 }}>
+                  Nothing yet. I'll let you know here when something happens with your candidates, roles or tasks, when a search finishes, before interviews, and with a round-up each weekday evening.
+                </div>
+              )}
+              <div className="flex flex-col gap-1.5">
+                {updates.map((u) => {
+                  const fresh = freshIds.has(u.id);
+                  const icon = u.kind === "job" ? CheckCircle2 : u.kind === "reminder" ? Clock : u.kind === "roundup" ? Sparkles : Bell;
+                  const Icon = icon;
+                  return (
+                    <button key={u.id} onClick={() => pickUpdate(u)} className="w-full text-left rounded-xl px-3 py-2.5 flex items-start gap-2.5"
+                      style={{ background: fresh ? C.emTint : "#fff", border: `1px solid ${fresh ? C.em : C.line}` }}>
+                      <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: fresh ? "#fff" : C.canvas }}><Icon size={14} color={u.kind === "reminder" ? "#D9573B" : C.em} /></span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm font-medium leading-snug">{u.title}{fresh && <span className="ml-1.5 text-[10px] rounded-full px-1.5 py-0.5 align-middle" style={{ background: "#D9573B", color: "#fff" }}>New</span>}</span>
+                        {u.body && <span className="block text-xs mt-0.5 leading-snug" style={{ color: C.ink2, whiteSpace: "pre-line", display: "-webkit-box", WebkitLineClamp: u.kind === "roundup" ? 6 : 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{u.body}</span>}
+                        <span className="block text-[11px] mt-1" style={{ color: C.ink3 }}>{ago(new Date(u.created_at).getTime())}{u.kind === "roundup" ? " · Open the round-up" : ""}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : showList ? (
             <div className="flex-1 overflow-y-auto px-3 py-3" style={{ background: C.canvas }}>
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search conversations" className="w-full text-sm rounded-lg border px-3 py-2 mb-2 outline-none" style={{ borderColor: C.line, background: "#fff" }} />
               <div className="flex gap-1.5 mb-2">
@@ -2106,7 +2184,7 @@ function AssistantPanel({ S, badges, pageCtx }) {
             {busy && <div className="text-sm" style={{ color: C.ink3 }}>{mode === "brainstorm" ? "Thinking" : "Looking into it"} <InlineDots /></div>}
           </div>
           )}
-          {!showList && (
+          {!showList && !showUpdates && (
           <div className="p-3 shrink-0" style={{ borderTop: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-1.5 mb-2">
               {[["work", "Work"], ["brainstorm", "Brainstorm"]].map(([k, l]) => <button key={k} onClick={() => setMode(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: mode === k ? C.em : C.line, background: mode === k ? C.emTint : "#fff", color: mode === k ? C.em : C.ink2 }}>{l}</button>)}
@@ -10978,6 +11056,40 @@ export default function App() {
     window.addEventListener("keydown", unlockChime, { once: true });
     return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("harbor:messages-read", onRead); };
   }, [status]); // eslint-disable-line
+  // Assistant updates (assistant_updates): every 20 seconds (and when the tab comes back) the
+  // last week's updates for you; anything new plays the sound, shows a toast or, with ProNext in
+  // another tab, a desktop pop-up if you turned them on. Unseen ones count on the assistant button.
+  const [updates, setUpdates] = useState([]);
+  const updRef = React.useRef({ seen: null, onNew: null });
+  const loadUpdates = React.useCallback(async () => {
+    const s = alertRef.current.session;
+    if (!s) return;
+    try {
+      const since = new Date(Date.now() - 7 * 864e5).toISOString();
+      const rows = await sbFetch("/rest/v1/assistant_updates?select=id,kind,title,body,link,created_at,seen_at&created_at=gte." + encodeURIComponent(since) + "&order=created_at.desc&limit=60", { token: s.token });
+      if (!Array.isArray(rows)) return;
+      const r = updRef.current;
+      const fresh = r.seen ? rows.filter((u) => !u.seen_at && !r.seen.has(u.id)) : [];
+      r.seen = new Set(rows.map((u) => u.id));
+      setUpdates(rows);
+      if (fresh.length && r.onNew) r.onNew(fresh);
+    } catch (e) { /* try again next time */ }
+  }, []);
+  React.useEffect(() => {
+    if (status !== "ready") return;
+    loadUpdates();
+    const t = setInterval(loadUpdates, 20000);
+    const onVis = () => { if (document.visibilityState === "visible") loadUpdates(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, [status]); // eslint-disable-line
+  const markUpdatesSeen = async () => {
+    const s = alertRef.current.session;
+    if (!s || !updates.some((u) => !u.seen_at)) return;
+    const at = new Date().toISOString();
+    setUpdates((list) => list.map((u) => (u.seen_at ? u : { ...u, seen_at: at })));
+    try { await sbFetch("/rest/v1/assistant_updates?seen_at=is.null", { method: "PATCH", body: { seen_at: at }, token: s.token }); } catch (e) { /* shown as seen here; tried again next time */ }
+  };
   React.useEffect(() => {
     if (isPublic || setupToken) return;
     document.title = (msgUnread > 0 ? "(" + msgUnread + ") " : "") + "ProNext";
@@ -11016,6 +11128,22 @@ export default function App() {
       } catch (e) { /* not shown */ }
     }
     reload();
+  };
+  updRef.current.onNew = (fresh) => {
+    const prefs = { ...DEFAULT_NOTIF_PREFS, ...(me.notificationPrefs || {}) };
+    // Chat replies already ring and pop up through the messages check above.
+    const news = fresh.filter((u) => !(u.link && u.link.page === "messages"));
+    if (!news.length) return;
+    playAssistChime(me);
+    const first = news[0];
+    const title = news.length > 1 ? news.length + " updates from your assistant" : first.title;
+    if (document.visibilityState === "visible") toast("✨ " + title);
+    else if (prefs.assistDesktop && typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try {
+        const n = new Notification(title, { body: news.length > 1 ? news.slice(0, 3).map((u) => u.title).join("\n") : String(first.body || "").slice(0, 140), tag: "pronext-assistant", icon: "/assets/icon.png" });
+        n.onclick = () => { window.focus(); window.dispatchEvent(new Event("pronext-assistant-updates")); n.close(); };
+      } catch (e) { /* not shown */ }
+    }
   };
   const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { S.error(e.message); throw e; } };
   const aiCall = async (action, payload) => {
@@ -11475,7 +11603,9 @@ export default function App() {
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
       <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={badges} />
       <Celebration S={S} />
-      <AssistantPanel S={S} badges={badges} pageCtx={{ jobId: page === "jobDetail" ? jobId : null, candidateId: candidate ? candidate.id : null }} />
+      <AssistantPanel S={S} badges={badges} pageCtx={{ jobId: page === "jobDetail" ? jobId : null, candidateId: candidate ? candidate.id : null }}
+        updates={updates} onUpdatesSeen={markUpdatesSeen} onRefreshUpdates={loadUpdates}
+        goUpdate={(l) => { if (!l) return; if (l.page === "jobDetail" && l.jobId) S.openJob(l.jobId); else if (l.candidateId && l.page === "candidates") { setPageRaw("candidates"); setCandId(l.candidateId); } else if (l.page) setPage(l.page); }} />
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />

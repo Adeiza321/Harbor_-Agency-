@@ -9,6 +9,7 @@ A recruitment-agency dashboard with three role views (Rec Ops, Recruiter, Admin)
 - `assets/` — the built CSS and JavaScript (hashed file names), logo and icon. `build/` is scratch space for the build and isn't committed.
 - `supabase/migrations/` — changes applied to the live database after `schema.sql` was written, in date order.
 - `supabase/functions/candidate-photo/` — saves the photo a candidate adds on their candidate page.
+- `supabase/functions/assistant-updates/` — emails people the assistant updates they haven't seen in ProNext (cron every 5 minutes; updates come from database triggers, reminders and the end-of-day round-up — see `migrations/20261015h_assistant_updates.sql`).
 - `supabase/functions/chat-file/` — files, pictures and voice messages in chats (private `chat-files` bucket).
 - `supabase/functions/inbox/` — Inbox actions for Rec Ops / Admins: assign an application to a recruiter (creates the candidate, copies the CV, puts them on the job), dismiss, restore, open the CV.
 - Public jobs board: `/jobs/` (Indeed-style list and detail), each job at `/jobs/<link_slug>/`. `.github/workflows/pages.yml` publishes the site every push and every hour with `scripts/build-job-pages.mjs`, which writes a real page per open job with Google for Jobs `JobPosting` data, plus `sitemap.xml` and `robots.txt` (Pages source must be set to "GitHub Actions"). `404.html` is a copy of `index.html` so `/jobs/...` addresses still open the app.
