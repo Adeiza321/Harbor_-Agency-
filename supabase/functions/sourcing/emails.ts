@@ -6,6 +6,8 @@
 //     than outreach.xrayEmailsPerDay lookups a day (the daily cap stands in for the approval).
 //     When Apollo has nothing usable, ContactOut is tried by the same profile (contactout.ts, CONTACTOUT_API_KEY),
 //     asking for work and personal emails anywhere; every address found is kept in data.emails_found.
+//     Then People Data Labs (pdl.ts, PDL_API_KEY) by the same profile, for anyone still without one:
+//     1 PDL credit per person it has an email for, never more than outreach.pdlEmailsPerDay a day.
 // Only verified work emails or Apollo-found personal emails are kept. Each person with an email gets the same short, personal draft as
 // Apollo's own prospects, ready for the usual approve-and-send flow (nothing is sent from here).
 
@@ -14,6 +16,7 @@ import { apolloKey, bestEmail, matchByLinkedIn } from "./apollo.ts";
 import { jobBrief } from "./prospects.ts";
 import { countryCode, regionOf } from "./regions.ts";
 import { contactoutByLinkedIn, contactoutKey } from "./contactout.ts";
+import { bestPdlEmail, pdlByLinkedIn, pdlKey } from "./pdl.ts";
 import { emailHash } from "./send.ts";
 import { anonymizeJd, sameCompany, type Settings } from "./common.ts";
 
@@ -77,6 +80,43 @@ async function suppressed(admin: any, email: string) {
   return !!data;
 }
 
+// People Data Labs lookups used today (counted from the prospects tried today).
+async function pdlUsedToday(admin: any) {
+  const since = new Date(); since.setUTCHours(0, 0, 0, 0);
+  const { count } = await admin.from("prospects").select("id", { count: "exact", head: true }).gte("data->email_lookup->>pdl", since.toISOString());
+  return count || 0;
+}
+
+// People Data Labs by LinkedIn profile, for X-ray people still without an email (within today's
+// allowance). The client's own staff and unsubscribed addresses are left out, like Apollo's.
+export async function pdlEmails(admin: any, ids: string[], s: Settings, agencyName: string) {
+  if (!pdlKey() || !ids.length || s.pdlEmailsPerDay <= 0) return { tried: 0, found: 0, ids: [] as string[], errors: [] as string[] };
+  const left = Math.max(0, s.pdlEmailsPerDay - (await pdlUsedToday(admin)));
+  if (!left) return { tried: 0, found: 0, ids: [] as string[], errors: [] as string[], limit: true };
+  const { data: rows } = await admin.from("prospects").select("*,jobs(client)").in("id", ids).is("email", null).eq("status", "found").not("linkedin_url", "is", null).limit(200);
+  const list = (rows || []).filter((p: any) => !p.data?.email_lookup?.pdl).slice(0, left);
+  const found: string[] = [], errors: string[] = [];
+  for (const p of list) {
+    const lookup = { ...(p.data?.email_lookup || {}), pdl: new Date().toISOString() };
+    let m: any = null;
+    try { m = await pdlByLinkedIn(p.linkedin_url); }
+    catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); await admin.from("prospects").update({ data: { ...(p.data || {}), email_lookup: lookup } }).eq("id", p.id); if (/credit|refused|rate/i.test(errors[errors.length - 1])) break; continue; }
+    const best = bestPdlEmail(m);
+    const atClient = !!m && (sameCompany(m.company, p.jobs?.client) || false);
+    const good = !!best.email && okEmail(best.email) && !atClient && !(await suppressed(admin, best.email));
+    const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup,
+      ...(m ? { emails_found: { work: m.work_email ? [m.work_email] : [], personal: m.personal_emails }, ...(m.phones.length ? { phones: m.phones } : {}) } : {}),
+      ...(good ? { email_source: "People Data Labs (from their LinkedIn profile)", history: p.data?.history || m.history } : {}) } };
+    if (good) Object.assign(patch, { email: best.email, email_status: best.status, first_name: p.first_name || m.first_name || null, last_name: p.last_name || m.last_name || null,
+      title: p.title || m.title || null, company: p.company || m.company || null, location: p.location || [m.city, m.region].filter(Boolean).join(", ") || null });
+    await admin.from("prospects").update(patch).eq("id", p.id);
+    if (good) found.push(p.id);
+    await sleep(250);
+  }
+  if (found.length) await draftEmails(admin, found, s, agencyName);
+  return { tried: list.length, found: found.length, ids: found, errors };
+}
+
 // The paid part (after approval) plus the free part: every X-ray person on the job (or the ids).
 export async function findEmails(admin: any, o: { jobId?: string | null; ids?: string[] }, s: Settings, agencyName: string) {
   const gh = await findGithubEmails(admin, o, s, agencyName);
@@ -128,13 +168,18 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
     await sleep(600);
   }
   if (found.length) await draftEmails(admin, found, s, agencyName);
+  // Still nothing from Apollo or ContactOut: People Data Labs, within its daily allowance.
+  const pdl = await pdlEmails(admin, list.map((p) => p.id).filter((id) => !found.includes(id)), s, agencyName).catch((e) => ({ tried: 0, found: 0, ids: [] as string[], errors: [String((e as Error)?.message || e)] }));
+  errors.push(...pdl.errors);
+  found.push(...pdl.ids);
   const total = gh.found + found.length;
   const parts = [`Found ${total} email${total === 1 ? "" : "s"}`];
   if (list.length) parts.push(`${found.length - coFound} of ${list.length} LinkedIn ${list.length === 1 ? "person" : "people"} through Apollo (${credits} credit${credits === 1 ? "" : "s"} used)`);
   if (coTried) parts.push(`${coFound} of ${coTried} more through ContactOut`);
+  if (pdl.tried) parts.push(`${pdl.found} of ${pdl.tried} more through People Data Labs (${pdl.found} credit${pdl.found === 1 ? "" : "s"})`);
   if (gh.checked) parts.push(`${gh.found} of ${gh.checked} from public GitHub profiles (free)`);
   const why = [noMatch ? `${noMatch} not in Apollo` : "", unverified ? `${unverified} without a usable work or personal email` : ""].filter(Boolean).join(", ");
-  return { ok: true, found: total, apollo: found.length - coFound, contactout: coFound, github: gh.found, credits, ids: found,
+  return { ok: true, found: total, apollo: found.length - coFound - pdl.found, contactout: coFound, pdl: pdl.found, github: gh.found, credits, ids: found,
     message: parts.join(": ").replace(": ", ". ") + (why ? `. Not found: ${why}.` : ".") + (total ? " Review and approve them under the job to send." : ""),
     ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 3) } : {}) };
 }
@@ -157,6 +202,19 @@ export async function autoFindEmails(admin: any, s: Settings, agencyName: string
   const out: Record<string, unknown> = { leftToday: left, waiting: (rows || []).filter((p: any) => p.linkedin_url && !p.data?.email_lookup?.apollo).length };
   if (github.length || apollo.length) Object.assign(out, await findEmails(admin, { ids: [...github, ...apollo] }, s, agencyName));
   else out.message = left <= 0 && out.waiting ? `Today's limit of ${s.xrayEmailsPerDay} Apollo lookups is used up; the rest continue tomorrow.` : "No one is waiting for an email.";
+  // People Apollo (and ContactOut) already tried without an email: People Data Labs, best fits first.
+  if (pdlKey() && s.pdlEmailsPerDay > 0) {
+    let pq = admin.from("prospects").select("id,fit,data,jobs!inner(status)").is("email", null).eq("status", "found").not("linkedin_url", "is", null)
+      .not("data->email_lookup->>apollo", "is", null).is("data->email_lookup->>pdl", null).neq("jobs.status", "Closed").order("fit", { ascending: false }).limit(100);
+    if (o.ids && o.ids.length) pq = pq.in("id", o.ids); else if (o.jobId) pq = pq.eq("job_id", o.jobId);
+    if (!manual) pq = pq.gte("fit", s.xrayEmailMinFit);
+    const { data: retry } = await pq;
+    if (retry?.length) {
+      const r = await pdlEmails(admin, retry.map((p: any) => p.id), s, agencyName).catch((e) => ({ tried: 0, found: 0, ids: [], errors: [String((e as Error)?.message || e)] }));
+      out.pdl = { tried: r.tried, found: r.found, ...(r.errors.length ? { errors: r.errors.slice(0, 2) } : {}) };
+      if (r.tried) out.message = String(out.message || "") + ` People Data Labs: ${r.found} of ${r.tried} found.`;
+    }
+  }
   // Emails found without a note yet (e.g. found by an earlier version): write the usual draft.
   const { data: undrafted } = await admin.from("prospects").select("id").neq("source", "apollo").not("email", "is", null).is("body", null).eq("status", "found").limit(20);
   if (undrafted?.length) { await draftEmails(admin, undrafted.map((r: any) => r.id), s, agencyName); out.drafted = undrafted.length; }

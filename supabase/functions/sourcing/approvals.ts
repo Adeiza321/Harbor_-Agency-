@@ -4,20 +4,22 @@
 //   leads_fetch    the client-lead feed: up to postingsPerDay TheirStack postings, plus up to
 //                  the same number of Apollo lookups for hiring contacts' emails
 //   xray_emails    emails for people the X-ray search found on LinkedIn: 1 Apollo credit per email
+//   pdl_search     outside search for one job in People Data Labs: up to pdlPerSearch credits (1 per person returned)
 
 import type { Settings } from "./common.ts";
 
-export type Kind = "apollo_search" | "leads_fetch" | "xray_emails";
+export type Kind = "apollo_search" | "leads_fetch" | "xray_emails" | "pdl_search";
 
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
-export function estimate(kind: Kind, s: Settings, count = 0) {
+export function estimate(kind: Kind, s: Settings, count = 0): { apollo: number; theirstack: number; pdl?: number } {
+  if (kind === "pdl_search") return { apollo: 0, theirstack: 0, pdl: s.pdlPerSearch };
   if (kind === "apollo_search") return { apollo: s.prospectsPerJob, theirstack: 0 };
   if (kind === "xray_emails") return { apollo: count, theirstack: 0 };
   return { apollo: s.leads.postingsPerDay, theirstack: s.leads.postingsPerDay };
 }
-export const costText = (e: { apollo: number; theirstack: number }) =>
-  [e.theirstack ? `up to ${e.theirstack} TheirStack credits` : "", e.apollo ? `up to ${e.apollo} Apollo credits` : ""].filter(Boolean).join(" and ");
+export const costText = (e: { apollo: number; theirstack: number; pdl?: number }) =>
+  [e.theirstack ? `up to ${e.theirstack} TheirStack credits` : "", e.apollo ? `up to ${e.apollo} Apollo credits` : "", e.pdl ? `up to ${e.pdl} People Data Labs credits (1 per person returned, about $0.20–0.28 each)` : ""].filter(Boolean).join(" and ");
 
 async function alertAdmins(admin: any, req: any) {
   const key = Deno.env.get("BREVO_API_KEY"), from = Deno.env.get("BREVO_SENDER_EMAIL");

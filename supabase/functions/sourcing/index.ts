@@ -12,6 +12,8 @@ import { cleanGuide, startXray } from "./xray.ts";
 import { searchEngines, searchUsage } from "./search.ts";
 import { autoFindEmails, findEmails } from "./emails.ts";
 import { matchPool } from "./pool.ts";
+import { pdlKey } from "./pdl.ts";
+import { sourcePdl } from "./pdl_source.ts";
 
 // Sourcing and outreach for Pronext.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
@@ -19,6 +21,8 @@ import { matchPool } from "./pool.ts";
 //   public profiles on LinkedIn and, for technical roles, GitHub and technical sites, through free
 //   search engines only; and only if there are fewer strong fits than the setting does Pronext
 //   search Apollo (paid, Admin approval), reveal verified emails for the best matches and draft emails.
+//   People Data Labs (PDL_API_KEY, pdl.ts / pdl_source.ts): a paid people database searched for a job
+//   on request (Admin approval), and a last email lookup for X-ray people (within a daily allowance).
 //   Client side: a daily job feed (TheirStack) is matched against candidates who agreed to be
 //   presented anonymously; the hiring contact gets an anonymous pitch by email, or a LinkedIn
 //   note for a person to send (LinkedIn doesn't allow automated messages).
@@ -39,6 +43,7 @@ function connections() {
   return {
     anthropic: !!Deno.env.get("ANTHROPIC_API_KEY"),
     apollo: !!apolloKey(),
+    pdl: !!pdlKey(),
     theirstack: !!theirstackKey(),
     sender: provider(),
     clientSender: provider("client"),
@@ -224,6 +229,11 @@ Deno.serve(async (req: Request) => {
         status: "done", requested_by: me.id, decided_by: me.id, decided_at: new Date().toISOString(), result }).then(() => {}, () => {});
     };
     const runApproved = async (req: any) => {
+      if (req.kind === "pdl_search") {
+        const r: any = await sourcePdl(admin, req.job_id, s, agencyName);
+        if (s.approval === "auto" && r.ids?.length && !sendBlockers(s).length) await queueProspects(admin, r.ids, null, s, agencyName);
+        return r;
+      }
       if (req.kind === "xray_emails") return await findEmails(admin, { jobId: req.job_id, ids: Array.isArray(req.payload?.ids) ? req.payload.ids : [] }, s, agencyName);
       if (req.kind === "apollo_search") {
         const r: any = await sourceExternal(admin, req.job_id, s, { force: true });
@@ -269,6 +279,24 @@ Deno.serve(async (req: Request) => {
       if (isAdmin && !body.confirmed) return json({ ok: true, needsConfirm: true, costText: `up to ${s.prospectsPerJob} Apollo credits` + (chk.area ? `. Searching: ${chk.area}` : ""), title });
       if (isAdmin) { const r = await runApproved({ kind: "apollo_search", job_id: body.jobId }); await logDirect("apollo_search", body.jobId, title, { a: s.prospectsPerJob, t: 0 }, r); return json(r); }
       const { created } = await requestSpend(admin, "apollo_search", s, { jobId: body.jobId, title, requestedBy: me.id });
+      return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
+    }
+
+    // People Data Labs search for one job (paid): Admins confirm the cost, anyone else asks an Admin.
+    if (action === "search_pdl") {
+      if (!body.jobId) return json({ error: "jobId is required" }, 400);
+      const chk: any = await sourcePdl(admin, String(body.jobId), s, agencyName, { checkOnly: true });
+      if (!chk.needed) return json(chk);
+      const title = `Search People Data Labs for outside candidates: ${chk.jobTitle}${chk.client ? ", " + chk.client : ""}`;
+      const cost = `up to ${s.pdlPerSearch} People Data Labs credits (1 per person returned, about $0.20–0.28 each). Searching: ${chk.area}`;
+      if (isAdmin && !body.confirmed) return json({ ok: true, needsConfirm: true, costText: cost, title });
+      if (isAdmin) {
+        const r: any = await runApproved({ kind: "pdl_search", job_id: body.jobId });
+        await admin.from("spend_requests").insert({ kind: "pdl_search", job_id: body.jobId, title, est_apollo: 0, est_theirstack: 0, cost_text: `up to ${s.pdlPerSearch} People Data Labs credits`,
+          status: "done", requested_by: me.id, decided_by: me.id, decided_at: new Date().toISOString(), result: r }).then(() => {}, () => {});
+        return json(r);
+      }
+      const { created } = await requestSpend(admin, "pdl_search", s, { jobId: String(body.jobId), title, requestedBy: me.id });
       return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
     }
 
