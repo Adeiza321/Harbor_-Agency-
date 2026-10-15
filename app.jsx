@@ -199,30 +199,55 @@ const CITY_STATE_OPTIONS = {
   Australia: ["Sydney, NSW", "Melbourne, VIC", "Brisbane, QLD", "Perth, WA", "Remote, Australia"],
 };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true };
+const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true, assistSound: true };
 
-// New-message chime: two short soft notes made in the browser (no sound file to load).
-// Browsers only allow sound after the person has clicked or typed on the page once, so the
-// first click "unlocks" it (see unlockChime).
-let chimeCtx = null;
+// Notification sound: a bright, rounded two-note "ba-ding" (a mallet-like tone rising a fifth),
+// made in the browser so there's no sound file to load. Used for new messages and when the
+// assistant replies or finishes an action. Browsers only allow sound after the person has
+// clicked or typed on the page once, so the first click "unlocks" it (see unlockChime).
+let chimeCtx = null, chimeOut = null;
 function unlockChime() {
-  try { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; chimeCtx = chimeCtx || new AC(); if (chimeCtx.state === "suspended") chimeCtx.resume(); } catch (e) { /* no sound */ }
-}
-function playChime() {
   try {
-    unlockChime(); if (!chimeCtx) return;
-    const t = chimeCtx.currentTime;
-    [[880, 0], [1318.5, 0.13]].forEach(([freq, delay]) => {
-      const o = chimeCtx.createOscillator(), g = chimeCtx.createGain();
-      o.type = "sine"; o.frequency.value = freq;
-      g.gain.setValueAtTime(0.0001, t + delay);
-      g.gain.exponentialRampToValueAtTime(0.16, t + delay + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + delay + 0.38);
-      o.connect(g); g.connect(chimeCtx.destination);
-      o.start(t + delay); o.stop(t + delay + 0.42);
-    });
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    if (!chimeCtx) {
+      chimeCtx = new AC();
+      // A light compressor keeps it loud and clear without crackling on laptop speakers.
+      const comp = chimeCtx.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.knee.value = 8; comp.ratio.value = 4; comp.attack.value = 0.002; comp.release.value = 0.12;
+      chimeOut = chimeCtx.createGain(); chimeOut.gain.value = 0.9;
+      chimeOut.connect(comp); comp.connect(chimeCtx.destination);
+    }
+    if (chimeCtx.state === "suspended") chimeCtx.resume();
   } catch (e) { /* no sound */ }
 }
+function chimeNotes() {
+  const t = chimeCtx.currentTime + 0.01;
+  // [pitch, start, length, loudness]: a short low note, then the higher note that rings a bit longer.
+  [[659.25, 0, 0.22, 0.75], [987.77, 0.11, 0.42, 0.9]].forEach(([freq, delay, len, peak]) => {
+    // Mallet tone: the main note plus a quieter, faster-fading overtone (4x) for the "tap".
+    [[1, peak, len], [4, peak * 0.22, len * 0.28]].forEach(([mult, amp, dur]) => {
+      const o = chimeCtx.createOscillator(), g = chimeCtx.createGain();
+      o.type = "sine"; o.frequency.value = freq * mult;
+      g.gain.setValueAtTime(0.0001, t + delay);
+      g.gain.exponentialRampToValueAtTime(amp, t + delay + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + delay + dur);
+      o.connect(g); g.connect(chimeOut);
+      o.start(t + delay); o.stop(t + delay + dur + 0.05);
+    });
+  });
+}
+let chimeLast = 0;
+function playChime() {
+  try {
+    if (Date.now() - chimeLast < 700) return; // never two on top of each other
+    chimeLast = Date.now();
+    unlockChime(); if (!chimeCtx) return;
+    if (chimeCtx.state === "suspended") chimeCtx.resume().then(chimeNotes).catch(() => {});
+    else chimeNotes();
+  } catch (e) { /* no sound */ }
+}
+// The assistant's sound, unless you turned it off (My profile > Notifications).
+const playAssistChime = (me) => { if (((me && me.notificationPrefs) || {}).assistSound !== false) playChime(); };
 const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null });
 
 function mapAll(d) {
@@ -1399,8 +1424,9 @@ function NotificationsTab({ S, toast }) {
       <div className="text-xs mt-3" style={{ color: C.ink3 }}>Email alerts aren't set up yet — these preferences will also cover email once they are.</div>
       <div className="mt-6"><SectionTitle title="New messages" sub="When a candidate replies to you. The number of unread messages always shows next to Messages in the menu." size="text-lg" /></div>
       <div className="flex flex-col gap-1 mt-4">
-        <MsgPrefRow label="Play a sound" sub="A short chime when a new message arrives." on={prefs.msgSound} onToggle={() => toggle("msgSound")}
+        <MsgPrefRow label="Play a sound" sub="A short “ba-ding” when a new message arrives." on={prefs.msgSound} onToggle={() => toggle("msgSound")}
           extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
+        <MsgPrefRow label="Assistant sound" sub="The same sound when the assistant replies to you or finishes something you approved." on={prefs.assistSound !== false} onToggle={() => toggle("assistSound")} />
         <MsgPrefRow label="Email me" sub="An email when a candidate replies to you (one per burst of messages), with a link straight to the chat." on={prefs.msgEmail !== false} onToggle={() => toggle("msgEmail")} />
         <MsgPrefRow label="Desktop alerts" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when a message arrives while ProNext is in another tab."}
           on={prefs.msgDesktop && !deskBlocked} onToggle={toggleDesktop} />
@@ -1856,7 +1882,7 @@ function AssistantPanel({ S, badges, pageCtx }) {
       const r = await S.sb("/functions/v1/assistant", { method: "POST", body: { messages: history, mode: (opts && opts.mode) || mode, page, tz: MY_TZ, smart: !!(opts && opts.smart) }, timeout: 150000 });
       list = [...next, { role: "assistant", content: r.text || "", proposals: (r.proposals || []).map((p) => ({ ...p, state: p.tool === "propose_email" ? "draft" : "waiting" })) }];
     } catch (e) { list = [...next, { role: "assistant", content: e.message || "Something went wrong. Try again.", error: true }]; }
-    setMsgs(list); setBusy(false);
+    setMsgs(list); setBusy(false); playAssistChime(S.me);
     save(list, base.length ? null : ask);
   };
   // "Close this role with AI" and other buttons elsewhere start a fresh conversation here.
@@ -1865,17 +1891,20 @@ function AssistantPanel({ S, badges, pageCtx }) {
     window.addEventListener("pronext-assistant", f);
     return () => window.removeEventListener("pronext-assistant", f);
   }); // eslint-disable-line
-  const decide = async (mi, pi, approve) => {
+  // quiet: no sound for this one (Approve all plays once at the end instead).
+  const decide = async (mi, pi, approve, quiet) => {
     const patchAll = (patch) => { const list = msgsRef.current.map((x, a) => (a !== mi ? x : { ...x, proposals: x.proposals.map((p, b) => (b !== pi ? p : { ...p, ...patch })) })); setMsgs(list); return list; };
     if (!approve) { save(patchAll({ state: "declined" })); return; }
     patchAll({ state: "working" });
     try { const note = await runProposal(S, msgsRef.current[mi].proposals[pi]); save(patchAll({ state: "approved", note })); }
     catch (e) { save(patchAll({ state: "failed", note: e.message || "That didn't work." })); }
+    if (!quiet) playAssistChime(S.me);
   };
   // A plan: approve every waiting action in one go, one after another.
   const approveAll = async (mi) => {
     const list = msgsRef.current[mi].proposals || [];
-    for (let pi = 0; pi < list.length; pi++) if (list[pi].state === "waiting") await decide(mi, pi, true);
+    for (let pi = 0; pi < list.length; pi++) if (list[pi].state === "waiting") await decide(mi, pi, true, true);
+    playAssistChime(S.me);
   };
   const copy = (t) => { try { navigator.clipboard.writeText(t).then(() => S.toast("Copied")).catch(() => S.toast("Select the text and copy it")); } catch (e) { S.toast("Select the text and copy it"); } };
   // Save an email card to the person's own Gmail drafts. First time: Google asks for the
@@ -10653,6 +10682,7 @@ export default function App() {
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("harbor:messages-read", onRead);
     window.addEventListener("pointerdown", unlockChime, { once: true });
+    window.addEventListener("keydown", unlockChime, { once: true });
     return () => { stop = true; clearInterval(t); document.removeEventListener("visibilitychange", onVis); window.removeEventListener("harbor:messages-read", onRead); };
   }, [status]); // eslint-disable-line
   React.useEffect(() => {
