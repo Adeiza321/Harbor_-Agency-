@@ -17,6 +17,8 @@ export { cleanLocation };
 import { jobCountryNames } from "./regions.ts";
 
 export type AreaAnswer = { inArea: "yes" | "no" | "unsure"; note: string };
+// Problems from the last checks (shown by the sweep), so a failing AI call never passes silently.
+export const areaErrors: string[] = [];
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
 const fullyRemote = (job: any) => /remote/i.test(String(job.work_setup || "")) && !/hybrid/i.test(String(job.work_setup || ""));
@@ -81,7 +83,8 @@ export async function checkPlaces(admin: any, job: any, area: any, places: strin
       const batch = ask.slice(i, i + 40);
       const head = `Office: ${o.text || "(not given)"}\nWork setup: ${job.work_setup || "on-site"}\nSearch area: ${area?.summary || o.text}\n\nPlaces (i | place):\n`;
       let res: any = null;
-      try { res = await askAI(sys, head + batch.map((p, n) => `${n} | ${p}`).join("\n"), 3000); } catch (e) { console.error("area check", String((e as Error)?.message || e)); }
+      try { res = await askAI(sys, head + batch.map((p, n) => `${n} | ${p}`).join("\n"), 3000); } catch (e) { areaErrors.push(String((e as Error)?.message || e).slice(0, 200)); console.error("area check", areaErrors[areaErrors.length - 1]); }
+      if (res && !Array.isArray(res?.results)) areaErrors.push("unexpected answer: " + JSON.stringify(res).slice(0, 200));
       for (const r of Array.isArray(res?.results) ? res.results : []) {
         const p = batch[Number(r?.i)];
         if (!p) continue;

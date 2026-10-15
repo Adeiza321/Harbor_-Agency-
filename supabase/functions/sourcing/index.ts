@@ -14,6 +14,7 @@ import { autoFindEmails, findEmails, skipTooFar } from "./emails.ts";
 import { matchPool } from "./pool.ts";
 import { pdlKey } from "./pdl.ts";
 import { contactoutKey } from "./contactout.ts";
+import { areaErrors } from "./area_check.ts";
 import { sourcePdl } from "./pdl_source.ts";
 
 // Sourcing and outreach for Pronext.
@@ -127,7 +128,7 @@ async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
 async function locationSweep(admin: any, dry = false) {
   const { data } = await admin.from("prospects").select("id,job_id,location,jobs!inner(status)").eq("status", "found").not("location", "is", null).neq("jobs.status", "Closed").limit(2000);
   const ids: any = await skipTooFar(admin, (data || []).map((p: any) => ({ id: p.id, job_id: p.job_id, location: p.location })), dry);
-  return { checked: (data || []).length, [dry ? "wouldSkip" : "skipped"]: ids.length, ids, ...(dry ? { report: ids.report } : {}) };
+  return { checked: (data || []).length, [dry ? "wouldSkip" : "skipped"]: ids.length, ids, ...(dry ? { report: ids.report } : {}), ...(areaErrors.length ? { errors: areaErrors.slice(-5) } : {}) };
 }
 
 // Data minimisation: prospects nobody engaged with are deleted after the retention period, and
