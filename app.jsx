@@ -1865,6 +1865,28 @@ function AssistantPanel({ S, badges, pageCtx }) {
     for (let pi = 0; pi < list.length; pi++) if (list[pi].state === "waiting") await decide(mi, pi, true);
   };
   const copy = (t) => { try { navigator.clipboard.writeText(t).then(() => S.toast("Copied")).catch(() => S.toast("Select the text and copy it")); } catch (e) { S.toast("Select the text and copy it"); } };
+  // Save an email card to the person's own Gmail drafts. First time: Google asks for the
+  // "create drafts" permission, then comes back here.
+  const toDrafts = async (mi, pi) => {
+    const p = msgsRef.current[mi].proposals[pi];
+    const patchAll = (patch) => { const list = msgsRef.current.map((x, a) => (a !== mi ? x : { ...x, proposals: x.proposals.map((q, b) => (b !== pi ? q : { ...q, ...patch })) })); setMsgs(list); return list; };
+    patchAll({ state: "working" });
+    try {
+      const r = await S.gmail("draft", { to: p.input.to || "", subject: p.input.subject || "", body: p.input.body || "" });
+      if (r.needConnect) {
+        patchAll({ state: "draft" });
+        const back = window.location.origin + window.location.pathname + "?gmail=connected";
+        const c = await S.gmail("connect", { returnTo: back });
+        S.toast("Allow Pronext to create Gmail drafts, then press Save to Gmail drafts again");
+        setTimeout(() => { window.location.href = c.url; }, 900);
+        return;
+      }
+      save(patchAll({ state: "approved", note: "Saved to your Gmail drafts" + (r.email ? " (" + r.email + ")" : ""), url: r.url }));
+    } catch (e) { patchAll({ state: "draft" }); S.error(e.message || "Couldn't save the draft"); }
+  };
+  useEffect(() => {
+    try { const u = new URL(window.location.href); if (u.searchParams.get("gmail") === "connected") { u.searchParams.delete("gmail"); window.history.replaceState(null, "", u.toString()); S.toast("Gmail connected. Save to Gmail drafts now works on email cards."); } } catch (e) { /* ignore */ }
+  }, []); // eslint-disable-line
   const onJob = pageCtx && pageCtx.jobId ? S.jobs.find((j) => j.id === pageCtx.jobId) : null;
   const chips = mode === "brainstorm"
     ? ["Why are we losing candidates at offer stage?", "How do we win more fintech clients in the UK?", "What should we charge for contract roles?"]
@@ -1942,10 +1964,10 @@ function AssistantPanel({ S, badges, pageCtx }) {
                 {(m.proposals || []).map((p, pi) => { const sm = proposalSummary(S, p), Icon = sm.icon; const isEmail = p.tool === "propose_email"; return (
                   <div key={pi} className="rounded-xl p-3 w-full" style={{ background: "#fff", border: `1px solid ${p.state === "approved" ? C.em : p.state === "failed" ? C.dangerFg : C.line}` }}>
                     <div className="flex items-start gap-2"><Icon size={16} color={C.em} className="shrink-0 mt-0.5" /><div className="min-w-0 flex-1"><div className="text-sm font-medium">{sm.title}</div>{sm.detail && <div className={"text-xs mt-0.5 whitespace-pre-wrap " + (isEmail ? "max-h-60 overflow-y-auto" : "")} style={{ color: C.ink2 }}>{sm.detail}</div>}</div></div>
-                    {isEmail && <div className="flex gap-2 mt-2.5 justify-end"><Btn onClick={() => copy((p.input.subject ? "Subject: " + p.input.subject + "\n\n" : "") + (p.input.body || ""))}>Copy</Btn><a href={gmailComposeUrl(p.input.to, p.input.subject, p.input.body)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ background: C.em, color: "#fff" }}><Mail size={14} />Open in Gmail</a></div>}
+                    {isEmail && <div className="flex gap-2 mt-2.5 justify-end"><Btn onClick={() => copy((p.input.subject ? "Subject: " + p.input.subject + "\n\n" : "") + (p.input.body || ""))}>Copy</Btn><a href={gmailComposeUrl(p.input.to, p.input.subject, p.input.body)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ border: `1px solid ${C.line}`, color: C.ink }}>Open in Gmail</a>{p.state !== "approved" && <Btn kind="primary" icon={Mail} disabled={p.state === "working"} onClick={() => toDrafts(mi, pi)}>Save to Gmail drafts</Btn>}</div>}
                     {!isEmail && p.state === "waiting" && <div className="flex gap-2 mt-2.5 justify-end"><Btn onClick={() => decide(mi, pi, false)}>Decline</Btn><Btn kind="primary" icon={Check} onClick={() => decide(mi, pi, true)}>Approve</Btn></div>}
                     {p.state === "working" && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Working <InlineDots /></div>}
-                    {p.state === "approved" && <div className="text-xs mt-2" style={{ color: C.em }}>✓ {p.note || "Done"}</div>}
+                    {p.state === "approved" && <div className="text-xs mt-2" style={{ color: C.em }}>✓ {p.note || "Done"}{p.url && <> · <a href={p.url} target="_blank" rel="noopener noreferrer" className="underline font-medium">Open draft</a></>}</div>}
                     {p.state === "declined" && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Declined</div>}
                     {p.state === "failed" && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{p.note}</div>}
                   </div>
@@ -10659,6 +10681,11 @@ export default function App() {
     const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Request failed"); return j;
   };
   const ivCall = async (action, payload) => { const j = await ivQuiet(action, payload); reload(); return j; };
+  // Gmail drafts (gmail Edge Function): status, connect, draft {to, subject, body}.
+  const gmailCall = async (action, payload) => {
+    const r = await fetch(SB_URL + "/functions/v1/gmail", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Request failed"); return j;
+  };
   // Sourcing and outreach (sourcing Edge Function). Pages refresh their own lists, so no reload here.
   const srcCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/sourcing", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
@@ -11011,6 +11038,7 @@ export default function App() {
     interviews: data.interviews || [],
     iv: ivCall,
     ivQuiet: ivQuiet,
+    gmail: gmailCall,
     goProfile: (tab) => { setProfileTab(tab || "account"); setPage("myProfile"); },
     sourcing: srcCall,
     sb: (path, opts) => sbFetch(path, { ...(opts || {}), token: session.token }),

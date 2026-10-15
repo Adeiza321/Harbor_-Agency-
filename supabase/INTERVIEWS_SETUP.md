@@ -58,3 +58,15 @@ times for clash warnings. It never reads their other meetings.
   candidate page: "Sorry we missed you... if you'd like to reschedule, let us know."
 - Outcomes: Offer moves the role to Offer; Client reject marks the role Rejected and returns the
   candidate to Active file unless they are live on another role.
+
+## Gmail drafts (assistant emails)
+
+Email cards in the AI assistant have **Save to Gmail drafts**. The first time, Google asks the
+person to allow "create drafts" (gmail.compose) on the same Google connection used for interviews.
+Pronext never reads the inbox and never sends; the person sends from Gmail.
+
+One-time setup in the same Google Cloud project:
+1. APIs & Services > Library > **Gmail API** > Enable.
+2. OAuth consent screen > User type **Internal** (Google Workspace). Internal apps can use Gmail
+   permissions without Google's app review, but only accounts in your Workspace can connect.
+3. OAuth consent screen > Data access (Scopes) > add `https://www.googleapis.com/auth/gmail.compose`.
