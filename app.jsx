@@ -2241,6 +2241,9 @@ function TodoPage({ toast, S }) {
       .catch(() => {}).finally(() => setBusy(false));
   };
   const setSt = (t, st) => S.setTaskStatus(t.id, st).then(() => toast(st === "done" ? "Done" : st === "dismissed" ? "Dismissed" : "Back on your list")).catch(() => {});
+  // Reassign: the person it's for, whoever created it, or Admin / Rec Ops can hand it to anyone active.
+  const canMove = (t) => t.status === "open" && (t.assignedTo === S.me.id || t.createdBy === S.me.id || staff);
+  const reassign = (t, to) => { if (!to || to === t.assignedTo) return; S.reassignTask(t.id, to).then(() => toast("Reassigned to " + nameOf(to))).catch(() => {}); };
   const inp = "rounded-lg border px-3 py-2.5 text-sm outline-none";
   const inpS = { borderColor: C.line, background: "#FAF8F3" };
   const Row = ({ t }) => {
@@ -2260,6 +2263,11 @@ function TodoPage({ toast, S }) {
             {t.status === "dismissed" && <span>Dismissed</span>}
           </div>
         </div>
+        {canMove(t) && <select value="" onChange={(e) => reassign(t, e.target.value)} aria-label={"Reassign " + t.title} title="Reassign to someone else"
+          className="text-xs rounded-lg border px-1.5 py-1 shrink-0 max-w-[120px]" style={{ borderColor: C.line, background: "#fff", color: C.ink2 }}>
+          <option value="">Reassign…</option>
+          {people.filter((u) => u.id !== t.assignedTo).map((u) => <option key={u.id} value={u.id}>{u.id === S.me.id ? "Me" : u.name}</option>)}
+        </select>}
         {t.status === "open"
           ? <button onClick={() => setSt(t, "dismissed")} title="Dismiss: no longer needed" aria-label="Dismiss" className="p-1 shrink-0" style={{ color: C.ink3 }}><X size={15} /></button>
           : t.status === "dismissed" && <button onClick={() => setSt(t, "open")} className="text-xs shrink-0" style={{ color: C.em }}>Restore</button>}
@@ -11245,6 +11253,7 @@ export default function App() {
     addTask: (t) => call("/rest/v1/tasks", { method: "POST", body: { title: t.title, notes: t.notes || null, assigned_to: t.assignedTo || session.uid, due_on: t.dueOn || null, candidate_id: t.candidateId || null, job_id: t.jobId || null } }),
     setTaskStatus: (id, status) => call("/rest/v1/tasks?id=eq." + id, { method: "PATCH", body: { status, done_at: status === "open" ? null : new Date().toISOString() } }),
     deleteTask: (id) => call("/rest/v1/tasks?id=eq." + id, { method: "DELETE" }),
+    reassignTask: (id, to) => call("/rest/v1/rpc/reassign_task", { method: "POST", body: { p_task: id, p_to: to } }),
     deleteJob: (id) => { const j = data.jobs.find((x) => x.id === id); return call("/rest/v1/jobs?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "job", id, j ? j.role + ", " + j.client : "")); },
     setJobs: (fn) => { const list = typeof fn === "function" ? fn(data.jobs) : fn; const j = list[0];
       setData((d) => ({ ...d, jobs: list })); call("/rest/v1/jobs", { method: "POST", body: { id: j.id, role_title: j.role, client: j.client, location: j.location || null, work_setup: j.workSetup || null, min_pay: j.minPay || null, max_pay: j.maxPay || null, description: j.description || null, currency: j.currency || "NGN", country: j.country || null, seo: j.seo || null,

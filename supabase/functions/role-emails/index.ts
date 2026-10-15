@@ -177,10 +177,14 @@ async function activity(admin: any, body: any) {
 
   if (kind === "task") {
     const { data: t } = await admin.from("tasks").select("id,title,notes,due_on,assigned_to,created_by").eq("id", uuid(body.taskId)).maybeSingle();
-    if (!t || t.assigned_to === t.created_by) return { ok: true, skipped: "own task" };
-    const u = await person(t.assigned_to); const from = await nameOf(t.created_by);
+    if (!t) return { ok: true, skipped: "no task" };
+    // A reassigned task names whoever passed it on; a new one names whoever created it.
+    const passedBy = body.reassigned ? actorId : "";
+    if (!passedBy && t.assigned_to === t.created_by) return { ok: true, skipped: "own task" };
+    if (passedBy && passedBy === t.assigned_to) return { ok: true, skipped: "own task" };
+    const u = await person(t.assigned_to); const from = await nameOf(passedBy || t.created_by);
     if (!(u?.email && u.status === "Active" && u.role === "recruiter" && (u.notification_prefs || {}).activityEmail !== false)) return { ok: true, skipped: "not for them" };
-    return { ok: true, sent: await send(u, "New task" + (from ? " from " + from : "") + ": " + t.title, p(`${from ? esc(from) + " gave you a task" : "You have a new task"}: <b>${esc(t.title)}</b>${t.due_on ? " (due " + esc(t.due_on) + ")" : ""}.`) + quote(t.notes || "") + button(brand, APP_URL + "/?page=todo", "Open your To-do")) };
+    return { ok: true, sent: await send(u, (passedBy ? "Task passed to you" : "New task") + (from ? " from " + from : "") + ": " + t.title, p(`${from ? esc(from) + (passedBy ? " passed you a task" : " gave you a task") : "You have a new task"}: <b>${esc(t.title)}</b>${t.due_on ? " (due " + esc(t.due_on) + ")" : ""}.`) + quote(t.notes || "") + button(brand, APP_URL + "/?page=todo", "Open your To-do")) };
   }
 
   if (kind === "assigned") {
