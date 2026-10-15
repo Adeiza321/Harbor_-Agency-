@@ -517,6 +517,11 @@ Deno.serve(async (req: Request) => {
       if (!isStaff && cand.recruiter_id !== me.id) return json({ error: "Not your candidate" }, 403);
       if (!body.jobId) return json({ error: "jobId is required" }, 400);
       if (action === "review_match") return json({ ok: true, ...(await reviewMatch(admin, cand.id, body.jobId, askAI, loadResume)) });
+      // Recruiters put candidates forward only for roles on their worklist (same rule as candidate_jobs).
+      if (!isStaff) {
+        const { data: jr } = await admin.from("job_recruiters").select("job_id").eq("job_id", body.jobId).eq("recruiter_id", me.id).maybeSingle();
+        if (!jr) return json({ error: "Add this role to your worklist first: open it and press Engage, then you can put candidates forward for it." }, 403);
+      }
 
       const { data: existing } = await admin.from("candidate_jobs").select("id").eq("candidate_id", cand.id).eq("job_id", body.jobId).maybeSingle();
       if (existing) return json({ error: "They're already on this job" }, 409);

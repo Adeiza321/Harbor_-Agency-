@@ -130,6 +130,8 @@ const resumeMime = (name, fallback) => RESUME_TYPES[((name.match(/\.([A-Za-z0-9]
 const JOB_STATUSES = ["Open", "On hold", "Closed"];
 // On hold and Closed roles take no new candidates (the database enforces it too).
 const takesCandidates = (j) => !!j && j.status !== "Closed" && j.status !== "On hold";
+// Recruiters put candidates forward only for roles on their worklist (engaged); Admin and Rec Ops for any role.
+const onWorklist = (S, j) => !!j && (S.role !== "recruiter" || (j.engagedIds || []).includes(S.me.id));
 const holdText = (j) => "On hold" + (j.holdUntil ? " until " + fdate(j.holdUntil + "T12:00:00") : "") + (j.holdReason ? ": " + j.holdReason : "");
 // A role the candidate is actively on (accepted, not finished).
 const isLiveLink = (l) => l.response === "accepted" && !["Rejected", "Withdrawn", "Placed"].includes(l.stage);
@@ -200,7 +202,7 @@ const CITY_STATE_OPTIONS = {
   Australia: ["Sydney, NSW", "Melbourne, VIC", "Brisbane, QLD", "Perth, WA", "Remote, Australia"],
 };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true, assistSound: true };
+const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true, assistSound: true, roleEmail: true };
 
 // Notification sound: a bright, rounded two-note "ba-ding" (a mallet-like tone rising a fifth),
 // made in the browser so there's no sound file to load. Used for new messages and when the
@@ -1429,6 +1431,7 @@ function NotificationsTab({ S, toast }) {
           extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
         <MsgPrefRow label="Assistant sound" sub="The same sound when the assistant replies to you or finishes something you approved." on={prefs.assistSound !== false} onToggle={() => toggle("assistSound")} />
         <MsgPrefRow label="Email me" sub="An email when a candidate replies to you (one per burst of messages), with a link straight to the chat." on={prefs.msgEmail !== false} onToggle={() => toggle("msgEmail")} />
+        {S.role === "recruiter" && <MsgPrefRow label="Role emails" sub="An email when a new role opens, when a role goes on hold, reopens or closes, and when a role is added to your worklist." on={prefs.roleEmail !== false} onToggle={() => toggle("roleEmail")} />}
         <MsgPrefRow label="Desktop alerts" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when a message arrives while ProNext is in another tab."}
           on={prefs.msgDesktop && !deskBlocked} onToggle={toggleDesktop} />
       </div>
@@ -4631,7 +4634,9 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
 /* The roles a candidate is attached to (candidate_jobs), with a stage per role. */
 function CandidateJobsCard({ candidate, S, toast }) {
   const [pick, setPick] = useState("");
-  const available = S.jobs.filter((j) => takesCandidates(j) && !candidate.jobLinks.some((l) => l.jobId === j.id));
+  const available0 = S.jobs.filter((j) => takesCandidates(j) && !candidate.jobLinks.some((l) => l.jobId === j.id));
+  const available = available0.filter((j) => onWorklist(S, j));
+  const offList = available0.length - available.length;
   const sel = "text-sm rounded-lg border px-2 py-1.5 bg-white";
   const pickedJob = pick ? S.jobs.find((j) => j.id === pick) : null;
   const pickedQs = (pickedJob && pickedJob.screeningQuestions) || [];
@@ -4652,6 +4657,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
           {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} />}
         </div>
       ); })}
+      {offList > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>{available.length ? "Only roles on your worklist are listed. " : "No roles on your worklist yet. "}Open a role and press Engage to add it to your worklist, then you can submit candidates for it.</div>}
       {available.length > 0 && (
         <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
           <div className="flex gap-2">
@@ -5079,7 +5085,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {job.status !== "Closed" && <Btn icon={Sparkles} onClick={() => askAssistant("Close this role: what's really blocking " + job.role + " at " + job.client + ", and what should we do this week to get a hire?", { jobId: job.id })} title="The assistant reviews this role and proposes what to do">Close with AI</Btn>}
-            <Btn icon={Upload} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job)} title={takesCandidates(job) ? "" : "This role isn't taking new candidates"}>Add candidate</Btn>
+            <Btn icon={Upload} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job) || !onWorklist(S, job)} title={!takesCandidates(job) ? "This role isn't taking new candidates" : !onWorklist(S, job) ? "Engage first: the role goes on your worklist, then you can submit candidates" : ""}>Add candidate</Btn>
             {!myOpenEngagement && <Btn kind="primary" onClick={engage} disabled={busy || job.status === "Closed"}>Engage</Btn>}
             {S.role !== "recruiter" && (
               <div className="relative">
@@ -9457,7 +9463,8 @@ const fileToBase64 = (f) => new Promise((resolve, reject) => {
    the backend and logged to the audit log. Nothing shows up for Admin/Rec Ops until
    Submit, which needs the resume AND the job's screening questions answered. */
 function AddCandidate({ setPage, toast, S, initialJobId }) {
-  const openJobs = S.jobs.filter(takesCandidates);
+  const openJobs = S.jobs.filter((j) => takesCandidates(j) && onWorklist(S, j));
+  const offList = S.jobs.filter((j) => takesCandidates(j) && !onWorklist(S, j)).length;
   // Coming from a specific job's page pre-selects it here; opened from the Candidates
   // page directly (initialJobId null), the recruiter picks the job themselves below.
   const [jobId, setJobId] = useState(initialJobId && openJobs.some((j) => j.id === initialJobId) ? initialJobId : "");
@@ -9562,6 +9569,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
             <option value="">Choose a job…</option>
             {openJobs.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
           </select>
+          {offList > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>{openJobs.length ? "Only roles on your worklist are listed." : "No roles on your worklist yet."} Open a role under Jobs and press Engage to add it, then you can submit candidates for it.</div>}
         </div>
         {job && qs.length > 0 && (
           <div className="rounded-xl p-3" style={{ background: C.canvas }}>
@@ -10760,7 +10768,8 @@ export default function App() {
   const [page, setPageRaw] = useState(() => new URLSearchParams(window.location.search).get("page") || "overview");
   const [query, setQueryRaw] = useState("");
   const [candId, setCandId] = useState(null);
-  const [jobId, setJobId] = useState(null);
+  // Links in emails open a role straight away: ?page=jobDetail&job=<id>.
+  const [jobId, setJobId] = useState(() => new URLSearchParams(window.location.search).get("job") || null);
   const [addCandidateJobId, setAddCandidateJobId] = useState(null);
   const [billFor, setBillFor] = useState(null);
   const [moreOpen, setMoreOpen] = useState(false);
