@@ -146,7 +146,7 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
   const batches: Person[][] = [];
   for (let i = 0; i < list.length; i += 10) batches.push(list.slice(i, i + 10));
   const review = async (b: Person[]) => {
-    const out = await askAI(REVIEW_SYSTEM, head + b.map((x, i) => `${i} | ${SITES[x.site].label} | ${x.title || "(no title)"} | ${x.snippet || "(no snippet)"} | ${x.url}`).join("\n"), 6000);
+    const out = await askAI(REVIEW_SYSTEM, head + b.map((x, i) => `${i} | ${SITES[x.site].label} | ${x.title || "(no title)"} | ${x.snippet || "(no snippet)"} | ${x.url}`).join("\n"), 12000);
     for (const r of fitsToPercent(Array.isArray(out?.people) ? out.people : [])) { const who = b[Number(r.i)]; if (who) byKey.set(who.key, r); }
   };
   for (let i = 0; i < batches.length; i += 2) {
