@@ -6404,11 +6404,12 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} openKey={manualKey} noButton />}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
               {p.status === "rejected" && <Btn kind="primary" icon={RefreshCw} onClick={() => onStatus("found")}>Put back in pool</Btn>}
+              {["interested", "not_interested"].includes(p.status) && <Btn icon={RefreshCw} onClick={() => onStatus(p.contacted_at ? "contacted" : "found")} title={"Marked " + (p.status === "interested" ? "interested" : "not interested") + " by mistake? Moves them back to " + (p.contacted_at ? "Emailed" : "Needs approval")}>Undo {p.status === "interested" ? "interested" : "not interested"}</Btn>}
               <RowMenu label={"More actions for " + name} busy={acting === "test"} items={[
                 { label: "Email me a test", icon: Mail, onClick: testOne, hidden: !(S && p.email && p.body) },
                 { label: "Send it myself", icon: Send, onClick: () => setManualKey((k) => k + 1), hidden: !(S && p.email && ["found", "approved", "queued"].includes(p.status)) },
                 { label: "Skip this person", icon: SkipForward, danger: true, onClick: () => onStatus("rejected"), hidden: p.status !== "found" },
-                { label: "Not interested", icon: ThumbsDown, danger: true, onClick: () => onStatus("not_interested"), hidden: !["contacted", "queued"].includes(p.status) },
+                { label: "Not interested", icon: ThumbsDown, danger: true, onClick: () => onStatus("not_interested"), hidden: !["contacted", "queued", "interested"].includes(p.status) },
               ]} />
             </div>
           )}
