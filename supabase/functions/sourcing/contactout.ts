@@ -10,7 +10,7 @@ export const contactoutKey = () => (Deno.env.get("CONTACTOUT_API_KEY") || "").tr
 const okEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e) && !/noreply|no-reply/i.test(e);
 const list = (v: unknown) => (Array.isArray(v) ? v : []).map((x) => String(x || "").trim()).filter(okEmail);
 
-export type ContactOutResult = { email: string; status: "verified" | "personal" | ""; found: boolean; work: string[]; personal: string[] };
+export type ContactOutResult = { email: string; status: "verified" | "personal" | ""; found: boolean; work: string[]; personal: string[]; location?: string };
 
 export async function contactoutByLinkedIn(profileUrl: string): Promise<ContactOutResult> {
   const key = contactoutKey();
@@ -30,8 +30,9 @@ export async function contactoutByLinkedIn(profileUrl: string): Promise<ContactO
   if (!p) return none;
   const statuses: Record<string, string> = p.work_email_status && typeof p.work_email_status === "object" ? p.work_email_status : {};
   const work = list(p.work_email), personal = list(p.personal_email);
+  const location = typeof p.location === "string" ? p.location.trim().slice(0, 120) : "";
   const verifiedWork = work.find((e) => /^verified$/i.test(String(statuses[e] || "")));
-  if (verifiedWork) return { email: verifiedWork, status: "verified", found: true, work, personal };
-  if (personal[0]) return { email: personal[0], status: "personal", found: true, work, personal };
-  return { email: "", status: "", found: true, work, personal };
+  if (verifiedWork) return { email: verifiedWork, status: "verified", found: true, work, personal, location };
+  if (personal[0]) return { email: personal[0], status: "personal", found: true, work, personal, location };
+  return { email: "", status: "", found: true, work, personal, location };
 }

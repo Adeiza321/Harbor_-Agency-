@@ -10,7 +10,7 @@ import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
 import { cleanGuide, startXray } from "./xray.ts";
 import { searchEngines, searchUsage } from "./search.ts";
-import { autoFindEmails, findEmails } from "./emails.ts";
+import { autoFindEmails, findEmails, skipTooFar } from "./emails.ts";
 import { matchPool } from "./pool.ts";
 import { pdlKey } from "./pdl.ts";
 import { contactoutKey } from "./contactout.ts";
@@ -122,6 +122,14 @@ async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   return { processed: (pending || []).length, kept, errors };
 }
 
+// Everyone still waiting under Needs approval on open roles, with a known location, checked against
+// the office: anyone clearly too far is moved to Skipped with the reason (nothing is deleted).
+async function locationSweep(admin: any) {
+  const { data } = await admin.from("prospects").select("id,job_id,location,jobs!inner(status)").eq("status", "found").not("location", "is", null).neq("jobs.status", "Closed").limit(2000);
+  const ids = await skipTooFar(admin, (data || []).map((p: any) => ({ id: p.id, job_id: p.job_id, location: p.location })));
+  return { checked: (data || []).length, skipped: ids.length, ids };
+}
+
 // Data minimisation: prospects nobody engaged with are deleted after the retention period, and
 // people in the talent pool (sourced for a role that has closed) 12 months after it closed.
 const POOL_DAYS = 365;
@@ -174,6 +182,7 @@ Deno.serve(async (req: Request) => {
       }
       // Every 10 minutes (cron harbor-xray-emails): emails for the best X-ray people, within the daily cap.
       if (body.action === "auto_emails") return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName)) });
+      if (body.action === "location_sweep") return json({ ok: true, ...(await locationSweep(admin)) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
       // The talent pool for one job (also checked automatically when a job goes live).
       if (body.action === "pool" && body.jobId) {

@@ -8,6 +8,7 @@
 //   5. AI writes each person a short email; saved as prospects for review (or queued if auto)
 
 import { askAI } from "./ai.ts";
+import { splitByArea } from "./area_check.ts";
 import { searchPeople, matchById, bestEmail, apolloKey, type ApolloPerson } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, jobCountryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { emailHash, normEmail } from "./send.ts";
@@ -163,6 +164,11 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     people.push(p);
   }
   if (!people.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0 }); return { ok: true, found: 0, message: "No new people with verified emails matched." }; }
+  // Where they are, checked against the office (on-site / hybrid) or the country and time zones (remote).
+  const placed = await splitByArea(admin, job, area, people, (p) => [p.city, p.state, p.country].filter(Boolean).join(", "));
+  const tooFar = placed.dropped.length;
+  people.splice(0, people.length, ...placed.kept.map((k) => k.p));
+  if (!people.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0, tooFar }); return { ok: true, found: 0, message: `All ${tooFar} people found were too far from the office.` }; }
 
   // 4. Fit check on the full profile.
   const fitSys = "You are a recruitment analyst. For each person, judge fit for the job from their title, employer, location and work history: " +

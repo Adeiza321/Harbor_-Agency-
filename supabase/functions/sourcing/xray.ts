@@ -20,6 +20,7 @@ import { jobBrief, searchArea } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fitsToPercent, type Settings } from "./common.ts";
 import { judge, reviewHead, REVIEW_SYSTEM, type Judged } from "./xray_rules.ts";
+import { splitByArea } from "./area_check.ts";
 import { findGithubEmails } from "./emails.ts";
 import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
 
@@ -192,11 +193,19 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
   //    the xray-recheck function): company pages, people at the client now, people outside the role's
   //    country or commute area, and anyone a core must-have clearly rules out are dropped; someone
   //    running their own practice in the same field is kept with a note to check.
-  const kept = list
+  const judged = list
     .map((x) => { const r = byKey.get(x.key); return { x, r, j: r ? judge(job, x, r) : null }; })
-    .filter((k): k is { x: Person; r: any; j: Judged } => !!k.j && k.j.keep)
-    .sort((a, b) => b.j.fit - a.j.fit)
-    .slice(0, perJob);
+    .filter((k): k is { x: Person; r: any; j: Judged } => !!k.j && k.j.keep);
+  // Then the place itself, checked against the office in code (the AI review often leaves a
+  // location it can see as "unknown"): anyone clearly too far is dropped, vague places get a note.
+  let tooFar = 0;
+  let placed = judged;
+  try {
+    const { kept: ok, dropped } = await splitByArea(admin, job, area, judged, (k) => k.j.location);
+    tooFar = dropped.length;
+    placed = ok.map(({ p, note }) => (note ? { ...p, j: { ...p.j, gaps: [note, ...p.j.gaps].slice(0, 5) } } : p));
+  } catch (e) { errors.push("area check: " + errMsg(e).slice(0, 160)); }
+  const kept = placed.sort((a, b) => b.j.fit - a.j.fit).slice(0, perJob);
   const rows = kept.map(({ x, r, j }) => {
     const name = clip(r.name, 120) || clip(x.title.split(/\s[-–|·]\s/)[0], 120);
     const parts = name.split(/\s+/);
@@ -228,8 +237,8 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
   for (const r of rows) bySite[r.source] = (bySite[r.source] || 0) + 1;
   const usage = await searchUsage(admin).catch(() => ({}));
   await setXray(admin, jobId, {
-    state: "done", found: inserted.length, reviewed: byKey.size, searched, used, bySite, ghEmails, technical: p.technical, checklist: p.checklist,
+    state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, ghEmails, technical: p.technical, checklist: p.checklist,
     queries: queries.map((x) => x.q), usage, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
   });
-  return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches).` };
+  return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches${tooFar ? `; ${tooFar} left out for being too far from the office` : ""}).` };
 }

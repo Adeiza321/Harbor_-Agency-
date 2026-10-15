@@ -15,8 +15,9 @@
 
 import { askAI } from "./ai.ts";
 import { apolloKey, bestEmail, matchByLinkedIn } from "./apollo.ts";
-import { jobBrief } from "./prospects.ts";
-import { countryCode, regionOf } from "./regions.ts";
+import { jobBrief, searchArea } from "./prospects.ts";
+import { splitByArea } from "./area_check.ts";
+import { countryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { contactoutByLinkedIn, contactoutKey } from "./contactout.ts";
 import { bestPdlEmail, pdlByLinkedIn, pdlKey } from "./pdl.ts";
 import { emailHash } from "./send.ts";
@@ -82,6 +83,27 @@ async function suppressed(admin: any, email: string) {
   return !!data;
 }
 
+// People whose location we just learned (or all found people on open roles, for the sweep): those
+// clearly too far from the office are moved to Skipped with the reason. Returns their ids.
+export async function skipTooFar(admin: any, people: { id: string; job_id: string; location: string }[]) {
+  const out: string[] = [];
+  const byJob = new Map<string, typeof people>();
+  for (const p of people) if (p.location) byJob.set(p.job_id, [...(byJob.get(p.job_id) || []), p]);
+  for (const [jobId, list] of byJob) {
+    const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).maybeSingle();
+    if (!job || /remote/i.test(String(job.work_setup || "")) && !/hybrid/i.test(String(job.work_setup || "")) && !job.country) continue;
+    const area = await searchArea(admin, job, jobCountryNames(job)).catch(() => null);
+    const { dropped } = await splitByArea(admin, job, area, list, (p) => p.location);
+    for (const { p, why } of dropped) {
+      const { data: cur } = await admin.from("prospects").select("data").eq("id", p.id).maybeSingle();
+      await admin.from("prospects").update({ status: "rejected", data: { ...(cur?.data || {}), skipped: { reason: why, by: "location check", at: new Date().toISOString() } } })
+        .eq("id", p.id).eq("status", "found");
+      out.push(p.id);
+    }
+  }
+  return out;
+}
+
 // People Data Labs lookups used today (counted from the prospects tried today).
 async function pdlUsedToday(admin: any) {
   const since = new Date(); since.setUTCHours(0, 0, 0, 0);
@@ -135,10 +157,12 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   let coDown = false, apDown = false;
   const found: string[] = [];
   const errors: string[] = [];
+  const learned: { id: string; job_id: string; location: string }[] = [];
   for (const p of list) {
     const lookup: Record<string, string> = { ...tried(p) };
     let best = { email: "", status: "" }, good = false, via = "", m: any = null;
     let extra: { work: string[]; personal: string[] } | null = null;
+    let seenAt = "";   // where a source says they are, when we didn't know
     // 1. ContactOut first, by their LinkedIn profile.
     if (co && !coDown && !lookup.contactout) {
       coTried++;
@@ -146,6 +170,7 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
       try {
         const r = await contactoutByLinkedIn(p.linkedin_url);
         if (r.work.length || r.personal.length) extra = { work: r.work, personal: r.personal };
+        if (r.location) seenAt = r.location;
         if (r.email && !(await suppressed(admin, r.email))) { best = { email: r.email, status: r.status }; good = true; via = "ContactOut (from their LinkedIn profile)"; coFound++; }
       } catch (e) {
         errors.push(String((e as Error)?.message || e).slice(0, 160));
@@ -164,6 +189,7 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
         if (m?.email || b.email) credits++;
         const atClient = !!m && sameCompany(m.company, clientOf.get(p.job_id));
         if (m) extra = { work: [...new Set([...(extra?.work || []), ...(m.email ? [m.email] : [])])], personal: [...new Set([...(extra?.personal || []), ...(m.personal_emails || [])])] };
+        if (m && !seenAt) seenAt = [m.city, m.state, m.country].filter(Boolean).join(", ");
         if (b.email && okEmail(b.email) && !atClient && !(await suppressed(admin, b.email)) && !(m.email && m.email !== b.email && await suppressed(admin, m.email))) {
           best = b; good = true; via = "Apollo (from their LinkedIn profile)"; apFound++;
         }
@@ -183,10 +209,14 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
       title: p.title || m?.title || null, company: p.company || m?.company || null,
       location: p.location || [m?.city, m?.state].filter(Boolean).join(", ") || null, country: cc || m?.country || p.country || null, region: cc ? regionOf(cc) : (p.region || null),
     });
+    if (!p.location && seenAt) { patch.location = seenAt; learned.push({ id: p.id, job_id: p.job_id, location: seenAt }); }
     await admin.from("prospects").update(patch).eq("id", p.id);
     if (good) found.push(p.id);
     await sleep(400);
   }
+  // Newly learned locations: anyone clearly too far from the office is skipped, not emailed.
+  const tooFar = await skipTooFar(admin, learned);
+  for (const id of tooFar) { const i = found.indexOf(id); if (i >= 0) found.splice(i, 1); }
   if (found.length) await draftEmails(admin, found, s, agencyName);
   // Still nothing from ContactOut or Apollo: People Data Labs, within its daily allowance.
   const pdl = await pdlEmails(admin, list.map((p) => p.id).filter((id) => !found.includes(id)), s, agencyName).catch((e) => ({ tried: 0, found: 0, ids: [] as string[], errors: [String((e as Error)?.message || e)] }));

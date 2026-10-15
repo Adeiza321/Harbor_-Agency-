@@ -6,7 +6,9 @@
 // shows (or a clear location):
 //   - a company page rather than a person
 //   - working at the hiring company now (only when the result names it)
-//   - based in another country (for any role), or outside the commute area (on-site / hybrid roles)
+//   - based in another country (for any role), or outside the commute area (on-site / hybrid roles;
+//     the AI's answer here, and the place itself checked in code afterwards: area_check.ts)
+//   - on-site / hybrid with no location shown: kept, 10 points off and never 'Good fit' until checked
 //   - a core must-have (the first three checklist items) clearly contradicted
 //   - running a business in a different field from the role
 //   - a clear "Not a fit" from the AI (field, level or title don't match), or fit under 40
@@ -34,11 +36,22 @@ const ALIAS: Record<string, string> = { "usa": "united states", "u.s.": "united 
 const COUNTRIES = [...new Set(Object.values(COUNTRY_NAMES).map((x) => String(x).toLowerCase()))].filter((x) => x.length > 3).sort((a, b) => b.length - a.length)
   .map((c) => ({ c, re: new RegExp("(^|[^a-z])" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^a-z])") }));
 
+// A usable location from what search engines return ("Bromley. View Darren's profile on LinkedIn…",
+// "London ... Gas safe plumber at …", "Greater ..."). '' when nothing usable is left.
+export function cleanLocation(s: unknown): string {
+  let t = String(s ?? "").replace(/\s+/g, " ").trim();
+  t = t.replace(/\.?\s*View [^.]*'s profile.*$/i, "").replace(/\s*(\.\.\.|…).*$/, "").replace(/\s*\|.*$/, "").trim();
+  t = t.replace(/[.,;:\s]+$/, "");
+  if (!t || /^(greater|remote|n\/?a|unknown|worldwide|global)$/i.test(t) || t.length < 3) return "";
+  return clip(t, 100);
+}
+
 export function countryIn(loc: string): string {
   const raw = String(loc || "");
   const l = " " + raw.toLowerCase().replace(/[()]/g, " ") + " ";
   // A named country other than the US wins over a state-like word ("Tbilisi, Georgia" stays Georgia).
   if (/tbilisi|batumi|kutaisi/.test(l)) return "georgia";
+  if (/[^a-z](ontario|quebec|british columbia|alberta|manitoba|saskatchewan|nova scotia|new brunswick|newfoundland|prince edward island)[^a-z]/.test(l)) return "canada";
   if (US_STATE_RE.test(l) || US_CODE_RE.test(raw.trim())) return "united states";
   for (const [a, c] of Object.entries(ALIAS)) if (new RegExp("[\\s,/]" + a.replace(/\./g, "\\.") + "[\\s,/]").test(l)) return c;
   return (COUNTRIES.find((x) => x.re.test(l)) || { c: "" }).c;
@@ -98,7 +111,7 @@ export function judge(job: any, hit: { title?: string; snippet?: string }, r: an
   const jobRemote = /remote|hybrid/i.test(String(job.work_setup || "")) || /remote|hybrid/i.test(String(job.location || ""));
   const fullyRemote = /remote/i.test(String(job.work_setup || ""));
   const fromSnippet = (snippet.match(/(?:Location|Lives in|Based in)\s*[:：]\s*([^·|\n]{2,80})/i) || [])[1];
-  const location = clip(fromSnippet || r.location, 120);
+  const location = cleanLocation(fromSnippet) || cleanLocation(r.location);
   const c = location ? countryIn(location) : "";
   // Remote workers: the location they show may be their employer's, so it never counts as confirmed
   // and they can't be a 'Good fit' until someone checks where they live (relaxed on remote/hybrid
@@ -108,6 +121,9 @@ export function judge(job: any, hit: { title?: string; snippet?: string }, r: an
   let fit = Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0)));
   let verdict = ["Good fit", "Possible fit", "Not a fit"].includes(r.verdict) ? r.verdict : "Possible fit";
   if (remote) { fit = Math.max(0, fit - 10); if (verdict === "Good fit") verdict = "Possible fit"; }
+  // On-site and hybrid roles: where they are matters, so an unknown location costs fit and caps the
+  // verdict until someone checks (the place itself is checked in code: area_check.ts).
+  if (!fullyRemote && !location) { fit = Math.max(0, fit - 10); if (verdict === "Good fit") verdict = "Possible fit"; }
 
   const checklist = (Array.isArray(r.checklist) ? r.checklist : []).slice(0, 10).map((x: any) => ({
     item: clip(x?.item, 100), status: ["met", "unconfirmed", "not met"].includes(String(x?.status)) ? String(x.status) : "unconfirmed", evidence: clip(x?.evidence, 140),
@@ -137,7 +153,7 @@ export function judge(job: any, hit: { title?: string; snippet?: string }, r: an
   const notes: string[] = [];
   if (ownPractice && sameField && r.company_page !== true) notes.push("Runs own practice: check they'd take an employed role");
   if (checklist.length && !checklist.some((x: any) => x.status === "met")) notes.push("Thin profile: check the must-haves");
-  if (!fullyRemote && r.in_area === "unknown" && !remote) notes.push("Location not shown: check they can commute");
+  if (!fullyRemote && !location && !remote) notes.push("Location not shown: check they can commute");
   const gaps = [...notes, ...(Array.isArray(r.gaps) ? r.gaps : []).map((g: unknown) => clip(g, 120))].filter(Boolean).slice(0, 5);
 
   return {

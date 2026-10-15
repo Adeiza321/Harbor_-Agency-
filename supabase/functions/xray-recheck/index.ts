@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { askAI } from "../sourcing/ai.ts";
 import { fitsToPercent } from "../sourcing/common.ts";
 import { judge, reviewHead, REVIEW_SYSTEM } from "../sourcing/xray_rules.ts";
+import { splitByArea } from "../sourcing/area_check.ts";
 
 // Re-checks X-ray people already found (status 'found' only — never anyone emailed, queued or
 // skipped) against the current X-ray rules, from the search result saved with each of them. The
@@ -39,10 +40,20 @@ async function review(admin: any, limit: number) {
       const out = await askAI(REVIEW_SYSTEM, head + b.map((p: any, k: number) =>
         `${k} | ${clip(p.data?.site || "linkedin", 20)} | ${clip(p.data?.result_title || p.full_name + " - " + (p.title || ""), 200)} | ${clip(p.data?.snippet || "", 500) || "(no snippet)"}${p.location ? " | Location on file: " + clip(p.location, 80) : ""}`).join("\n"), 12000);
       const byI = new Map(fitsToPercent(Array.isArray(out?.people) ? out.people : []).map((r: any) => [Number(r.i), r]));
+      const done: { p: any; r: any; j: any }[] = [];
       for (let k = 0; k < b.length; k++) {
         const p: any = b[k], r: any = byI.get(k);
         if (!r) continue; // tried again next run
-        const j = judge(job, { title: p.data?.result_title || "", snippet: p.data?.snippet || "" }, { ...r, location: r.location || p.location || "" });
+        done.push({ p, r, j: judge(job, { title: p.data?.result_title || "", snippet: p.data?.snippet || "" }, { ...r, location: r.location || p.location || "" }) });
+      }
+      // The place itself, checked against the office in code (same as a new X-ray search).
+      const keepers = done.filter((d) => d.j.keep);
+      try {
+        const { kept: ok, dropped } = await splitByArea(admin, job, job.sourcing?.area, keepers, (d) => d.j.location || d.p.location);
+        for (const { p: d, why } of dropped) { d.j = { ...d.j, keep: false, reasons: [why], verdict: "Not a fit" }; }
+        for (const { p: d, note } of ok) if (note) d.j = { ...d.j, gaps: [note, ...d.j.gaps].slice(0, 5), notes: [...d.j.notes, note] };
+      } catch (e) { console.error("area check", String((e as Error)?.message || e)); }
+      for (const { p, r, j } of done) {
         await mark(admin, p, { ...j, why: clip(r.why, 140) }, j.reasons);
         reviewed++; if (!j.keep) removed++;
       }

@@ -6784,6 +6784,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{statusLabel}</Pill></div>
           </div>
           {(jobLabel || (p.status === "archived" && d.archived_role)) && <div className="text-xs mt-1" style={{ color: C.ink3 }}>{p.status === "archived" ? "Found for" : "For"} {jobLabel || d.archived_role}</div>}
+          {p.status === "rejected" && d.skipped && d.skipped.reason && <div className="text-xs mt-1" style={{ color: C.warnFg }}>Skipped automatically ({d.skipped.by || "check"}): {d.skipped.reason}. Put back in pool if that's wrong.</div>}
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           <ApolloNote data={d} />

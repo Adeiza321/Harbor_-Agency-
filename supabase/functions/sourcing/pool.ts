@@ -10,8 +10,9 @@
 
 import { askAI } from "./ai.ts";
 import { draftEmails } from "./emails.ts";
-import { jobBrief } from "./prospects.ts";
-import { countryCode, jobCountryCode, regionOf } from "./regions.ts";
+import { jobBrief, searchArea } from "./prospects.ts";
+import { splitByArea } from "./area_check.ts";
+import { countryCode, jobCountryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { profileOf } from "./search.ts";
 import { emailHash, normEmail } from "./send.ts";
 import { fitsToPercent, sameCompany, titlesMatch, type Settings } from "./common.ts";
@@ -90,6 +91,12 @@ export async function matchPool(admin: any, job: any, s: Settings, agencyName: s
       fit_reason: clip(r.reason, 300) || null, status: "found",
       data: { ...kept, overview: clip(r.reason, 400), pool: { fromProspect: p.id, fromJob: p.job_id, fromRole: p.jobs?.role_title || p.data?.archived_role || null, contactedBefore: !!p.contacted_at, at: new Date().toISOString() } },
     });
+  }
+  // Where they are, checked against the new role's office (on-site / hybrid) or country (remote).
+  if (rows.length) {
+    const area = await searchArea(admin, job, jobCountryNames(job)).catch(() => null);
+    const { kept: ok } = await splitByArea(admin, job, area, rows, (r: any) => r.location || "");
+    rows.splice(0, rows.length, ...ok.map(({ p, note }) => (note ? { ...p, data: { ...p.data, gaps: [note] } } : p)));
   }
   let ids: string[] = [];
   if (rows.length) {
