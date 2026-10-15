@@ -124,10 +124,10 @@ async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
 
 // Everyone still waiting under Needs approval on open roles, with a known location, checked against
 // the office: anyone clearly too far is moved to Skipped with the reason (nothing is deleted).
-async function locationSweep(admin: any) {
+async function locationSweep(admin: any, dry = false) {
   const { data } = await admin.from("prospects").select("id,job_id,location,jobs!inner(status)").eq("status", "found").not("location", "is", null).neq("jobs.status", "Closed").limit(2000);
-  const ids = await skipTooFar(admin, (data || []).map((p: any) => ({ id: p.id, job_id: p.job_id, location: p.location })));
-  return { checked: (data || []).length, skipped: ids.length, ids };
+  const ids: any = await skipTooFar(admin, (data || []).map((p: any) => ({ id: p.id, job_id: p.job_id, location: p.location })), dry);
+  return { checked: (data || []).length, [dry ? "wouldSkip" : "skipped"]: ids.length, ids, ...(dry ? { report: ids.report } : {}) };
 }
 
 // Data minimisation: prospects nobody engaged with are deleted after the retention period, and
@@ -182,7 +182,7 @@ Deno.serve(async (req: Request) => {
       }
       // Every 10 minutes (cron harbor-xray-emails): emails for the best X-ray people, within the daily cap.
       if (body.action === "auto_emails") return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName)) });
-      if (body.action === "location_sweep") return json({ ok: true, ...(await locationSweep(admin)) });
+      if (body.action === "location_sweep") return json({ ok: true, ...(await locationSweep(admin, !!body.dry)) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
       // The talent pool for one job (also checked automatically when a job goes live).
       if (body.action === "pool" && body.jobId) {

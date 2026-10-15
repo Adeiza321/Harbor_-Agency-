@@ -85,8 +85,9 @@ async function suppressed(admin: any, email: string) {
 
 // People whose location we just learned (or all found people on open roles, for the sweep): those
 // clearly too far from the office are moved to Skipped with the reason. Returns their ids.
-export async function skipTooFar(admin: any, people: { id: string; job_id: string; location: string }[]) {
+export async function skipTooFar(admin: any, people: { id: string; job_id: string; location: string }[], dry = false) {
   const out: string[] = [];
+  const report: { id: string; location: string; why: string }[] = [];
   const byJob = new Map<string, typeof people>();
   for (const p of people) if (p.location) byJob.set(p.job_id, [...(byJob.get(p.job_id) || []), p]);
   for (const [jobId, list] of byJob) {
@@ -95,12 +96,15 @@ export async function skipTooFar(admin: any, people: { id: string; job_id: strin
     const area = await searchArea(admin, job, jobCountryNames(job)).catch(() => null);
     const { dropped } = await splitByArea(admin, job, area, list, (p) => p.location);
     for (const { p, why } of dropped) {
+      report.push({ id: p.id, location: p.location, why });
+      if (dry) { out.push(p.id); continue; }
       const { data: cur } = await admin.from("prospects").select("data").eq("id", p.id).maybeSingle();
       await admin.from("prospects").update({ status: "rejected", data: { ...(cur?.data || {}), skipped: { reason: why, by: "location check", at: new Date().toISOString() } } })
         .eq("id", p.id).eq("status", "found");
       out.push(p.id);
     }
   }
+  if (dry) (out as any).report = report;
   return out;
 }
 
