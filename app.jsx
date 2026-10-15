@@ -1929,7 +1929,7 @@ function AssistantPanel({ S, badges, pageCtx }) {
               <div key={mi} className={"flex flex-col gap-2 " + (m.role === "user" ? "items-end" : "items-start")}>
                 {m.content && (
                   <div className="rounded-2xl px-3.5 py-2.5 text-sm max-w-[92%] whitespace-pre-wrap" style={m.role === "user" ? { background: C.em, color: "#fff" } : { background: "#fff", border: `1px solid ${C.line}`, color: m.error ? C.dangerFg : C.ink }}>
-                    {m.content}
+                    {m.role === "assistant" ? boldText(m.content) : m.content}
                     {m.role === "assistant" && !m.error && m.content.length > 120 && <div className="mt-1.5"><button onClick={() => copy(m.content)} className="text-xs font-medium" style={{ color: C.em }}>Copy</button></div>}
                   </div>
                 )}
@@ -1976,6 +1976,8 @@ function AssistantPanel({ S, badges, pageCtx }) {
     </>
   );
 }
+// The assistant sometimes marks key words with **bold**: show them bold instead of the stars.
+const boldText = (t) => String(t || "").split(/\*\*([^*\n]+)\*\*/g).map((part, i) => (i % 2 ? <b key={i}>{part}</b> : part.replace(/^#{1,4}\s+/gm, "")));
 const clip60 = (s) => { const t = String(s || "").replace(/\s+/g, " ").trim(); return t.length > 60 ? t.slice(0, 57) + "…" : t || "New conversation"; };
 
 /* ---- To-do list -------------------------------------------------------------------------------
