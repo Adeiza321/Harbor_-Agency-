@@ -9,8 +9,19 @@ import { loadBrand, emailShell, button, esc, sendBrevo } from "./brand.ts";
 //                                         hears about it too.
 //   { kind: "worklist", jobId, recruiterId, actorId }  a role was added to a recruiter's worklist
 //                                         (they engaged, or Admin / Rec Ops added them).
+//   Activity on a recruiter's own candidates or work, by someone else (or by the system):
+//   { kind: "stage", linkId, from, to, actorId }        a candidate moved stage (Placed included)
+//   { kind: "response", linkId, actorId }               a candidate accepted / declined a role
+//   { kind: "added", linkId, actorId }                  a candidate was put forward / applied to a role
+//   { kind: "interview", interviewId, op, actorId }     an interview booked, moved, cancelled or decided
+//   { kind: "task", taskId }                            a task given to them by someone else
+//   { kind: "assigned", candidateId, actorId }          a candidate assigned to them
+//   { kind: "comment", commentId }                      a teammate's note on their candidate
+//   Team wins:
+//   { kind: "placed", cheerId }   a placement: every other active recruiter hears who made it
+//   { kind: "kudos", kudosId }    a teammate congratulated the recruiter on a placement
 // Recruiters never see the client fee; their own incentive is shown when the role has one.
-// Anyone can turn these off in My profile > Notifications ("Role emails").
+// Switches in My profile > Notifications: "Role emails" (roles) and "Activity emails" (the rest).
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 const APP_URL = Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com";
@@ -42,6 +53,7 @@ Deno.serve(async (req: Request) => {
     const { data: tok } = opsKey.length >= 32 ? await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle() : { data: null };
     if (!tok) return json({ error: "Invalid ops token" }, 403);
     const body = await req.json().catch(() => ({}));
+    if (!["status", "worklist"].includes(String(body.kind || "status"))) return json(await activity(admin, body));
     const jobId = String(body.jobId || "");
     if (!/^[0-9a-f-]{36}$/i.test(jobId)) return json({ error: "No job" }, 400);
     const { data: j } = await admin.from("jobs").select("id,role_title,client,status,location,work_setup,employment_type,min_pay,max_pay,currency,salary_period,incentive_type,incentive_amount,incentive_currency,headcount,hold_reason").eq("id", jobId).maybeSingle();
@@ -96,3 +108,119 @@ Deno.serve(async (req: Request) => {
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
 });
+
+// ---------------------------------------------------------------- activity and team wins
+const uuid = (v: unknown) => /^[0-9a-f-]{36}$/i.test(String(v || "")) ? String(v) : "";
+const NOTE_STAGES = ["Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
+const PROFILE = "id,email,full_name,status,role,notification_prefs";
+
+async function activity(admin: any, body: any) {
+  const brand = await loadBrand(admin);
+  const kind = String(body.kind || "");
+  const actorId = uuid(body.actorId);
+  const nameOf = async (id: string) => { if (!id) return ""; const { data } = await admin.from("profiles").select("full_name").eq("id", id).maybeSingle(); return data?.full_name || ""; };
+  const person = async (id: string) => { if (!id) return null; const { data } = await admin.from("profiles").select(PROFILE).eq("id", id).maybeSingle(); return data; };
+  // Recruiters only, never for something they did themselves; "Activity emails" can turn it off.
+  const okFor = (u: any) => u?.email && u.status === "Active" && u.role === "recruiter" && u.id !== actorId && (u.notification_prefs || {}).activityEmail !== false;
+  const send = async (u: any, subject: string, inner: string, foot?: string) => {
+    const first = String(u.full_name || "").split(" ")[0] || "there";
+    const html = emailShell(brand, subject, `<div style="font-size:20px;margin-bottom:8px;">Hi ${esc(first)},</div>${inner}`,
+      foot || "You're receiving this because it's about your candidates or work in " + brand.name + ". Turn activity emails off in ProNext: My profile, Notifications.");
+    return sendBrevo(brand, { email: u.email, name: u.full_name || undefined }, subject, html);
+  };
+  const candLink = (id: string) => APP_URL + "/?page=candidates&cand=" + id;
+  const quote = (t: string) => t ? `<div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;line-height:1.5;">${esc(t.slice(0, 600))}</div>` : "";
+  const loadLink = async (id: string) => {
+    const { data } = await admin.from("candidate_jobs").select("id,stage,candidate_response,reject_kind,reject_reason,reject_feedback,candidates(id,name,recruiter_id),jobs(id,role_title,client)").eq("id", id).maybeSingle();
+    return data;
+  };
+  const roleOf = (j: any) => j ? j.role_title + (j.client ? " at " + j.client : "") : "a role";
+  const by = async () => { const n = await nameOf(actorId); return n ? " by " + n : ""; };
+
+  if (kind === "stage" || kind === "response" || kind === "added") {
+    const l = await loadLink(uuid(body.linkId)); if (!l) return { ok: true, skipped: "no link" };
+    const c: any = l.candidates, j: any = l.jobs;
+    const u = await person(c?.recruiter_id); if (!okFor(u)) return { ok: true, skipped: "not for them" };
+    const who = `<b>${esc(c.name)}</b>`, role = `<b>${esc(roleOf(j))}</b>`;
+    if (kind === "stage") {
+      const to = String(body.to || l.stage);
+      if (!NOTE_STAGES.includes(to)) return { ok: true, skipped: "stage " + to };
+      if (to === "Placed") {
+        return { ok: true, sent: await send(u, "Congratulations! " + c.name + " is placed", `<div style="font-size:30px;text-align:center;margin:6px 0 10px;">&#127881;</div>` +
+          p(`${who} has been placed as ${role}. Brilliant work, this one's yours.`) + p("The team has been told, so expect some congratulations.") + button(brand, candLink(c.id), "See the placement")) };
+      }
+      const extra = to === "Rejected" ? quote([l.reject_kind === "client" ? "Client's reason: " + (l.reject_reason || "") : l.reject_reason ? "Reason: " + l.reject_reason : "", l.reject_feedback || ""].filter(Boolean).join("\n")) : "";
+      return { ok: true, sent: await send(u, c.name + ": " + to + " · " + (j?.role_title || ""), p(`${who} moved to <b>${esc(to)}</b> for ${role}${esc(await by())}.`) + extra + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
+    }
+    if (kind === "response") {
+      const r = String(l.candidate_response || "");
+      if (!["accepted", "declined"].includes(r)) return { ok: true, skipped: "response " + r };
+      return { ok: true, sent: await send(u, c.name + (r === "accepted" ? " accepted " : " declined ") + (j?.role_title || "a role"),
+        p(`${who} ${r === "accepted" ? "accepted" : "declined"} ${role}.`) + (r === "accepted" ? p("Their screening starts now; you'll see it on their profile.") : "") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
+    }
+    return { ok: true, sent: await send(u, c.name + " is on " + (j?.role_title || "a new role"), p(`${who} is now on ${role}${esc(await by()) || " (they applied)"}.`) + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
+  }
+
+  if (kind === "interview") {
+    const { data: iv } = await admin.from("interviews").select("id,round,starts_at,status,decision,feedback,scheduler_tz,candidate_id,job_id,candidates(id,name,recruiter_id),jobs(role_title,client)").eq("id", uuid(body.interviewId)).maybeSingle();
+    if (!iv) return { ok: true, skipped: "no interview" };
+    const c: any = iv.candidates;
+    const u = await person(c?.recruiter_id); if (!okFor(u)) return { ok: true, skipped: "not for them" };
+    let when = new Date(iv.starts_at).toUTCString();
+    try { when = new Intl.DateTimeFormat("en-GB", { timeZone: iv.scheduler_tz || "Africa/Lagos", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }).format(new Date(iv.starts_at)); } catch { /* keep UTC */ }
+    const op = String(body.op || "");
+    const what = op === "insert" ? "booked" : iv.status === "cancelled" ? "cancelled" : iv.decision && op === "decision" ? "decided: " + iv.decision : "moved";
+    return { ok: true, sent: await send(u, "Interview " + what.split(":")[0] + ": " + c.name,
+      p(`${esc(iv.round || "Interview")} for <b>${esc(c.name)}</b> (${esc(roleOf(iv.jobs))}) was <b>${esc(what)}</b>${esc(await by())}.`) +
+      (iv.status !== "cancelled" ? p("When: " + esc(when)) : "") + (op === "decision" && iv.feedback ? quote(iv.feedback) : "") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
+  }
+
+  if (kind === "task") {
+    const { data: t } = await admin.from("tasks").select("id,title,notes,due_on,assigned_to,created_by").eq("id", uuid(body.taskId)).maybeSingle();
+    if (!t || t.assigned_to === t.created_by) return { ok: true, skipped: "own task" };
+    const u = await person(t.assigned_to); const from = await nameOf(t.created_by);
+    if (!(u?.email && u.status === "Active" && u.role === "recruiter" && (u.notification_prefs || {}).activityEmail !== false)) return { ok: true, skipped: "not for them" };
+    return { ok: true, sent: await send(u, "New task" + (from ? " from " + from : "") + ": " + t.title, p(`${from ? esc(from) + " gave you a task" : "You have a new task"}: <b>${esc(t.title)}</b>${t.due_on ? " (due " + esc(t.due_on) + ")" : ""}.`) + quote(t.notes || "") + button(brand, APP_URL + "/?page=todo", "Open your To-do")) };
+  }
+
+  if (kind === "assigned") {
+    const { data: c } = await admin.from("candidates").select("id,name,recruiter_id").eq("id", uuid(body.candidateId)).maybeSingle();
+    if (!c) return { ok: true, skipped: "no candidate" };
+    const u = await person(c.recruiter_id); if (!okFor(u)) return { ok: true, skipped: "not for them" };
+    return { ok: true, sent: await send(u, c.name + " is now your candidate", p(`<b>${esc(c.name)}</b> has been assigned to you${esc(await by())}.`) + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
+  }
+
+  if (kind === "comment") {
+    const { data: cm } = await admin.from("candidate_comments").select("id,body,author_id,candidates(id,name,recruiter_id)").eq("id", uuid(body.commentId)).maybeSingle();
+    if (!cm) return { ok: true, skipped: "no comment" };
+    const c: any = cm.candidates; const u = await person(c?.recruiter_id);
+    if (!(u?.email && u.status === "Active" && u.role === "recruiter" && u.id !== cm.author_id && (u.notification_prefs || {}).activityEmail !== false)) return { ok: true, skipped: "not for them" };
+    const from = await nameOf(cm.author_id);
+    return { ok: true, sent: await send(u, (from || "A teammate") + " left a note on " + c.name, p(`${esc(from || "A teammate")} left a note on <b>${esc(c.name)}</b>:`) + quote(cm.body || "") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
+  }
+
+  if (kind === "placed") {
+    const { data: ch } = await admin.from("placement_cheers").select("id,recruiter_id,role_title,client").eq("id", uuid(body.cheerId)).maybeSingle();
+    if (!ch) return { ok: true, skipped: "no placement" };
+    const placer = await nameOf(ch.recruiter_id) || "A teammate";
+    const { data: people } = await admin.from("profiles").select(PROFILE).eq("role", "recruiter").eq("status", "Active");
+    let sent = 0;
+    for (const u of (people || []).filter((u: any) => u.email && u.id !== ch.recruiter_id && (u.notification_prefs || {}).activityEmail !== false)) {
+      if (await send(u, "🎉 " + placer + " made a placement", `<div style="font-size:30px;text-align:center;margin:6px 0 10px;">&#127881;</div>` +
+        p(`<b>${esc(placer)}</b> just placed a <b>${esc(ch.role_title || "candidate")}</b>${ch.client ? " at " + esc(ch.client) : ""}.`) + p("Send them a congratulations from your dashboard.") +
+        button(brand, APP_URL + "/?page=overview", "Congratulate " + placer.split(" ")[0]), "You're receiving this because you're on the " + brand.name + " team. Turn these off in ProNext: My profile, Notifications.")) sent++;
+    }
+    return { ok: true, sent };
+  }
+
+  if (kind === "kudos") {
+    const { data: k } = await admin.from("placement_kudos").select("id,from_id,message,placement_cheers(recruiter_id,role_title,client)").eq("id", uuid(body.kudosId)).maybeSingle();
+    if (!k) return { ok: true, skipped: "no kudos" };
+    const ch: any = k.placement_cheers; const u = await person(ch?.recruiter_id);
+    if (!u?.email || u.status !== "Active" || u.id === k.from_id || (u.notification_prefs || {}).activityEmail === false) return { ok: true, skipped: "not for them" };
+    const from = await nameOf(k.from_id) || "A teammate";
+    return { ok: true, sent: await send(u, from + " congratulated you", p(`<b>${esc(from)}</b> congratulated you on your <b>${esc(ch.role_title || "")}</b> placement${ch.client ? " at " + esc(ch.client) : ""}. &#127881;`) + quote(k.message || "") + button(brand, APP_URL + "/?page=myProfile", "See your congratulations"),
+      "You're receiving this because a teammate congratulated you in " + brand.name + ".") };
+  }
+  return { ok: true, skipped: "unknown kind" };
+}

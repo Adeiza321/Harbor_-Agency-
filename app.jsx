@@ -202,7 +202,7 @@ const CITY_STATE_OPTIONS = {
   Australia: ["Sydney, NSW", "Melbourne, VIC", "Brisbane, QLD", "Perth, WA", "Remote, Australia"],
 };
 const num = (x) => Number(String(x || "").replace(/[^0-9.]/g, "")) || 0;
-const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true, assistSound: true, roleEmail: true };
+const DEFAULT_NOTIF_PREFS = { newCandidate: true, screeningReady: true, placementRecorded: true, jobPosted: true, msgSound: true, msgDesktop: false, msgEmail: true, assistSound: true, roleEmail: true, activityEmail: true };
 
 // Notification sound: a bright, rounded two-note "ba-ding" (a mallet-like tone rising a fifth),
 // made in the browser so there's no sound file to load. Used for new messages and when the
@@ -580,9 +580,85 @@ function SubmissionsCard({ S, recruiterId, title = "Submissions and placements" 
   );
 }
 
+/* Team wins. A placement (stage Placed) makes a placement_cheers row: the recruiter gets a
+   celebration screen and the congratulations show on their profile; everyone else sees it on
+   their dashboard with a Congratulate button (once each), which emails the recruiter. */
+const userName = (S, id) => { const u = (S.users || []).find((x) => x.id === id); return u ? u.name : "A teammate"; };
+// Teammates' placements in the last 14 days you haven't congratulated yet.
+const pendingWins = (S) => { const since = Date.now() - 14 * 864e5; return (S.cheers || []).filter((c) => c.recruiter_id && c.recruiter_id !== S.me.id && new Date(c.created_at).getTime() >= since && !(c.placement_kudos || []).some((k) => k.from_id === S.me.id)); };
+function TeamWins({ S }) {
+  const [busy, setBusy] = useState("");
+  const [done, setDone] = useState({});
+  const wins = pendingWins(S).filter((c) => !done[c.id]).slice(0, 4);
+  if (!wins.length) return null;
+  const cheer = (c) => { setBusy(c.id); S.congratulate(c.id).then(() => { setDone((d) => ({ ...d, [c.id]: true })); S.toast("Congratulations sent to " + userName(S, c.recruiter_id).split(" ")[0]); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      {wins.map((c) => (
+        <div key={c.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5" style={{ background: C.emTint }}>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-lg" style={{ background: "#fff" }} aria-hidden>🎉</div>
+          <div className="flex-1 min-w-0"><div className="text-sm font-medium">{userName(S, c.recruiter_id)} made a placement</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[c.role_title, c.client].filter(Boolean).join(" at ")} · {ago(c.created_at)}</div></div>
+          <Btn kind="primary" onClick={() => cheer(c)} disabled={busy === c.id}>{busy === c.id ? "Sending…" : "Congratulate"}</Btn>
+        </div>
+      ))}
+    </div>
+  );
+}
+// Your placements and who congratulated you (My profile).
+function MyWins({ S }) {
+  const mine = (S.cheers || []).filter((c) => c.recruiter_id === S.me.id);
+  if (!mine.length) return null;
+  return (
+    <Card>
+      <SectionTitle title="Your placements 🎉" sub="Every placement you've made, and the teammates who congratulated you." size="text-lg" />
+      <div className="mt-3 flex flex-col gap-2">
+        {mine.slice(0, 12).map((c) => { const ks = c.placement_kudos || []; return (
+          <div key={c.id} className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
+            <div className="flex items-center justify-between gap-2"><div className="text-sm font-medium truncate">{[c.role_title, c.client].filter(Boolean).join(" at ")}</div><div className="text-xs shrink-0" style={{ color: C.ink3 }}>{fdate(c.created_at)}</div></div>
+            <div className="text-xs mt-1" style={{ color: ks.length ? C.em : C.ink3 }}>{ks.length ? "Congratulated by " + ks.map((k) => userName(S, k.from_id).split(" ")[0]).join(", ") : "No congratulations yet"}</div>
+            {ks.filter((k) => k.message).slice(0, 3).map((k) => <div key={k.id} className="text-xs mt-1 italic" style={{ color: C.ink2 }}>“{k.message}” — {userName(S, k.from_id).split(" ")[0]}</div>)}
+          </div>
+        ); })}
+      </div>
+    </Card>
+  );
+}
+// The celebration screen: the recruiter's own new placements (until they close it), and once for
+// whoever marked someone else's candidate Placed.
+function Celebration({ S }) {
+  const seenKey = "pronext_seen_cheers";
+  const [closed, setClosed] = useState({});
+  const seen = () => { try { return JSON.parse(localStorage.getItem(seenKey) || "[]"); } catch (e) { return []; } };
+  const recent = Date.now() - 3 * 864e5;
+  const c = (S.cheers || []).find((x) => !closed[x.id] && ((x.recruiter_id === S.me.id && !x.celebrated_at) || (x.placed_by === S.me.id && x.recruiter_id !== S.me.id && new Date(x.created_at).getTime() >= recent && !seen().includes(x.id))));
+  if (!c) return null;
+  const mineWin = c.recruiter_id === S.me.id;
+  const close = () => {
+    setClosed((m) => ({ ...m, [c.id]: true }));
+    if (mineWin) S.markCelebrated(c.id);
+    else { try { localStorage.setItem(seenKey, JSON.stringify([...seen(), c.id].slice(-50))); } catch (e) { /* ignore */ } }
+  };
+  const colors = ["#1F6F54", "#C8F169", "#F2B705", "#E8684A", "#5B8DEF", "#C77DFF"];
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4" style={{ background: "rgba(18,36,29,0.55)" }} onClick={close} role="dialog" aria-modal="true" aria-label="Placement celebration">
+      <style>{`@keyframes pnx-fall{0%{transform:translateY(-10vh) rotate(0)}100%{transform:translateY(110vh) rotate(720deg)}}@keyframes pnx-pop{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.05);opacity:1}100%{transform:scale(1)}}`}</style>
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
+        {Array.from({ length: 70 }).map((_, i) => <span key={i} style={{ position: "absolute", left: (i * 37) % 100 + "%", top: 0, width: 8, height: 14, borderRadius: 2, background: colors[i % colors.length], animation: `pnx-fall ${2.4 + (i % 7) * 0.35}s linear ${(i % 10) * 0.18}s infinite` }} />)}
+      </div>
+      <div className="relative rounded-2xl p-7 max-w-sm w-full text-center" style={{ background: "#fff", animation: "pnx-pop .45s ease-out" }} onClick={(e) => e.stopPropagation()}>
+        <div className="text-5xl" aria-hidden>🎉</div>
+        <div className="text-2xl mt-3" style={SERIF}>{mineWin ? "Congratulations, " + S.me.name.split(" ")[0] + "!" : "Placement recorded!"}</div>
+        <div className="text-sm mt-2" style={{ color: C.ink2 }}>{mineWin ? "You made a placement: " : userName(S, c.recruiter_id) + " made a placement: "}<b style={{ color: C.ink }}>{[c.role_title, c.client].filter(Boolean).join(" at ")}</b>.</div>
+        <div className="text-xs mt-2" style={{ color: C.ink3 }}>{mineWin ? "The team has been told. Their congratulations will show on your profile." : "The team has been told, so they can congratulate " + userName(S, c.recruiter_id).split(" ")[0] + "."}</div>
+        <Btn kind="primary" full className="mt-5" onClick={close}>{mineWin ? "Thank you!" : "Great"}</Btn>
+      </div>
+    </div>
+  );
+}
+
 /* A "needs attention" list where each row opens the people behind it: one person goes
    straight to their profile, several expand into a clickable list. */
-function AttentionList({ title, items, S }) {
+function AttentionList({ title, items, S, extra }) {
   const [open, setOpen] = useState(null);
   // Only show rows that actually have something in them — an item with 0 people is nothing to
   // act on, so it's just clutter here.
@@ -590,7 +666,8 @@ function AttentionList({ title, items, S }) {
   return (
     <Card>
       <SectionTitle title={title} />
-      {rows.length === 0 ? (
+      {extra}
+      {rows.length === 0 ? (extra ? null :
         <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Nothing needs attention right now.</div>
       ) : (
       <div className="mt-3 flex flex-col">
@@ -1431,6 +1508,7 @@ function NotificationsTab({ S, toast }) {
           extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
         <MsgPrefRow label="Assistant sound" sub="The same sound when the assistant replies to you or finishes something you approved." on={prefs.assistSound !== false} onToggle={() => toggle("assistSound")} />
         <MsgPrefRow label="Email me" sub="An email when a candidate replies to you (one per burst of messages), with a link straight to the chat." on={prefs.msgEmail !== false} onToggle={() => toggle("msgEmail")} />
+        {S.role === "recruiter" && <MsgPrefRow label="Activity emails" sub="An email when someone else moves your candidates, books or changes their interviews, gives you a task, assigns you a candidate or leaves a note; plus team placements and congratulations." on={prefs.activityEmail !== false} onToggle={() => toggle("activityEmail")} />}
         {S.role === "recruiter" && <MsgPrefRow label="Role emails" sub="An email when a new role opens, when a role goes on hold, reopens or closes, and when a role is added to your worklist." on={prefs.roleEmail !== false} onToggle={() => toggle("roleEmail")} />}
         <MsgPrefRow label="Desktop alerts" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when a message arrives while ProNext is in another tab."}
           on={prefs.msgDesktop && !deskBlocked} onToggle={toggleDesktop} />
@@ -1531,6 +1609,7 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
       <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }, { key: "calendar", label: "Calendar" }]} active={tab} setActive={setTab} />
+      {tab === "account" && <MyWins S={S} />}
       {tab === "account" && <AccountTab S={S} toast={toast} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
       {tab === "security" && <SecurityTab S={S} toast={toast} />}
@@ -2527,7 +2606,7 @@ function OverviewRecOps({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
         <SubmissionsCard S={S} />
-        <AttentionList title="Needs attention" S={S} items={(() => {
+        <AttentionList title="Needs attention" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const drafts = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "draft");
           const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
           const unassigned = S.inbox.filter((x) => x.status === "new").map((x) => ({ id: null, name: x.name, sub: x.role, go: "inbox" }));
@@ -2570,7 +2649,7 @@ function OverviewRecruiter({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
-        <AttentionList title="Your next steps" S={S} items={(() => {
+        <AttentionList title="Your next steps" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
           const routed = linkPeople(S, (l) => l.response === "pending");
@@ -10735,7 +10814,7 @@ async function loadAll(token) {
   // Reaching a recruiter's app is what "delivered" means for candidate messages (two grey ticks).
   // Sent alongside the data, not before it, so it never delays the dashboard.
   sbFetch("/rest/v1/rpc/staff_mark_delivered", { method: "POST", token }).catch(() => {});
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks, cheers] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -10751,8 +10830,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/chat_clears?select=link_id,cleared_at", { token }).catch(() => []), // RLS: your own "clear chat" marks only
     sbFetch("/rest/v1/rpc/job_view_stats", { method: "POST", token }).catch(() => []), // views + applications per job
     sbFetch("/rest/v1/tasks?select=*&order=created_at.desc&limit=1000", { token }).catch(() => []), // to-do list (RLS: yours, ones you assigned, or all for Admin / Rec Ops)
+    sbFetch("/rest/v1/placement_cheers?select=*,placement_kudos(id,from_id,message,created_at)&order=created_at.desc&limit=300", { token }).catch(() => []), // team wins and congratulations
   ]);
-  return mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks });
+  return { ...mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks }), cheers: cheers || [] };
 }
 
 export default function App() {
@@ -10767,7 +10847,8 @@ export default function App() {
   const [errMsg, setErrMsg] = useState("");
   const [page, setPageRaw] = useState(() => new URLSearchParams(window.location.search).get("page") || "overview");
   const [query, setQueryRaw] = useState("");
-  const [candId, setCandId] = useState(null);
+  // Links in emails open a candidate straight away: ?cand=<id>.
+  const [candId, setCandId] = useState(() => new URLSearchParams(window.location.search).get("cand") || null);
   // Links in emails open a role straight away: ?page=jobDetail&job=<id>.
   const [jobId, setJobId] = useState(() => new URLSearchParams(window.location.search).get("job") || null);
   const [addCandidateJobId, setAddCandidateJobId] = useState(null);
@@ -11028,6 +11109,10 @@ export default function App() {
       setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
     jobs: data.jobs, updateJob, jobViews: data.jobViews || {},
     tasks: data.tasks || [],
+    // Team wins: one per placement; anyone can congratulate the recruiter once.
+    cheers: data.cheers || [],
+    congratulate: async (cheerId, message) => { await call("/rest/v1/placement_kudos", { method: "POST", body: { cheer_id: cheerId, message: message || null } }); },
+    markCelebrated: (cheerId) => sbFetch("/rest/v1/placement_cheers?id=eq." + cheerId, { method: "PATCH", token: session.token, body: { celebrated_at: new Date().toISOString() } }).catch(() => {}),
     openJob: (id) => { setCandId(null); setJobId(id); setPageRaw("jobDetail"); },
     addTask: (t) => call("/rest/v1/tasks", { method: "POST", body: { title: t.title, notes: t.notes || null, assigned_to: t.assignedTo || session.uid, due_on: t.dueOn || null, candidate_id: t.candidateId || null, job_id: t.jobId || null } }),
     setTaskStatus: (id, status) => call("/rest/v1/tasks?id=eq." + id, { method: "PATCH", body: { status, done_at: status === "open" ? null : new Date().toISOString() } }),
@@ -11389,6 +11474,7 @@ export default function App() {
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
       <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={badges} />
+      <Celebration S={S} />
       <AssistantPanel S={S} badges={badges} pageCtx={{ jobId: page === "jobDetail" ? jobId : null, candidateId: candidate ? candidate.id : null }} />
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
