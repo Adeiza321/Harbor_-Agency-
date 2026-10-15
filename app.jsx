@@ -817,6 +817,11 @@ function SectionTitle({ title, sub, size = "text-2xl" }) {
   );
 }
 
+// Message boxes: on a computer Enter sends and Shift+Enter starts a new line; on a phone or
+// tablet Enter always starts a new line and the Send button sends (like WhatsApp).
+const isTouchDevice = () => { try { return window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches; } catch (e) { return false; } };
+const enterSends = (e) => e.key === "Enter" && !e.shiftKey && !(e.nativeEvent && e.nativeEvent.isComposing) && !isTouchDevice();
+
 function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", full = false, type = "button", disabled = false, title }) {
   const base = `inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${full ? "w-full" : ""}`;
   const style =
@@ -1832,7 +1837,7 @@ function AssistantPanel({ S, badges, pageCtx }) {
   const send = async (qText, opts) => {
     const ask = (qText || text).trim();
     if (!ask || busy) return;
-    setText("");
+    setText(""); { const el = document.getElementById("assistant-input"); if (el) el.style.height = "auto"; }
     const base = opts && opts.fresh ? [] : msgsRef.current;
     const next = [...base, { role: "user", content: ask }];
     setMsgs(next); setBusy(true);
@@ -1987,7 +1992,7 @@ function AssistantPanel({ S, badges, pageCtx }) {
               {!onJob && threadJob && S.jobs.find((j) => j.id === threadJob) && <span className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }}>📌 {S.jobs.find((j) => j.id === threadJob).role}</span>}
             </div>
             <div className="flex gap-2">
-              <textarea id="assistant-input" rows={1} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+              <textarea id="assistant-input" rows={1} value={text} onChange={(e) => setText(e.target.value)} onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }} enterKeyHint={isTouchDevice() ? "enter" : "send"} onKeyDown={(e) => { if (enterSends(e)) { e.preventDefault(); send(); } }}
                 placeholder={mode === "brainstorm" ? "What do you want to think through?" : "Close a role, research a candidate, draft a client email…"} className="flex-1 min-w-0 rounded-xl border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: "#FAF8F3", maxHeight: 120 }} />
               <button onClick={() => send()} disabled={busy || !text.trim()} aria-label="Send" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy || !text.trim() ? 0.5 : 1 }}><SendHorizontal size={17} /></button>
             </div>
@@ -3073,7 +3078,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
           <input ref={fileRef} type="file" className="hidden" onChange={pickFile}
             accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" />
           <textarea ref={inputRef} value={text} rows={1} onChange={(e) => onType(e.target.value)} placeholder={attach ? "Add a caption (optional)" : "Write a message"}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
+            enterKeyHint={isTouchDevice() ? "enter" : "send"} onKeyDown={(e) => { if (enterSends(e)) { e.preventDefault(); send(); } }}
             onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }}
             className="flex-1 resize-none rounded-2xl border px-4 py-2.5 text-[15px] outline-none" style={{ borderColor: C.line, background: "#FAF8F3", color: C.ink, maxHeight: 120 }} />
           <button onClick={() => send()} disabled={!canSend} aria-label="Send"
