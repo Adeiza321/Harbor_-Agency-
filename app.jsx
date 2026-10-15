@@ -1713,6 +1713,8 @@ function proposalSummary(S, p) {
     case "propose_stage": return { icon: ArrowRightLeft, title: "Move " + who + " to " + i.stage + (role ? " on " + role : ""), detail: "" };
     case "propose_task": { const u = (S.users || []).find((x) => x.id === i.assigned_to); return { icon: ListTodo, title: (u && u.id !== S.me.id ? "Give " + u.name + " a task: " : "Remind you: ") + (i.title || ""), detail: i.due_on ? "Due " + fdate(i.due_on + "T12:00:00") : "No due date" }; }
     case "propose_route": return { icon: Forward, title: "Put " + who + " forward for " + (role || "a role"), detail: (i.questions || []).length ? "With questions: " + i.questions.join(" / ") : "They accept on their candidate page." };
+    case "propose_xray": { const g = i.guide || {}; const bits = [g.titles && g.titles.length ? "Titles: " + g.titles.join(", ") : "", g.locations && g.locations.length ? "Places: " + g.locations.join(", ") : "", g.must_have && g.must_have.length ? "Must-haves: " + g.must_have.join(", ") : "", g.target_companies && g.target_companies.length ? "Target: " + g.target_companies.join(", ") : "", g.exclude && g.exclude.length ? "Leave out: " + g.exclude.join(", ") : "", g.notes || "", (g.queries || []).length ? "Searches: " + g.queries.join("  ·  ") : ""].filter(Boolean);
+      return { icon: ScanSearch, title: "Run an X-ray search for " + (role || "this role"), detail: [i.why || "", ...bits].filter(Boolean).join("\n") || "Free LinkedIn and web searches, reviewed against the job." }; }
     case "propose_bench_check": return { icon: ScanSearch, title: "Check the bench for " + (role || "this role"), detail: "Reviews the closest people already in ProNext (uses AI credits)." };
     case "propose_email": return { icon: Mail, title: "Email" + (i.to ? " to " + i.to : "") + ": " + (i.subject || ""), detail: i.body };
     default: return { icon: Sparkles, title: p.tool, detail: "" };
@@ -1734,6 +1736,12 @@ async function runProposal(S, p) {
   if (p.tool === "propose_task") {
     await S.addTask({ title: i.title, dueOn: i.due_on || null, assignedTo: staff && i.assigned_to ? i.assigned_to : S.me.id, jobId: i.job_id || null, candidateId: i.candidate_id || null });
     return "Added to To-do.";
+  }
+  if (p.tool === "propose_xray") {
+    if (!staff) throw new Error("Only Admins and Rec Ops can run X-ray searches.");
+    const r = await S.sourcing("xray", { jobId: i.job_id, guide: i.guide || null });
+    if (r.ok === false) throw new Error(r.message || "The X-ray search couldn't start.");
+    return r.message || "X-ray search started. Results appear on the job's Sourcing tab in a minute or two.";
   }
   if (p.tool === "propose_bench_check") {
     if (!staff) throw new Error("Only Admins and Rec Ops can check the bench.");

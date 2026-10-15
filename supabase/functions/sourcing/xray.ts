@@ -10,6 +10,10 @@
 //      where they were found, without an email. GitHub public emails are added straight away (free);
 //      LinkedIn people's emails are looked up in Apollo automatically, within a daily limit (emails.ts).
 // No credits are spent. The run is recorded on jobs.xray.
+//
+// Direction (optional, from a person or the AI assistant after they approve it): what to aim for
+// in this run, e.g. other titles, places, must-haves, employers to target or avoid, and exact
+// searches to add. The planner follows it on top of the job; it is kept on jobs.xray.guide.
 
 import { askAI } from "./ai.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
@@ -27,28 +31,50 @@ async function setXray(admin: any, jobId: string, xray: Record<string, unknown>)
   await admin.from("jobs").update({ xray: { ...xray, at: new Date().toISOString() } }).eq("id", jobId);
 }
 
+export type XrayGuide = { notes?: string; titles?: string[]; locations?: string[]; must_have?: string[]; target_companies?: string[]; exclude?: string[]; queries?: string[] };
+// Cleans direction sent by a caller (any shape) into a small, safe XrayGuide, or null.
+export function cleanGuide(g: any): XrayGuide | null {
+  if (!g || typeof g !== "object") return null;
+  const list = (v: unknown, n: number, len: number) => [...new Set((Array.isArray(v) ? v : typeof v === "string" ? v.split(/[;\n]/) : []).map((x) => clip(x, len)).filter(Boolean))].slice(0, n) as string[];
+  const out: XrayGuide = {
+    notes: clip(g.notes, 600) || undefined, titles: list(g.titles, 8, 80), locations: list(g.locations, 12, 80), must_have: list(g.must_have, 6, 80),
+    target_companies: list(g.target_companies, 10, 80), exclude: list(g.exclude, 10, 80),
+    queries: list(g.queries, 4, 300).filter((q) => /^site:\S+/i.test(q)),
+  };
+  for (const k of Object.keys(out) as (keyof XrayGuide)[]) if (!out[k] || (Array.isArray(out[k]) && !(out[k] as string[]).length)) delete out[k];
+  return Object.keys(out).length ? out : null;
+}
+
 // Starts a run in the background (the caller gets an answer straight away). A run already going
 // for this job is left alone unless it has been stuck for over 6 minutes.
-export async function startXray(admin: any, jobId: string, s: Settings, by: string | null = null) {
+export async function startXray(admin: any, jobId: string, s: Settings, by: string | null = null, guide: XrayGuide | null = null) {
   const { data: job } = await admin.from("jobs").select("id,xray").eq("id", jobId).maybeSingle();
   if (!job) return { ok: false, message: "Job not found" };
   const e = searchEngines();
   if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No free search engine is connected yet. Add a SERPER_API_KEY, BRAVE_API_KEY or TAVILY_API_KEY secret in Supabase." };
   const x = job.xray || {};
   if (x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < 6 * 60e3) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
-  await setXray(admin, jobId, { state: "running", by });
-  const work = runXray(admin, jobId, s).catch(async (err) => {
+  await setXray(admin, jobId, { state: "running", by, ...(guide ? { guide } : {}) });
+  const work = runXray(admin, jobId, s, guide).catch(async (err) => {
     console.error("xray", jobId, errMsg(err));
-    await setXray(admin, jobId, { state: "error", error: errMsg(err).slice(0, 300) });
+    await setXray(admin, jobId, { state: "error", error: errMsg(err).slice(0, 300), ...(guide ? { guide } : {}) });
   });
   // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
   if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
-  return { ok: true, started: true, message: "X-ray search started. Results appear under this job in a minute or two." };
+  return { ok: true, started: true, message: "X-ray search started" + (guide ? " with your direction" : "") + ". Results appear under this job in a minute or two." };
 }
 
 type Plan = { technical: boolean; checklist: string[]; linkedin: string[]; sites: { site: SiteKey; query: string }[]; github: { location?: string; language?: string; keywords?: string } | null };
 
-async function plan(job: any, area: any, lessons: string[], titles: string[]): Promise<Plan> {
+function guideText(g: XrayGuide | null) {
+  if (!g) return "";
+  const l = (label: string, xs?: string[]) => (xs?.length ? `\n- ${label}: ${xs.join("; ")}` : "");
+  return "\n\nDIRECTION FOR THIS RUN from the recruiter (follow it; it overrides your own choices where they differ):" +
+    (g.notes ? `\n- ${g.notes}` : "") + l("Titles to search (use these as the title variants)", g.titles) + l("Places to search (use these as the locations)", g.locations) +
+    l("Must-haves to search for and check", g.must_have) + l("Target people who work or worked at", g.target_companies) + l("Leave out (add as -\"term\" in queries)", g.exclude);
+}
+
+async function plan(job: any, area: any, lessons: string[], titles: string[], guide: XrayGuide | null = null): Promise<Plan> {
   const siteList = (Object.keys(SITES) as SiteKey[]).filter((k) => k !== "linkedin").map((k) => `${k} (${SITES[k].label}, query starts "${SITES[k].prefix}")`).join("; ");
   const sys = "You are an expert technical and executive sourcer who writes Google X-ray searches to find people's public profiles for one job. Reply with STRICT JSON only: " +
     "{\"technical\": boolean, \"checklist\": string[], \"linkedin\": string[], \"sites\": [{\"site\": string, \"query\": string}], \"github\": {\"location\": string, \"language\": string, \"keywords\": string} | null}. " +
@@ -63,7 +89,8 @@ async function plan(job: any, area: any, lessons: string[], titles: string[]): P
     `\n\nParallel titles: ${titles.join("; ") || "(none)"}` +
     `\nSearch area: ${area?.summary || job.location || job.country || "(not set)"}` +
     (area?.locations?.length ? `\nPlaces in the search area: ${area.locations.slice(0, 40).join("; ")}` : "") +
-    (lessons.length ? `\n\nLessons from past candidates for this role (add as checklist items when they apply):\n${lessons.map((l) => "- " + l).join("\n")}` : "");
+    (lessons.length ? `\n\nLessons from past candidates for this role (add as checklist items when they apply):\n${lessons.map((l) => "- " + l).join("\n")}` : "") +
+    guideText(guide);
   const out = await askAI(sys, text, 3000);
   const fix = (q: unknown, prefix: string) => {
     let s = clip(q, 400).replace(/\bsite:\S+/gi, "").replace(/\s+/g, " ").trim();
@@ -85,14 +112,21 @@ async function plan(job: any, area: any, lessons: string[], titles: string[]): P
 
 type Person = Hit & { key: string; site: SiteKey; query: string };
 
-export async function runXray(admin: any, jobId: string, s: Settings) {
+export async function runXray(admin: any, jobId: string, s: Settings, guide: XrayGuide | null = null) {
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("Job not found");
   // Searched where the job is (its own country), like every other outside search.
   const area = await searchArea(admin, job, jobCountryNames(job));
   const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8) as string[];
   const { data: ls } = await admin.from("screening_lessons").select("lesson,kind").eq("job_id", jobId).eq("active", true).in("kind", ["client_reject", "internal_reject"]).limit(6);
-  const p = await plan(job, area, (ls || []).map((l: any) => l.lesson), titles);
+  const p = await plan(job, area, (ls || []).map((l: any) => l.lesson), titles, guide);
+  // Exact searches from the direction run first (LinkedIn ones count as LinkedIn).
+  if (guide?.queries?.length) {
+    for (const q of [...guide.queries].reverse()) {
+      if (/^site:linkedin\.com/i.test(q)) p.linkedin.unshift(q);
+      else { const site = (Object.keys(SITES) as SiteKey[]).find((k) => k !== "linkedin" && q.toLowerCase().startsWith(SITES[k].prefix.toLowerCase())); if (site) p.sites.unshift({ site, query: q }); else p.linkedin.unshift(q); }
+    }
+  }
   if (!p.linkedin.length && !p.sites.length && !p.github) throw new Error("The AI couldn't write searches for this job");
 
   // 2. Search, until there are enough new people to choose from.
@@ -135,7 +169,7 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
   }
   if (!people.size) {
     const why = searched ? `The searches found nobody new (${dropped} already on this job or in ProNext).` : "No search could run: " + ([...new Set(errors)].join("; ") || "no engine available");
-    await setXray(admin, jobId, { state: "done", found: 0, searched, used, technical: p.technical, checklist: p.checklist, queries: queries.map((x) => x.q), note: why });
+    await setXray(admin, jobId, { state: "done", found: 0, searched, used, technical: p.technical, checklist: p.checklist, queries: queries.map((x) => x.q), note: why, ...(guide ? { guide } : {}) });
     return { ok: true, found: 0, message: why };
   }
 
@@ -195,7 +229,7 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
   const usage = await searchUsage(admin).catch(() => ({}));
   await setXray(admin, jobId, {
     state: "done", found: inserted.length, reviewed: byKey.size, searched, used, bySite, ghEmails, technical: p.technical, checklist: p.checklist,
-    queries: queries.map((x) => x.q), usage, ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
+    queries: queries.map((x) => x.q), usage, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
   });
   return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches).` };
 }

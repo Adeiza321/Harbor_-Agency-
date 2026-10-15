@@ -32,6 +32,10 @@ jobs:
         with:
           node-version: 20
       - name: Build job pages, sitemap and robots.txt
+        # The site's address for job links and the sitemap (the custom domain itself is set in
+        # Settings > Pages; there is no CNAME file in the repo).
+        env:
+          SITE_URL: https://recruitment.pronextglobal.com
         run: node scripts/build-job-pages.mjs _site
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

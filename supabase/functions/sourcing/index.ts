@@ -8,7 +8,7 @@ import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./ap
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
-import { startXray } from "./xray.ts";
+import { cleanGuide, startXray } from "./xray.ts";
 import { searchEngines, searchUsage } from "./search.ts";
 import { autoFindEmails, findEmails } from "./emails.ts";
 import { matchPool } from "./pool.ts";
@@ -175,7 +175,7 @@ Deno.serve(async (req: Request) => {
         return json(await matchPool(admin, job, s, agencyName));
       }
       // Free X-ray search for one job (also started automatically for every newly live job).
-      if (body.action === "xray" && body.jobId) return json(await startXray(admin, String(body.jobId), s, null));
+      if (body.action === "xray" && body.jobId) return json(await startXray(admin, String(body.jobId), s, null, cleanGuide(body.guide)));
       // Someone applied, said no, unsubscribed or was deleted (database trigger): finish their
       // Apollo sequence so the follow-ups stop.
       if (body.action === "apollo_stop") {
@@ -248,7 +248,8 @@ Deno.serve(async (req: Request) => {
     // credits are used, so it runs straight away for Rec Ops and Admins.
     if (action === "xray") {
       if (!body.jobId) return json({ error: "jobId is required" }, 400);
-      return json(await startXray(admin, String(body.jobId), s, me.id));
+      // Optional direction (titles, places, must-haves, companies, exclusions, exact searches).
+      return json(await startXray(admin, String(body.jobId), s, me.id, cleanGuide(body.guide)));
     }
 
     // People from the talent pool who fit this job (free; also checked when a job goes live).

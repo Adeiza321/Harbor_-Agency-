@@ -48,6 +48,8 @@ const READ_TOOLS = [
     input_schema: { type: "object", properties: { from: { type: "string", description: "YYYY-MM-DD" }, to: { type: "string", description: "YYYY-MM-DD" }, job_id: { type: "string" } } } },
   { name: "team_workload", description: "Each team member's open candidates by stage, open tasks and interviews this week (Admins and Rec Ops only).",
     input_schema: { type: "object", properties: {} } },
+  { name: "get_xray", description: "The X-ray sourcing for a job (Admins and Rec Ops only): the last run (state, when, the searches it ran, the must-have checklist, any direction given, how many found) and the people found so far (X-ray and Apollo prospects) with fit, verdict, overview, gaps, location, whether an email was found and outreach status. Use it to judge whether sourcing is finding the right people and how to steer the next run.",
+    input_schema: { type: "object", properties: { job_id: { type: "string" } }, required: ["job_id"] } },
 ];
 const WEB_TOOLS = [
   { type: "web_search_20250305", name: "web_search", max_uses: 5 },
@@ -79,6 +81,12 @@ const PROPOSE: Record<string, any> = {
     input_schema: { type: "object", properties: { to: { type: "string", description: "Email address if known, else ''" }, subject: { type: "string" }, body: { type: "string", description: "Plain text, ready to send, signed with the person's first name" } }, required: ["subject", "body"] } },
   propose_route: { name: "propose_route", description: "Propose putting an existing candidate forward for another open role (they get it on their candidate page and accept), optionally with screening questions for what's unproven.",
     input_schema: { type: "object", properties: { candidate_id: { type: "string" }, job_id: { type: "string" }, questions: { type: "array", items: { type: "string" } } }, required: ["candidate_id", "job_id"] } },
+  propose_xray: { name: "propose_xray", description: "Propose running an X-ray search for a job (free public-profile searches on LinkedIn, and GitHub and technical sites for technical roles; found people are reviewed against the job and saved as prospects). Steer it with direction drawn from what you learned: titles to search, places, must-haves, companies to target, terms to leave out, and up to 4 exact Google X-ray queries of your own (each starting with site:, e.g. site:linkedin.com/in). Admins and Rec Ops only.",
+    input_schema: { type: "object", properties: { job_id: { type: "string" }, why: { type: "string", description: "One line for the person: what this run aims for and why" },
+      guide: { type: "object", properties: {
+        notes: { type: "string", description: "Plain direction for the search planner, e.g. 'Client rejected two people without Big 4 audit; only people with Big 4 audit then industry'" },
+        titles: { type: "array", items: { type: "string" } }, locations: { type: "array", items: { type: "string" } }, must_have: { type: "array", items: { type: "string" } },
+        target_companies: { type: "array", items: { type: "string" } }, exclude: { type: "array", items: { type: "string" } }, queries: { type: "array", items: { type: "string" } } } } }, required: ["job_id"] } },
   propose_bench_check: { name: "propose_bench_check", description: "Propose running the AI bench check for a job: reviews the closest people already in ProNext against it (uses AI credits). Admins and Rec Ops only.",
     input_schema: { type: "object", properties: { job_id: { type: "string" } }, required: ["job_id"] } },
 };
@@ -195,6 +203,20 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     return (data || []).map((i: any) => ({ candidate_id: i.candidate_id, candidate: i.candidates?.name, job_id: i.job_id, role: i.jobs ? i.jobs.role_title + " (" + i.jobs.client + ")" : "", round: i.round, when: i.starts_at, status: i.status, decision: i.decision, feedback: clip(i.feedback, 200), mine: i.recruiter_id === me.id }));
   }
 
+  if (name === "get_xray") {
+    if (!staff) return { error: "Only Admins and Rec Ops can see sourcing" };
+    const { data: j } = await db.from("jobs").select("id,role_title,client,xray").eq("id", String(input?.job_id || "")).maybeSingle();
+    if (!j) return { error: "Job not found" };
+    const { data: ps } = await db.from("prospects").select("id,full_name,title,company,location,source,fit,verdict,fit_reason,status,email,data,created_at").eq("job_id", j.id).is("archived_at", null).order("fit", { ascending: false, nullsFirst: false }).limit(30);
+    const x = j.xray || {};
+    return {
+      job: `${j.role_title} at ${j.client}`,
+      last_run: x.state ? { state: x.state, at: x.at, found: x.found, reviewed: x.reviewed, searches_run: x.searched, by_site: x.bySite, checklist: x.checklist, queries: x.queries, direction: x.guide || null, note: x.note || x.error || null } : "X-ray has not run for this job yet",
+      people: (ps || []).map((p: any) => ({ id: p.id, name: p.full_name, title: p.title, company: p.company, location: p.location, found_by: p.data?.xray ? "X-ray " + (p.data.site || p.source) : p.source, fit: p.fit, verdict: p.verdict,
+        overview: p.data?.overview || p.fit_reason, gaps: p.data?.gaps, has_email: !!p.email, outreach: p.status, profile: p.data?.profile_url || null })),
+    };
+  }
+
   if (name === "team_workload") {
     if (!staff) return { error: "Only Admins and Rec Ops can see the team's workload" };
     const { data: users } = await db.from("profiles").select("id,full_name,role,status").eq("status", "Active");
@@ -228,6 +250,7 @@ HOW YOU ACT: you cannot change anything yourself. To do something, call the prop
 CLOSING A ROLE (when asked to close, fill, unblock or review a role):
 1) Diagnose with get_job (and get_candidate for the key people): is the pipeline too thin, the wrong profile (look at unmet must-haves, client rejection reasons and lessons), stuck (no update for days, interviews without feedback, submitted but not viewed), or is the brief itself the problem (pay below market: check the web; requirements too narrow)?
 2) Say in 3-6 lines what's really blocking it, most important first.
+SOURCING (Admins and Rec Ops): when the pipeline is thin or the wrong profile, check get_xray. If X-ray never ran, or found the wrong people (look at their gaps and at client rejection reasons and lessons), propose_xray with direction that fixes it: the titles, places, must-haves and target companies that match what the client actually wants, terms to leave out, and your own exact queries when you can write sharper ones. Use web_search to learn where such people work (competitors, firms) before steering.
 3) Give a concrete plan and propose the actions for it right away: e.g. chase the client on submitted candidates (propose_email from the person), nudge stalled candidates (propose_message), schedule interviews, route strong people already in ProNext to it (propose_route with questions for what's unproven), run a bench check, reminders for follow-ups (propose_task), or a revised brief to suggest to the client (propose_email). Prefer actions that move a candidate closer to an offer this week.
 Emails the person should send themselves (to clients, or personal notes to candidates) go in propose_email. Chat messages to candidates on a role go in propose_message.`;
   const brainstorm = `
