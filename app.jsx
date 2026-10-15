@@ -1836,12 +1836,31 @@ function proposalSummary(S, p) {
       return { icon: ScanSearch, title: "Run an X-ray search for " + (role || "this role"), detail: [i.why || "", ...bits].filter(Boolean).join("\n") || "Free LinkedIn and web searches, reviewed against the job." }; }
     case "propose_bench_check": return { icon: ScanSearch, title: "Check the bench for " + (role || "this role"), detail: "Reviews the closest people already in ProNext (uses AI credits)." };
     case "propose_email": return { icon: Mail, title: "Email" + (i.to ? " to " + i.to : "") + ": " + (i.subject || ""), detail: i.body };
+    case "propose_prospect": {
+      const nm = i.name || "this person", at = i.role ? " (" + i.role + ")" : "";
+      const t = { approve_email: "Approve the outreach email to " + nm, mark_contacted: "Mark " + nm + " as contacted", skip: "Skip " + nm, put_back: "Put " + nm + " back as Needs approval" }[i.action] || nm;
+      return { icon: i.action === "skip" ? SkipForward : i.action === "approve_email" ? Send : UserCheck, title: t + at, detail: [i.why || "", i.message ? "LinkedIn message:\n" + i.message : ""].filter(Boolean).join("\n\n") };
+    }
     default: return { icon: Sparkles, title: p.tool, detail: "" };
   }
 }
 async function runProposal(S, p) {
   const i = p.input || {};
   const staff = S.role === "admin" || S.role === "recops";
+  if (p.tool === "propose_prospect") {
+    if (!staff) throw new Error("Only Admins and Rec Ops can act on sourced people.");
+    if (!/^[0-9a-f-]{36}$/i.test(String(i.prospect_id || ""))) throw new Error("I couldn't find that person.");
+    const nm = i.name || "They";
+    if (i.action === "approve_email") {
+      const r = await S.sourcing("approve_prospects", { ids: [i.prospect_id] });
+      if (!r.queued) throw new Error(nm + " can't be emailed yet: they need an email address and a drafted email. Find their email on the role's Sourcing tab first.");
+      return "Approved. " + nm + "'s email goes out with the next send.";
+    }
+    const body = i.action === "mark_contacted" ? { status: "contacted", contacted_at: new Date().toISOString() } : i.action === "skip" ? { status: "rejected" } : i.action === "put_back" ? { status: "found" } : null;
+    if (!body) throw new Error("I don't know how to do that yet.");
+    await S.sb("/rest/v1/prospects?id=eq." + i.prospect_id, { method: "PATCH", body });
+    return i.action === "mark_contacted" ? nm + " marked as contacted." : i.action === "skip" ? nm + " skipped. Find them under Skipped on the role." : nm + " is back under Needs approval.";
+  }
   if (p.tool === "propose_job_draft") {
     const id = uid(), cur = (i.currency || "USD").toUpperCase();
     S.setJobs((l) => [{ id, role: i.role, client: i.client, location: i.location || "", workSetup: i.work_setup || "", employmentType: i.employment_type || null, headcount: 1,
@@ -2172,6 +2191,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                     <div className="flex items-start gap-2"><Icon size={16} color={C.em} className="shrink-0 mt-0.5" /><div className="min-w-0 flex-1"><div className="text-sm font-medium">{sm.title}</div>{sm.detail && <div className={"text-xs mt-0.5 whitespace-pre-wrap " + (isEmail ? "max-h-60 overflow-y-auto" : "")} style={{ color: C.ink2 }}>{sm.detail}</div>}</div></div>
                     {isEmail && p.state !== "approved" && <label className="flex items-center justify-end gap-1.5 mt-2.5 text-xs cursor-pointer select-none" style={{ color: C.ink2 }} title="Use your agency's email design (logo, colours, footer) instead of a plain email"><input type="checkbox" checked={branded} onChange={(e) => pickBranded(e.target.checked)} style={{ accentColor: C.em }} />Branded design</label>}
                     {isEmail && <div className="flex flex-wrap gap-2 mt-2 justify-end"><Btn onClick={() => copy((p.input.subject ? "Subject: " + p.input.subject + "\n\n" : "") + (p.input.body || ""))}>Copy</Btn><a href={gmailComposeUrl(p.input.to, p.input.subject, p.input.body)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ border: `1px solid ${C.line}`, color: C.ink }}>Open in Gmail</a>{p.state !== "approved" && <Btn kind="primary" icon={Mail} disabled={p.state === "working"} onClick={() => toDrafts(mi, pi)}>Save to Gmail drafts</Btn>}</div>}
+                    {p.tool === "propose_prospect" && (p.input.message || p.input.linkedin_url) && <div className="flex flex-wrap gap-2 mt-2 justify-end">{p.input.message && <Btn onClick={() => copy(p.input.message)}>Copy message</Btn>}{/^https:\/\/([a-z]+\.)?linkedin\.com\//i.test(p.input.linkedin_url || "") && <a href={p.input.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ border: `1px solid ${C.line}`, color: C.ink }}>Open LinkedIn</a>}</div>}
                     {!isEmail && p.state === "waiting" && <div className="flex gap-2 mt-2.5 justify-end"><Btn onClick={() => decide(mi, pi, false)}>Decline</Btn><Btn kind="primary" icon={Check} onClick={() => decide(mi, pi, true)}>Approve</Btn></div>}
                     {p.state === "working" && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Working <InlineDots /></div>}
                     {p.state === "approved" && <div className="text-xs mt-2" style={{ color: C.em }}>✓ {p.note || "Done"}{p.url && <> · <a href={p.url} target="_blank" rel="noopener noreferrer" className="underline font-medium">Open draft</a></>}</div>}

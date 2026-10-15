@@ -30,9 +30,13 @@ const SMART = Deno.env.get("ASSISTANT_SMART_MODEL") || "claude-sonnet-4-5";
 // USD per million tokens, for the spend log (input, output). Web search: $10 per 1,000.
 const PRICE: Record<string, [number, number]> = { haiku: [1, 5], sonnet: [3, 15], opus: [5, 25] };
 const priceOf = (m: string) => PRICE[Object.keys(PRICE).find((k) => m.includes(k)) || "sonnet"];
-const MAX_STEPS = 8;
+const MAX_STEPS = 10;
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : "");
+// Prospect statuses as the app shows them (Outreach tabs and the job's Sourcing tab).
+const PROSPECT_LABEL: Record<string, string> = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted", archived: "In talent pool" };
+const prospectLabel = (p: any) => p.archived_at ? "In talent pool" : p.data?.xray && p.status === "found" ? (p.email ? "Needs approval" : "To contact (no email yet)") : p.data?.xray && p.status === "contacted" ? "Contacted" : (PROSPECT_LABEL[p.status] || p.status);
+const PROSPECT_GROUPS: Record<string, string[]> = { needs_approval: ["found"], emailed: ["approved", "queued", "contacted"], interested: ["interested", "converted"], skipped: ["rejected", "not_interested", "unsubscribed", "bounced"] };
 
 // ---------------------------------------------------------------- tools
 const STAGES = ["Sourced", "In review", "Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
@@ -49,8 +53,12 @@ const READ_TOOLS = [
     input_schema: { type: "object", properties: { from: { type: "string", description: "YYYY-MM-DD" }, to: { type: "string", description: "YYYY-MM-DD" }, job_id: { type: "string" } } } },
   { name: "team_workload", description: "Each team member's open candidates by stage, open tasks and interviews this week (Admins and Rec Ops only).",
     input_schema: { type: "object", properties: {} } },
-  { name: "get_xray", description: "The X-ray sourcing for a job (Admins and Rec Ops only): the last run (state, when, the searches it ran, the must-have checklist, any direction given, how many found) and the people found so far (X-ray and Apollo prospects) with fit, verdict, overview, gaps, location, whether an email was found and outreach status. Use it to judge whether sourcing is finding the right people and how to steer the next run.",
-    input_schema: { type: "object", properties: { job_id: { type: "string" } }, required: ["job_id"] } },
+  { name: "get_xray", description: "The X-ray sourcing for a job (Admins and Rec Ops only): the last run (state, when, the searches it ran, the must-have checklist, any direction given, how many found), counts by outreach status, and EVERY person found for the role (X-ray and Apollo prospects, best fit first) with fit, verdict, status as the app shows it (Needs approval / To contact, Emailed, Interested, Skipped…), LinkedIn link and whether an email was found; overview and gaps too when the list is short. Filter with status and/or query (name, title, company). Use it to judge whether sourcing is finding the right people and how to steer the next run.",
+    input_schema: { type: "object", properties: { job_id: { type: "string" }, status: { type: "string", enum: ["all", "needs_approval", "emailed", "interested", "skipped", "talent_pool"], description: "Default: everyone except the talent pool" }, query: { type: "string", description: "Words to match in name, title, company or LinkedIn link" } }, required: ["job_id"] } },
+  { name: "find_person", description: "Find a person anywhere in ProNext by name, LinkedIn link, email or company: candidates, every X-ray and Apollo prospect on every role (Needs approval / To contact, Emailed, Interested, Skipped, talent pool) and applications in the Inbox. Use it FIRST whenever the person names someone or pastes a LinkedIn link or email. Returns where each match is (which role, which status) with ids to act on, plus close matches when nothing matches exactly.",
+    input_schema: { type: "object", properties: { query: { type: "string", description: "A name, LinkedIn URL, email or company" } }, required: ["query"] } },
+  { name: "recent_activity", description: "What happened in the last N hours (default 24) on the person's own work: their assistant updates (replies, interest, stage changes, client views, interviews, tasks, finished searches), new candidates, pipeline moves, candidate messages, interviews, tasks done, and (Admins and Rec Ops) prospects found, emailed and interested per role. Use it for 'what changed / what moved today', briefs and round-ups.",
+    input_schema: { type: "object", properties: { hours: { type: "number", description: "1 to 168, default 24" } } } },
 ];
 const WEB_TOOLS = [
   { type: "web_search_20250305", name: "web_search", max_uses: 5 },
@@ -88,6 +96,11 @@ const PROPOSE: Record<string, any> = {
         notes: { type: "string", description: "Plain direction for the search planner, e.g. 'Client rejected two people without Big 4 audit; only people with Big 4 audit then industry'" },
         titles: { type: "array", items: { type: "string" } }, locations: { type: "array", items: { type: "string" } }, must_have: { type: "array", items: { type: "string" } },
         target_companies: { type: "array", items: { type: "string" } }, exclude: { type: "array", items: { type: "string" } }, queries: { type: "array", items: { type: "string" } } } } }, required: ["job_id"] } },
+  propose_prospect: { name: "propose_prospect", description: "Propose an action on a PROSPECT (someone found by X-ray or Apollo for a role; not a candidate yet). Actions: approve_email (approve their drafted outreach email so it's sent; needs an email address), mark_contacted (after the person messages them on LinkedIn; put the LinkedIn message in 'message' so they can copy it first), skip (not right for the role), put_back (a skipped person back to Needs approval). Admins and Rec Ops only. Use real prospect ids from find_person or get_xray.",
+    input_schema: { type: "object", properties: { prospect_id: { type: "string" }, action: { type: "string", enum: ["approve_email", "mark_contacted", "skip", "put_back"] },
+      name: { type: "string", description: "The prospect's name, for the card" }, role: { type: "string", description: "The role they were found for, for the card" },
+      linkedin_url: { type: "string" }, message: { type: "string", description: "A ready-to-send LinkedIn message (for mark_contacted), in the person's own voice and template if they gave one" },
+      why: { type: "string", description: "One line on why" } }, required: ["prospect_id", "action"] } },
   propose_bench_check: { name: "propose_bench_check", description: "Propose running the AI bench check for a job: reviews the closest people already in ProNext against it (uses AI credits). Admins and Rec Ops only.",
     input_schema: { type: "object", properties: { job_id: { type: "string" } }, required: ["job_id"] } },
 };
@@ -208,13 +221,105 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     if (!staff) return { error: "Only Admins and Rec Ops can see sourcing" };
     const { data: j } = await db.from("jobs").select("id,role_title,client,xray").eq("id", String(input?.job_id || "")).maybeSingle();
     if (!j) return { error: "Job not found" };
-    const { data: ps } = await db.from("prospects").select("id,full_name,title,company,location,source,fit,verdict,fit_reason,status,email,data,created_at").eq("job_id", j.id).is("archived_at", null).order("fit", { ascending: false, nullsFirst: false }).limit(30);
+    const { data: ps0 } = await db.from("prospects").select("id,full_name,title,company,location,source,fit,verdict,fit_reason,status,email,linkedin_url,data,archived_at,created_at").eq("job_id", j.id).order("fit", { ascending: false, nullsFirst: false }).limit(400);
+    const all = ps0 || [];
+    const counts: Record<string, number> = {};
+    for (const p of all) { const l = prospectLabel(p); counts[l] = (counts[l] || 0) + 1; }
+    const st = String(input?.status || "");
+    let ps = all.filter((p: any) => st === "all" ? true : st === "talent_pool" ? !!p.archived_at : !p.archived_at);
+    if (st && PROSPECT_GROUPS[st]) ps = ps.filter((p: any) => PROSPECT_GROUPS[st].includes(p.status));
+    const words = String(input?.query || "").toLowerCase().split(/[\s,]+/).filter((w) => w.length > 1);
+    if (words.length) ps = ps.filter((p: any) => { const hay = [p.full_name, p.title, p.company, p.linkedin_url, p.location].join(" ").toLowerCase(); return words.every((w) => hay.includes(w)); });
+    const full = ps.length <= 40;
     const x = j.xray || {};
     return {
-      job: `${j.role_title} at ${j.client}`,
+      job: `${j.role_title} at ${j.client}`, job_id: j.id,
       last_run: x.state ? { state: x.state, at: x.at, found: x.found, reviewed: x.reviewed, searches_run: x.searched, by_site: x.bySite, checklist: x.checklist, queries: x.queries, direction: x.guide || null, note: x.note || x.error || null } : "X-ray has not run for this job yet",
-      people: (ps || []).map((p: any) => ({ id: p.id, name: p.full_name, title: p.title, company: p.company, location: p.location, found_by: p.data?.xray ? "X-ray " + (p.data.site || p.source) : p.source, fit: p.fit, verdict: p.verdict,
-        overview: p.data?.overview || p.fit_reason, gaps: p.data?.gaps, has_email: !!p.email, outreach: p.status, profile: p.data?.profile_url || null })),
+      people_by_status: counts, showing: ps.length + " of " + all.length + (st ? " (" + st + ")" : "") + (words.length ? " matching '" + input.query + "'" : ""),
+      people: ps.map((p: any) => ({ id: p.id, name: p.full_name, title: clip(p.title, 90), company: p.company, location: full ? p.location : undefined,
+        found_by: p.data?.xray ? "X-ray " + (p.data.site || p.source) : p.source, fit: p.fit, verdict: p.verdict, status: prospectLabel(p), has_email: !!p.email, linkedin: p.linkedin_url || p.data?.profile_url || undefined,
+        overview: full ? clip(p.data?.overview || p.fit_reason, 300) : undefined, gaps: full ? p.data?.gaps : undefined })),
+    };
+  }
+
+  if (name === "find_person") {
+    const raw = String(input?.query || "").trim().slice(0, 200);
+    if (!raw) return { error: "Give a name, LinkedIn link, email or company" };
+    const slug = (/linkedin\.com\/in\/([^/?#\s]+)/i.exec(raw) || [])[1] || "";
+    const mail = (/[^\s@]+@[^\s@]+\.[^\s@]+/.exec(raw) || [])[0] || "";
+    const words = slug || mail ? [] : raw.toLowerCase().replace(/[^\p{L}\p{N}\s'-]/gu, " ").split(/\s+/).filter((w) => w.length > 1).slice(0, 5);
+    if (!slug && !mail && !words.length) return { error: "Give a name, LinkedIn link, email or company" };
+    const esc = (w: string) => w.replace(/[%_,()]/g, "");
+    // Every word must match (exactly the person); if nothing does, any word (close matches).
+    const run = async (table: string, cols: string, nameCols: string[], liCol: string | null, mailCol: string | null, extra?: (q: any) => any, loose = false) => {
+      let q = db.from(table).select(cols).limit(loose ? 15 : 25);
+      if (extra) q = extra(q);
+      if (slug) { if (!liCol) return []; q = q.ilike(liCol, "%" + esc(slug) + "%"); }
+      else if (mail) { if (!mailCol) return []; q = q.ilike(mailCol, mail.replace(/[%,()]/g, "")); }
+      else if (loose) q = q.or(words.flatMap((w) => nameCols.map((c) => `${c}.ilike.%${esc(w)}%`)).join(","));
+      else for (const w of words) q = q.or(nameCols.map((c) => `${c}.ilike.%${esc(w)}%`).join(","));
+      const { data, error } = await q;
+      return error ? [] : data || [];
+    };
+    const searchAll = async (loose: boolean) => {
+      const cands = await run("candidates", "id,name,current_title,current_company,location,status,linkedin_url,recruiter_id,candidate_jobs(job_id,stage,jobs(role_title,client))",
+        ["name", "current_company", "current_title"], "linkedin_url", "email", (q) => { q = q.eq("is_draft", false); return me.scoped ? q.eq("recruiter_id", me.id) : q; }, loose);
+      const pros = staff ? await run("prospects", "id,full_name,title,company,location,status,fit,verdict,email,linkedin_url,source,data,archived_at,job_id,jobs(role_title,client,status)",
+        ["full_name", "company", "title"], "linkedin_url", "email", undefined, loose) : [];
+      const apps = staff ? await run("applications", "id,name,email,linkedin,job_id,role_title,status,source,interest_at,created_at,candidate_id",
+        ["name"], "linkedin", "email", undefined, loose) : [];
+      return { cands, pros, apps };
+    };
+    let r = await searchAll(false), close = false;
+    if (!r.cands.length && !r.pros.length && !r.apps.length && words.length) { r = await searchAll(true); close = true; }
+    return {
+      searched: ["candidates" + (me.scoped ? " (your own)" : ""), ...(staff ? ["X-ray and Apollo prospects on every role (all statuses, talent pool included)", "Inbox applications"] : [])].join("; ") + " for " + (slug ? "LinkedIn " + slug : mail ? "email " + mail : "'" + raw + "'"),
+      match: close ? "No exact match. These are close matches (share at least one word):" : r.cands.length + r.pros.length + r.apps.length ? "Exact matches" : "Nobody found",
+      candidates: r.cands.map((c: any) => ({ candidate_id: c.id, name: c.name, title: c.current_title, company: c.current_company, location: c.location, status: c.status, linkedin: c.linkedin_url || undefined,
+        roles: (c.candidate_jobs || []).map((l: any) => ({ job_id: l.job_id, role: l.jobs ? l.jobs.role_title + " (" + l.jobs.client + ")" : "", stage: l.stage })), mine: c.recruiter_id === me.id })),
+      prospects: r.pros.map((p: any) => ({ prospect_id: p.id, name: p.full_name, title: clip(p.title, 90), company: p.company, location: p.location, job_id: p.job_id,
+        role: p.jobs ? p.jobs.role_title + " (" + p.jobs.client + ")" + (p.jobs.status !== "Open" ? " [" + p.jobs.status + "]" : "") : "",
+        found_by: p.data?.xray ? "X-ray " + (p.data.site || p.source) : p.source, status: prospectLabel(p), fit: p.fit, verdict: p.verdict, has_email: !!p.email,
+        linkedin: p.linkedin_url || undefined, overview: clip(p.data?.overview, 300), gaps: p.data?.gaps })),
+      inbox: r.apps.map((a: any) => ({ application_id: a.id, name: a.name, role: a.role_title, job_id: a.job_id, source: a.source, status: a.status, interested: !!a.interest_at, on: day(a.created_at), candidate_id: a.candidate_id || undefined })),
+    };
+  }
+
+  if (name === "recent_activity") {
+    const h = Math.min(168, Math.max(1, Number(input?.hours) || 24));
+    const since = new Date(Date.now() - h * 3600e3).toISOString();
+    const [{ data: ups }, { data: newc }, { data: moves }, { data: msgs }, { data: ivs }, { data: done }] = await Promise.all([
+      db.from("assistant_updates").select("kind,title,created_at").eq("user_id", me.id).gte("created_at", since).order("created_at", { ascending: false }).limit(40),
+      (me.scoped ? db.from("candidates").select("name,current_title,created_at").eq("recruiter_id", me.id) : db.from("candidates").select("name,current_title,created_at")).eq("is_draft", false).gte("created_at", since).limit(40),
+      db.from("candidate_jobs").select("stage,updated_at,candidates(name,recruiter_id),jobs(role_title,client)").gte("updated_at", since).order("updated_at", { ascending: false }).limit(60),
+      db.from("candidate_job_messages").select("created_at,candidate_jobs(candidates(name))").eq("sender", "candidate").eq("staff_id", me.id).gte("created_at", since).limit(60),
+      db.from("interviews").select("starts_at,status,decision,round,recruiter_id,candidates(name),jobs(role_title)").gte("starts_at", since).lte("starts_at", new Date(Date.now() + 864e5).toISOString()).limit(30),
+      db.from("tasks").select("title,done_at").eq("assigned_to", me.id).gte("done_at", since).limit(30),
+    ]);
+    const mv = (moves || []).filter((l: any) => !me.scoped || l.candidates?.recruiter_id === me.id);
+    const byCand: Record<string, number> = {};
+    for (const m of msgs || []) { const n = (m as any).candidate_jobs?.candidates?.name || "a candidate"; byCand[n] = (byCand[n] || 0) + 1; }
+    let sourcing: any = undefined;
+    if (staff) {
+      const { data: pr } = await db.from("prospects").select("status,created_at,contacted_at,updated_at,jobs(role_title)").or(`created_at.gte.${since},contacted_at.gte.${since},updated_at.gte.${since}`).limit(1000);
+      const per: Record<string, { found: number; emailed: number; interested: number }> = {};
+      for (const p of pr || []) {
+        const k = (p as any).jobs?.role_title || "?"; per[k] = per[k] || { found: 0, emailed: 0, interested: 0 };
+        if (p.created_at >= since) per[k].found++;
+        if (p.contacted_at && p.contacted_at >= since) per[k].emailed++;
+        if (["interested", "converted"].includes(p.status) && p.updated_at >= since) per[k].interested++;
+      }
+      sourcing = per;
+    }
+    return {
+      window: "last " + h + " hours",
+      your_updates: (ups || []).map((u: any) => day(u.created_at) + " " + String(u.created_at).slice(11, 16) + " [" + u.kind + "] " + u.title),
+      new_candidates: (newc || []).map((c: any) => c.name + (c.current_title ? " (" + c.current_title + ")" : "")),
+      pipeline_changes: mv.map((l: any) => (l.candidates?.name || "?") + " → " + l.stage + " on " + (l.jobs ? l.jobs.role_title + " (" + l.jobs.client + ")" : "?")),
+      candidate_messages_to_you: byCand,
+      interviews: (ivs || []).filter((i: any) => !me.scoped || i.recruiter_id === me.id).map((i: any) => (i.candidates?.name || "?") + ", " + (i.round || "interview") + " for " + (i.jobs?.role_title || "?") + " at " + i.starts_at + " (" + (i.decision || i.status) + ")"),
+      tasks_done: (done || []).map((t: any) => t.title),
+      sourcing_per_role: sourcing,
     };
   }
 
@@ -246,6 +351,11 @@ function systemPrompt(me: any, mode: string, today: string, tz: string, page: an
 Today is ${today} (${tz}).
 You can look things up yourself with the lookup tools (ProNext data) and web_search / web_fetch (the internet: candidate and company research, a client's news and hiring, salary benchmarks, where people with a rare skill work, competitor job posts). Look things up instead of asking the person for facts you can find. Never invent facts: if a lookup returns nothing, say so.
 "X-ray" here always means X-ray sourcing: Google searches for people's public profiles (LinkedIn, GitHub and similar sites) for a job, never medical imaging. Admins and Rec Ops can run and steer it with get_xray and propose_xray; for a Recruiter, propose a task asking Rec Ops to run one.
+FINDING PEOPLE: when the person names someone, or pastes a LinkedIn link or an email, call find_person straight away. It searches candidates, every X-ray and Apollo prospect on every role (all statuses, talent pool too) and the Inbox. Don't ask which role first and don't make the person look it up for you. Only say someone isn't in ProNext after find_person found nothing, and then say exactly what you searched. To see everyone found for one role, use get_xray (it lists them all; filter with status or query).
+BE EXACT: never say you checked, saw, found or did something unless a tool in this conversation actually did it; say "I searched X and found Y". You cannot open LinkedIn profiles (LinkedIn blocks it): never describe a LinkedIn profile you haven't been given. Use what ProNext holds about the person, or ask.
+PROSPECTS are people found by X-ray or Apollo for a role; they are not candidates yet, and their ids are prospect ids. propose_route, propose_message, propose_stage, propose_note and propose_interview only work for candidates. For a prospect use propose_prospect (approve their outreach email, mark them contacted after a LinkedIn message, skip, put back); write a LinkedIn message in its message field so the person can copy it.
+For "what changed / what moved today", briefs and round-ups, use recent_activity (and list_jobs / list_interviews) instead of guessing.
+After your lookups and proposals, write your whole answer in your final message: what you found, then what you propose. Don't leave the answer in an earlier message.
 Write plainly and briefly. No markdown headings; short paragraphs or simple "-" lists are fine.`;
   const work = `
 HOW YOU ACT: you cannot change anything yourself. To do something, call the propose_* tools; each becomes a card the person approves. Propose several at once when a plan needs them. Only use real ids from lookups. If something essential is ambiguous (two people with the same name, a missing interview time), ask one short question.
@@ -286,14 +396,16 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   ]);
   const allowed = mode === "brainstorm" ? [] : (TOOLS_FOR[me.role] || TOOLS_FOR.recruiter);
   const last = String(o.messages[o.messages.length - 1]?.content || "").toLowerCase();
-  // The stronger model for planning and thinking; the fast one for quick asks.
-  const model = o.forceModel || (o.smart || mode === "brainstorm" || /\b(close|fill|unblock|plan|strategy|why|diagnos|review)\b/.test(last) ? SMART : FAST);
+  // The stronger model for conversations (it has to search, reason and stay exact); the fast one
+  // only for very short follow-ups like "ok" / "yes" with nothing to look up.
+  const model = o.forceModel || (o.smart || mode === "brainstorm" || last.length > 12 || o.messages.length < 2 ? SMART : FAST);
   let useFetch = true;
   const tools = () => [...READ_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => PROPOSE[n])];
   const system = [{ type: "text", text: systemPrompt(me, mode, today, tz, page || {}, jobs || [], users || []), cache_control: { type: "ephemeral" } }];
   const convo: any[] = [...o.messages];
   const proposals: any[] = [];
   let text = "", inTok = 0, outTok = 0, searches = 0, steps = 0, error = "", status = 200;
+  const texts: string[] = [];
   while (steps++ < MAX_STEPS) {
     const payload = { model, max_tokens: 3000, system, tools: tools(), messages: convo };
     let res = await callClaude(key, payload, useFetch ? "web-fetch-2025-09-10" : null);
@@ -315,7 +427,7 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
     searches += Number(out?.usage?.server_tool_use?.web_search_requests) || 0;
     const blocks: any[] = Array.isArray(out?.content) ? out.content : [];
     const said = blocks.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-    if (said) text = said; // the last thing it says is the answer; earlier "let me check…" lines are dropped
+    if (said) { said.length > 160 && texts.push(said); text = said; } // the last thing it says is the answer; earlier "let me check…" lines are dropped
     // A long web search can pause the turn: hand it straight back to continue.
     if (out.stop_reason === "pause_turn") { convo.push({ role: "assistant", content: blocks }); continue; }
     const uses = blocks.filter((b) => b.type === "tool_use");
@@ -338,6 +450,10 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   const [pi, po] = priceOf(model);
   await admin.from("ai_usage").insert({ user_id: me.id, feature: "assistant", model, input_tokens: Math.round(inTok), output_tokens: outTok,
     cost_usd: Math.round(((inTok * pi + outTok * po) / 1e6 + searches * 0.01) * 1e6) / 1e6 }).then(() => {}, () => {});
+  // A short closing line ("Done, three reminders proposed") after a real answer earlier in the turn:
+  // keep the answer too.
+  const earlier = texts.filter((t) => t !== text).pop();
+  if (text && text.length < 160 && earlier) text = earlier + "\n\n" + text;
   return { error, status, model, proposals, text: text || (proposals.length ? "Here's what I'd do. Approve to go ahead." : "I couldn't find an answer to that.") };
 }
 
@@ -362,7 +478,7 @@ async function briefNext(admin: any, key: string, max: number, kind: "brief" | "
   const out: any[] = [];
   for (const p of todo.slice(0, max)) {
     const me = { id: p.id, full_name: p.full_name, role: p.role, status: p.status, scoped: p.role === "recruiter" };
-    const r = await runAgent({ admin, db: admin, me, key, mode: "work", messages: [{ role: "user", content: ask }], page: {}, tz, forceModel: FAST });
+    const r = await runAgent({ admin, db: admin, me, key, mode: "work", messages: [{ role: "user", content: ask }], page: {}, tz, forceModel: SMART });
     if (r.error) { out.push({ id: p.id, error: r.error }); if (r.status === 402) break; continue; }
     const label = new Intl.DateTimeFormat("en-GB", { timeZone: tz, day: "numeric", month: "short" }).format(new Date());
     const { data: th } = await admin.from("assistant_threads").insert({ user_id: p.id, kind, mode: "work", title: (kind === "brief" ? "Morning brief · " : "End-of-day round-up · ") + label,
