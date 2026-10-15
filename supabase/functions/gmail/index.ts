@@ -7,8 +7,11 @@
 // Google Workspace: set the OAuth consent screen to "Internal" and enable the Gmail API in the
 // same Google Cloud project (see supabase/INTERVIEWS_SETUP.md, Gmail drafts).
 //
-// Actions (the person's own login): status, connect, draft {to, cc, subject, body}.
+// Actions (the person's own login): status, connect, draft {to, cc, subject, body, branded}.
+// branded: true sends the agency's email design (logo/name, green button style, footer) with the
+// plain text as the fallback part; otherwise a plain email, like one typed in Gmail.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { emailShell, esc, loadBrand } from "./brand.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -45,7 +48,7 @@ Deno.serve(async (req: Request) => {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const { data: caller } = await admin.auth.getUser((req.headers.get("Authorization") || "").replace("Bearer ", ""));
     if (!caller?.user) return json({ error: "Not signed in" }, 401);
-    const { data: me } = await admin.from("profiles").select("id,status").eq("id", caller.user.id).single();
+    const { data: me } = await admin.from("profiles").select("id,status,full_name").eq("id", caller.user.id).single();
     if (!me || me.status !== "Active") return json({ error: "Your account is not active" }, 403);
     const body = await req.json().catch(() => ({}));
     const action = String(body.action || "");
@@ -71,16 +74,27 @@ Deno.serve(async (req: Request) => {
 
     if (action === "draft") {
       if (!can) return json({ ok: false, needConnect: true, email: conn.google_email || "" });
-      const mime = [
+      const text = String(body.body || "").slice(0, 50000);
+      const part = (type: string, content: string) => ["Content-Type: " + type + "; charset=UTF-8", "Content-Transfer-Encoding: base64", "", (b64(content.replace(/\r?\n/g, "\r\n")).match(/.{1,76}/g) || []).join("\r\n")];
+      const head = [
         ...(line(body.to, 500) ? ["To: " + line(body.to, 500)] : []),
         ...(line(body.cc, 500) ? ["Cc: " + line(body.cc, 500)] : []),
         "Subject: " + hdr(line(body.subject, 300)),
         "MIME-Version: 1.0",
-        "Content-Type: text/plain; charset=UTF-8",
-        "Content-Transfer-Encoding: base64",
-        "",
-        (b64(String(body.body || "").slice(0, 50000).replace(/\r?\n/g, "\r\n")).match(/.{1,76}/g) || []).join("\r\n"),
-      ].join("\r\n");
+      ];
+      let mime: string;
+      if (body.branded) {
+        const b = await loadBrand(admin);
+        // Paragraphs and line breaks as typed; web links clickable.
+        const link = (t: string) => t.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" style="color:' + b.color + ';">$1</a>');
+        const html = text.trim().split(/\n{2,}/).map((para) => `<div style="font-size:15px;line-height:1.6;margin-top:12px;">${link(esc(para.trim())).replace(/\n/g, "<br>")}</div>`).join("").replace('margin-top:12px;', "margin-top:0;");
+        const footer = [me.full_name, b.legal || b.name, b.address].filter(Boolean).join(" · ");
+        const shell = emailShell(b, line(body.subject, 150), html, footer);
+        const boundary = "pronext_" + crypto.randomUUID().replace(/-/g, "");
+        mime = [...head, `Content-Type: multipart/alternative; boundary="${boundary}"`, "", "--" + boundary, ...part("text/plain", text), "--" + boundary, ...part("text/html", shell), "--" + boundary + "--", ""].join("\r\n");
+      } else {
+        mime = [...head, ...part("text/plain", text)].join("\r\n");
+      }
       const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
         method: "POST", headers: { Authorization: "Bearer " + t.token, "Content-Type": "application/json" },
         body: JSON.stringify({ message: { raw: b64url(mime) } }),
