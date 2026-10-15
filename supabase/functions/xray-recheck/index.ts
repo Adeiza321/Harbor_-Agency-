@@ -37,12 +37,12 @@ async function review(admin: any, limit: number) {
     for (let i = 0; i < people.length; i += 10) {
       const b = people.slice(i, i + 10);
       const out = await askAI(REVIEW_SYSTEM, head + b.map((p: any, k: number) =>
-        `${k} | ${clip(p.data?.site || "linkedin", 20)} | ${clip(p.data?.result_title || p.full_name + " - " + (p.title || ""), 200)} | ${clip(p.data?.snippet || "", 500) || "(no snippet)"}`).join("\n"), 12000);
+        `${k} | ${clip(p.data?.site || "linkedin", 20)} | ${clip(p.data?.result_title || p.full_name + " - " + (p.title || ""), 200)} | ${clip(p.data?.snippet || "", 500) || "(no snippet)"}${p.location ? " | Location on file: " + clip(p.location, 80) : ""}`).join("\n"), 12000);
       const byI = new Map(fitsToPercent(Array.isArray(out?.people) ? out.people : []).map((r: any) => [Number(r.i), r]));
       for (let k = 0; k < b.length; k++) {
         const p: any = b[k], r: any = byI.get(k);
         if (!r) continue; // tried again next run
-        const j = judge(job, { title: p.data?.result_title || "", snippet: p.data?.snippet || "" }, r);
+        const j = judge(job, { title: p.data?.result_title || "", snippet: p.data?.snippet || "" }, { ...r, location: r.location || p.location || "" });
         await mark(admin, p, { ...j, why: clip(r.why, 140) }, j.reasons);
         reviewed++; if (!j.keep) removed++;
       }

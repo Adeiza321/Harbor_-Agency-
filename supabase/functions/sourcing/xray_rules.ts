@@ -5,7 +5,7 @@
 // "not met", and doesn't lower the fit. People are removed only for something the result actually
 // shows (or a clear location):
 //   - a company page rather than a person
-//   - working at the hiring company now
+//   - working at the hiring company now (only when the result names it)
 //   - based in another country (for any role), or outside the commute area (on-site / hybrid roles)
 //   - a core must-have (the first three checklist items) clearly contradicted
 //   - running a business in a different field from the role
@@ -16,7 +16,7 @@
 
 import { jobBrief } from "./prospects.ts";
 import { COUNTRY_NAMES, jobCountryNames } from "./regions.ts";
-import { sameCompany } from "./common.ts";
+import { normCompany, sameCompany } from "./common.ts";
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
@@ -119,7 +119,12 @@ export function judge(job: any, hit: { title?: string; snippet?: string }, r: an
   if (r.company_page === true) reasons.push("A company page, not a person");
   // A hidden client ("Confidential") can't be matched by name.
   const client = /^\s*(confidential|undisclosed|n\/?a)\s*$/i.test(String(job.client || "")) ? "" : String(job.client || "");
-  if (r.client_history === "current" || (client && sameCompany(r.company, client))) reasons.push("Works at " + (client || "the client") + " now");
+  // Only when the result itself shows the client: their current employer is the client, or the AI
+  // says "current" and the client's name appears in the result (it can't know otherwise).
+  const clientNorm = client ? normCompany(client) : "";
+  const mentionsClient = clientNorm.length > 2 && (" " + normCompany([r.company, r.headline, title, snippet].join(" ")) + " ").includes(" " + clientNorm + " ");
+  const atClient = !!client && (sameCompany(r.company, client) || (r.client_history === "current" && mentionsClient));
+  if (atClient) reasons.push("Works at " + client + " now");
   if (allowed.size && c && !allowed.has(c)) reasons.push("Based in " + CAP(c) + ", outside the role's country");
   else if (!fullyRemote && r.in_area === "no") reasons.push("Outside the commute area" + (clip(r.area_note, 80) ? ": " + clip(r.area_note, 80) : ""));
   const coreMissing = checklist.slice(0, 3).filter((x: any) => x.status === "not met");
@@ -138,6 +143,6 @@ export function judge(job: any, hit: { title?: string; snippet?: string }, r: an
   return {
     keep: reasons.length === 0, reasons, notes, fit, verdict: reasons.length ? "Not a fit" : verdict === "Not a fit" ? "Possible fit" : verdict,
     location, locationSource: remote ? "remote" : fromSnippet ? "profile" : location ? "result" : "", remote,
-    clientHistory: r.client_history === "past" ? "past" : "none", ownPractice, checklist, gaps,
+    clientHistory: r.client_history === "past" && mentionsClient ? "past" : "none", ownPractice, checklist, gaps,
   };
 }
