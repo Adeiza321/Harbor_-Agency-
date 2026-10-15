@@ -10,6 +10,9 @@
 // Actions (the person's own login): status, connect, draft {to, cc, subject, body, branded}.
 // branded: true sends the agency's email design (logo/name, green button style, footer) with the
 // plain text as the fallback part; otherwise a plain email, like one typed in Gmail.
+// Your Gmail signature (the default "Send mail as" signature set in Gmail) is added at the end,
+// as Gmail would; drafts made through Google's API don't get it otherwise. The AI's own sign-off
+// name is dropped when there is a signature, so the name isn't there twice.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { emailShell, esc, loadBrand } from "./brand.ts";
 
@@ -22,8 +25,9 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const errMsg = (e: unknown) => String((e as Error)?.message || e);
 
 const COMPOSE = "https://www.googleapis.com/auth/gmail.compose";
+const SETTINGS = "https://www.googleapis.com/auth/gmail.settings.basic"; // read your signature only
 // The interview scopes are asked again so the refreshed token keeps them.
-const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/calendar.app.created", "https://www.googleapis.com/auth/calendar.freebusy", COMPOSE];
+const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/calendar.app.created", "https://www.googleapis.com/auth/calendar.freebusy", COMPOSE, SETTINGS];
 const configured = () => !!(Deno.env.get("GOOGLE_CLIENT_ID") && Deno.env.get("GOOGLE_CLIENT_SECRET"));
 
 async function accessToken(refresh: string) {
@@ -69,12 +73,30 @@ Deno.serve(async (req: Request) => {
 
     if (!conn) return json({ ok: true, connected: false, needConnect: true });
     const t = await accessToken(conn.refresh_token);
-    const can = !!t.token && t.scope.split(" ").includes(COMPOSE);
+    const granted = t.scope.split(" ");
+    const can = !!t.token && granted.includes(COMPOSE) && granted.includes(SETTINGS);
     if (action === "status") return json({ ok: true, connected: can, email: conn.google_email || "" });
 
     if (action === "draft") {
       if (!can) return json({ ok: false, needConnect: true, email: conn.google_email || "" });
-      const text = String(body.body || "").slice(0, 50000);
+      let text = String(body.body || "").slice(0, 50000).replace(/\s+$/, "");
+      // The Gmail signature: the default send-as address's, else the primary one's.
+      let sig = "";
+      try {
+        const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs", { headers: { Authorization: "Bearer " + t.token } });
+        const d = await r.json().catch(() => ({}));
+        const list = Array.isArray(d?.sendAs) ? d.sendAs : [];
+        sig = String((list.find((x: any) => x.isDefault) || list.find((x: any) => x.isPrimary) || {}).signature || "").trim();
+      } catch { /* no signature */ }
+      if (sig) {
+        // Drop the AI's own sign-off name ("Sani" / "Sani Adeiza") when the signature carries it.
+        const names = [String(me.full_name || "").trim(), String(me.full_name || "").trim().split(/\s+/)[0]].filter(Boolean).map((n) => n.toLowerCase());
+        const lines = text.split("\n");
+        if (lines.length > 1 && names.includes(lines[lines.length - 1].trim().toLowerCase())) text = lines.slice(0, -1).join("\n").replace(/\s+$/, "");
+      }
+      const sigText = sig.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(div|p|tr|li|h\d)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\n{3,}/g, "\n\n").trim();
+      const textOut = sig ? text + "\n\n-- \n" + sigText : text;
+      const sigHtml = sig ? `<div class="gmail_signature" style="margin-top:16px;">${sig}</div>` : "";
       const part = (type: string, content: string) => ["Content-Type: " + type + "; charset=UTF-8", "Content-Transfer-Encoding: base64", "", (b64(content.replace(/\r?\n/g, "\r\n")).match(/.{1,76}/g) || []).join("\r\n")];
       const head = [
         ...(line(body.to, 500) ? ["To: " + line(body.to, 500)] : []),
@@ -83,15 +105,17 @@ Deno.serve(async (req: Request) => {
         "MIME-Version: 1.0",
       ];
       let mime: string;
+      const alt = (html: string) => { const boundary = "pronext_" + crypto.randomUUID().replace(/-/g, ""); return [...head, `Content-Type: multipart/alternative; boundary="${boundary}"`, "", "--" + boundary, ...part("text/plain", textOut), "--" + boundary, ...part("text/html", html), "--" + boundary + "--", ""].join("\r\n"); };
+      // Paragraphs and line breaks as typed; web links clickable.
+      const linkify = (t: string, color: string) => t.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1"' + (color ? ' style="color:' + color + ';"' : "") + ">$1</a>");
       if (body.branded) {
         const b = await loadBrand(admin);
-        // Paragraphs and line breaks as typed; web links clickable.
-        const link = (t: string) => t.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '<a href="$1" style="color:' + b.color + ';">$1</a>');
-        const html = text.trim().split(/\n{2,}/).map((para) => `<div style="font-size:15px;line-height:1.6;margin-top:12px;">${link(esc(para.trim())).replace(/\n/g, "<br>")}</div>`).join("").replace('margin-top:12px;', "margin-top:0;");
+        const html = text.trim().split(/\n{2,}/).map((para) => `<div style="font-size:15px;line-height:1.6;margin-top:12px;">${linkify(esc(para.trim()), b.color).replace(/\n/g, "<br>")}</div>`).join("").replace('margin-top:12px;', "margin-top:0;");
         const footer = [me.full_name, b.legal || b.name, b.address].filter(Boolean).join(" · ");
-        const shell = emailShell(b, line(body.subject, 150), html, footer);
-        const boundary = "pronext_" + crypto.randomUUID().replace(/-/g, "");
-        mime = [...head, `Content-Type: multipart/alternative; boundary="${boundary}"`, "", "--" + boundary, ...part("text/plain", text), "--" + boundary, ...part("text/html", shell), "--" + boundary + "--", ""].join("\r\n");
+        mime = alt(emailShell(b, line(body.subject, 150), html + sigHtml, footer));
+      } else if (sig) {
+        // Looks like an email typed in Gmail: Gmail's own font, then your signature.
+        mime = alt(`<div dir="ltr">${linkify(esc(text), "").replace(/\n/g, "<br>")}${sigHtml}</div>`);
       } else {
         mime = [...head, ...part("text/plain", text)].join("\r\n");
       }

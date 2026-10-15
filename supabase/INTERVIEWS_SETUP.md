@@ -69,4 +69,6 @@ One-time setup in the same Google Cloud project:
 1. APIs & Services > Library > **Gmail API** > Enable.
 2. OAuth consent screen > User type **Internal** (Google Workspace). Internal apps can use Gmail
    permissions without Google's app review, but only accounts in your Workspace can connect.
-3. OAuth consent screen > Data access (Scopes) > add `https://www.googleapis.com/auth/gmail.compose`.
+3. OAuth consent screen > Data access (Scopes) > add `https://www.googleapis.com/auth/gmail.compose`
+   (create drafts) and `https://www.googleapis.com/auth/gmail.settings.basic` (read your Gmail
+   signature, which is added to each draft).
