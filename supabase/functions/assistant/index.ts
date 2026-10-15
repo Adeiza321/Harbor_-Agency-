@@ -12,6 +12,10 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 //   POST { messages: [{ role, content }], mode: "work" | "brainstorm", page: { jobId?, candidateId? }, tz? }
 //   ->   { text, proposals: [{ tool, input }], model }
 // Each call's token and web-search use is logged to public.ai_usage (feature 'assistant').
+// Morning brief (ops token, cron "harbor-morning-brief" on weekday mornings): { action: "brief_next" }
+// writes one person's brief as a saved conversation (kind 'brief') with its proposed actions waiting
+// for approval, a few people per call. Those runs use the service role, so recruiter scoping is
+// applied in the lookups themselves (me.scoped) instead of by row security.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -99,7 +103,8 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     const { data: jobs, error } = await q;
     if (error) return { error: error.message };
     const ids = (jobs || []).map((j: any) => j.id);
-    const { data: links } = ids.length ? await db.from("candidate_jobs").select("job_id,stage,updated_at,candidate_response").in("job_id", ids) : { data: [] };
+    const { data: links0 } = ids.length ? await db.from("candidate_jobs").select("job_id,stage,updated_at,candidate_response,candidates(recruiter_id)").in("job_id", ids) : { data: [] };
+    const links = me.scoped ? (links0 || []).filter((l: any) => l.candidates?.recruiter_id === me.id) : links0;
     return (jobs || []).map((j: any) => {
       const ls = (links || []).filter((l: any) => l.job_id === j.id && l.candidate_response !== "declined");
       const by: Record<string, number> = {};
@@ -114,9 +119,11 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
   if (name === "get_job") {
     const { data: j, error } = await db.from("jobs").select("*").eq("id", input.job_id).maybeSingle();
     if (error || !j) return { error: "Job not found or not visible to you" };
-    const { data: links } = await db.from("candidate_jobs").select("id,candidate_id,stage,fit,ai,candidate_response,submitted_at,updated_at,reject_kind,reject_reason,reject_feedback,rejected_at,client_viewed_at,candidates(name,current_title,location,recruiter_id)").eq("job_id", j.id);
+    const { data: links0 } = await db.from("candidate_jobs").select("id,candidate_id,stage,fit,ai,candidate_response,submitted_at,updated_at,reject_kind,reject_reason,reject_feedback,rejected_at,client_viewed_at,candidates(name,current_title,location,recruiter_id)").eq("job_id", j.id);
+    const links = me.scoped ? (links0 || []).filter((l: any) => l.candidates?.recruiter_id === me.id) : links0;
     const { data: lessons } = await db.from("screening_lessons").select("kind,lesson,look_for").eq("job_id", j.id).eq("active", true).limit(20);
-    const { data: ivs } = await db.from("interviews").select("candidate_id,round,starts_at,status,decision,feedback").eq("job_id", j.id).order("starts_at", { ascending: false }).limit(20);
+    const { data: ivs0 } = await db.from("interviews").select("candidate_id,round,starts_at,status,decision,feedback,recruiter_id").eq("job_id", j.id).order("starts_at", { ascending: false }).limit(20);
+    const ivs = me.scoped ? (ivs0 || []).filter((i: any) => i.recruiter_id === me.id) : ivs0;
     return {
       id: j.id, role: j.role_title, client: j.client, status: j.status, hold: j.hold_reason || undefined, location: j.location, work_setup: j.work_setup, country: j.country,
       employment_type: j.employment_type, openings: j.headcount || 1, pay: [j.min_pay, j.max_pay].filter(Boolean).join("–") + " " + (j.currency || "") + (j.salary_period ? "/" + j.salary_period : ""),
@@ -137,6 +144,7 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
   if (name === "search_candidates") {
     const lim = Math.min(Number(input?.limit) || 25, 50);
     let q = db.from("candidates").select("id,name,current_title,current_company,location,status,ai_score,skills,experience,updated_at,recruiter_id,candidate_jobs(job_id,stage,fit)").eq("is_draft", false).order("updated_at", { ascending: false }).limit(input?.query ? 400 : lim);
+    if (me.scoped) q = q.eq("recruiter_id", me.id);
     if (input?.status) q = q.eq("status", input.status);
     const { data, error } = await q;
     if (error) return { error: error.message };
@@ -156,7 +164,7 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
 
   if (name === "get_candidate") {
     const { data: c, error } = await db.from("candidates").select("id,name,current_title,current_company,location,status,email,phone,linkedin_url,experience,notice,pay,skills,strengths,gaps,ai_score,industries,parallel_titles,preferences,email_opt_out,recruiter_id,created_at").eq("id", input.candidate_id).maybeSingle();
-    if (error || !c) return { error: "Candidate not found or not visible to you" };
+    if (error || !c || (me.scoped && c.recruiter_id !== me.id)) return { error: "Candidate not found or not visible to you" };
     const { data: links } = await db.from("candidate_jobs").select("id,job_id,stage,fit,ai,screening_answers,candidate_response,submitted_at,reject_kind,reject_reason,reject_feedback,jobs(role_title,client)").eq("candidate_id", c.id);
     const { data: notes } = await db.from("candidate_comments").select("body,created_at").eq("candidate_id", c.id).order("created_at", { ascending: false }).limit(10);
     const { data: ivs } = await db.from("interviews").select("job_id,round,starts_at,status,decision,feedback").eq("candidate_id", c.id).order("starts_at", { ascending: false }).limit(10);
@@ -181,6 +189,7 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     const to = input?.to || new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10);
     let q = db.from("interviews").select("candidate_id,job_id,round,starts_at,status,decision,feedback,recruiter_id,candidates(name),jobs(role_title,client)").gte("starts_at", from).lte("starts_at", to + "T23:59:59Z").order("starts_at").limit(60);
     if (input?.job_id) q = q.eq("job_id", input.job_id);
+    if (me.scoped) q = q.eq("recruiter_id", me.id);
     const { data, error } = await q;
     if (error) return { error: error.message };
     return (data || []).map((i: any) => ({ candidate_id: i.candidate_id, candidate: i.candidates?.name, job_id: i.job_id, role: i.jobs ? i.jobs.role_title + " (" + i.jobs.client + ")" : "", round: i.round, when: i.starts_at, status: i.status, decision: i.decision, feedback: clip(i.feedback, 200), mine: i.recruiter_id === me.id }));
@@ -242,6 +251,95 @@ async function callClaude(key: string, payload: any, beta: string | null) {
   return res!;
 }
 
+// One assistant turn: lookups, web and proposals in a loop until it answers. Logs its cost.
+async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: string; messages: any[]; page: any; tz: string; smart?: boolean; forceModel?: string }) {
+  const { admin, db, me, key, mode, page, tz } = o;
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const [{ data: jobs }, { data: users }] = await Promise.all([
+    db.from("jobs").select("id,role_title,client").in("status", ["Open", "On hold"]).order("created_at", { ascending: false }).limit(80),
+    db.from("profiles").select("id,full_name,role").eq("status", "Active"),
+  ]);
+  const allowed = mode === "brainstorm" ? [] : (TOOLS_FOR[me.role] || TOOLS_FOR.recruiter);
+  const last = String(o.messages[o.messages.length - 1]?.content || "").toLowerCase();
+  // The stronger model for planning and thinking; the fast one for quick asks.
+  const model = o.forceModel || (o.smart || mode === "brainstorm" || /\b(close|fill|unblock|plan|strategy|why|diagnos|review)\b/.test(last) ? SMART : FAST);
+  let useFetch = true;
+  const tools = () => [...READ_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => PROPOSE[n])];
+  const system = [{ type: "text", text: systemPrompt(me, mode, today, tz, page || {}, jobs || [], users || []), cache_control: { type: "ephemeral" } }];
+  const convo: any[] = [...o.messages];
+  const proposals: any[] = [];
+  let text = "", inTok = 0, outTok = 0, searches = 0, steps = 0, error = "", status = 200;
+  while (steps++ < MAX_STEPS) {
+    const payload = { model, max_tokens: 3000, system, tools: tools(), messages: convo };
+    let res = await callClaude(key, payload, useFetch ? "web-fetch-2025-09-10" : null);
+    if (!res.ok && res.status === 400 && useFetch) {
+      const t = await res.text();
+      if (/web_fetch|beta/i.test(t)) { useFetch = false; res = await callClaude(key, { ...payload, tools: tools() }, null); }
+      else { error = "The assistant couldn't answer: " + t.slice(0, 200); status = 502; break; }
+    }
+    if (!res.ok) {
+      const t = (await res.text()).slice(0, 300);
+      status = /credit balance/i.test(t) ? 402 : 502;
+      error = /credit balance/i.test(t) ? "The Claude account is out of credit. Top up at console.anthropic.com, then try again."
+        : [429, 529].includes(res.status) ? "The assistant is busy right now. Try again in a minute." : "The assistant couldn't answer (" + res.status + "): " + t.slice(0, 160);
+      break;
+    }
+    const out = await res.json();
+    inTok += (Number(out?.usage?.input_tokens) || 0) + (Number(out?.usage?.cache_creation_input_tokens) || 0) + (Number(out?.usage?.cache_read_input_tokens) || 0) * 0.1;
+    outTok += Number(out?.usage?.output_tokens) || 0;
+    searches += Number(out?.usage?.server_tool_use?.web_search_requests) || 0;
+    const blocks: any[] = Array.isArray(out?.content) ? out.content : [];
+    const said = blocks.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+    if (said) text = said; // the last thing it says is the answer; earlier "let me check…" lines are dropped
+    // A long web search can pause the turn: hand it straight back to continue.
+    if (out.stop_reason === "pause_turn") { convo.push({ role: "assistant", content: blocks }); continue; }
+    const uses = blocks.filter((b) => b.type === "tool_use");
+    if (!uses.length || out.stop_reason !== "tool_use") break;
+    convo.push({ role: "assistant", content: blocks });
+    const results: any[] = [];
+    for (const u of uses) {
+      if (u.name.startsWith("propose_")) {
+        if (!allowed.includes(u.name)) { results.push({ type: "tool_result", tool_use_id: u.id, content: "Not allowed for this person's role. Propose a task for Rec Ops instead.", is_error: true }); continue; }
+        proposals.push({ tool: u.name, input: u.input || {} });
+        results.push({ type: "tool_result", tool_use_id: u.id, content: "Proposed. The person will approve or decline it." });
+      } else {
+        let r: unknown;
+        try { r = await runRead(db, me, u.name, u.input || {}); } catch (e) { r = { error: String((e as Error)?.message || e) }; }
+        results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r).slice(0, 30000) });
+      }
+    }
+    convo.push({ role: "user", content: results });
+  }
+  const [pi, po] = priceOf(model);
+  await admin.from("ai_usage").insert({ user_id: me.id, feature: "assistant", model, input_tokens: Math.round(inTok), output_tokens: outTok,
+    cost_usd: Math.round(((inTok * pi + outTok * po) / 1e6 + searches * 0.01) * 1e6) / 1e6 }).then(() => {}, () => {});
+  return { error, status, model, proposals, text: text || (proposals.length ? "Here's what I'd do. Approve to go ahead." : "I couldn't find an answer to that.") };
+}
+
+const BRIEF_ASK = "Give me my morning brief. In a few short lines: what changed since yesterday, which roles are closest to a hire and what's blocking each, and the 3 most important things to do today to get a hire. Propose the actions for those 3 things (emails, messages, interviews, reminders) so I can approve them. If nothing needs doing, say so in one line.";
+
+// Weekday mornings: the next few active people without today's brief get one, saved as a conversation.
+async function briefNext(admin: any, key: string, max: number) {
+  const tz = "Africa/Lagos";
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const startUtc = new Date(Date.now() - 20 * 3600e3).toISOString();
+  const { data: people } = await admin.from("profiles").select("id,full_name,role,status").eq("status", "Active").in("role", ["admin", "recops", "recruiter"]);
+  const { data: done } = await admin.from("assistant_threads").select("user_id").eq("kind", "brief").gte("created_at", startUtc);
+  const have = new Set((done || []).map((d: any) => d.user_id));
+  const todo = (people || []).filter((p: any) => !have.has(p.id));
+  const out: any[] = [];
+  for (const p of todo.slice(0, max)) {
+    const me = { ...p, scoped: p.role === "recruiter" };
+    const r = await runAgent({ admin, db: admin, me, key, mode: "work", messages: [{ role: "user", content: BRIEF_ASK }], page: {}, tz, forceModel: FAST });
+    if (r.error) { out.push({ id: p.id, error: r.error }); if (r.status === 402) break; continue; }
+    const label = new Intl.DateTimeFormat("en-GB", { timeZone: tz, day: "numeric", month: "short" }).format(new Date());
+    await admin.from("assistant_threads").insert({ user_id: p.id, kind: "brief", mode: "work", title: "Morning brief · " + label,
+      messages: [{ role: "user", content: BRIEF_ASK }, { role: "assistant", content: r.text, proposals: r.proposals.map((x: any) => ({ ...x, state: x.tool === "propose_email" ? "draft" : "waiting" })) }] });
+    out.push({ id: p.id, ok: true, proposals: r.proposals.length });
+  }
+  return { ok: true, today, done: out, remaining: Math.max(0, todo.length - out.length) };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
@@ -253,13 +351,16 @@ Deno.serve(async (req: Request) => {
     if (!key) return json({ error: "The assistant isn't connected (ANTHROPIC_API_KEY)" }, 400);
     let me: any, db: any;
     const opsKey = req.headers.get("x-harbor-ops") || "";
-    if (opsKey && body.selftest_profile) {
-      // Maintenance health check (server-side ops token only): answers as the given person, read-only;
-      // proposals are returned, never carried out. Lets the setup be checked without a browser.
+    if (opsKey) {
+      // Server-side runs (ops token): the morning brief, and a health check that answers as a given
+      // person (read-only; proposals are returned, never carried out).
       const { data: tok } = await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
+      if (body.action === "brief_next") return json(await briefNext(admin, key, Math.min(Number(body.max) || 2, 4)));
+      if (!body.selftest_profile) return json({ error: "Unknown ops action" }, 400);
       ({ data: me } = await admin.from("profiles").select("id,full_name,role,status").eq("id", body.selftest_profile).single());
       if (!me) return json({ error: "No such profile" }, 404);
+      me.scoped = me.role === "recruiter";
       db = admin;
     } else {
       const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
@@ -273,73 +374,15 @@ Deno.serve(async (req: Request) => {
 
     const mode = body.mode === "brainstorm" ? "brainstorm" : "work";
     const tz = String(body.tz || "Africa/Lagos");
-    const today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
     const messages: any[] = (Array.isArray(body.messages) ? body.messages : []).slice(-20)
       .map((m: any) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "").slice(0, 6000) }))
       .filter((m: any) => m.content);
     while (messages.length && messages[0].role !== "user") messages.shift();
     if (!messages.length || messages[messages.length - 1].role !== "user") return json({ error: "Ask something first" }, 400);
 
-    const [{ data: jobs }, { data: users }] = await Promise.all([
-      db.from("jobs").select("id,role_title,client").in("status", ["Open", "On hold"]).order("created_at", { ascending: false }).limit(80),
-      db.from("profiles").select("id,full_name,role").eq("status", "Active"),
-    ]);
-    const allowed = mode === "brainstorm" ? [] : (TOOLS_FOR[me.role] || TOOLS_FOR.recruiter);
-    const last = messages[messages.length - 1].content.toLowerCase();
-    // The stronger model for planning and thinking; the fast one for quick asks.
-    const model = body.smart || mode === "brainstorm" || /\b(close|fill|unblock|plan|strategy|why|diagnos|review)\b/.test(last) ? SMART : FAST;
-    let useFetch = true;
-    const tools = () => [...READ_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => PROPOSE[n])];
-    const system = [{ type: "text", text: systemPrompt(me, mode, today, tz, body.page || {}, jobs || [], users || []), cache_control: { type: "ephemeral" } }];
-
-    const convo: any[] = [...messages];
-    const proposals: any[] = [];
-    let text = "", inTok = 0, outTok = 0, searches = 0, steps = 0;
-    while (steps++ < MAX_STEPS) {
-      const payload = { model, max_tokens: 3000, system, tools: tools(), messages: convo };
-      let res = await callClaude(key, payload, useFetch ? "web-fetch-2025-09-10" : null);
-      if (!res.ok && res.status === 400 && useFetch) {
-        const t = await res.text();
-        if (/web_fetch|beta/i.test(t)) { useFetch = false; res = await callClaude(key, { ...payload, tools: tools() }, null); }
-        else return json({ error: "The assistant couldn't answer: " + t.slice(0, 200) }, 502);
-      }
-      if (!res.ok) {
-        const t = (await res.text()).slice(0, 300);
-        if (/credit balance/i.test(t)) return json({ error: "The Claude account is out of credit. Top up at console.anthropic.com, then try again." }, 402);
-        return json({ error: [429, 529].includes(res.status) ? "The assistant is busy right now. Try again in a minute." : "The assistant couldn't answer (" + res.status + "): " + t.slice(0, 160) }, 502);
-      }
-      const out = await res.json();
-      inTok += (Number(out?.usage?.input_tokens) || 0) + (Number(out?.usage?.cache_creation_input_tokens) || 0) + (Number(out?.usage?.cache_read_input_tokens) || 0) * 0.1;
-      outTok += Number(out?.usage?.output_tokens) || 0;
-      searches += Number(out?.usage?.server_tool_use?.web_search_requests) || 0;
-      const blocks: any[] = Array.isArray(out?.content) ? out.content : [];
-      const said = blocks.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
-      if (said) text = said; // the last thing it says is the answer; earlier "let me check…" lines are dropped
-      // A long web search can pause the turn: hand it straight back to continue.
-      if (out.stop_reason === "pause_turn") { convo.push({ role: "assistant", content: blocks }); continue; }
-      const uses = blocks.filter((b) => b.type === "tool_use");
-      if (!uses.length || out.stop_reason !== "tool_use") break;
-      convo.push({ role: "assistant", content: blocks });
-      const results: any[] = [];
-      for (const u of uses) {
-        if (u.name.startsWith("propose_")) {
-          if (!allowed.includes(u.name)) { results.push({ type: "tool_result", tool_use_id: u.id, content: "Not allowed for this person's role. Propose a task for Rec Ops instead.", is_error: true }); continue; }
-          proposals.push({ tool: u.name, input: u.input || {} });
-          results.push({ type: "tool_result", tool_use_id: u.id, content: "Proposed. The person will approve or decline it." });
-        } else {
-          let r: unknown;
-          try { r = await runRead(db, me, u.name, u.input || {}); } catch (e) { r = { error: String((e as Error)?.message || e) }; }
-          results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r).slice(0, 30000) });
-        }
-      }
-      convo.push({ role: "user", content: results });
-    }
-
-    const [pi, po] = priceOf(model);
-    await admin.from("ai_usage").insert({ user_id: me.id, feature: "assistant", model, input_tokens: Math.round(inTok), output_tokens: outTok,
-      cost_usd: Math.round(((inTok * pi + outTok * po) / 1e6 + searches * 0.01) * 1e6) / 1e6 }).then(() => {}, () => {});
-
-    return json({ ok: true, text: text || (proposals.length ? "Here's what I'd do. Approve to go ahead." : "I couldn't find an answer to that."), proposals, model });
+    const r = await runAgent({ admin, db, me, key, mode, messages, page: body.page || {}, tz, smart: !!body.smart });
+    if (r.error) return json({ error: r.error }, r.status);
+    return json({ ok: true, text: r.text, proposals: r.proposals, model: r.model });
   } catch (e) {
     console.error("assistant", String((e as Error)?.message || e));
     return json({ error: String((e as Error)?.message || e) }, 500);

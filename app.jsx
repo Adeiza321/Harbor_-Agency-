@@ -1786,15 +1786,21 @@ function AssistantPanel({ S, badges, pageCtx }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [threadJob, setThreadJob] = useState(null);
   const scrollRef = React.useRef(null);
   const msgsRef = React.useRef(msgs); msgsRef.current = msgs;
   useEffect(() => { try { if (threadId) sessionStorage.setItem(ASSIST_KEY + ".thread." + S.me.id, threadId); else sessionStorage.removeItem(ASSIST_KEY + ".thread." + S.me.id); } catch (e) { /* fine */ } }, [threadId]); // eslint-disable-line
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [msgs.length, busy, open]);
-  const loadThreads = () => S.sb("/rest/v1/assistant_threads?select=id,title,mode,updated_at,job_id&order=updated_at.desc&limit=100").then((r) => setThreads(r || [])).catch(() => setThreads([]));
+  const loadThreads = () => S.sb("/rest/v1/assistant_threads?select=id,title,mode,kind,seen_at,updated_at,job_id&order=updated_at.desc&limit=100").then((r) => setThreads(r || [])).catch(() => setThreads([]));
+  // Today's morning brief, until it's opened: shown first and counted on the button.
+  const freshBrief = (threads || []).find((t) => t.kind === "brief" && !t.seen_at && Date.now() - new Date(t.updated_at).getTime() < 20 * 3600e3);
+  useEffect(() => { loadThreads(); const t = setInterval(loadThreads, 15 * 60e3); return () => clearInterval(t); }, []); // eslint-disable-line
   // Opening the panel reloads the saved conversations and reopens the one you were in.
   useEffect(() => {
     if (!open) return;
     loadThreads();
+    if (freshBrief && !msgs.length) { openThread(freshBrief); return; }
     if (threadId && !msgs.length) S.sb("/rest/v1/assistant_threads?select=messages,mode&id=eq." + threadId).then((r) => { if (r && r[0]) { setMsgs(r[0].messages || []); setMode(r[0].mode || "work"); } else setThreadId(null); }).catch(() => {});
   }, [open]); // eslint-disable-line
   const save = async (list, firstAsk) => {
@@ -1802,14 +1808,20 @@ function AssistantPanel({ S, badges, pageCtx }) {
     try {
       if (threadId) await S.sb("/rest/v1/assistant_threads?id=eq." + threadId, { method: "PATCH", body });
       else {
-        const r = await S.sb("/rest/v1/assistant_threads", { method: "POST", prefer: "return=representation", body: { ...body, title: clip60(firstAsk), job_id: (pageCtx && pageCtx.jobId) || null } });
+        const r = await S.sb("/rest/v1/assistant_threads", { method: "POST", prefer: "return=representation", body: { ...body, title: clip60(firstAsk), job_id: threadJob || (pageCtx && pageCtx.jobId) || null } });
         if (r && r[0]) setThreadId(r[0].id);
       }
       loadThreads();
     } catch (e) { /* the chat still works; it just isn't saved */ }
   };
-  const newChat = () => { setThreadId(null); setMsgs([]); setShowList(false); setMode("work"); };
-  const openThread = (t) => { setShowList(false); setThreadId(t.id); setMsgs([]); S.sb("/rest/v1/assistant_threads?select=messages,mode&id=eq." + t.id).then((r) => { if (r && r[0]) { setMsgs(r[0].messages || []); setMode(r[0].mode || "work"); } }).catch(() => {}); };
+  const newChat = () => { setThreadId(null); setThreadJob(null); setMsgs([]); setShowList(false); setMode("work"); };
+  const openThread = (t) => {
+    setShowList(false); setThreadId(t.id); setThreadJob(t.job_id || null); setMsgs([]);
+    S.sb("/rest/v1/assistant_threads?select=messages,mode&id=eq." + t.id).then((r) => { if (r && r[0]) { setMsgs(r[0].messages || []); setMode(r[0].mode || "work"); } }).catch(() => {});
+    if (t.kind === "brief" && !t.seen_at) S.sb("/rest/v1/assistant_threads?id=eq." + t.id, { method: "PATCH", body: { seen_at: new Date().toISOString() } }).then(loadThreads).catch(() => {});
+  };
+  // Pin the current conversation to the role you're on (or unpin it), so it shows under "This role".
+  const pinToRole = (jid) => { setThreadJob(jid); if (threadId) S.sb("/rest/v1/assistant_threads?id=eq." + threadId, { method: "PATCH", body: { job_id: jid } }).then(loadThreads).catch(() => {}); };
   const deleteThread = (t) => S.sb("/rest/v1/assistant_threads?id=eq." + t.id, { method: "DELETE" }).then(() => { if (t.id === threadId) newChat(); loadThreads(); }).catch((e) => S.error(e.message));
   // The free summary of what's due, shown at the top of a new conversation.
   const today = ymdToday();
@@ -1836,7 +1848,7 @@ function AssistantPanel({ S, badges, pageCtx }) {
   };
   // "Close this role with AI" and other buttons elsewhere start a fresh conversation here.
   useEffect(() => {
-    const f = (e) => { const d = (e && e.detail) || {}; setOpen(true); setShowList(false); setThreadId(null); setMsgs([]); setMode(d.mode || "work"); setTimeout(() => send(d.text, { fresh: true, jobId: d.jobId, mode: d.mode || "work", smart: true }), 50); };
+    const f = (e) => { const d = (e && e.detail) || {}; setOpen(true); setShowList(false); setThreadId(null); setThreadJob(d.jobId || null); setMsgs([]); setMode(d.mode || "work"); setTimeout(() => send(d.text, { fresh: true, jobId: d.jobId, mode: d.mode || "work", smart: true }), 50); };
     window.addEventListener("pronext-assistant", f);
     return () => window.removeEventListener("pronext-assistant", f);
   }); // eslint-disable-line
@@ -1847,14 +1859,20 @@ function AssistantPanel({ S, badges, pageCtx }) {
     try { const note = await runProposal(S, msgsRef.current[mi].proposals[pi]); save(patchAll({ state: "approved", note })); }
     catch (e) { save(patchAll({ state: "failed", note: e.message || "That didn't work." })); }
   };
+  // A plan: approve every waiting action in one go, one after another.
+  const approveAll = async (mi) => {
+    const list = msgsRef.current[mi].proposals || [];
+    for (let pi = 0; pi < list.length; pi++) if (list[pi].state === "waiting") await decide(mi, pi, true);
+  };
   const copy = (t) => { try { navigator.clipboard.writeText(t).then(() => S.toast("Copied")).catch(() => S.toast("Select the text and copy it")); } catch (e) { S.toast("Select the text and copy it"); } };
   const onJob = pageCtx && pageCtx.jobId ? S.jobs.find((j) => j.id === pageCtx.jobId) : null;
   const chips = mode === "brainstorm"
     ? ["Why are we losing candidates at offer stage?", "How do we win more fintech clients in the UK?", "What should we charge for contract roles?"]
     : [onJob ? "Close this role: what's blocking " + onJob.role + " and what do we do this week?" : "Which roles are closest to closing, and what's blocking each?", "What should I focus on today to get a hire?", "Draft an email to chase a client for feedback on my submitted candidates"];
-  const due = myTasks.length + myCheckins.length + myIvs.length + (unread ? 1 : 0);
+  const due = myTasks.length + myCheckins.length + myIvs.length + (unread ? 1 : 0) + (freshBrief ? 1 : 0);
   const panelStyle = desktop ? { position: "fixed", right: 24, bottom: 88, width: 440, height: "min(700px, calc(100vh - 120px))", zIndex: 45 } : { position: "fixed", inset: 0, zIndex: 60 };
-  const shownThreads = (threads || []).filter((t) => !q.trim() || t.title.toLowerCase().includes(q.trim().toLowerCase()));
+  const shownThreads = (threads || []).filter((t) => (!q.trim() || t.title.toLowerCase().includes(q.trim().toLowerCase()))
+    && (filter === "all" || (filter === "brief" ? t.kind === "brief" : onJob && t.job_id === onJob.id)));
   return (
     <>
       {!(open && !desktop) && (
@@ -1875,13 +1893,16 @@ function AssistantPanel({ S, badges, pageCtx }) {
           {showList ? (
             <div className="flex-1 overflow-y-auto px-3 py-3" style={{ background: C.canvas }}>
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search conversations" className="w-full text-sm rounded-lg border px-3 py-2 mb-2 outline-none" style={{ borderColor: C.line, background: "#fff" }} />
+              <div className="flex gap-1.5 mb-2">
+                {[["all", "All"], ...(onJob ? [["role", "This role"]] : []), ["brief", "Morning briefs"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : "#fff", color: filter === k ? C.em : C.ink2 }}>{l}</button>)}
+              </div>
               {threads === null && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Loading <InlineDots /></div>}
               {threads && !shownThreads.length && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>{threads.length ? "No match." : "No saved conversations yet."}</div>}
               <div className="flex flex-col gap-1.5">
                 {shownThreads.map((t) => (
                   <div key={t.id} className="rounded-xl px-3 py-2.5 flex items-start gap-2" style={{ background: t.id === threadId ? C.emTint : "#fff", border: `1px solid ${C.line}` }}>
                     <button onClick={() => openThread(t)} className="flex-1 min-w-0 text-left">
-                      <div className="text-sm font-medium truncate">{t.mode === "brainstorm" ? "💡 " : ""}{t.title}</div>
+                      <div className="text-sm font-medium truncate">{t.kind === "brief" ? "☀️ " : t.mode === "brainstorm" ? "💡 " : ""}{t.title}{t.kind === "brief" && !t.seen_at && <span className="ml-1.5 text-[10px] rounded-full px-1.5 py-0.5 align-middle" style={{ background: "#D9573B", color: "#fff" }}>New</span>}</div>
                       <div className="text-[11px]" style={{ color: C.ink3 }}>{ago(t.updated_at)}{t.job_id && S.jobs.find((j) => j.id === t.job_id) ? " · " + S.jobs.find((j) => j.id === t.job_id).role : ""}</div>
                     </button>
                     <button onClick={() => { const n = window.prompt("Rename conversation", t.title); if (n && n.trim()) S.sb("/rest/v1/assistant_threads?id=eq." + t.id, { method: "PATCH", body: { title: n.trim().slice(0, 80) } }).then(loadThreads).catch(() => {}); }} aria-label="Rename" className="shrink-0 p-1" style={{ color: C.ink3 }}><Pencil size={13} /></button>
@@ -1912,6 +1933,12 @@ function AssistantPanel({ S, badges, pageCtx }) {
                     {m.role === "assistant" && !m.error && m.content.length > 120 && <div className="mt-1.5"><button onClick={() => copy(m.content)} className="text-xs font-medium" style={{ color: C.em }}>Copy</button></div>}
                   </div>
                 )}
+                {(m.proposals || []).filter((p) => p.state === "waiting").length > 1 && (
+                  <div className="w-full flex items-center justify-between rounded-xl px-3 py-2" style={{ background: C.emTint }}>
+                    <span className="text-xs font-medium" style={{ color: C.em }}>{(m.proposals || []).filter((p) => p.state === "waiting").length} actions in this plan</span>
+                    <Btn kind="primary" icon={Check} onClick={() => approveAll(mi)}>Approve all</Btn>
+                  </div>
+                )}
                 {(m.proposals || []).map((p, pi) => { const sm = proposalSummary(S, p), Icon = sm.icon; const isEmail = p.tool === "propose_email"; return (
                   <div key={pi} className="rounded-xl p-3 w-full" style={{ background: "#fff", border: `1px solid ${p.state === "approved" ? C.em : p.state === "failed" ? C.dangerFg : C.line}` }}>
                     <div className="flex items-start gap-2"><Icon size={16} color={C.em} className="shrink-0 mt-0.5" /><div className="min-w-0 flex-1"><div className="text-sm font-medium">{sm.title}</div>{sm.detail && <div className={"text-xs mt-0.5 whitespace-pre-wrap " + (isEmail ? "max-h-60 overflow-y-auto" : "")} style={{ color: C.ink2 }}>{sm.detail}</div>}</div></div>
@@ -1932,7 +1959,10 @@ function AssistantPanel({ S, badges, pageCtx }) {
           <div className="p-3 shrink-0" style={{ borderTop: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-1.5 mb-2">
               {[["work", "Work"], ["brainstorm", "Brainstorm"]].map(([k, l]) => <button key={k} onClick={() => setMode(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: mode === k ? C.em : C.line, background: mode === k ? C.emTint : "#fff", color: mode === k ? C.em : C.ink2 }}>{l}</button>)}
-              {onJob && <span className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }}>On: {onJob.role}</span>}
+              {onJob && (threadJob === onJob.id
+                ? <button onClick={() => pinToRole(null)} className="text-[11px] ml-auto truncate" style={{ color: C.em }} title="This conversation is pinned to this role. Click to unpin.">📌 {onJob.role}</button>
+                : <button onClick={() => pinToRole(onJob.id)} className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }} title="Pin this conversation to the role so it shows under This role">Pin to {onJob.role}</button>)}
+              {!onJob && threadJob && S.jobs.find((j) => j.id === threadJob) && <span className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }}>📌 {S.jobs.find((j) => j.id === threadJob).role}</span>}
             </div>
             <div className="flex gap-2">
               <textarea id="assistant-input" rows={1} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
