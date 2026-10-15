@@ -2,7 +2,10 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 // The ProNext assistant: helps close roles. Signed-in staff only.
 //   - It LOOKS THINGS UP itself (candidates, jobs, pipelines, interviews, client feedback, AI
-//     lessons, team workload) and searches / reads the web. Lookups run with the caller's own
+//     lessons, team workload, anyone by name or LinkedIn link, X-ray prospects, the bench check,
+//     sourcing across roles, tasks, the Inbox, its person's own chats, placements, recent activity)
+//     and searches / reads the web. It knows how the app works for each role (GUIDE) so it can
+//     walk people through it, and it's told to say when it isn't sure. Lookups run with the caller's own
 //     login, so the database's row security decides what comes back: a recruiter only ever sees
 //     their own candidates. Money is filtered by role too (recruiters never see client fees).
 //   - It never changes anything itself: it PROPOSES actions (propose_* tools). Each comes back to
@@ -57,6 +60,20 @@ const READ_TOOLS = [
     input_schema: { type: "object", properties: { job_id: { type: "string" }, status: { type: "string", enum: ["all", "needs_approval", "emailed", "interested", "skipped", "talent_pool"], description: "Default: everyone except the talent pool" }, query: { type: "string", description: "Words to match in name, title, company or LinkedIn link" } }, required: ["job_id"] } },
   { name: "find_person", description: "Find a person anywhere in ProNext by name, LinkedIn link, email or company: candidates, every X-ray and Apollo prospect on every role (Needs approval / To contact, Emailed, Interested, Skipped, talent pool) and applications in the Inbox. Use it FIRST whenever the person names someone or pastes a LinkedIn link or email. Returns where each match is (which role, which status) with ids to act on, plus close matches when nothing matches exactly.",
     input_schema: { type: "object", properties: { query: { type: "string", description: "A name, LinkedIn URL, email or company" } }, required: ["query"] } },
+  { name: "get_prospect", description: "Everything ProNext holds on one prospect (someone found by X-ray or Apollo): the search result it came from, the AI's reading of it (overview, must-have checklist with met / not met / unconfirmed, gaps to check, location and where it came from, own practice, remote), fit and verdict, email and its status, the drafted outreach email, outreach history and status. Use it before judging or contacting a prospect.",
+    input_schema: { type: "object", properties: { prospect_id: { type: "string" } }, required: ["prospect_id"] } },
+  { name: "get_bench", description: "The bench check for a job (Admins and Rec Ops): when it last ran, how many people already in ProNext matched the role's parallel titles, how many were reviewed and how many are strong fits, and every review saved for this job (candidate, fit, verdict, summary, open questions, when reviewed). Use it to answer 'who do we already have for this role'.",
+    input_schema: { type: "object", properties: { job_id: { type: "string" } }, required: ["job_id"] } },
+  { name: "sourcing_overview", description: "Sourcing across every open role (Admins and Rec Ops): for each role, the last X-ray run (state, when, found), prospects by status (Needs approval / To contact, Emailed, Interested, Skipped), the last bench check (reviewed, strong fits) and candidates on the role. Use it to see where sourcing is working and where it isn't.",
+    input_schema: { type: "object", properties: {} } },
+  { name: "list_tasks", description: "To-do tasks: yours (default), the ones you gave others, or everyone's (Admins and Rec Ops). Open by default; with due dates, who it's for, who set it, and the candidate or role it's about.",
+    input_schema: { type: "object", properties: { scope: { type: "string", enum: ["mine", "assigned_by_me", "everyone"] }, status: { type: "string", enum: ["open", "done", "all"] } } } },
+  { name: "get_inbox", description: "The Inbox (Admins and Rec Ops): applications from apply links, referrals and outreach, with source, role, AI score, whether they've said they're interested, who it's assigned to and status (new or handled).",
+    input_schema: { type: "object", properties: { status: { type: "string", enum: ["new", "handled", "all"] }, job_id: { type: "string" } } } },
+  { name: "list_conversations", description: "Your own chats with candidates (each chat is private to you and the candidate): who, which role, unread messages from them, and the last message. Add link_id to read one chat's recent messages.",
+    input_schema: { type: "object", properties: { link_id: { type: "string", description: "Read this chat's last 30 messages" } } } },
+  { name: "list_placements", description: "Placements and billing: who was placed where, start date, guarantee end, status (Placed / In guarantee / Ready to invoice / Invoiced / Paid / Fallout) and the recruiter's incentive; client fees only for Admins and Rec Ops. Recruiters see their own placements.",
+    input_schema: { type: "object", properties: { status: { type: "string" } } } },
   { name: "recent_activity", description: "What happened in the last N hours (default 24) on the person's own work: their assistant updates (replies, interest, stage changes, client views, interviews, tasks, finished searches), new candidates, pipeline moves, candidate messages, interviews, tasks done, and (Admins and Rec Ops) prospects found, emailed and interested per role. Use it for 'what changed / what moved today', briefs and round-ups.",
     input_schema: { type: "object", properties: { hours: { type: "number", description: "1 to 168, default 24" } } } },
 ];
@@ -323,6 +340,118 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     };
   }
 
+  if (name === "get_prospect") {
+    if (!staff) return { error: "Only Admins and Rec Ops can see sourced people" };
+    const { data: p } = await db.from("prospects").select("*,jobs(role_title,client,status)").eq("id", String(input?.prospect_id || "")).maybeSingle();
+    if (!p) return { error: "Prospect not found" };
+    const d = p.data || {};
+    return {
+      prospect_id: p.id, name: p.full_name, title: p.title, company: p.company, location: p.location, country: p.country, linkedin: p.linkedin_url || d.profile_url || undefined,
+      role: p.jobs ? p.jobs.role_title + " (" + p.jobs.client + ")" : "", job_id: p.job_id, status: prospectLabel(p), found_by: d.xray ? "X-ray " + (d.site || p.source) : p.source, found_on: day(p.created_at),
+      fit: p.fit, verdict: p.verdict, why: d.why || p.fit_reason || undefined, overview: d.overview || undefined,
+      checklist: d.checklist || undefined, gaps_to_check: d.gaps || undefined, own_practice: d.own_practice || undefined, remote_worker: d.remote_worker || undefined,
+      location_source: d.location_source || undefined, client_history: d.client_history || undefined,
+      search_result: d.result_title || d.snippet ? { title: d.result_title, snippet: clip(d.snippet, 700) } : undefined,
+      email: p.email ? { address: p.email, status: p.email_status || "unverified" } : "No email found yet", email_lookup: d.email_lookup || undefined,
+      drafted_email: p.subject || p.body ? { subject: p.subject, body: clip(p.body, 1500) } : undefined,
+      contacted: day(p.contacted_at) || undefined, history: Array.isArray(d.history) ? d.history.slice(-10) : undefined, recheck: d.recheck || undefined,
+    };
+  }
+
+  if (name === "get_bench") {
+    if (!staff) return { error: "Only Admins and Rec Ops can see the bench check" };
+    const jobId = String(input?.job_id || "");
+    const { data: j } = await db.from("jobs").select("id,role_title,client,sourcing,parallel_titles").eq("id", jobId).maybeSingle();
+    if (!j) return { error: "Job not found" };
+    const { data: cs } = await db.from("candidates").select("id,name,current_title,location,status,recruiter_id,matches,candidate_jobs(job_id,stage)").eq("is_draft", false).not("matches", "is", null).limit(2000);
+    const reviews: any[] = [];
+    for (const c of cs || []) for (const m of Array.isArray(c.matches) ? c.matches : []) if (m?.job_id === jobId) reviews.push({ c, m });
+    reviews.sort((a, b) => (b.m.fit || 0) - (a.m.fit || 0));
+    const b = j.sourcing?.internal;
+    return {
+      job: `${j.role_title} at ${j.client}`, job_id: j.id, parallel_titles: j.parallel_titles || [],
+      how_it_works: "The bench check looks only at people already in ProNext whose own title or parallel titles match this role's parallel titles, who have a CV, aren't Rejected, aren't already on this role and aren't at Interview or Offer on another role. Each run gives a full AI review to the 5 closest who haven't been reviewed for this role in the last 14 days. Strong fits = Perfect / Good fit at 60%+.",
+      last_run: b ? { at: b.at, matched_titles: b.considered, reviewed: b.reviewed, strong_fits: b.goodFits, already_on_role_60_plus: b.onRole } : "The bench check has not run for this role",
+      reviews: reviews.slice(0, 40).map(({ c, m }) => ({ candidate_id: c.id, name: c.name, title: c.current_title, location: c.location, status: c.status,
+        fit: m.fit, verdict: m.verdict, reviewed: day(m.reviewedAt), summary: clip(m.summary, 450),
+        open_questions: (Array.isArray(m.questions) ? m.questions : []).filter((q: any) => !q.already_answered && !q.answer).map((q: any) => clip(q.q, 160)).slice(0, 4),
+        on_this_role_now: (c.candidate_jobs || []).some((l: any) => l.job_id === jobId) || undefined })),
+    };
+  }
+
+  if (name === "sourcing_overview") {
+    if (!staff) return { error: "Only Admins and Rec Ops can see sourcing" };
+    const { data: jobs } = await db.from("jobs").select("id,role_title,client,status,created_at,xray,sourcing").in("status", ["Open", "On hold"]).order("created_at", { ascending: false }).limit(80);
+    const ids = (jobs || []).map((j: any) => j.id);
+    const { data: ps } = ids.length ? await db.from("prospects").select("job_id,status,email,data,archived_at").in("job_id", ids).limit(5000) : { data: [] };
+    const { data: ls } = ids.length ? await db.from("candidate_jobs").select("job_id,stage,candidate_response").in("job_id", ids) : { data: [] };
+    return (jobs || []).map((j: any) => {
+      const mine = (ps || []).filter((p: any) => p.job_id === j.id);
+      const by: Record<string, number> = {};
+      for (const p of mine) { const l = prospectLabel(p); by[l] = (by[l] || 0) + 1; }
+      const x = j.xray || {}, b = j.sourcing?.internal;
+      return { job_id: j.id, role: j.role_title, client: j.client, status: j.status, days_open: Math.round((Date.now() - new Date(j.created_at).getTime()) / 864e5),
+        xray: x.state ? { state: x.state, at: day(x.at), found_last_run: x.found } : "never run", prospects: by,
+        bench: b ? { at: day(b.at), reviewed: b.reviewed, strong_fits: b.goodFits } : "never run",
+        candidates_on_role: (ls || []).filter((l: any) => l.job_id === j.id && l.candidate_response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)).length };
+    });
+  }
+
+  if (name === "list_tasks") {
+    const scope = String(input?.scope || "mine"), st = String(input?.status || "open");
+    if (scope === "everyone" && !staff) return { error: "Recruiters see their own tasks and the ones they gave" };
+    let q = db.from("tasks").select("id,title,notes,assigned_to,created_by,due_on,status,done_at,candidate_id,job_id,candidates(name),jobs(role_title)").order("due_on", { ascending: true, nullsFirst: false }).limit(80);
+    if (scope === "mine") q = q.eq("assigned_to", me.id); else if (scope === "assigned_by_me") q = q.eq("created_by", me.id);
+    if (st !== "all") q = q.eq("status", st);
+    const { data, error } = await q;
+    if (error) return { error: error.message };
+    const today = new Date().toISOString().slice(0, 10);
+    return (data || []).map((t: any) => ({ task_id: t.id, title: t.title, notes: clip(t.notes, 200) || undefined, for: t.assigned_to, set_by: t.created_by, due: t.due_on, overdue: t.status === "open" && t.due_on && t.due_on < today || undefined,
+      status: t.status, done: day(t.done_at) || undefined, candidate: t.candidates?.name, role: t.jobs?.role_title }));
+  }
+
+  if (name === "get_inbox") {
+    if (!staff) return { error: "The Inbox is for Admins and Rec Ops" };
+    const st = String(input?.status || "new");
+    let q = db.from("applications").select("id,name,email,role_title,job_id,source,ai_score,status,assigned_to,interest_at,referrer,created_at,handled_at,candidate_id").order("created_at", { ascending: false }).limit(80);
+    if (st !== "all") q = st === "new" ? q.eq("status", "new") : q.neq("status", "new");
+    if (input?.job_id) q = q.eq("job_id", input.job_id);
+    const { data, error } = await q;
+    if (error) return { error: error.message };
+    return (data || []).map((a: any) => ({ application_id: a.id, name: a.name, role: a.role_title, job_id: a.job_id, source: a.source, ai_score: a.ai_score, status: a.status,
+      interested: a.source === "outreach" || !!a.interest_at, referred_by: a.referrer || undefined, assigned_to: a.assigned_to || undefined, candidate_id: a.candidate_id || undefined, on: day(a.created_at) }));
+  }
+
+  if (name === "list_conversations") {
+    if (input?.link_id) {
+      const { data, error } = await db.from("candidate_job_messages").select("sender,body,attachment_name,created_at,recruiter_read_at,deleted_at").eq("link_id", String(input.link_id)).eq("staff_id", me.id).order("created_at", { ascending: false }).limit(30);
+      if (error) return { error: error.message };
+      return (data || []).reverse().map((m: any) => ({ from: m.sender === "candidate" ? "candidate" : "you", at: m.created_at, text: m.deleted_at ? "(deleted)" : clip(m.body, 600) || (m.attachment_name ? "[file: " + m.attachment_name + "]" : ""), unread: m.sender === "candidate" && !m.recruiter_read_at || undefined }));
+    }
+    const { data, error } = await db.from("candidate_job_messages").select("link_id,sender,body,attachment_name,created_at,recruiter_read_at,deleted_at,candidate_jobs(candidate_id,candidates(name),jobs(role_title,client))").eq("staff_id", me.id).order("created_at", { ascending: false }).limit(500);
+    if (error) return { error: error.message };
+    const byLink = new Map<string, any>();
+    for (const m of data || []) {
+      const t = byLink.get(m.link_id) || { link_id: m.link_id, candidate_id: m.candidate_jobs?.candidate_id, candidate: m.candidate_jobs?.candidates?.name, role: m.candidate_jobs?.jobs ? m.candidate_jobs.jobs.role_title + " (" + m.candidate_jobs.jobs.client + ")" : "", unread: 0, last: null };
+      if (!t.last) t.last = { from: m.sender === "candidate" ? "candidate" : "you", at: m.created_at, text: m.deleted_at ? "(deleted)" : clip(m.body, 160) || (m.attachment_name ? "[file]" : "") };
+      if (m.sender === "candidate" && !m.recruiter_read_at && !m.deleted_at) t.unread++;
+      byLink.set(m.link_id, t);
+    }
+    return [...byLink.values()].slice(0, 40);
+  }
+
+  if (name === "list_placements") {
+    let q = db.from("placements").select("id,candidate_name,role_desc,recruiter_id,fee,fee_currency,recruiter_incentive,recruiter_incentive_currency,start_date,guarantee_ends,status,created_at,job_id,candidate_id,pay_type,contract_months").order("created_at", { ascending: false }).limit(80);
+    if (me.scoped) q = q.eq("recruiter_id", me.id);
+    if (input?.status) q = q.eq("status", input.status);
+    const { data, error } = await q;
+    if (error) return { error: error.message };
+    return (data || []).map((p: any) => ({ placement_id: p.id, candidate: p.candidate_name, role: p.role_desc, recruiter_id: p.recruiter_id, start: p.start_date, guarantee_ends: p.guarantee_ends, status: p.status,
+      client_fee: staff ? (p.fee ? p.fee + " " + (p.fee_currency || "") : undefined) : undefined,
+      recruiter_incentive: staff || p.recruiter_id === me.id ? (p.recruiter_incentive ? p.recruiter_incentive + " " + (p.recruiter_incentive_currency || "") : undefined) : undefined,
+      contract: p.pay_type === "monthly" ? "monthly fee, " + (p.contract_months || "?") + " months" : undefined }));
+  }
+
   if (name === "team_workload") {
     if (!staff) return { error: "Only Admins and Rec Ops can see the team's workload" };
     const { data: users } = await db.from("profiles").select("id,full_name,role,status").eq("status", "Active");
@@ -340,6 +469,28 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
   return { error: "Unknown lookup" };
 }
 
+// ---------------------------------------------------------------- how ProNext works
+// The assistant's map of the app, so it can guide people step by step by the names on screen.
+// Keep it in step with app.jsx when menus, buttons or rules change.
+const GUIDE = `PRONEXT GUIDE (how the app works; use it to guide people step by step with the exact menu, tab and button names in quotes. If you're not sure a button exists, where it is, or whether this person's role can use it, say so instead of guessing).
+Menus. Recruiter: Overview, My candidates, Messages, To-do, Jobs, Interviews, Outreach, Billing. Rec Ops: Overview, Candidates, Inbox, Messages, To-do, Jobs, Interviews, Outreach, Billing, Ads. Admin: the Rec Ops menu plus Users & permissions, Email tracking, Recruiter audit, Agency settings. On a phone the main pages are tabs at the bottom and the rest are under More.
+My profile: click your name and photo at the bottom of the left menu (phone: More, then your name). Tabs: Account (name, phone, photo), Notifications (bell activity, message sound and emails, desktop alerts, Assistant updates, End-of-day round-up, Assistant sound), Security (password, two-factor, sessions), Calendar (connect Google Calendar so interviews get a Meet link and sync both ways).
+Overview: Recruiters see how their own candidates are doing, "My submissions and placements" and "Your next steps"; Rec Ops and Admins see how the agency is doing and "Needs attention". Both have Export.
+Jobs: "All roles" with tabs All, Open, On hold, Closed and "I'm engaged"; "Post a job" (Save as draft or Publish job; sections Location, Salary, description with AI redraft, Client billing, Recruiter incentive, Screening questions; each job gets its own link). On a job: "Engage" puts the role on your worklist. Recruiters can only add or put forward candidates for roles on their worklist ("Engage first"); "Disengage" takes it off with a reason (shown in the "Engagement log"). Also "Add candidate", "Change status" (Open / On hold / Closed), "Copy link", "Promote", "Edit job", "Delete job", "Reopen", and "Close with AI" (the assistant reviews the role and proposes what to do). Sections: Screening questions ("Copy all"), "Candidates who might fit this role" (the bench check: "Open review", "Route"), "Candidates on this role" (stage, CV, fit), and for Admins and Rec Ops the "Sourcing" section (parallel titles, In ProNext = bench, X-ray search (free), Apollo (paid), "People found outside ProNext").
+Stages on a role: Sourced, In review, Screening, Submitted, Interview, Offer, Placed, or Rejected / Withdrawn. A candidate accepts or declines a role on their candidate page.
+Candidates ("My candidates" for Recruiters): search, Export, "Add candidate" (pick the job first, then the CV, then the screening answers if you have them). A candidate's profile has "Message", "Forward to client", "Mark as placed" / "Mark hired", "Update status", "Edit details", "Review and route", "Delete candidate", the candidate page link ("Their secure link. No login needed."), and tabs Companies (one card per role: Requirements checklist with MUST-HAVE and NICE TO HAVE, Application questions, AI additional screening follow-up questions), Discussion (team notes; type @ to tag a teammate) and Timeline. "Other roles they could fit" lists roles the full AI review rated a fit; Route puts them forward and they accept on their candidate page.
+Inbox (Rec Ops and Admins): applications from apply links, referrals and outreach; tabs New and Handled. "Assign to…" a recruiter creates the candidate, copies the CV and puts them on the job; also "Open CV", "Open candidate", "Reassign", "Unassign", "Dismiss", "Restore to New", "Delete".
+Messages: your own chats with candidates, one per candidate per role, private to you and them ("New message" to start one). Messages are also emailed to the candidate. In a chat: attach files and pictures (paperclip), emoji (smiley), voice messages (mic when the box is empty), and tap a message to react, copy or delete it. Ticks: clock = sending, two ticks = delivered, lime = read; a red tick means the email bounced or wasn't sent.
+To-do: add tasks, filter Mine / Assigned by me / Everyone and by date; reassign or dismiss a task.
+Interviews: "Schedule interview"; Week, Month and "Upcoming list" views; Today and "Needs attention". Candidates are emailed and reminded when reminders are on.
+Outreach: Admins and Rec Ops run candidate outreach and client leads. Tabs "Candidate outreach" (Needs approval, Sending, Emailed, Interested, Closed, Skipped), "Talent pool" (people found for roles that closed; never emailed; they come back as Needs approval when a new role fits), "Client leads" (New, Contacted, In talks, Won), "Approvals" and "Setup". On a person: "Find email", "Save email", "Email me a test", "Send it myself", "Mark contacted", "Skip this person", "Not interested", "Mark converted", "Put back in pool". Approve sends their drafted email.
+X-ray search (Admins and Rec Ops): free Google searches of public profiles (LinkedIn; GitHub and technical sites for technical roles) for one role. The AI reads each search result (title and snippet only, not the full profile) against the role's must-have checklist; people kept become prospects with a fit, a verdict and "Gaps to check". People without an email show as "To contact". An Admin can approve Apollo (paid) for verified emails.
+Bench check: reviews people already in ProNext whose titles match the role's parallel titles, who have a CV, aren't Rejected and aren't at Interview or Offer elsewhere; 5 at a time, reusing reviews from the last 14 days. Results show under "Candidates who might fit this role".
+Billing: placements, guarantee periods and fees; fees are invoiced once the guarantee clears. Statuses: Placed / Hired, In guarantee, Ready to invoice, Invoiced, Paid, Fallout. "Check-ins due": talk to each placed person before their payout is at risk. Recruiters see their own placements and incentive, never the client fee.
+Ads (Rec Ops and Admins): "Promote a job" across job boards and social channels; spend needs approval.
+Admin only: Users & permissions ("Invite user"; roles Recruiter, Rec Ops manager, Admin; edit, set password, disable, delete; "Transfer ownership"), Email tracking (Brevo emails to candidates and Apollo outreach: delivered, opened, clicked, replied, problems), Recruiter audit (what each recruiter did and what each hire cost), Agency settings (Agency, Data & privacy: automatic sign-out, exports, data retention; Integrations; Audit log).
+The assistant (the ✨ button): Work mode looks things up and proposes actions as cards to Approve or Decline; Brainstorm mode only thinks with you. The list icon opens saved conversations (and morning briefs), the bell opens Updates. Nothing changes until the person approves a card.`;
+
 // ---------------------------------------------------------------- prompt
 function systemPrompt(me: any, mode: string, today: string, tz: string, page: any, jobs: any[], users: any[]) {
   const role = me.role === "admin" ? "Admin" : me.role === "recops" ? "Rec Ops manager" : "Recruiter";
@@ -351,6 +502,8 @@ function systemPrompt(me: any, mode: string, today: string, tz: string, page: an
 Today is ${today} (${tz}).
 You can look things up yourself with the lookup tools (ProNext data) and web_search / web_fetch (the internet: candidate and company research, a client's news and hiring, salary benchmarks, where people with a rare skill work, competitor job posts). Look things up instead of asking the person for facts you can find. Never invent facts: if a lookup returns nothing, say so.
 "X-ray" here always means X-ray sourcing: Google searches for people's public profiles (LinkedIn, GitHub and similar sites) for a job, never medical imaging. Admins and Rec Ops can run and steer it with get_xray and propose_xray; for a Recruiter, propose a task asking Rec Ops to run one.
+HONEST AND ACCURATE: being right matters more than sounding sure. Base every fact on a lookup in this conversation or on the guide below. If you're unsure, say so plainly ("I'm not sure", "I couldn't confirm that") and say what would confirm it; never fill a gap with a guess. Separate what ProNext shows from your own judgment ("ProNext has… / My read is…"). When a lookup fails or returns nothing, say so. If you made a mistake earlier in the conversation, say so and correct it.
+X-RAY AND BENCH: quote fit, verdict, status and dates exactly as the lookups give them. An X-ray review is based only on a search-result title and snippet, so treat what it doesn't show as unconfirmed, not as missing, and say that. A bench review is a full AI review of the CV; say when it was done and if it's older than 14 days or the bench check never ran, say so and offer to run it. Before saying who fits a role, check both get_bench (people already in ProNext) and get_xray (people found outside).
 FINDING PEOPLE: when the person names someone, or pastes a LinkedIn link or an email, call find_person straight away. It searches candidates, every X-ray and Apollo prospect on every role (all statuses, talent pool too) and the Inbox. Don't ask which role first and don't make the person look it up for you. Only say someone isn't in ProNext after find_person found nothing, and then say exactly what you searched. To see everyone found for one role, use get_xray (it lists them all; filter with status or query).
 BE EXACT: never say you checked, saw, found or did something unless a tool in this conversation actually did it; say "I searched X and found Y". You cannot open LinkedIn profiles (LinkedIn blocks it): never describe a LinkedIn profile you haven't been given. Use what ProNext holds about the person, or ask.
 PROSPECTS are people found by X-ray or Apollo for a role; they are not candidates yet, and their ids are prospect ids. propose_route, propose_message, propose_stage, propose_note and propose_interview only work for candidates. For a prospect use propose_prospect (approve their outreach email, mark them contacted after a LinkedIn message, skip, put back); write a LinkedIn message in its message field so the person can copy it.
@@ -368,7 +521,10 @@ Emails the person should send themselves (to clients, or personal notes to candi
   const brainstorm = `
 BRAINSTORM MODE: think with the person. Explore options, challenge assumptions, bring numbers from ProNext and evidence from the web, and end with a clear recommendation and the next 2-3 steps. You have no action tools in this mode; if the person wants to act, tell them to switch Brainstorm off.`;
   const where = page?.jobId ? `\nThe person is looking at job ${page.jobId} right now ("this role" means it).` : page?.candidateId ? `\nThe person is looking at candidate ${page.candidateId} right now ("this candidate" means them).` : "";
-  return common + (mode === "brainstorm" ? brainstorm : work) + where +
+  const help = `
+HELPING PEOPLE USE PRONEXT: when someone asks how to do something, answer for their role (${role}) with numbered steps using the exact names in the guide, and say when something is only for Admins or Rec Ops and who to ask instead. Explain what each page shows from their point of view (a Recruiter only sees their own candidates; Rec Ops and Admins see everyone). If the guide doesn't cover it, say you're not sure rather than invent a button.
+${GUIDE}`;
+  return common + (mode === "brainstorm" ? brainstorm : work) + help + where +
     `\n\nOpen jobs (id | role | client):\n${jobs.map((j) => `${j.id} | ${j.role_title} | ${j.client}`).join("\n") || "(none)"}` +
     `\n\nTeam (id | name | role):\n${users.map((u) => `${u.id} | ${u.full_name} | ${u.role}`).join("\n") || "(none)"}`;
 }
