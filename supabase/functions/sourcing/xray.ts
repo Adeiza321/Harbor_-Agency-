@@ -13,8 +13,9 @@
 
 import { askAI } from "./ai.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
-import { COUNTRY_NAMES, jobCountryNames } from "./regions.ts";
-import { fitsToPercent, sameCompany, type Settings } from "./common.ts";
+import { jobCountryNames } from "./regions.ts";
+import { fitsToPercent, type Settings } from "./common.ts";
+import { judge, reviewHead, REVIEW_SYSTEM, type Judged } from "./xray_rules.ts";
 import { findGithubEmails } from "./emails.ts";
 import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
 
@@ -140,28 +141,12 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
 
   // 4. Review what each result shows, in batches (two at a time).
   const list = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
-  const sys = "You are a recruitment researcher reviewing search-engine results for people's public profiles (LinkedIn and technical sites) against one job. " +
-    "You only see each result's title line and short snippet, not the full profile. Reply with STRICT JSON only: " +
-    "{\"people\": [{\"i\": number, \"name\": string, \"headline\": string, \"company\": string, \"location\": string, \"client_history\": \"current\" | \"past\" | \"none\", \"business\": boolean, \"remote\": boolean, \"overview\": string, \"checklist\": [{\"item\": string, \"status\": \"met\" | \"unconfirmed\" | \"not met\", \"evidence\": string}], \"gaps\": string[], \"fit\": number, \"verdict\": \"Good fit\" | \"Possible fit\" | \"Not a fit\"}]}, one entry per person. " +
-    "name, headline (their current title) and company (current employer) come ONLY from the result ('' when not shown). " +
-    "location: where they live or work NOW: the 'Location:' part of a LinkedIn snippet, or the place shown next to their current role. Never a past job's city, a school, or an employer's head office; '' when not shown. " +
-    "remote: true when the result shows they work remotely (a remote role, 'Remote', 'remotely', work from home) or work for an employer in another country than where they live; otherwise false. A remote worker's shown location may be their employer's, not where they live. " +
-    "client_history: 'current' when the result shows them working at the hiring company now, 'past' when it shows they worked there before, otherwise 'none'. " +
-    "business: true when the result is a business, company, agency, brand or group page rather than one person, or when the person runs their own business (founder, co-founder, owner, CEO / managing director of their own company, self-employed agency owner); otherwise false. " +
-    "overview: 1 to 2 short sentences on what the result shows about them that matters for this job. " +
-    "checklist: exactly the job's checklist items given, in the same order and wording. 'met' only when the result clearly shows it; 'not met' only when the result clearly contradicts it (based somewhere else, a different field, clearly more junior or senior); otherwise 'unconfirmed'. evidence: a few words from the result, '' if none. " +
-    "gaps: up to 4 short items: what is 'not met' first, then the most important 'unconfirmed' must-haves to check with them. " +
-    "fit: a percentage from 0 to 100 (never a 0-10 score) for how promising they are to approach: matching title, seniority and field count most; each 'unconfirmed' item lowers it a little, each 'not met' a lot. " +
-    "verdict: 'Good fit' only when title, seniority and field match, at least half the checklist is 'met' and nothing is 'not met'. 'Not a fit' when any of the first three checklist items (the core must-haves) is 'not met', when the field, level or title clearly doesn't match, when their current location is outside the search area, when they work for the hiring company now, or when business is true. Otherwise 'Possible fit'. " +
-    "A search result can never prove everything, so never say 'Perfect fit'. For a GitHub result, judge technical skills from their bio, languages, repositories and followers.";
-  const head = jobBrief(job, false) + `\nHiring company (people who work there now are 'Not a fit'): ${job.client || "(not given)"}` +
-    `\nSearch area (where candidates must be based now): ${area?.summary || job.location || job.country || "(not set)"}` +
-    `\n\nJob checklist:\n${p.checklist.map((c) => "- " + c).join("\n")}\n\nPeople (i | site | result title | snippet):\n`;
+  const head = reviewHead(job, area, p.checklist);
   const byKey = new Map<string, any>();
   const batches: Person[][] = [];
   for (let i = 0; i < list.length; i += 10) batches.push(list.slice(i, i + 10));
   const review = async (b: Person[]) => {
-    const out = await askAI(sys, head + b.map((x, i) => `${i} | ${SITES[x.site].label} | ${x.title || "(no title)"} | ${x.snippet || "(no snippet)"} | ${x.url}`).join("\n"), 6000);
+    const out = await askAI(REVIEW_SYSTEM, head + b.map((x, i) => `${i} | ${SITES[x.site].label} | ${x.title || "(no title)"} | ${x.snippet || "(no snippet)"} | ${x.url}`).join("\n"), 6000);
     for (const r of fitsToPercent(Array.isArray(out?.people) ? out.people : [])) { const who = b[Number(r.i)]; if (who) byKey.set(who.key, r); }
   };
   for (let i = 0; i < batches.length; i += 2) {
@@ -169,68 +154,26 @@ export async function runXray(admin: any, jobId: string, s: Settings) {
     for (const r of res) if (r.status === "rejected") errors.push(errMsg(r.reason).slice(0, 200));
   }
 
-  // 5. Keep the best and save them next to Apollo's prospects. Checked here as well as by the AI:
-  //    their CURRENT location is in the search area (read from the result's "Location:" line when it
-  //    has one), the core must-haves aren't contradicted and at least one is shown, they don't work
-  //    at the hiring company now, and they're a person, not a business or a business owner.
-  // Someone is dropped only when their location clearly names a different country from the role's;
-  // a place we can't place (a city, "Greater ... Area") is kept and shown as not confirmed.
-  const allowed = new Set(jobCountryNames(job).map((x) => String(x || "").toLowerCase().trim()).filter(Boolean));
-  const ALIAS: Record<string, string> = { "usa": "united states", "u.s.": "united states", "uk": "united kingdom", "england": "united kingdom", "scotland": "united kingdom", "wales": "united kingdom", "uae": "united arab emirates" };
-  // Longest names first and whole words only, so "Nigeria" isn't read as "Niger".
-  const countries = [...new Set(Object.values(COUNTRY_NAMES).map((x) => String(x).toLowerCase()))].filter((x) => x.length > 3).sort((a, b) => b.length - a.length)
-    .map((c) => ({ c, re: new RegExp("(^|[^a-z])" + c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "($|[^a-z])") }));
-  const countryIn = (loc: string) => {
-    const l = " " + loc.toLowerCase().replace(/[()]/g, " ") + " ";
-    for (const [a, c] of Object.entries(ALIAS)) if (new RegExp("[\\s,]" + a.replace(/\./g, "\\.") + "[\\s,]").test(l)) return c;
-    return (countries.find((x) => x.re.test(l)) || { c: "" }).c;
-  };
-  // Remote and hybrid roles: working remotely is normal, so the closer look is relaxed.
-  const jobRemote = /remote|hybrid/i.test(String(job.work_setup || "")) || /remote|hybrid/i.test(String(job.location || ""));
-  const inArea = (loc: string) => { if (!allowed.size) return true; const c = countryIn(loc); return !c || allowed.has(c); };
-  const OWNER = /\b(founder|co-?founder|owner|proprietor|self[- ]employed|ceo\s*(&|and|\/)?\s*founder|managing director at (my|own))\b/i;
+  // 5. Keep the best and save them next to Apollo's prospects (rules in xray_rules.ts, shared with
+  //    the xray-recheck function): company pages, people at the client now, people outside the role's
+  //    country or commute area, and anyone a core must-have clearly rules out are dropped; someone
+  //    running their own practice in the same field is kept with a note to check.
   const kept = list
-    .map((x) => {
-      const r = byKey.get(x.key);
-      if (!r) return { x, r };
-      const fromSnippet = (String(x.snippet || "").match(/(?:Location|Lives in|Based in)\s*[:：]\s*([^·|\n]{2,80})/i) || [])[1];
-      const loc = clip(fromSnippet || r.location, 120).trim();
-      // Remote workers get a closer look: the location they show may be their employer's (UK, US)
-      // while they live elsewhere, so it never counts as confirmed and they can't be a 'Good fit'
-      // until someone checks where they're based.
-      const remoteSigns = r.remote === true || /\bremote(ly)?\b|work(ing)? from home|\bwfh\b/i.test(String(r.headline || "") + " " + String(x.title || "") + " " + String(x.snippet || ""));
-      // On a remote or hybrid role, working remotely is expected: no closer look when they show a location
-      // inside the role's country (or the role is open worldwide).
-      const c = loc ? countryIn(loc) : "";
-      const remote = remoteSigns && !(jobRemote && (!allowed.size || (c && allowed.has(c))));
-      const fit = remote ? Math.max(0, Number(r.fit || 0) - 10) : r.fit;
-      return { x, r: { ...r, fit, verdict: remote && r.verdict === "Good fit" ? "Possible fit" : r.verdict, remote, location: loc, locationSource: remote ? "remote" : fromSnippet ? "profile" : loc ? "result" : "" } };
-    })
-    .filter(({ r }) => r && r.verdict !== "Not a fit" && Number(r.fit) >= 40)
-    .filter(({ r }) => !sameCompany(r.company, job.client) && r.client_history !== "current")
-    .filter(({ r }) => r.business !== true && !OWNER.test(String(r.headline || "")))
-    .filter(({ r }) => !r.location || inArea(r.location))
-    .filter(({ r }) => {
-      const cl = Array.isArray(r.checklist) ? r.checklist : [];
-      return !cl.slice(0, 3).some((c: any) => c?.status === "not met") && (!cl.length || cl.some((c: any) => c?.status === "met"));
-    })
-    .sort((a, b) => Number(b.r.fit) - Number(a.r.fit))
+    .map((x) => { const r = byKey.get(x.key); return { x, r, j: r ? judge(job, x, r) : null }; })
+    .filter((k): k is { x: Person; r: any; j: Judged } => !!k.j && k.j.keep)
+    .sort((a, b) => b.j.fit - a.j.fit)
     .slice(0, perJob);
-  const VERDICTS = ["Good fit", "Possible fit"];
-  const rows = kept.map(({ x, r }) => {
+  const rows = kept.map(({ x, r, j }) => {
     const name = clip(r.name, 120) || clip(x.title.split(/\s[-–|·]\s/)[0], 120);
     const parts = name.split(/\s+/);
-    const checklist = (Array.isArray(r.checklist) ? r.checklist : []).slice(0, 10).map((c: any) => ({
-      item: clip(c?.item, 100), status: ["met", "unconfirmed", "not met"].includes(String(c?.status)) ? String(c.status) : "unconfirmed", evidence: clip(c?.evidence, 140),
-    }));
     return {
       job_id: jobId, source: x.site, external_id: x.key,
       first_name: parts[0] || null, last_name: parts.slice(1).join(" ") || null, full_name: name || null,
-      title: clip(r.headline, 160) || null, company: clip(r.company, 120) || null, location: clip(r.location, 120) || null,
+      title: clip(r.headline, 160) || null, company: clip(r.company, 120) || null, location: j.location || null,
       linkedin_url: x.site === "linkedin" ? x.key : null,
-      fit: Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0))), verdict: VERDICTS.includes(r.verdict) ? r.verdict : "Possible fit",
+      fit: j.fit, verdict: j.verdict,
       fit_reason: clip(r.overview, 300) || null, status: "found",
-      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: r.client_history === "past" ? "past" : "none", location_source: r.locationSource || "", remote_worker: !!r.remote, overview: clip(r.overview, 400), checklist, gaps: (Array.isArray(r.gaps) ? r.gaps : []).slice(0, 4).map((g: unknown) => clip(g, 120)), snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
+      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: j.clientHistory, location_source: j.locationSource, remote_worker: j.remote, own_practice: j.ownPractice, overview: clip(r.overview, 400), checklist: j.checklist, gaps: j.gaps, snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
     };
   });
   let inserted: any[] = [];
