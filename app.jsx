@@ -2550,11 +2550,10 @@ function RecruiterAuditPage({ S, toast }) {
   const cur = goal.currency || "USD";
   const tc = { apollo: 0, brevo: 0, ...(goal.toolCosts || {}) };
   const ads = goal.adSpend || {}; // ad spend actually paid, by month: { "2026-10": 250 }
-  // Costs are edited in place and saved when you leave the box (or press Enter). goalRef holds the
-  // latest saved settings so two quick edits in a row never undo each other.
-  const goalRef = React.useRef(goal);
-  useEffect(() => { goalRef.current = goal; }, [S.settings]); // eslint-disable-line
-  const [draft, setDraft] = useState({});
+  // Costs are edited in a small panel opened from the Cost figure ("Edit costs").
+  const [costsOpen, setCostsOpen] = useState(false);
+  const [cf, setCf] = useState({});
+  const [costsBusy, setCostsBusy] = useState(false);
   const [ai, setAi] = useState(null);
   const [logFrom, setLogFrom] = useState(null); // when screening costs started being logged
   const [openId, setOpenId] = useState(null);
@@ -2608,27 +2607,25 @@ function RecruiterAuditPage({ S, toast }) {
   const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost"), cost: sum("cost") };
   const m = (v) => money(v, cur);
   const m2 = (v) => money2(v, cur);
-  // k: "apollo" | "brevo" | "ad:2026-10"
-  const savedOf = (k) => { const g = goalRef.current || {}; return k.startsWith("ad:") ? Number((g.adSpend || {})[k.slice(3)]) || 0 : Number((g.toolCosts || {})[k]) || 0; };
-  const commit = (k) => {
-    if (!(k in draft)) return;
-    const v = Math.max(0, num(draft[k]) || 0);
-    setDraft((d) => { const n = { ...d }; delete n[k]; return n; });
-    if (v === savedOf(k)) return;
-    const g = goalRef.current || {};
-    let next;
-    if (k.startsWith("ad:")) { const a = { ...(g.adSpend || {}) }; if (v > 0) a[k.slice(3)] = v; else delete a[k.slice(3)]; next = { ...g, adSpend: a }; }
-    else next = { ...g, toolCosts: { apollo: 0, brevo: 0, ...(g.toolCosts || {}), [k]: v } };
-    goalRef.current = next;
-    S.saveRevenueGoal(next).then(() => toast("Saved")).catch(() => {});
+  const openCosts = () => {
+    setCf({ apollo: tc.apollo ? String(tc.apollo) : "", brevo: tc.brevo ? String(tc.brevo) : "", ...Object.fromEntries(adMonths.map((x) => ["ad:" + x.key, x.amount ? String(x.amount) : ""])) });
+    setCostsOpen(true);
   };
-  const amountBox = (k, label, small) => (
-    <div className={"flex items-center gap-1 rounded-lg border px-2 focus-within:ring-2 " + (small ? "py-1" : "py-1.5")} style={{ borderColor: C.line, background: C.card }}>
-      <span className="text-xs" style={{ color: C.ink3 }}>{cur}</span>
-      <input aria-label={label} inputMode="decimal" placeholder="0" value={k in draft ? draft[k] : (savedOf(k) || "")}
-        onChange={(e) => setDraft({ ...draft, [k]: e.target.value.replace(/[^0-9.,]/g, "") })} onBlur={() => commit(k)}
-        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setDraft((d) => { const n = { ...d }; delete n[k]; return n; }); } }}
-        className={"w-full min-w-0 bg-transparent outline-none " + (small ? "text-sm" : "text-lg")} style={{ fontVariantNumeric: "tabular-nums", color: C.ink }} />
+  const saveCosts = () => {
+    const adSpend = { ...ads };
+    for (const x of adMonths) { const v = Math.max(0, num(cf["ad:" + x.key]) || 0); if (v > 0) adSpend[x.key] = v; else delete adSpend[x.key]; }
+    setCostsBusy(true);
+    S.saveRevenueGoal({ ...goal, toolCosts: { ...tc, apollo: Math.max(0, num(cf.apollo) || 0), brevo: Math.max(0, num(cf.brevo) || 0) }, adSpend })
+      .then(() => { setCostsOpen(false); toast("Costs saved"); }).catch(() => {}).finally(() => setCostsBusy(false));
+  };
+  const costField = (k, label, hint) => (
+    <div className="flex items-center justify-between gap-3 py-2" style={{ borderTop: `1px solid ${C.line}` }}>
+      <label htmlFor={"cost-" + k} className="text-sm">{label}{hint && <span className="block text-xs" style={{ color: C.ink3 }}>{hint}</span>}</label>
+      <div className="flex items-center gap-1 rounded-lg border px-2 py-1.5 w-32 shrink-0" style={{ borderColor: C.line }}>
+        <span className="text-xs" style={{ color: C.ink3 }}>{cur}</span>
+        <input id={"cost-" + k} inputMode="decimal" placeholder="0" value={cf[k] || ""} onChange={(e) => setCf({ ...cf, [k]: e.target.value.replace(/[^0-9.,]/g, "") })}
+          onKeyDown={(e) => { if (e.key === "Enter") saveCosts(); }} className="w-full min-w-0 bg-transparent outline-none text-sm text-right" style={{ fontVariantNumeric: "tabular-nums" }} />
+      </div>
     </div>
   );
   // A day-by-day breakdown for one person (most recent working days first, up to 31).
@@ -2658,33 +2655,18 @@ function RecruiterAuditPage({ S, toast }) {
       <KPIGrid>
         <KPI dark label="Hires" value={tot.hires} foot={pr.label.toLowerCase()} />
         <KPI label="Revenue" value={m(tot.revenue)} foot="client fees on those hires" />
-        <KPI label="Cost" value={m(tot.cost)} foot="incentives + tools + ads + AI" />
+        <KPI label="Cost" value={m(tot.cost)} foot={<span className="flex items-center justify-between gap-2 flex-wrap">incentives + tools + ads + AI<button onClick={openCosts} className="rounded-full border px-2.5 py-0.5 text-xs font-medium" style={{ borderColor: C.line, color: C.em }}>Edit costs</button></span>} />
         <KPI label="Cost per hire" value={tot.hires ? m(tot.cost / tot.hires) : "–"} foot={tot.cost ? "return " + (Math.round((tot.revenue / tot.cost) * 10) / 10) + "× cost" : "no cost yet"} />
       </KPIGrid>
-      <Card>
-        <div className="flex items-baseline justify-between gap-3 flex-wrap">
-          <div className="text-lg" style={{ ...SERIF }}>Costs</div>
-          <div className="text-xs" style={{ color: C.ink2 }}>{m(toolPool + adPool)} counted for {pr.label.toLowerCase()} · type to change, saved when you click away</div>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 items-start">
-          {[["apollo", "Apollo"], ["brevo", "Brevo"]].map(([k, name]) => (
-            <div key={k} className="rounded-xl p-3" style={{ background: C.canvas }}>
-              <div className="flex items-baseline justify-between gap-2"><span className="text-sm font-medium">{name}</span><span className="text-[11px]" style={{ color: C.ink3 }}>a month</span></div>
-              <div className="mt-1.5">{amountBox(k, name + " a month")}</div>
-              <div className="text-[11px] mt-1.5" style={{ color: C.ink3 }}>{m((Number(tc[k]) || 0) * monthsShare)} for {pr.label.toLowerCase()} · split by activity</div>
-            </div>
-          ))}
-          <div className="rounded-xl p-3" style={{ background: C.canvas }}>
-            <div className="flex items-baseline justify-between gap-2"><span className="text-sm font-medium">Job ads</span><span className="text-[11px]" style={{ color: C.ink3 }}>{adMonths.length === 1 ? adMonths[0].label : "by month"}</span></div>
-            {adMonths.length === 1
-              ? <div className="mt-1.5">{amountBox("ad:" + adMonths[0].key, "Job ads paid in " + adMonths[0].label)}</div>
-              : <div className="mt-1.5 grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-1">
-                  {adMonths.map((x) => (<div key={x.key}><div className="text-[11px]" style={{ color: C.ink3 }}>{x.label}</div>{amountBox("ad:" + x.key, "Job ads paid in " + x.label, true)}</div>))}
-                </div>}
-            <div className="text-[11px] mt-1.5" style={{ color: C.ink3 }}>{m(adPool)} for {pr.label.toLowerCase()}{adMonths.some((x) => x.amount && x.share < 1) ? " (part month)" : ""} · split by hires</div>
-          </div>
-        </div>
-      </Card>
+      <Modal open={costsOpen} onClose={() => setCostsOpen(false)} title="Edit costs">
+        <div className="text-xs mb-1" style={{ color: C.ink2 }}>Counted in the cost and cost per hire. Tools are split by each person's share of the activity, job ads by their share of the hires.</div>
+        <div className="text-xs font-semibold tracking-widest mt-3 mb-1" style={{ color: C.ink3 }}>TOOLS · A MONTH</div>
+        {costField("apollo", "Apollo")}
+        {costField("brevo", "Brevo")}
+        <div className="text-xs font-semibold tracking-widest mt-4 mb-1" style={{ color: C.ink3 }}>JOB ADS · WHAT YOU PAID</div>
+        <div className="max-h-72 overflow-y-auto">{adMonths.map((x) => <React.Fragment key={x.key}>{costField("ad:" + x.key, x.label)}</React.Fragment>)}</div>
+        <div className="flex gap-2 justify-end mt-4"><Btn onClick={() => setCostsOpen(false)} disabled={costsBusy}>Cancel</Btn><Btn kind="primary" onClick={saveCosts} disabled={costsBusy}>{costsBusy ? "Saving…" : "Save"}</Btn></div>
+      </Modal>
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -2725,7 +2707,7 @@ function RecruiterAuditPage({ S, toast }) {
             </tbody>
           </table>
         </div>
-        <div className="text-xs mt-3" style={{ color: C.ink3 }}>Revenue counts hires made in the period at their full value (contracts: monthly fee × months), in {cur}. AI is the actual cost of each person's assistant use and screenings (hover the figure for the split). A screening is charged to whoever put the candidate forward for that job; screenings from before costs were logged are estimated at {money2(AI_SCREEN_EST, "USD")} each.{sysAi > 0 ? " Scheduled runs with nobody behind them (System): " + money2(sysAi, "USD") + ", not in the table." : ""} Activity points: placement 10, submission 3, interview 2, candidate added or task done 1, any other recorded action 0.5. Click a person to see each working day.</div>
+        <div className="text-xs mt-3" style={{ color: C.ink3 }}>Revenue counts hires made in the period at their full value (contracts: monthly fee × months), in {cur}. Tools ({m(toolPool)}: Apollo and Brevo) are split by each person's share of the activity and job ads ({m(adPool)}) by their share of the hires; change them with Edit costs. AI is the actual cost of each person's assistant use and screenings (hover the figure for the split). A screening is charged to whoever put the candidate forward for that job; screenings from before costs were logged are estimated at {money2(AI_SCREEN_EST, "USD")} each.{sysAi > 0 ? " Scheduled runs with nobody behind them (System): " + money2(sysAi, "USD") + ", not in the table." : ""} Activity points: placement 10, submission 3, interview 2, candidate added or task done 1, any other recorded action 0.5. Click a person to see each working day.</div>
       </Card>
     </div>
   );
