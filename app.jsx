@@ -6782,6 +6782,22 @@ const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send",
 const EUROPE_LABEL = "Europe (EU, UK, EEA, Switzerland)";
 const leadPlaceLabel = (k) => k === "EU" ? EUROPE_LABEL : (COUNTRY_DATA.find((x) => x.iso === k) || {}).name || k;
 const LEAD_PLACE_OPTIONS = [{ value: "EU", label: EUROPE_LABEL }].concat(COUNTRY_DATA.map((x) => ({ value: x.iso, label: x.name })));
+// The first email exactly as the person will get it (house design, Apply button, footer), drawn by
+// the server from the saved draft. Reloads after the draft is saved.
+function ProspectEmailPreview({ S, id, version }) {
+  const [p, setP] = useState(null), [err, setErr] = useState("");
+  React.useEffect(() => { let on = true; setP(null); setErr("");
+    S.sourcing("preview_email", { id }).then((r) => on && setP(r), (e) => on && setErr(e.message || "Couldn't load the preview"));
+    return () => { on = false; }; }, [id, version]); // eslint-disable-line
+  if (err) return <div className="text-xs" style={{ color: C.warnFg }}>{err}</div>;
+  if (!p) return <div className="text-xs" style={{ color: C.ink3 }}>Loading the email as they'll see it…</div>;
+  return (
+    <div>
+      <div className="text-xs mb-1" style={{ color: C.ink2 }}>As they'll see it · Subject: <span style={{ color: C.ink }}>{p.subject}</span></div>
+      <iframe title="Email preview" sandbox="allow-same-origin" srcDoc={safeEmailHtml(p.html)} className="w-full rounded-lg border" style={{ borderColor: C.line, height: 560, background: "#fff" }} />
+    </div>
+  );
+}
 const approvedMsg = (n, held) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected." + (held ? " " + held + " not sent: their location needs checking first (Location OK on each)." : "");
 const copyText = (t, toast, label) => { try { navigator.clipboard.writeText(t); toast(label || "Copied"); } catch (e) { toast("Copy failed. Select and copy it manually."); } };
 
@@ -7034,9 +7050,11 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           </div>
           {open && !xray && (
             <div className="mt-2 flex flex-col gap-2">
+              {S && p.body && <ProspectEmailPreview S={S} id={p.id} version={(p.subject || "") + "|" + (p.body || "")} />}
+              {editable && <div className="text-xs font-medium mt-1" style={{ color: C.ink2 }}>Edit the wording</div>}
               <input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={!editable} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
               <textarea value={body} onChange={(e) => setBody(e.target.value)} disabled={!editable} rows={9} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-              <div className="text-xs" style={{ color: C.ink3 }}>{"{{INTERESTED_LINK}}"} becomes a one-click "I'm interested" link. The sender details, unsubscribe link and (outside the US) the privacy notice are added at the bottom when it's sent.</div>
+              <div className="text-xs" style={{ color: C.ink3 }}>{/\{\{APPLY_LINK\}\}/.test(body) ? <>From the role's outreach template. [First Name] and the line about their profile are already filled in; {"{{APPLY_LINK}}"} becomes the Apply now button (and the Refer someone line). The address, where we found their details, Unsubscribe and Delete my details are added at the bottom. Change the template for everyone on the role's Sourcing tab.</> : <>{"{{INTERESTED_LINK}}"} becomes a one-click "I'm interested" link. The sender details, unsubscribe link and (outside the US) the privacy notice are added at the bottom when it's sent.</>}</div>
               {editable && <div className="flex gap-2 justify-end">{dirty && <Btn onClick={() => { setSubject(p.subject || ""); setBody(p.body || ""); }}>Undo</Btn>}<Btn kind="primary" disabled={!dirty} onClick={() => onSave({ subject, body })}>Save email</Btn></div>}
             </div>
           )}

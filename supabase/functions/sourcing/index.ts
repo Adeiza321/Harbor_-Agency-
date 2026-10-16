@@ -4,7 +4,7 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, processLead } from "./leads.ts";
-import { composeProspect, manualCompose, markManualSent, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
+import { composeProspect, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
@@ -422,6 +422,7 @@ async function handle(req: Request): Promise<Response> {
     }
     // "Email me a test": the first email to a prospect (or the pitch to a lead), sent to your
     // own address so you see exactly what they'd get. Nothing is queued or marked as sent.
+    if (action === "preview_email") return json(await previewProspect(admin, String(body.id || ""), s, agencyName));
     if (action === "test_email") {
       const to = String(me.email || caller.user.email || "");
       if (!to) return json({ error: "Your profile has no email address" }, 400);

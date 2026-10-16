@@ -108,6 +108,17 @@ export async function sendTest(admin: any, prospectId: string, to: string, s: Se
   return { ok: true, to };
 }
 
+// The email exactly as the person would get it (design, apply button, footer), for the preview on
+// their card. Nothing is sent.
+export async function previewProspect(admin: any, prospectId: string, s: Settings, agencyName: string) {
+  const { data: p } = await admin.from("prospects").select("*").eq("id", prospectId).maybeSingle();
+  if (!p) throw new Error("Not found");
+  if (!p.body) throw new Error("This person has no drafted email yet");
+  const b = await loadBrand(admin);
+  const mail = await composeProspect(admin, { ...p, unsub_token: "test-preview" }, s, agencyName, new Map(), b);
+  return { ok: true, subject: p.subject || "", to: p.email || "", html: mail.html };
+}
+
 // The same for a client pitch: plain text with the footer, as the hiring manager would get it.
 export async function sendLeadTest(admin: any, leadId: string, to: string, s: Settings, agencyName: string) {
   const { data: l } = await admin.from("leads").select("*").eq("id", leadId).maybeSingle();
