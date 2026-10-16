@@ -82,6 +82,7 @@ export async function checkPlaces(admin: any, job: any, area: any, places: strin
       "{\"results\": [{\"i\": number, \"in_area\": \"yes\" | \"no\" | \"unsure\", \"note\": string}]}, one per place. " +
       "yes: the place is within about 60 to 75 minutes' normal commute (car or public transport) of the office, or (for a state-wide search area) inside that state or within an hour of it. " +
       "no: clearly farther than that (another city or region, e.g. Manchester or Sheffield for an office in Croydon, Missoula for an office in Kalispell, Jeddah for an office in Riyadh). " +
+      "For a HYBRID job (only some days in the office), the city or metro area the office is part of counts as yes (e.g. 'London', 'Greater London' or 'London Area' for an office in Croydon; 'Greater Chicago Area' for Buffalo Grove); for a fully on-site job it is unsure. " +
       "unsure: the place is too vague to tell (a whole country, a big region like 'England' or 'Northern Illinois', or a metro area whose far side is out of reach). " +
       "note: for 'no', where it is and roughly how far, e.g. 'Sheffield, about 3.5 h from Croydon'; otherwise ''. Be accurate: use real geography, not the spelling.";
     for (let i = 0; i < ask.length; i += 40) {
