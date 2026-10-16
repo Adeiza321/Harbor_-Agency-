@@ -9,7 +9,7 @@ import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
 import { cleanGuide, startXray } from "./xray.ts";
-import { searchEngines, searchUsage, checkEngines } from "./search.ts";
+import { searchEngines, searchUsage, checkEngines, tavilyRaw } from "./search.ts";
 import { autoFindEmails, findEmails, skipTooFar } from "./emails.ts";
 import { matchPool } from "./pool.ts";
 import { pdlKey } from "./pdl.ts";
@@ -186,6 +186,7 @@ Deno.serve(async (req: Request) => {
       if (body.action === "location_sweep") return json({ ok: true, ...(await locationSweep(admin, !!body.dry)) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
       if (body.action === "search_check") return json({ ok: true, ...(await checkEngines(admin)) });
+      if (body.action === "tavily_raw") return json(await Promise.all((Array.isArray(body.tries) ? body.tries : []).slice(0, 6).map((b: unknown) => tavilyRaw(b))));
       // The talent pool for one job (also checked automatically when a job goes live).
       if (body.action === "pool" && body.jobId) {
         const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();

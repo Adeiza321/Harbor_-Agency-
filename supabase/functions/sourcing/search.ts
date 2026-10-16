@@ -207,6 +207,14 @@ export async function searchWeb(admin: any, q: string, skip: Set<string> = new S
   return empty ? { ...empty, errors } : { hits: [], engine: null, errors };
 }
 
+// TEMP diagnostic: one raw Tavily request with the given body (ops only).
+export async function tavilyRaw(body: unknown) {
+  const res = await fetch("https://api.tavily.com/search", { method: "POST", headers: { Authorization: "Bearer " + env("TAVILY_API_KEY"), "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
+  const d = await res.json().catch(() => ({}));
+  const urls = (d.results || []).map((r: any) => String(r.url || ""));
+  return { status: res.status, n: urls.length, profiles: urls.filter((u: string) => profileOf(u)).length, urls: urls.slice(0, 20), error: d.detail || d.error || null };
+}
+
 // Tests every connected engine with one real search (one credit each) and reports what came back.
 export async function checkEngines(admin: any, q = "site:linkedin.com/in recruiter Lagos Nigeria") {
   const out: Record<string, unknown>[] = [];
