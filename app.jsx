@@ -2536,9 +2536,9 @@ function TeamToday({ S }) {
    For each recruiter over a period: what they did each working day, the hires they made, the
    revenue those bring, and what they cost. Recruiters are freelancers, so cost = the incentives on
    their placements + their share of tools (Apollo, Brevo; monthly costs set here, shared out by
-   working day and split by each person's share of the team's activity) + their share of ad spend
-   (what was paid for job ads each month, entered here, split by each person's share of the hires so
-   all of it counts in the cost per hire) + AI (the actual cost of every AI call, logged in ai_usage). Screening is charged to the person who put the
+   working day and split by each person's share of the team's activity) + the job ads run for them
+   (each payment entered with its date, the job and the recruiter it was for: charged to that
+   recruiter, or split between the job's recruiters when none is named) + AI (the actual cost of every AI call, logged in ai_usage). Screening is charged to the person who put the
    candidate forward for that job (candidate_jobs.added_by); screenings from before that logging
    began are estimated at AI_SCREEN_EST each, charged the same way. Calls with nobody behind them
    (scheduled runs) are shown as System.
@@ -2549,10 +2549,15 @@ function RecruiterAuditPage({ S, toast }) {
   const goal = (S.settings && S.settings.revenueGoal) || {};
   const cur = goal.currency || "USD";
   const tc = { apollo: 0, brevo: 0, ...(goal.toolCosts || {}) };
-  const ads = goal.adSpend || {}; // ad spend actually paid, by month: { "2026-10": 250 }
+  // Job ads paid: [{ id, date: "2026-10-16", amount, jobId, recruiterId }]. Older month totals
+  // (adSpend: { "2026-10": 250 }) are shown as unassigned entries until they're given a job/recruiter.
+  const adList = [...(Array.isArray(goal.adEntries) ? goal.adEntries : []),
+    ...Object.entries(goal.adSpend || {}).filter(([, v]) => Number(v) > 0).map(([k, v]) => ({ id: "m-" + k, date: k + "-01", amount: Number(v), jobId: "", recruiterId: "" }))];
   // Costs are edited in a small panel opened from the Cost figure ("Edit costs").
   const [costsOpen, setCostsOpen] = useState(false);
   const [cf, setCf] = useState({});
+  const [adDraft, setAdDraft] = useState([]); // the panel's working copy of adList
+  const [na, setNa] = useState({ amount: "", date: "", jobId: "", recruiterId: "" }); // new ad payment
   const [costsBusy, setCostsBusy] = useState(false);
   const [ai, setAi] = useState(null);
   const [logFrom, setLogFrom] = useState(null); // when screening costs started being logged
@@ -2569,22 +2574,33 @@ function RecruiterAuditPage({ S, toast }) {
   const inP = (t) => t && t >= from && t < to;
   const rows = teamPeriod(S, from, to, true);
   const totalPts = rows.reduce((a, r) => a + r.score, 0);
-  // Ad spend (and the monthly tools): each month the period touches, counted in full for whole
-  // months and by working days for part of one (a week). Shared out by each person's share of the period's hires (activity
-  // when nobody hired), so every penny spent on ads lands in the cost per hire.
-  const monthKey = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-  const adMonths = [];
-  for (let d = new Date(new Date(from).getFullYear(), new Date(from).getMonth(), 1); d.getTime() < to && adMonths.length < 24; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
-    const m0 = d.getTime(), m1 = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
-    const share = Math.min(1, workdays(Math.max(from, m0), Math.min(to, m1)) / (workdays(m0, m1) || 1));
-    adMonths.push({ key: monthKey(d), label: d.toLocaleDateString("en-GB", { month: "long", year: "numeric" }), share, amount: Number(ads[monthKey(d)]) || 0 });
-  }
-  const adPool = adMonths.reduce((a, x) => a + x.amount * x.share, 0);
-  // Monthly tools: whole months in full, part of a month by working days (same as ads).
-  const monthsShare = adMonths.reduce((a, x) => a + x.share, 0);
+  // Monthly tools: each month the period touches, counted in full for whole months and by working
+  // days for part of one (a week).
+  const monthsShare = (() => {
+    let n = 0;
+    for (let d = new Date(new Date(from).getFullYear(), new Date(from).getMonth(), 1); d.getTime() < to; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+      const m0 = d.getTime(), m1 = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+      n += Math.min(1, workdays(Math.max(from, m0), Math.min(to, m1)) / (workdays(m0, m1) || 1));
+    }
+    return n;
+  })();
   const toolPool = ((Number(tc.apollo) || 0) + (Number(tc.brevo) || 0)) * monthsShare;
+  // Job ads paid in the period (by payment date), charged to the recruiter they were run for; with
+  // only a job, split between that job's recruiters on the team; with neither (old month totals),
+  // split by the period's hires so it still counts.
+  const dayOf = (ymd) => new Date(ymd + "T00:00:00").getTime();
+  const adsIn = adList.filter((x) => inP(dayOf(x.date)));
+  const adPool = adsIn.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const teamIds = new Set(rows.map((r) => r.u.id));
   const hiresOf = (id) => S.placements.filter((p) => p.recruiterId === id && inP(p.createdAt) && p.status !== "Fallout").length;
   const teamHires = rows.reduce((a, r) => a + hiresOf(r.u.id), 0);
+  const adShare = (x, r) => {
+    if (x.recruiterId) return x.recruiterId === r.u.id ? 1 : 0;
+    const j = x.jobId && S.jobs.find((jj) => jj.id === x.jobId);
+    const on = j ? (j.engagedIds || []).filter((id) => teamIds.has(id)) : [];
+    if (on.length) return on.includes(r.u.id) ? 1 / on.length : 0;
+    return teamHires ? hiresOf(r.u.id) / teamHires : totalPts ? r.score / totalPts : rows.length ? 1 / rows.length : 0;
+  };
   const data = rows.map((r) => {
     const pl = S.placements.filter((p) => p.recruiterId === r.u.id && inP(p.createdAt) && p.status !== "Fallout");
     const inCur = (p, k, c) => (p[c] === cur ? Number(p[k]) || 0 : 0);
@@ -2598,26 +2614,39 @@ function RecruiterAuditPage({ S, toast }) {
       && l.ai.updatedAt && inP(new Date(l.ai.updatedAt).getTime()) && new Date(l.ai.updatedAt).getTime() < (logFrom == null ? Infinity : logFrom)).length, 0);
     const aiAssistant = byFeat("assistant"), aiScreening = byFeat("other") + oldScreens * AI_SCREEN_EST;
     const aiCost = aiAssistant + aiScreening;
-    const adsCost = adPool * (teamHires ? pl.length / teamHires : totalPts ? r.score / totalPts : rows.length ? 1 / rows.length : 0);
+    const adsCost = adsIn.reduce((a, x) => a + (Number(x.amount) || 0) * adShare(x, r), 0);
     const cost = incentives + tools + adsCost + aiCost;
     return { ...r, hires: pl.length, revenue, incentives, tools, adsCost, aiCost, aiAssistant, aiScreening, oldScreens, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
   });
-  const sysAi = (ai || []).filter((x) => !x.user_id).reduce((a, x) => a + Number(x.cost_usd || 0), 0);
   const sum = (k) => data.reduce((a, x) => a + (x[k] || 0), 0);
   const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost"), cost: sum("cost") };
   const m = (v) => money(v, cur);
   const m2 = (v) => money2(v, cur);
+  const todayYmd = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
   const openCosts = () => {
-    setCf({ apollo: tc.apollo ? String(tc.apollo) : "", brevo: tc.brevo ? String(tc.brevo) : "", ...Object.fromEntries(adMonths.map((x) => ["ad:" + x.key, x.amount ? String(x.amount) : ""])) });
+    setCf({ apollo: tc.apollo ? String(tc.apollo) : "", brevo: tc.brevo ? String(tc.brevo) : "" });
+    setAdDraft(adList.map((x) => ({ ...x })));
+    setNa({ amount: "", date: todayYmd(), jobId: "", recruiterId: "" });
     setCostsOpen(true);
   };
+  const jobTitle = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? j.role + " · " + j.client : ""; };
+  const personName = (id) => { const u = (S.users || []).find((x) => x.id === id); return u ? u.name : ""; };
+  const addAd = () => {
+    const amount = num(na.amount);
+    if (!(amount > 0)) { toast("Enter what was paid"); return; }
+    if (!na.jobId && !na.recruiterId) { toast("Choose the job or the recruiter the ad was for"); return; }
+    if (!na.date) { toast("Enter the date it was paid"); return; }
+    setAdDraft([{ id: Math.random().toString(36).slice(2, 10), date: na.date, amount, jobId: na.jobId, recruiterId: na.recruiterId }, ...adDraft]);
+    setNa({ amount: "", date: na.date, jobId: "", recruiterId: "" });
+  };
   const saveCosts = () => {
-    const adSpend = { ...ads };
-    for (const x of adMonths) { const v = Math.max(0, num(cf["ad:" + x.key]) || 0); if (v > 0) adSpend[x.key] = v; else delete adSpend[x.key]; }
     setCostsBusy(true);
-    S.saveRevenueGoal({ ...goal, toolCosts: { ...tc, apollo: Math.max(0, num(cf.apollo) || 0), brevo: Math.max(0, num(cf.brevo) || 0) }, adSpend })
+    const adEntries = adDraft.filter((x) => Number(x.amount) > 0).map(({ id, date, amount, jobId, recruiterId }) => ({ id: String(id).startsWith("m-") ? Math.random().toString(36).slice(2, 10) : id, date, amount: Number(amount), jobId: jobId || "", recruiterId: recruiterId || "" }));
+    S.saveRevenueGoal({ ...goal, toolCosts: { ...tc, apollo: Math.max(0, num(cf.apollo) || 0), brevo: Math.max(0, num(cf.brevo) || 0) }, adEntries, adSpend: {} })
       .then(() => { setCostsOpen(false); toast("Costs saved"); }).catch(() => {}).finally(() => setCostsBusy(false));
   };
+  const openJobs = S.jobs.filter((j) => j.status !== "Draft").slice().sort((a, b) => (a.status === "Closed") - (b.status === "Closed") || String(a.client).localeCompare(String(b.client)));
+  const sel = "rounded-lg border px-2 py-1.5 text-sm w-full min-w-0";
   const costField = (k, label, hint) => (
     <div className="flex items-center justify-between gap-3 py-2" style={{ borderTop: `1px solid ${C.line}` }}>
       <label htmlFor={"cost-" + k} className="text-sm">{label}{hint && <span className="block text-xs" style={{ color: C.ink3 }}>{hint}</span>}</label>
@@ -2650,21 +2679,55 @@ function RecruiterAuditPage({ S, toast }) {
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" title="Team audit" sub="What everyone on the team (Admins, Rec Ops and Recruiters) did, the hires they made, and what each person and each hire cost the agency." />
-        <PeriodSelect id="audit-period" value={pr.key} onChange={pr.setKey} custom={pr.custom} setCustom={pr.setCustom} />
+        <div className="flex items-start gap-2 flex-wrap">
+          <Btn onClick={openCosts}><Pencil size={14} /> Edit costs</Btn>
+          <PeriodSelect id="audit-period" value={pr.key} onChange={pr.setKey} custom={pr.custom} setCustom={pr.setCustom} />
+        </div>
       </div>
       <KPIGrid>
         <KPI dark label="Hires" value={tot.hires} foot={pr.label.toLowerCase()} />
         <KPI label="Revenue" value={m(tot.revenue)} foot="client fees on those hires" />
-        <KPI label="Cost" value={m(tot.cost)} foot={<span className="flex items-center justify-between gap-2 flex-wrap">incentives + tools + ads + AI<button onClick={openCosts} className="rounded-full border px-2.5 py-0.5 text-xs font-medium" style={{ borderColor: C.line, color: C.em }}>Edit costs</button></span>} />
+        <KPI label="Cost" value={m(tot.cost)} foot="incentives + tools + ads + AI" />
         <KPI label="Cost per hire" value={tot.hires ? m(tot.cost / tot.hires) : "–"} foot={tot.cost ? "return " + (Math.round((tot.revenue / tot.cost) * 10) / 10) + "× cost" : "no cost yet"} />
       </KPIGrid>
       <Modal open={costsOpen} onClose={() => setCostsOpen(false)} title="Edit costs">
-        <div className="text-xs mb-1" style={{ color: C.ink2 }}>Counted in the cost and cost per hire. Tools are split by each person's share of the activity, job ads by their share of the hires.</div>
+        <div className="text-xs mb-1" style={{ color: C.ink2 }}>Counted in the cost and cost per hire. Tools are split by each person's share of the activity; each job ad is charged to the recruiter it was run for.</div>
         <div className="text-xs font-semibold tracking-widest mt-3 mb-1" style={{ color: C.ink3 }}>TOOLS · A MONTH</div>
         {costField("apollo", "Apollo")}
         {costField("brevo", "Brevo")}
         <div className="text-xs font-semibold tracking-widest mt-4 mb-1" style={{ color: C.ink3 }}>JOB ADS · WHAT YOU PAID</div>
-        <div className="max-h-72 overflow-y-auto">{adMonths.map((x) => <React.Fragment key={x.key}>{costField("ad:" + x.key, x.label)}</React.Fragment>)}</div>
+        <div className="rounded-xl p-3 flex flex-col gap-2" style={{ background: C.canvas }}>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col min-w-0"><label htmlFor="ad-amount" className="text-xs" style={{ color: C.ink2 }}>Amount ({cur})</label>
+              <input id="ad-amount" inputMode="decimal" placeholder="0" value={na.amount} onChange={(e) => setNa({ ...na, amount: e.target.value.replace(/[^0-9.,]/g, "") })} className={sel} style={{ borderColor: C.line, background: C.card }} /></div>
+            <div className="flex flex-col min-w-0"><label htmlFor="ad-date" className="text-xs" style={{ color: C.ink2 }}>Date paid</label>
+              <input id="ad-date" type="date" value={na.date} onChange={(e) => setNa({ ...na, date: e.target.value })} className={sel} style={{ borderColor: C.line, background: C.card }} /></div>
+          </div>
+          <div className="flex flex-col min-w-0"><label htmlFor="ad-job" className="text-xs" style={{ color: C.ink2 }}>Job the ad was for</label>
+            <select id="ad-job" value={na.jobId} onChange={(e) => { const j = S.jobs.find((x) => x.id === e.target.value); const on = j ? (j.engagedIds || []).filter((id) => teamIds.has(id)) : []; setNa({ ...na, jobId: e.target.value, recruiterId: on.length === 1 ? on[0] : na.recruiterId && (!j || on.includes(na.recruiterId)) ? na.recruiterId : "" }); }} className={sel} style={{ borderColor: C.line, background: C.card }}>
+              <option value="">Not for one job</option>
+              {openJobs.map((j) => <option key={j.id} value={j.id}>{j.role} · {j.client}{j.status === "Closed" ? " (closed)" : ""}</option>)}
+            </select></div>
+          <div className="flex flex-col min-w-0"><label htmlFor="ad-rec" className="text-xs" style={{ color: C.ink2 }}>Recruiter it was for</label>
+            <select id="ad-rec" value={na.recruiterId} onChange={(e) => setNa({ ...na, recruiterId: e.target.value })} className={sel} style={{ borderColor: C.line, background: C.card }}>
+              <option value="">{na.jobId ? "Everyone on this job" : "Choose…"}</option>
+              {rows.map((r) => <option key={r.u.id} value={r.u.id}>{r.u.name}</option>)}
+            </select></div>
+          <div className="flex justify-end"><Btn onClick={addAd}><Plus size={14} /> Add payment</Btn></div>
+        </div>
+        <div className="max-h-64 overflow-y-auto mt-2">
+          {!adDraft.length && <div className="text-xs py-2" style={{ color: C.ink3 }}>No job ads entered yet.</div>}
+          {adDraft.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).map((x) => (
+            <div key={x.id} className="flex items-center justify-between gap-3 py-2 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
+              <div className="min-w-0">
+                <div className="truncate">{x.jobId ? jobTitle(x.jobId) || "A job no longer listed" : x.recruiterId ? "General ads" : "Not assigned yet"}</div>
+                <div className="text-xs truncate" style={{ color: x.jobId || x.recruiterId ? C.ink3 : C.dangerFg }}>{new Date(x.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {x.recruiterId ? personName(x.recruiterId) : x.jobId ? "everyone on this job" : "old month total: remove it and add it with a job or recruiter"}</div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0"><span style={{ fontVariantNumeric: "tabular-nums" }}>{m2(x.amount)}</span>
+                <button aria-label="Remove this payment" onClick={() => setAdDraft(adDraft.filter((y) => y.id !== x.id))} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: C.canvas }}><X size={13} /></button></div>
+            </div>
+          ))}
+        </div>
         <div className="flex gap-2 justify-end mt-4"><Btn onClick={() => setCostsOpen(false)} disabled={costsBusy}>Cancel</Btn><Btn kind="primary" onClick={saveCosts} disabled={costsBusy}>{costsBusy ? "Saving…" : "Save"}</Btn></div>
       </Modal>
       <Card>
@@ -2707,7 +2770,6 @@ function RecruiterAuditPage({ S, toast }) {
             </tbody>
           </table>
         </div>
-        <div className="text-xs mt-3" style={{ color: C.ink3 }}>Revenue counts hires made in the period at their full value (contracts: monthly fee × months), in {cur}. Tools ({m(toolPool)}: Apollo and Brevo) are split by each person's share of the activity and job ads ({m(adPool)}) by their share of the hires; change them with Edit costs. AI is the actual cost of each person's assistant use and screenings (hover the figure for the split). A screening is charged to whoever put the candidate forward for that job; screenings from before costs were logged are estimated at {money2(AI_SCREEN_EST, "USD")} each.{sysAi > 0 ? " Scheduled runs with nobody behind them (System): " + money2(sysAi, "USD") + ", not in the table." : ""} Activity points: placement 10, submission 3, interview 2, candidate added or task done 1, any other recorded action 0.5. Click a person to see each working day.</div>
       </Card>
     </div>
   );
