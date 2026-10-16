@@ -7124,7 +7124,10 @@ function JobSourcingCard({ job, S, toast }) {
     S.sourcing("search_area", { jobId: job.id }).then(() => load()).catch(() => {});
   }, [row]); // eslint-disable-line
   // While an X-ray search runs on the server, check back every few seconds.
-  const xrayRunning = !!(row && row.xray && row.xray.state === "running");
+  // A search still "running" after 8 minutes was cut off by the server: shown as stopped so it can
+  // be run again. "queued" waits for one of the two running searches to finish (starts by itself).
+  const xrStale = !!(row && row.xray && row.xray.state === "running" && Date.now() - new Date(row.xray.at || 0).getTime() > 8 * 60e3);
+  const xrayRunning = !!(row && row.xray && (row.xray.state === "running" || row.xray.state === "queued") && !xrStale);
   React.useEffect(() => {
     if (!xrayRunning) return;
     const t = setTimeout(load, 8000);
@@ -7165,7 +7168,7 @@ function JobSourcingCard({ job, S, toast }) {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <SectionTitle title="Sourcing" sub="ProNext checks your own candidates first, using the job's parallel titles. Searching outside runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles) and, when the bench is short, Apollo and People Data Labs for people with emails (paid, Admin approval)." size="text-xl" />
         {canRun && <div className="flex gap-2 shrink-0 flex-wrap">
-          <Btn kind="primary" icon={Search} onClick={() => outside(!!external)} disabled={!!busy || xrayRunning}>{busy === "outside" || xrayRunning ? "Searching…" : external || xr ? "Search outside again" : "Search outside ProNext"}</Btn>
+          <Btn kind="primary" icon={Search} onClick={() => outside(!!external)} disabled={!!busy || xrayRunning}>{busy === "outside" || xrayRunning ? (row.xray && row.xray.state === "queued" ? "Queued…" : "Searching…") : external || xr ? "Search outside again" : "Search outside ProNext"}</Btn>
         </div>}
       </div>
       <div className="mt-3">
@@ -7200,7 +7203,7 @@ function JobSourcingCard({ job, S, toast }) {
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
           <div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
-          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xr.state === "running" ? <>Searching public profiles <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "unknown error") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <>Searching public profiles <InlineDots /></> : xr.state === "queued" ? <>Queued: starts when another search finishes (two run at a time) <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "unknown error") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
           {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
         </div>
       </div>

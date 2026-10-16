@@ -9,7 +9,7 @@ import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./ap
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
-import { cleanGuide, startXray } from "./xray.ts";
+import { cleanGuide, startXray, stepXrayQueue } from "./xray.ts";
 import { searchEngines, searchUsage, checkEngines } from "./search.ts";
 import { autoFindEmails, draftEmails, findEmails, skipTooFar } from "./emails.ts";
 import { matchPool } from "./pool.ts";
@@ -185,10 +185,13 @@ async function handle(req: Request): Promise<Response> {
         // well inside the function time limit; sending and clean-up are quick.
         try { out.jobs = await stepJobs(admin, s, opsKey, agencyName); } catch (e) { out.jobsError = errMsg(e); }
         if (!out.jobs) { try { out.leads = await stepLeads(admin, s, agencyName, 2); } catch (e) { out.leadsError = errMsg(e); } }
+        try { out.xray = await stepXrayQueue(admin, s); } catch (e) { out.xrayError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
       }
+      // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, clear cut-off ones.
+      if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
       if (body.action === "search_area" && body.jobId) {
         const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();
         if (!job) return json({ error: "Job not found" }, 404);

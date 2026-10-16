@@ -47,14 +47,26 @@ export function cleanGuide(g: any): XrayGuide | null {
 }
 
 // Starts a run in the background (the caller gets an answer straight away). A run already going
-// for this job is left alone unless it has been stuck for over 6 minutes.
-export async function startXray(admin: any, jobId: string, s: Settings, by: string | null = null, guide: XrayGuide | null = null) {
+// for this job is left alone unless it has been stuck for over 6 minutes. At most two searches run
+// at once: many at the same time hit the AI and search engines' rate limits, slow down and get cut
+// off by the server's time limit, so further ones wait as "queued" and the scheduled run starts them.
+export const XRAY_MAX_PARALLEL = 2;
+export const XRAY_STALE_MS = 8 * 60e3;
+export async function startXray(admin: any, jobId: string, s: Settings, by: string | null = null, guide: XrayGuide | null = null, fromQueue = false) {
   const { data: job } = await admin.from("jobs").select("id,xray").eq("id", jobId).maybeSingle();
   if (!job) return { ok: false, message: "Job not found" };
   const e = searchEngines();
   if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No free search engine is connected yet. Add a TAVILY_API_KEY, SERPER_API_KEY, BRAVE_API_KEY or GEMINI_API_KEY secret in Supabase." };
   const x = job.xray || {};
   if (x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < 6 * 60e3) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
+  if (!fromQueue) {
+    const { data: others } = await admin.from("jobs").select("id,xray").eq("xray->>state", "running").neq("id", jobId);
+    const busy = (others || []).filter((j: any) => Date.now() - new Date(j.xray?.at || 0).getTime() < XRAY_STALE_MS).length;
+    if (busy >= XRAY_MAX_PARALLEL) {
+      await setXray(admin, jobId, { state: "queued", by, ...(guide ? { guide } : {}) });
+      return { ok: true, queued: true, message: `X-ray search queued: ${busy} other searches are running. It starts automatically within about 10 minutes.` };
+    }
+  }
   await setXray(admin, jobId, { state: "running", by, ...(guide ? { guide } : {}) });
   const work = runXray(admin, jobId, s, guide).catch(async (err) => {
     console.error("xray", jobId, errMsg(err));
@@ -138,6 +150,29 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
 }
 
 type Person = Hit & { key: string; site: SiteKey; query: string };
+
+// Scheduled: searches cut off by the server (still "running" long after starting) are marked as
+// stopped, and queued searches are started, up to two running at a time.
+export async function stepXrayQueue(admin: any, s: Settings) {
+  const { data: rows } = await admin.from("jobs").select("id,status,xray").in("xray->>state", ["running", "queued"]);
+  const now = Date.now();
+  let stopped = 0, started = 0;
+  const running = [] as string[];
+  for (const j of rows || []) {
+    if (j.xray?.state !== "running") continue;
+    if (now - new Date(j.xray?.at || 0).getTime() > XRAY_STALE_MS) {
+      await setXray(admin, j.id, { ...(j.xray || {}), state: "error", error: "It was cut off before finishing (the server's time limit). Run it again." });
+      stopped++;
+    } else running.push(j.id);
+  }
+  const queued = (rows || []).filter((j: any) => j.xray?.state === "queued" && j.status !== "Closed")
+    .sort((a: any, b: any) => String(a.xray?.at).localeCompare(String(b.xray?.at)));
+  for (const j of queued.slice(0, Math.max(0, XRAY_MAX_PARALLEL - running.length))) {
+    await startXray(admin, j.id, s, j.xray?.by || null, j.xray?.guide || null, true);
+    started++;
+  }
+  return { stopped, started, waiting: Math.max(0, queued.length - started) };
+}
 
 export async function runXray(admin: any, jobId: string, s: Settings, guide: XrayGuide | null = null) {
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
