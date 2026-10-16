@@ -2549,11 +2549,12 @@ function RecruiterAuditPage({ S, toast }) {
   const goal = (S.settings && S.settings.revenueGoal) || {};
   const cur = goal.currency || "USD";
   const tc = { apollo: 0, brevo: 0, ...(goal.toolCosts || {}) };
-  const [edit, setEdit] = useState(false);
-  const [f, setF] = useState({ apollo: String(tc.apollo || ""), brevo: String(tc.brevo || "") });
   const ads = goal.adSpend || {}; // ad spend actually paid, by month: { "2026-10": 250 }
-  const [adEdit, setAdEdit] = useState(false);
-  const [af, setAf] = useState({});
+  // Costs are edited in place and saved when you leave the box (or press Enter). goalRef holds the
+  // latest saved settings so two quick edits in a row never undo each other.
+  const goalRef = React.useRef(goal);
+  useEffect(() => { goalRef.current = goal; }, [S.settings]); // eslint-disable-line
+  const [draft, setDraft] = useState({});
   const [ai, setAi] = useState(null);
   const [logFrom, setLogFrom] = useState(null); // when screening costs started being logged
   const [openId, setOpenId] = useState(null);
@@ -2569,10 +2570,8 @@ function RecruiterAuditPage({ S, toast }) {
   const inP = (t) => t && t >= from && t < to;
   const rows = teamPeriod(S, from, to, true);
   const totalPts = rows.reduce((a, r) => a + r.score, 0);
-  const monthsShare = workdays(from, to) / WORKDAYS_PER_MONTH;
-  const toolPool = ((Number(tc.apollo) || 0) + (Number(tc.brevo) || 0)) * monthsShare;
-  // Ad spend: each month the period touches, counted in full for whole months and by working days
-  // for part of one (a week). Shared out by each person's share of the period's hires (activity
+  // Ad spend (and the monthly tools): each month the period touches, counted in full for whole
+  // months and by working days for part of one (a week). Shared out by each person's share of the period's hires (activity
   // when nobody hired), so every penny spent on ads lands in the cost per hire.
   const monthKey = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
   const adMonths = [];
@@ -2582,6 +2581,9 @@ function RecruiterAuditPage({ S, toast }) {
     adMonths.push({ key: monthKey(d), label: d.toLocaleDateString("en-GB", { month: "long", year: "numeric" }), share, amount: Number(ads[monthKey(d)]) || 0 });
   }
   const adPool = adMonths.reduce((a, x) => a + x.amount * x.share, 0);
+  // Monthly tools: whole months in full, part of a month by working days (same as ads).
+  const monthsShare = adMonths.reduce((a, x) => a + x.share, 0);
+  const toolPool = ((Number(tc.apollo) || 0) + (Number(tc.brevo) || 0)) * monthsShare;
   const hiresOf = (id) => S.placements.filter((p) => p.recruiterId === id && inP(p.createdAt) && p.status !== "Fallout").length;
   const teamHires = rows.reduce((a, r) => a + hiresOf(r.u.id), 0);
   const data = rows.map((r) => {
@@ -2606,12 +2608,29 @@ function RecruiterAuditPage({ S, toast }) {
   const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost"), cost: sum("cost") };
   const m = (v) => money(v, cur);
   const m2 = (v) => money2(v, cur);
-  const save = () => S.saveRevenueGoal({ ...goal, toolCosts: { apollo: num(f.apollo), brevo: num(f.brevo) } }).then(() => { setEdit(false); toast("Tool costs saved"); }).catch(() => {});
-  const saveAds = () => {
-    const next = { ...ads };
-    for (const x of adMonths) { const v = num(af[x.key]); if (v > 0) next[x.key] = v; else delete next[x.key]; }
-    S.saveRevenueGoal({ ...goal, adSpend: next }).then(() => { setAdEdit(false); toast("Ad spend saved"); }).catch(() => {});
+  // k: "apollo" | "brevo" | "ad:2026-10"
+  const savedOf = (k) => { const g = goalRef.current || {}; return k.startsWith("ad:") ? Number((g.adSpend || {})[k.slice(3)]) || 0 : Number((g.toolCosts || {})[k]) || 0; };
+  const commit = (k) => {
+    if (!(k in draft)) return;
+    const v = Math.max(0, num(draft[k]) || 0);
+    setDraft((d) => { const n = { ...d }; delete n[k]; return n; });
+    if (v === savedOf(k)) return;
+    const g = goalRef.current || {};
+    let next;
+    if (k.startsWith("ad:")) { const a = { ...(g.adSpend || {}) }; if (v > 0) a[k.slice(3)] = v; else delete a[k.slice(3)]; next = { ...g, adSpend: a }; }
+    else next = { ...g, toolCosts: { apollo: 0, brevo: 0, ...(g.toolCosts || {}), [k]: v } };
+    goalRef.current = next;
+    S.saveRevenueGoal(next).then(() => toast("Saved")).catch(() => {});
   };
+  const amountBox = (k, label, small) => (
+    <div className={"flex items-center gap-1 rounded-lg border px-2 focus-within:ring-2 " + (small ? "py-1" : "py-1.5")} style={{ borderColor: C.line, background: C.card }}>
+      <span className="text-xs" style={{ color: C.ink3 }}>{cur}</span>
+      <input aria-label={label} inputMode="decimal" placeholder="0" value={k in draft ? draft[k] : (savedOf(k) || "")}
+        onChange={(e) => setDraft({ ...draft, [k]: e.target.value.replace(/[^0-9.,]/g, "") })} onBlur={() => commit(k)}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setDraft((d) => { const n = { ...d }; delete n[k]; return n; }); } }}
+        className={"w-full min-w-0 bg-transparent outline-none " + (small ? "text-sm" : "text-lg")} style={{ fontVariantNumeric: "tabular-nums", color: C.ink }} />
+    </div>
+  );
   // A day-by-day breakdown for one person (most recent working days first, up to 31).
   const days = (u) => {
     const out = [];
@@ -2643,41 +2662,28 @@ function RecruiterAuditPage({ S, toast }) {
         <KPI label="Cost per hire" value={tot.hires ? m(tot.cost / tot.hires) : "–"} foot={tot.cost ? "return " + (Math.round((tot.revenue / tot.cost) * 10) / 10) + "× cost" : "no cost yet"} />
       </KPIGrid>
       <Card>
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div><div className="text-lg" style={{ ...SERIF }}>Tool costs</div>
-            <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Apollo {m(tc.apollo || 0)} and Brevo {m(tc.brevo || 0)} a month: {m(toolPool)} for {pr.label.toLowerCase()}, split by each person's share of the team's activity.</div></div>
-          {!edit && <button onClick={() => { setF({ apollo: String(tc.apollo || ""), brevo: String(tc.brevo || "") }); setEdit(true); }} className="text-xs font-medium" style={{ color: C.em }}>Change</button>}
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <div className="text-lg" style={{ ...SERIF }}>Costs</div>
+          <div className="text-xs" style={{ color: C.ink2 }}>{m(toolPool + adPool)} counted for {pr.label.toLowerCase()} · type to change, saved when you click away</div>
         </div>
-        {edit && (
-          <div className="flex items-end gap-2 mt-3 flex-wrap">
-            <div className="flex flex-col"><label htmlFor="tc-apollo" className="text-xs" style={{ color: C.ink2 }}>Apollo a month ({cur})</label><input id="tc-apollo" value={f.apollo} onChange={(e) => setF({ ...f, apollo: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-28" style={{ borderColor: C.line }} /></div>
-            <div className="flex flex-col"><label htmlFor="tc-brevo" className="text-xs" style={{ color: C.ink2 }}>Brevo a month ({cur})</label><input id="tc-brevo" value={f.brevo} onChange={(e) => setF({ ...f, brevo: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-28" style={{ borderColor: C.line }} /></div>
-            <Btn kind="primary" onClick={save}>Save</Btn><Btn onClick={() => setEdit(false)}>Cancel</Btn>
-          </div>
-        )}
-      </Card>
-      <Card>
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div><div className="text-lg" style={{ ...SERIF }}>Ad spend</div>
-            <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>
-              {adMonths.some((x) => x.amount)
-                ? adMonths.filter((x) => x.amount).map((x) => x.label + " " + m(x.amount)).join(" · ") + ": " + m(adPool) + " counted for " + pr.label.toLowerCase() + (adMonths.some((x) => x.amount && x.share < 1) ? " (part months by working day)" : "") + ", shared by each person's share of the hires, so all of it counts in the cost per hire."
-                : "Nothing entered for " + pr.label.toLowerCase() + " yet. Add what you paid for job ads and it counts in full towards the cost per hire."}
-            </div></div>
-          {!adEdit && <button onClick={() => { setAf(Object.fromEntries(adMonths.map((x) => [x.key, x.amount ? String(x.amount) : ""]))); setAdEdit(true); }} className="text-xs font-medium" style={{ color: C.em }}>Change</button>}
-        </div>
-        {adEdit && (
-          <div className="mt-3">
-            <div className="text-xs mb-2" style={{ color: C.ink2 }}>What you actually paid for job ads (LinkedIn, Indeed, Jobberman, boosted posts and so on) in each month, in {cur}. Leave a month empty for none.</div>
-            <div className="flex items-end gap-2 flex-wrap">
-              {adMonths.map((x) => (
-                <div key={x.key} className="flex flex-col"><label htmlFor={"ad-" + x.key} className="text-xs" style={{ color: C.ink2 }}>{x.label}</label>
-                  <input id={"ad-" + x.key} inputMode="decimal" value={af[x.key] || ""} onChange={(e) => setAf({ ...af, [x.key]: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-28" style={{ borderColor: C.line }} /></div>
-              ))}
-              <Btn kind="primary" onClick={saveAds}>Save</Btn><Btn onClick={() => setAdEdit(false)}>Cancel</Btn>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3 items-start">
+          {[["apollo", "Apollo"], ["brevo", "Brevo"]].map(([k, name]) => (
+            <div key={k} className="rounded-xl p-3" style={{ background: C.canvas }}>
+              <div className="flex items-baseline justify-between gap-2"><span className="text-sm font-medium">{name}</span><span className="text-[11px]" style={{ color: C.ink3 }}>a month</span></div>
+              <div className="mt-1.5">{amountBox(k, name + " a month")}</div>
+              <div className="text-[11px] mt-1.5" style={{ color: C.ink3 }}>{m((Number(tc[k]) || 0) * monthsShare)} for {pr.label.toLowerCase()} · split by activity</div>
             </div>
+          ))}
+          <div className="rounded-xl p-3" style={{ background: C.canvas }}>
+            <div className="flex items-baseline justify-between gap-2"><span className="text-sm font-medium">Job ads</span><span className="text-[11px]" style={{ color: C.ink3 }}>{adMonths.length === 1 ? adMonths[0].label : "by month"}</span></div>
+            {adMonths.length === 1
+              ? <div className="mt-1.5">{amountBox("ad:" + adMonths[0].key, "Job ads paid in " + adMonths[0].label)}</div>
+              : <div className="mt-1.5 grid grid-cols-2 gap-1.5 max-h-40 overflow-y-auto pr-1">
+                  {adMonths.map((x) => (<div key={x.key}><div className="text-[11px]" style={{ color: C.ink3 }}>{x.label}</div>{amountBox("ad:" + x.key, "Job ads paid in " + x.label, true)}</div>))}
+                </div>}
+            <div className="text-[11px] mt-1.5" style={{ color: C.ink3 }}>{m(adPool)} for {pr.label.toLowerCase()}{adMonths.some((x) => x.amount && x.share < 1) ? " (part month)" : ""} · split by hires</div>
           </div>
-        )}
+        </div>
       </Card>
       <Card>
         <div className="overflow-x-auto">
