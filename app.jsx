@@ -270,7 +270,7 @@ function mapAll(d) {
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at, emailStatus: m.email_status, emailError: m.email_error, deleted: !!m.deleted_at, file: m.attachment_path && !m.deleted_at ? { name: m.attachment_name, type: m.attachment_type, size: m.attachment_size } : null })) })),
@@ -2537,7 +2537,10 @@ function TeamToday({ S }) {
    revenue those bring, and what they cost. Recruiters are freelancers, so cost = the incentives on
    their placements + their share of tools (Apollo, Brevo; monthly costs set here, shared out by
    working day and split by each person's share of the team's activity) + AI (the assistant's actual
-   cost from ai_usage; CV screening estimated at AI_SCREEN_EST per candidate screened).
+   cost of every AI call, logged in ai_usage). Screening is charged to the person who put the
+   candidate forward for that job (candidate_jobs.added_by); screenings from before that logging
+   began are estimated at AI_SCREEN_EST each, charged the same way. Calls with nobody behind them
+   (scheduled runs) are shown as System.
    Cost per hire = cost / hires. Return = revenue / cost. Money in the goal currency (USD). */
 const AI_SCREEN_EST = 0.01;
 function RecruiterAuditPage({ S, toast }) {
@@ -2548,10 +2551,15 @@ function RecruiterAuditPage({ S, toast }) {
   const [edit, setEdit] = useState(false);
   const [f, setF] = useState({ apollo: String(tc.apollo || ""), brevo: String(tc.brevo || "") });
   const [ai, setAi] = useState(null);
+  const [logFrom, setLogFrom] = useState(null); // when screening costs started being logged
   const [openId, setOpenId] = useState(null);
   const { from, to } = pr;
   useEffect(() => {
-    S.sb("/rest/v1/ai_usage?select=user_id,cost_usd,created_at&created_at=gte." + new Date(from).toISOString() + "&created_at=lt." + new Date(to).toISOString() + "&limit=10000")
+    S.sb("/rest/v1/ai_usage?select=created_at&feature=neq.assistant&order=created_at.asc&limit=1")
+      .then((r) => setLogFrom(Array.isArray(r) && r[0] ? new Date(r[0].created_at).getTime() : Infinity)).catch(() => setLogFrom(Infinity));
+  }, []); // eslint-disable-line
+  useEffect(() => {
+    S.sb("/rest/v1/ai_usage?select=user_id,feature,cost_usd,created_at&created_at=gte." + new Date(from).toISOString() + "&created_at=lt." + new Date(to).toISOString() + "&limit=10000")
       .then((r) => setAi(Array.isArray(r) ? r : [])).catch(() => setAi([]));
   }, [from, to]); // eslint-disable-line
   const inP = (t) => t && t >= from && t < to;
@@ -2565,12 +2573,17 @@ function RecruiterAuditPage({ S, toast }) {
     const revenue = pl.reduce((a, p) => a + (p.payType === "monthly" ? placementMonthly(p) * (p.contractMonths || CONTRACT_DEFAULT_MONTHS) : inCur(p, "feeNum", "feeCurrency")), 0);
     const incentives = pl.reduce((a, p) => a + inCur(p, "incentiveNum", "incentiveCurrency"), 0);
     const tools = toolPool * (totalPts ? r.score / totalPts : rows.length ? 1 / rows.length : 0);
-    const aiActual = (ai || []).filter((x) => x.user_id === r.u.id).reduce((a, x) => a + Number(x.cost_usd || 0), 0);
-    const screened = S.cands.filter((c) => c.recruiterId === r.u.id && inP(c.createdAt) && c.screening && c.screening.state && c.screening.state !== "pending").length;
-    const aiCost = aiActual + screened * AI_SCREEN_EST;
+    const mine = (ai || []).filter((x) => x.user_id === r.u.id);
+    const byFeat = (f) => mine.filter((x) => (f === "assistant" ? x.feature === "assistant" : x.feature !== "assistant")).reduce((a, x) => a + Number(x.cost_usd || 0), 0);
+    // Screenings from before logging began: estimated, charged to whoever put the candidate forward.
+    const oldScreens = S.cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => (l.addedBy || c.recruiterId) === r.u.id && l.ai && l.ai.stage
+      && l.ai.updatedAt && inP(new Date(l.ai.updatedAt).getTime()) && new Date(l.ai.updatedAt).getTime() < (logFrom == null ? Infinity : logFrom)).length, 0);
+    const aiAssistant = byFeat("assistant"), aiScreening = byFeat("other") + oldScreens * AI_SCREEN_EST;
+    const aiCost = aiAssistant + aiScreening;
     const cost = incentives + tools + aiCost;
-    return { ...r, hires: pl.length, revenue, incentives, tools, aiCost, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
+    return { ...r, hires: pl.length, revenue, incentives, tools, aiCost, aiAssistant, aiScreening, oldScreens, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
   });
+  const sysAi = (ai || []).filter((x) => !x.user_id).reduce((a, x) => a + Number(x.cost_usd || 0), 0);
   const sum = (k) => data.reduce((a, x) => a + (x[k] || 0), 0);
   const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), aiCost: sum("aiCost"), cost: sum("cost") };
   const m = (v) => money(v, cur);
@@ -2633,7 +2646,7 @@ function RecruiterAuditPage({ S, toast }) {
                   <tr onClick={() => setOpenId(openId === r.u.id ? null : r.u.id)} className="cursor-pointer" style={{ borderTop: `1px solid ${C.line}` }}>
                     <td className="py-2.5 pr-3 whitespace-nowrap"><span className="inline-flex items-center gap-1.5">{openId === r.u.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.u.name}<span className="text-[11px]" style={{ color: C.ink3 }}>{r.u.roleKey === "admin" ? "Admin" : r.u.roleKey === "recops" ? "Rec Ops" : "Recruiter"}</span></span></td>
                     <td className="pr-3 whitespace-nowrap"><Pill tone={{ Productive: "em", "Fairly productive": "warn", Unproductive: "danger" }[r.band]}>{Math.round(r.score)} pts</Pill></td>
-                    <td className="pr-3">{r.hires}</td><td className="pr-3">{m(r.revenue)}</td><td className="pr-3">{m(r.incentives)}</td><td className="pr-3">{m2(r.tools)}</td><td className="pr-3">{m2(r.aiCost)}</td>
+                    <td className="pr-3">{r.hires}</td><td className="pr-3">{m(r.revenue)}</td><td className="pr-3">{m(r.incentives)}</td><td className="pr-3">{m2(r.tools)}</td><td className="pr-3" title={"Assistant " + m2(r.aiAssistant) + " · Screening and CV reads " + m2(r.aiScreening) + (r.oldScreens ? " (" + r.oldScreens + " earlier screenings estimated)" : "")}>{m2(r.aiCost)}</td>
                     <td className="pr-3 font-medium">{m2(r.cost)}</td><td className="pr-3">{r.perHire != null ? m(r.perHire) : "–"}</td><td className="pr-3">{r.ret != null ? (Math.round(r.ret * 10) / 10) + "×" : "–"}</td>
                   </tr>
                   {openId === r.u.id && (
@@ -2660,7 +2673,7 @@ function RecruiterAuditPage({ S, toast }) {
             </tbody>
           </table>
         </div>
-        <div className="text-xs mt-3" style={{ color: C.ink3 }}>Revenue counts hires made in the period at their full value (contracts: monthly fee × months), in {cur}. AI is the assistant's actual cost plus CV screening estimated at {money2(AI_SCREEN_EST, "USD")} per candidate screened. Activity points: placement 10, submission 3, interview 2, candidate added or task done 1, any other recorded action 0.5. Click a person to see each working day.</div>
+        <div className="text-xs mt-3" style={{ color: C.ink3 }}>Revenue counts hires made in the period at their full value (contracts: monthly fee × months), in {cur}. AI is the actual cost of each person's assistant use and screenings (hover the figure for the split). A screening is charged to whoever put the candidate forward for that job; screenings from before costs were logged are estimated at {money2(AI_SCREEN_EST, "USD")} each.{sysAi > 0 ? " Scheduled runs with nobody behind them (System): " + money2(sysAi, "USD") + ", not in the table." : ""} Activity points: placement 10, submission 3, interview 2, candidate added or task done 1, any other recorded action 0.5. Click a person to see each working day.</div>
       </Card>
     </div>
   );

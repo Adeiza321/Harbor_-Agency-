@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { prepareResume, findLinkedIn, type ResumeInput } from "./resume.ts";
 import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
@@ -29,6 +30,43 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
 const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5-20251001";
+
+// What each Claude call cost, logged to ai_usage for the Team audit. Who pays: a screening (and its
+// follow-up questions) is charged to the person who put the candidate forward for that job
+// (candidate_jobs.added_by, else the candidate's recruiter); anything else to the signed-in caller;
+// scheduled runs with nobody behind them have no user ("System").
+type Charge = { admin: any; userId: string | null; feature: string };
+const charge = new AsyncLocalStorage<Charge>();
+const PRICE: Record<string, [number, number]> = { haiku: [1, 5], sonnet: [3, 15], opus: [5, 25] };
+const priceOf = (m: string) => PRICE[Object.keys(PRICE).find((k) => m.includes(k)) || "sonnet"];
+async function logUsage(usage: any, model: string) {
+  const c = charge.getStore();
+  if (!c?.admin || !usage) return;
+  const inTok = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+  const outTok = usage.output_tokens || 0;
+  const [pi, po] = priceOf(model);
+  try {
+    await c.admin.from("ai_usage").insert({ user_id: c.userId, feature: c.feature, model, input_tokens: inTok, output_tokens: outTok,
+      cost_usd: Math.round(((inTok * pi + outTok * po) / 1e6) * 1e6) / 1e6 });
+  } catch (e) { console.error("ai usage log", String((e as Error)?.message || e)); }
+}
+// Runs fn charged to `feature` for whoever the current request charges (or `userId` when given).
+function chargedAs<T>(feature: string, userId: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+  const cur = charge.getStore();
+  return charge.run({ admin: cur?.admin, userId: userId === undefined ? (cur?.userId ?? null) : userId, feature }, fn);
+}
+// Who put this candidate forward for this job.
+async function submitterOf(admin: any, linkId: string): Promise<string | null> {
+  const { data } = await admin.from("candidate_jobs").select("added_by,candidates(recruiter_id)").eq("id", linkId).maybeSingle();
+  return data?.added_by || data?.candidates?.recruiter_id || charge.getStore()?.userId || null;
+}
+// Screening, charged to the submitter.
+async function screenAs(admin: any, linkId: string) {
+  return chargedAs("screening", await submitterOf(admin, linkId), () => screenLink(admin, linkId, askAI, loadResume));
+}
+async function followupsAs(admin: any, linkId: string) {
+  return chargedAs("screening", await submitterOf(admin, linkId), () => draftFollowups(admin, linkId, askAI));
+}
 const GEMINI_DEFAULT_MODEL = "gemini-3.8-flash";
 
 function parseJson(text: string) {
@@ -120,6 +158,7 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
     throw new Error("AI request failed (" + res!.status + "): " + body);
   }
   const data = await res!.json();
+  await logUsage(data.usage, data.model || ANTHROPIC_MODEL);
   if (data.stop_reason === "max_tokens") throw new Error("Claude's answer was cut off before it finished");
   return parseJson((data.content || []).map((b: any) => b.text || "").join(""));
 }
@@ -130,6 +169,15 @@ async function askAI(system: string, text: string, resume: ResumeInput | null = 
   // Claude only — see the note above. askAnthropic already retries on 429/5xx, so a
   // transient failure is handled without switching models.
   return await askAnthropic(anthropic, system, text, resume, maxTokens);
+}
+
+// The kind of AI work an action is, for the cost breakdown.
+function featureOf(action: string) {
+  if (/bench|review_match/.test(action)) return "bench check";
+  if (/learn/.test(action)) return "learning";
+  if (/title/.test(action)) return "parallel titles";
+  if (/refresh|profile|read/.test(action)) return "cv read";
+  return "screening";
 }
 
 // The resume on file, ready for the AI (any supported format), or a reason it can't be read.
@@ -230,7 +278,7 @@ async function refreshCandidate(admin: any, candidate: any, step: string, force 
     if (candidate.ai_locked) return { ok: true, step, skipped: "locked (manually reviewed)" };
     const { data: cards } = await admin.from("candidate_jobs").select("id").eq("candidate_id", candidate.id).eq("candidate_response", "accepted").limit(5);
     let rescreened = 0; const errors: string[] = [];
-    for (const c of cards || []) { try { await screenLink(admin, c.id, askAI, loadResume); rescreened++; } catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); } }
+    for (const c of cards || []) { try { await screenAs(admin, c.id); rescreened++; } catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); } }
     return { ok: !errors.length, step, rescreened, errors };
   }
   return { ok: false, step, error: "Unknown step" };
@@ -251,8 +299,8 @@ async function autoScreen(admin: any, linkId: string) {
   const stamp = { tries: (auto.tries || 0) + 1, at: new Date().toISOString() };
   await admin.from("candidate_jobs").update({ ai: { ...(link.ai || {}), auto: stamp } }).eq("id", linkId);
   try {
-    const ai: any = await screenLink(admin, linkId, askAI, loadResume);
-    if (!ai?.followups && ai?.verdict !== "Reject") { try { await draftFollowups(admin, linkId, askAI); } catch (_) { /* nothing open to ask about */ } }
+    const ai: any = await screenAs(admin, linkId);
+    if (!ai?.followups && ai?.verdict !== "Reject") { try { await followupsAs(admin, linkId); } catch (_) { /* nothing open to ask about */ } }
     return { ok: true, screened: true };
   } catch (e) {
     const msg = String((e as Error)?.message || e).slice(0, 200);
@@ -298,18 +346,23 @@ async function learnLessons(admin: any, ids: string[] | null, by: string | null,
         .in("stage", ["Screening", "In review"]).eq("candidate_response", "accepted").eq("candidates.ai_locked", false).eq("candidates.is_draft", false).limit(6)
       : { data: [] };
     rescreening = (cards || []).length;
-    const work = (async () => { for (const c of cards || []) { try { await screenLink(admin, c.id, askAI, loadResume); } catch (e) { console.error("rescreen after lesson", c.id, String((e as Error)?.message || e)); } } })();
+    const work = (async () => { for (const c of cards || []) { try { await screenAs(admin, c.id); } catch (e) { console.error("rescreen after lesson", c.id, String((e as Error)?.message || e)); } } })();
     // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
     if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
   }
   return { ok: true, learned: learned.length, skipped: results.filter((r) => !r.lesson && r.ok).length, failed: results.filter((r) => !r.ok).length, results, rescreening };
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve((req: Request) => charge.run({ admin: null, userId: null, feature: "screening" }, () => handle(req)));
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const body = await req.json();
+    const ch = charge.getStore()!;
+    ch.admin = admin;
+    ch.feature = featureOf(String(body.action || ""));
 
     // ---------------------------------------------------------------
     // Candidate page actions. No staff login: the candidate's secret portal token
@@ -335,7 +388,7 @@ Deno.serve(async (req: Request) => {
           ...(accept ? { stage: "In review" } : { stage: "Withdrawn" }),
         }).eq("id", link.id);
         await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: (accept ? "Accepted " : "Declined ") + roleName + " on their candidate page", done: true });
-        if (accept) { try { const sc: any = await screenLink(admin, link.id, askAI, loadResume); if (!sc?.followups && sc?.verdict !== "Reject") await draftFollowups(admin, link.id, askAI).catch(() => {}); } catch (e) { console.error("screen after accept", String((e as Error)?.message || e)); } }
+        if (accept) { try { const sc: any = await screenAs(admin, link.id); if (!sc?.followups && sc?.verdict !== "Reject") await followupsAs(admin, link.id).catch(() => {}); } catch (e) { console.error("screen after accept", String((e as Error)?.message || e)); } }
         return json({ ok: true });
       }
 
@@ -348,7 +401,7 @@ Deno.serve(async (req: Request) => {
       const ai = { ...(link.ai || {}), followups: { ...f, state: "answered", questions, answeredAt: new Date().toISOString() } };
       await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
       await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: "Answered screening questions for " + roleName, done: true });
-      try { await screenLink(admin, link.id, askAI, loadResume); } catch (e) { console.error("screen after answers", String((e as Error)?.message || e)); }
+      try { await screenAs(admin, link.id); } catch (e) { console.error("screen after answers", String((e as Error)?.message || e)); }
       return json({ ok: true });
     }
 
@@ -405,6 +458,7 @@ Deno.serve(async (req: Request) => {
     const { data: me } = await admin.from("profiles").select("id,role,status,full_name").eq("id", caller.user.id).single();
     if (!me || me.status !== "Active") return json({ error: "Your account is not active" }, 403);
     const isStaff = me.role === "admin" || me.role === "recops";
+    ch.userId = me.id;
     const { action } = body;
 
     // Card-level actions take a linkId (one candidate on one job).
@@ -416,12 +470,12 @@ Deno.serve(async (req: Request) => {
       if (action === "screen" && owner?.ai_locked) return json({ error: LOCKED_MSG, locked: true }, 409);
       if (link.candidate_response !== "accepted") return json({ error: "The candidate hasn't accepted this role yet" }, 409);
 
-      if (action === "screen") return json({ ok: true, ai: await screenLink(admin, link.id, askAI, loadResume) });
+      if (action === "screen") return json({ ok: true, ai: await screenAs(admin, link.id) });
       // Draft follow-up questions from the card's review (allowed on locked cards).
       if (action === "draft_followups") {
         const f0 = link.ai?.followups;
         if (f0 && f0.state !== "draft") return json({ error: "Questions were already sent to this candidate" }, 409);
-        return json({ ok: true, ai: await draftFollowups(admin, link.id, askAI) });
+        return json({ ok: true, ai: await followupsAs(admin, link.id) });
       }
 
       // Recruiter edits the follow-up questions by hand: removes ones that aren't needed (never
@@ -457,7 +511,7 @@ Deno.serve(async (req: Request) => {
         if (anyAnswer) await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening answers entered by " + (me.full_name || "a recruiter"), done: true });
         if (allAnswered && body.rescreen !== false) {
           if (owner?.ai_locked) return json({ ok: true, ai, rescreened: false, locked: true });
-          return json({ ok: true, ai: await screenLink(admin, link.id, askAI, loadResume), rescreened: true });
+          return json({ ok: true, ai: await screenAs(admin, link.id), rescreened: true });
         }
         return json({ ok: true, ai, rescreened: false, removed: removed.length });
       }
@@ -704,7 +758,7 @@ Deno.serve(async (req: Request) => {
       let rescreened = 0;
       if (body.rescreenCards) {
         const { data: cards } = await admin.from("candidate_jobs").select("id").eq("candidate_id", candidateId).eq("candidate_response", "accepted").limit(5);
-        for (const c of cards || []) { try { await screenLink(admin, c.id, askAI, loadResume); rescreened++; } catch (e) { console.error("rescreen", c.id, String((e as Error)?.message || e)); } }
+        for (const c of cards || []) { try { await screenAs(admin, c.id); rescreened++; } catch (e) { console.error("rescreen", c.id, String((e as Error)?.message || e)); } }
       }
       return json({ ok: true, result, usedScreeningAnswers: material.count > 0, rescreened });
     }
@@ -790,4 +844,4 @@ Deno.serve(async (req: Request) => {
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
-});
+}
