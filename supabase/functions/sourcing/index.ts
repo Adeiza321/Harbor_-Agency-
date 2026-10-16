@@ -185,7 +185,7 @@ Deno.serve(async (req: Request) => {
       if (body.action === "auto_emails") return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName)) });
       if (body.action === "location_sweep") return json({ ok: true, ...(await locationSweep(admin, !!body.dry)) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
-      if (body.action === "search_check") return json({ ok: true, ...(await checkEngines(admin)) });
+      if (body.action === "search_check") return json({ ok: true, ...(await checkEngines(admin, body.q ? String(body.q) : undefined, String(body.only || ""))) });
       // The talent pool for one job (also checked automatically when a job goes live).
       if (body.action === "pool" && body.jobId) {
         const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();

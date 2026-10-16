@@ -3,14 +3,15 @@
 //   Serper.dev  real Google results           SERPER_API_KEY   one-time free allowance (2,500)
 //   Brave       Brave's own index             BRAVE_API_KEY    monthly free credit (~1,000)
 //   Tavily      AI search API                 TAVILY_API_KEY   1,000 free credits a month
-//   Gemini      Google Search grounding       GEMINI_API_KEY + XRAY_GEMINI_MODEL (opt-in: off unless the
-//               model is named, because grounding on current Gemini models may be billed)
+//   Gemini      Google Search grounding       GEMINI_API_KEY (on whenever the key exists; model from
+//               XRAY_GEMINI_MODEL, else GEMINI_MODEL, else gemini-3.8-flash; XRAY_GEMINI_MODEL=off turns
+//               it off). Capped at GEMINI_FREE_LIMIT searches a day (400).
 //   GitHub      user search (technical roles) GITHUB_TOKEN optional (more profiles per run)
 // The allowances can be lowered (or raised, if a paid plan is added later) with SERPER_FREE_LIMIT,
 // BRAVE_FREE_LIMIT, TAVILY_FREE_LIMIT and GEMINI_FREE_LIMIT.
-// Order: allowances that reset every month (Tavily, Brave) are spent first, because what isn't used
-// by the end of the month is lost; Serper's one-time allowance is kept for when they run out or
-// find nothing; Gemini last. A search that fails, or finds no profiles, is tried on the next engine.
+// Order: allowances that reset (Tavily and Brave monthly, Gemini daily) are spent first, because what
+// isn't used is lost; Serper's one-time allowance is kept for when they run out or find nothing.
+// A search that fails, or finds no profiles, is tried on the next engine.
 //
 // Only search-engine results are read (title, link, snippet). Profile sites themselves (LinkedIn
 // included) are never opened or scraped.
@@ -121,8 +122,10 @@ async function tavily(q: string): Promise<Hit[]> {
 // Gemini with Google Search grounding. Only addresses that Google actually returned (the
 // grounding sources, resolved from Google's redirect links) are kept, so nothing the model
 // might make up gets through.
+const geminiModel = () => env("XRAY_GEMINI_MODEL") || env("GEMINI_MODEL") || "gemini-3.8-flash";
+const geminiOn = () => !!env("GEMINI_API_KEY") && geminiModel().toLowerCase() !== "off";
 async function gemini(q: string): Promise<Hit[]> {
-  const model = env("XRAY_GEMINI_MODEL");
+  const model = geminiModel();
   const prompt = "Use Google Search to run exactly this search query and report the results it returns. Do not add anything that is not in the results.\n" +
     `Query: ${q}\n` +
     "Reply with STRICT JSON only: {\"results\": [{\"url\": string, \"title\": string, \"snippet\": string}]} with every individual person's profile page found (up to 20).";
@@ -162,13 +165,13 @@ function engines(): Engine[] {
   return [
     { name: "tavily", key: env("TAVILY_API_KEY"), period: "month" as const, limit: limitOf("TAVILY_FREE_LIMIT", 950), run: tavily },
     { name: "brave", key: env("BRAVE_API_KEY"), period: "month" as const, limit: limitOf("BRAVE_FREE_LIMIT", 950), run: brave },
+    { name: "gemini", key: geminiOn() ? env("GEMINI_API_KEY") : "", period: "day" as const, limit: limitOf("GEMINI_FREE_LIMIT", 400), run: gemini },
     { name: "serper", key: env("SERPER_API_KEY"), period: "total" as const, limit: limitOf("SERPER_FREE_LIMIT", 2400), run: serper },
-    { name: "gemini", key: env("XRAY_GEMINI_MODEL") ? env("GEMINI_API_KEY") : "", period: "day" as const, limit: limitOf("GEMINI_FREE_LIMIT", 400), run: gemini },
   ].filter((e) => e.key);
 }
 
 export function searchEngines() {
-  return { serper: !!env("SERPER_API_KEY"), brave: !!env("BRAVE_API_KEY"), tavily: !!env("TAVILY_API_KEY"), gemini: !!(env("GEMINI_API_KEY") && env("XRAY_GEMINI_MODEL")), github: !!env("GITHUB_TOKEN") };
+  return { serper: !!env("SERPER_API_KEY"), brave: !!env("BRAVE_API_KEY"), tavily: !!env("TAVILY_API_KEY"), gemini: geminiOn(), github: !!env("GITHUB_TOKEN") };
 }
 
 // Current use against each engine's free allowance (for Outreach > Setup and the run summary).
@@ -208,9 +211,10 @@ export async function searchWeb(admin: any, q: string, skip: Set<string> = new S
 }
 
 // Tests every connected engine with one real search (one credit each) and reports what came back.
-export async function checkEngines(admin: any, q = "site:linkedin.com/in recruiter Lagos Nigeria") {
+export async function checkEngines(admin: any, q = "site:linkedin.com/in recruiter Lagos Nigeria", only = "") {
   const out: Record<string, unknown>[] = [];
   for (const e of engines()) {
+    if (only && e.name !== only) continue;
     const { data: ok } = await admin.rpc("use_search_quota", { p_provider: e.name, p_period: periodKey(e.period), p_limit: e.limit });
     if (!ok) { out.push({ engine: e.name, ok: false, error: "free allowance used up" }); continue; }
     try {
@@ -218,7 +222,7 @@ export async function checkEngines(admin: any, q = "site:linkedin.com/in recruit
       out.push({ engine: e.name, ok: true, results: hits.length, profiles: hits.filter((h) => profileOf(h.url)).length, sample: hits.slice(0, 3).map((h) => h.url) });
     } catch (err) { out.push({ engine: e.name, ok: false, error: String((err as Error)?.message || err).slice(0, 200) }); }
   }
-  return { connected: searchEngines(), usage: await searchUsage(admin), results: out };
+  return { connected: searchEngines(), geminiModel: geminiOn() ? geminiModel() : null, usage: await searchUsage(admin), results: out };
 }
 
 // GitHub's own user search (free): people in the area who code in the role's main language.

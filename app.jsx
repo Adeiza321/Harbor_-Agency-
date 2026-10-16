@@ -6714,6 +6714,24 @@ function PortalInterviews({ list, token, onChanged }) {
 const PROSPECT_TONE = { found: "info", approved: "warn", queued: "warn", contacted: "neutral", interested: "em", not_interested: "neutral", unsubscribed: "danger", bounced: "danger", rejected: "neutral", converted: "em", archived: "neutral" };
 // Where an outside prospect was found (shown as a small tag beside their name).
 const FOUND_ON = { apollo: "Apollo", pdl: "People Data Labs", linkedin: "LinkedIn X-ray", github: "GitHub", stackoverflow: "Stack Overflow", gitlab: "GitLab", kaggle: "Kaggle", huggingface: "Hugging Face", devto: "DEV", dribbble: "Dribbble", behance: "Behance" };
+const SITE_NAME = { linkedin: "LinkedIn", github: "GitHub", stackoverflow: "Stack Overflow", gitlab: "GitLab", kaggle: "Kaggle", huggingface: "Hugging Face", devto: "DEV", dribbble: "Dribbble", behance: "Behance" };
+// The search engine an X-ray profile came through, and a colour for each source badge.
+const ENGINE_NAME = { tavily: "Tavily", serper: "Google (Serper)", gemini: "Gemini", brave: "Brave", github: "GitHub search" };
+const SOURCE_TONE = { tavily: { bg: "#E5E8FB", fg: "#3B4BB8" }, serper: { bg: "#FBEFD8", fg: "#A5670A" }, gemini: { bg: "#EEEBFB", fg: "#6B4FD6" }, brave: { bg: "#FBE7DF", fg: "#B4471E" },
+  github: { bg: "#E8EAED", fg: "#24292F" }, apollo: { bg: "#DDEFE6", fg: "#1F6F54" }, pdl: { bg: "#E3F1F6", fg: "#1D6A86" }, pool: { bg: "#F3EFE6", fg: "#6B6455" } };
+// Where one prospect was found: { key (for filtering), label, tone }. X-ray people show the site and
+// the engine ("LinkedIn via Tavily"); others their database, or the talent pool.
+function foundOn(p) {
+  const d = p.data || {};
+  if (d.pool) return { key: "pool", label: "Talent pool", tone: SOURCE_TONE.pool };
+  if (d.xray) {
+    const eng = d.engine || "";
+    if (eng === "github") return { key: p.source + ":github", label: "GitHub search", tone: SOURCE_TONE.github };
+    const site = SITE_NAME[p.source] || p.source;
+    return { key: p.source + ":" + eng, label: eng ? site + " via " + (ENGINE_NAME[eng] || eng) : site + " X-ray", tone: SOURCE_TONE[eng] || SOURCE_TONE.pool };
+  }
+  return { key: p.source, label: FOUND_ON[p.source] || p.source || "Unknown", tone: SOURCE_TONE[p.source] || SOURCE_TONE.pool };
+}
 const CHECK_STYLE = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43" }, unconfirmed: { t: "?", bg: "#F3EFE6", fg: "#6B6455" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E" } };
 const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted", archived: "In talent pool" };
 const LEAD_TONE = { new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
@@ -6933,7 +6951,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="min-w-0">
-              <div className="font-medium text-sm truncate">{name}{FOUND_ON[p.source] && <span className="ml-1.5 align-middle rounded px-1.5 py-px font-normal" style={{ fontSize: 10, background: C.canvas, color: C.ink3 }} title="Where this person was found">{FOUND_ON[p.source]}</span>}</div>
+              <div className="font-medium text-sm truncate">{name}{(() => { const f = foundOn(p); return <span className="ml-1.5 align-middle rounded-full px-2 py-px font-medium" style={{ fontSize: 10.5, background: f.tone.bg, color: f.tone.fg }} title={"Found through " + f.label + (p.data && p.data.query ? ". Search: " + p.data.query : "")}>{f.label}</span>; })()}</div>
               <div className="text-xs truncate" style={{ color: C.ink2 }}>{[p.title, p.company, p.location].filter(Boolean).join(" · ")}</div>
             </div>
             <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{statusLabel}</Pill></div>
@@ -7062,7 +7080,8 @@ function JobSourcingCard({ job, S, toast }) {
   const waiting = prospects.filter((p) => p.status === "found" && p.email);
   const toContact = prospects.filter((p) => p.status === "found" && !p.email).length;
   const state = src.state;
-  const siteText = xr && xr.bySite ? Object.entries(xr.bySite).map(([k, n]) => n + " " + (FOUND_ON[k] || k)).join(", ") : "";
+  const siteText = xr && xr.byEngine ? Object.entries(xr.byEngine).map(([k, n]) => { const [site, eng] = k.split(":"); return n + " " + (eng === "github" ? "from GitHub search" : (SITE_NAME[site] || site) + (eng ? " via " + (ENGINE_NAME[eng] || eng) : "")); }).join(", ")
+    : xr && xr.bySite ? Object.entries(xr.bySite).map(([k, n]) => n + " " + (FOUND_ON[k] || k)).join(", ") : "";
   return (
     <Card>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -7244,7 +7263,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
             const se = conn.search || {}, use = (status && status.searchUsage) || {};
             const per = { total: "free in total", month: "free this month", day: "free today" };
             const one = (k, label, secret) => se[k] ? label + (use[k] ? " " + use[k].used + "/" + use[k].limit + " " + per[use[k].per] : " connected") : label + ": add " + secret;
-            return [one("serper", "Serper (Google)", "SERPER_API_KEY"), one("brave", "Brave", "BRAVE_API_KEY"), one("tavily", "Tavily", "TAVILY_API_KEY"), one("gemini", "Gemini (optional, may be billed)", "XRAY_GEMINI_MODEL"), se.github ? "GitHub token connected" : "GitHub works without a key (add GITHUB_TOKEN for more profiles)"].join(" · ") + ". ProNext stops before any free allowance runs out, so nothing is charged.";
+            return [one("tavily", "Tavily", "TAVILY_API_KEY"), one("brave", "Brave", "BRAVE_API_KEY"), one("gemini", "Gemini (Google Search)", "GEMINI_API_KEY"), one("serper", "Serper (Google)", "SERPER_API_KEY"), se.github ? "GitHub token connected" : "GitHub works without a key (add GITHUB_TOKEN for more profiles)"].join(" · ") + ". ProNext stops before any free allowance runs out, so nothing is charged.";
           })()} />
           <Row ok={conn.contactout} label="ContactOut: first place ProNext looks for X-ray people's emails (by LinkedIn profile)" hint={conn.contactout ? "Connected" : "Add CONTACTOUT_API_KEY. Until then, Apollo is used on its own."} />
           <Row ok={conn.pdl} label="People Data Labs: searches a 1.5-billion-profile database for a role, and finds emails Apollo couldn't" hint={conn.pdl ? "Connected" : "Add PDL_API_KEY (Supabase: Edge Functions > Secrets). Needs a paid PDL plan for emails."} />
@@ -7360,7 +7379,7 @@ function CampaignsPage({ toast, S }) {
   const pMatch = (p) => (!ql || [p.full_name, p.first_name, p.last_name, p.title, p.company, p.location, p.email].some((v) => low(v).includes(ql)))
     && (!fl.role || low(roleOf(p.job_id)) === low(fl.role))
     && (!fl.job || p.job_id === fl.job)
-    && (!fl.source || (fl.source === "pool" ? !!(p.data && p.data.pool) : p.source === fl.source))
+    && (!fl.source || foundOn(p).key === fl.source)
     && (!fl.email || (fl.email === "with" ? !!p.email : !p.email))
     && (!fl.fit || (Number(p.fit) || 0) >= fl.fit)
     && (!fl.reply || replyMatch(p.data || {}, fl.reply));
@@ -7425,8 +7444,7 @@ function CampaignsPage({ toast, S }) {
           </select>
           <select value={fl.source} onChange={(e) => setF("source", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Found on">
             <option value="">Found anywhere</option>
-            {opts((prospects || []).map((p) => p.source)).map((s) => <option key={s} value={s}>{FOUND_ON[s] || s}</option>)}
-            {(prospects || []).some((p) => p.data && p.data.pool) && <option value="pool">Talent pool</option>}
+            {Object.values(Object.fromEntries((prospects || []).map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
           </select>
           <select value={fl.email} onChange={(e) => setF("email", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Email">
             <option value="">With or without email</option><option value="with">Has an email</option><option value="without">No email yet</option>

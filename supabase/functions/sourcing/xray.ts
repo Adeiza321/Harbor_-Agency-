@@ -52,7 +52,7 @@ export async function startXray(admin: any, jobId: string, s: Settings, by: stri
   const { data: job } = await admin.from("jobs").select("id,xray").eq("id", jobId).maybeSingle();
   if (!job) return { ok: false, message: "Job not found" };
   const e = searchEngines();
-  if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No free search engine is connected yet. Add a SERPER_API_KEY, BRAVE_API_KEY or TAVILY_API_KEY secret in Supabase." };
+  if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No free search engine is connected yet. Add a TAVILY_API_KEY, SERPER_API_KEY, BRAVE_API_KEY or GEMINI_API_KEY secret in Supabase." };
   const x = job.xray || {};
   if (x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < 6 * 60e3) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
   await setXray(admin, jobId, { state: "running", by, ...(guide ? { guide } : {}) });
@@ -235,9 +235,12 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
   }
   const bySite: Record<string, number> = {};
   for (const r of rows) bySite[r.source] = (bySite[r.source] || 0) + 1;
+  // Where each person was found: site and search engine ("linkedin:tavily": 12).
+  const byEngine: Record<string, number> = {};
+  for (const r of rows) { const k = r.source + ":" + String((r.data as any)?.engine || ""); byEngine[k] = (byEngine[k] || 0) + 1; }
   const usage = await searchUsage(admin).catch(() => ({}));
   await setXray(admin, jobId, {
-    state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, ghEmails, technical: p.technical, checklist: p.checklist,
+    state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, byEngine, ghEmails, technical: p.technical, checklist: p.checklist,
     queries: queries.map((x) => x.q), usage, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
   });
   return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches${tooFar ? `; ${tooFar} left out for being too far from the office` : ""}).` };

@@ -37,6 +37,15 @@ const MAX_STEPS = 10;
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : "");
 // Prospect statuses as the app shows them (Outreach tabs and the job's Sourcing tab).
+// Where a prospect was found: the site and search engine for X-ray people ("X-ray: LinkedIn via
+// Tavily"), the talent pool, or the database (Apollo, People Data Labs).
+const ENGINE_NAME: Record<string, string> = { tavily: "Tavily", serper: "Google (Serper)", gemini: "Gemini", brave: "Brave", github: "GitHub search" };
+function foundBy(p: any): string {
+  const d = p?.data || {};
+  if (d.pool) return "Talent pool";
+  if (d.xray) return d.engine === "github" ? "X-ray: GitHub search" : "X-ray: " + (d.site || p.source) + (d.engine ? " via " + (ENGINE_NAME[d.engine] || d.engine) : "");
+  return ({ apollo: "Apollo", pdl: "People Data Labs" } as Record<string, string>)[p?.source] || p?.source || "unknown";
+}
 const PROSPECT_LABEL: Record<string, string> = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted", archived: "In talent pool" };
 const prospectLabel = (p: any) => p.archived_at ? "In talent pool" : p.data?.xray && p.status === "found" ? (p.email ? "Needs approval" : "To contact (no email yet)") : p.data?.xray && p.status === "contacted" ? "Contacted" : (PROSPECT_LABEL[p.status] || p.status);
 const PROSPECT_GROUPS: Record<string, string[]> = { needs_approval: ["found"], emailed: ["approved", "queued", "contacted"], interested: ["interested", "converted"], skipped: ["rejected", "not_interested", "unsubscribed", "bounced"] };
@@ -254,7 +263,7 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
       last_run: x.state ? { state: x.state, at: x.at, found: x.found, reviewed: x.reviewed, searches_run: x.searched, by_site: x.bySite, checklist: x.checklist, queries: x.queries, direction: x.guide || null, note: x.note || x.error || null } : "X-ray has not run for this job yet",
       people_by_status: counts, showing: ps.length + " of " + all.length + (st ? " (" + st + ")" : "") + (words.length ? " matching '" + input.query + "'" : ""),
       people: ps.map((p: any) => ({ id: p.id, name: p.full_name, title: clip(p.title, 90), company: p.company, location: full ? p.location : undefined,
-        found_by: p.data?.xray ? "X-ray " + (p.data.site || p.source) : p.source, fit: p.fit, verdict: p.verdict, status: prospectLabel(p), has_email: !!p.email, linkedin: p.linkedin_url || p.data?.profile_url || undefined,
+        found_by: foundBy(p), fit: p.fit, verdict: p.verdict, status: prospectLabel(p), has_email: !!p.email, linkedin: p.linkedin_url || p.data?.profile_url || undefined,
         overview: full ? clip(p.data?.overview || p.fit_reason, 300) : undefined, gaps: full ? p.data?.gaps : undefined })),
     };
   }
@@ -296,7 +305,7 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
         roles: (c.candidate_jobs || []).map((l: any) => ({ job_id: l.job_id, role: l.jobs ? l.jobs.role_title + " (" + l.jobs.client + ")" : "", stage: l.stage })), mine: c.recruiter_id === me.id })),
       prospects: r.pros.map((p: any) => ({ prospect_id: p.id, name: p.full_name, title: clip(p.title, 90), company: p.company, location: p.location, job_id: p.job_id,
         role: p.jobs ? p.jobs.role_title + " (" + p.jobs.client + ")" + (p.jobs.status !== "Open" ? " [" + p.jobs.status + "]" : "") : "",
-        found_by: p.data?.xray ? "X-ray " + (p.data.site || p.source) : p.source, status: prospectLabel(p), fit: p.fit, verdict: p.verdict, has_email: !!p.email,
+        found_by: foundBy(p), status: prospectLabel(p), fit: p.fit, verdict: p.verdict, has_email: !!p.email,
         linkedin: p.linkedin_url || undefined, overview: clip(p.data?.overview, 300), gaps: p.data?.gaps })),
       inbox: r.apps.map((a: any) => ({ application_id: a.id, name: a.name, role: a.role_title, job_id: a.job_id, source: a.source, status: a.status, interested: !!a.interest_at, on: day(a.created_at), candidate_id: a.candidate_id || undefined })),
     };
@@ -347,7 +356,7 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     const d = p.data || {};
     return {
       prospect_id: p.id, name: p.full_name, title: p.title, company: p.company, location: p.location, country: p.country, linkedin: p.linkedin_url || d.profile_url || undefined,
-      role: p.jobs ? p.jobs.role_title + " (" + p.jobs.client + ")" : "", job_id: p.job_id, status: prospectLabel(p), found_by: d.xray ? "X-ray " + (d.site || p.source) : p.source, found_on: day(p.created_at),
+      role: p.jobs ? p.jobs.role_title + " (" + p.jobs.client + ")" : "", job_id: p.job_id, status: prospectLabel(p), found_by: foundBy(p), found_on: day(p.created_at),
       fit: p.fit, verdict: p.verdict, why: d.why || p.fit_reason || undefined, overview: d.overview || undefined,
       checklist: d.checklist || undefined, gaps_to_check: d.gaps || undefined, own_practice: d.own_practice || undefined, remote_worker: d.remote_worker || undefined,
       location_source: d.location_source || undefined, client_history: d.client_history || undefined,
