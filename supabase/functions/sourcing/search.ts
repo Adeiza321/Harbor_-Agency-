@@ -104,13 +104,13 @@ async function brave(q: string): Promise<Hit[]> {
   return (d.web?.results || []).map((r: any) => ({ url: String(r.url || ""), title: clip(r.title, 200), snippet: clip([r.description, ...(r.extra_snippets || [])].join(" "), 500).replace(/<\/?strong>/g, ""), engine: "brave" }));
 }
 
-// Tavily takes the site as a domain filter rather than a site: operator.
+// Tavily gets the query exactly as written, site: operator included. Tested on real X-ray searches:
+// that returns 20 profiles out of 20, where turning site: into a domain filter (linkedin.com) let in
+// mostly job ads and posts (6 profiles out of 20). Queries are kept under Tavily's 400 characters.
 async function tavily(q: string): Promise<Hit[]> {
-  const site = q.match(/site:(\S+)/i)?.[1] || "";
-  const domain = site.split("/")[0];
   const res = await fetch("https://api.tavily.com/search", {
     method: "POST", headers: { Authorization: "Bearer " + env("TAVILY_API_KEY"), "Content-Type": "application/json" },
-    body: JSON.stringify({ query: q.replace(/site:\S+/gi, " ").replace(/\s+/g, " ").trim().slice(0, 390), search_depth: "basic", max_results: 20, ...(domain ? { include_domains: [domain] } : {}) }),
+    body: JSON.stringify({ query: q.replace(/\s+/g, " ").trim().slice(0, 395), search_depth: "basic", max_results: 20 }),
     signal: AbortSignal.timeout(25000),
   });
   if (!res.ok) throw new Error("Tavily " + res.status + ": " + (await res.text()).slice(0, 160));
@@ -205,14 +205,6 @@ export async function searchWeb(admin: any, q: string, skip: Set<string> = new S
     }
   }
   return empty ? { ...empty, errors } : { hits: [], engine: null, errors };
-}
-
-// TEMP diagnostic: one raw Tavily request with the given body (ops only).
-export async function tavilyRaw(body: unknown) {
-  const res = await fetch("https://api.tavily.com/search", { method: "POST", headers: { Authorization: "Bearer " + env("TAVILY_API_KEY"), "Content-Type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
-  const d = await res.json().catch(() => ({}));
-  const urls = (d.results || []).map((r: any) => String(r.url || ""));
-  return { status: res.status, n: urls.length, profiles: urls.filter((u: string) => profileOf(u)).length, urls: urls.slice(0, 20), error: d.detail || d.error || null };
 }
 
 // Tests every connected engine with one real search (one credit each) and reports what came back.
