@@ -133,6 +133,47 @@ ${signHtml(signName, m.senderTitle, m.agency)}`,
   return { text, html };
 }
 
+// A first email written from the job's outreach template (template.ts): the agency's own words,
+// with "- " lines as a list, **bold** kept, and {{APPLY_LINK}} as the tracked apply link (a button
+// too). No role box or must-haves underneath: the template already carries them. Same footer.
+export function templateEmail(m: { brand: Brand; region: Region; text: string; signoff: string; senderName: string; senderTitle: string; agency: string; address: string; applyUrl: string; unsubUrl: string; deleteUrl: string; source?: string; subject: string }): { text: string; html: string } {
+  const b = m.brand;
+  const why = m.region !== "US"
+    ? `Why you're getting this: we found ${m.source || "your work profile in Apollo.io, a business contact database"}, and it matches this role. We use only your name, job title and email address, only to tell you about roles like this, and delete them if you're not interested.`
+    : "";
+  const signName = m.signoff || m.senderName.split(" ")[0] || "";
+  const plain = m.text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\{\{APPLY_LINK\}\}/g, m.applyUrl);
+  const t = [plain, "", signName, "", "--", [m.senderName, m.senderTitle].filter(Boolean).join(", ") + (m.agency ? ", " + m.agency : "")];
+  if (m.address) t.push(m.address);
+  if (why) t.push("", why + " Delete my details: " + m.deleteUrl);
+  t.push("Not interested? Unsubscribe: " + m.unsubUrl);
+  const inline = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
+    .replace(/\{\{APPLY_LINK\}\}/g, `<a href="${esc(m.applyUrl)}" style="color:${b.color};">apply here</a>`)
+    .replace(/apply here:?\s*<a /i, "<a ");
+  const blocks = m.text.split(/\n\s*\n/).map((blk) => blk.split("\n"));
+  let first = true;
+  const body = blocks.map((ls) => {
+    const out: string[] = [];
+    let list: string[] = [];
+    const flush = () => { if (list.length) { out.push(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">${list.map((x) => `<tr><td valign="top" style="padding:0 8px 4px 0;font-size:14px;line-height:1.55;color:${b.color};">&bull;</td><td valign="top" style="padding:0 0 4px;font-size:14px;line-height:1.55;">${inline(x)}</td></tr>`).join("")}</table>`); list = []; } };
+    for (const l of ls) {
+      const li = l.match(/^\s*[-•*]\s+(.*)$/);
+      if (li) { list.push(li[1]); continue; }
+      flush();
+      if (!l.trim()) continue;
+      if (first && /^(hi|hello|dear)\b[^.!?]{0,40},?$/i.test(l.trim())) { out.push(`<div style="font-size:20px;margin-bottom:8px;">${esc(l.trim())}</div>`); first = false; continue; }
+      out.push(`<div style="font-size:15px;line-height:1.6;margin-top:${first ? 0 : 12}px;">${inline(l.trim())}</div>`);
+      first = false;
+    }
+    flush();
+    return out.join("\n");
+  }).join("\n");
+  const html = emailShell(b, m.subject, body + button(b, m.applyUrl, "Apply now") + signHtml(signName, m.senderTitle, m.agency), undefined, undefined,
+    footerHtml(b, { sender: [m.senderName, m.senderTitle].filter(Boolean).join(", "), agency: m.agency, address: m.address,
+      why: why || "You are receiving this email because we think this role fits your experience.", unsubUrl: m.unsubUrl, deleteUrl: why ? m.deleteUrl : "" }));
+  return { text: t.join("\n").replace(/\n{3,}/g, "\n\n"), html };
+}
+
 // ---- Pieces shared by candidate outreach and client pitches, in the house email style ----
 // The note's first paragraph ("Hi Sarah,") becomes the heading, like every other ProNext email.
 function noteHtml(b: Brand, paragraphs: string[]) {

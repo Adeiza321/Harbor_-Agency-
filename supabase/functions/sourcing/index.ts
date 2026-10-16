@@ -16,6 +16,7 @@ import { pdlKey } from "./pdl.ts";
 import { contactoutKey } from "./contactout.ts";
 import { areaErrors } from "./area_check.ts";
 import { sourcePdl } from "./pdl_source.ts";
+import { cleanTemplate, draftFromTemplate } from "./template.ts";
 
 // Sourcing and outreach for Pronext.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
@@ -143,6 +144,15 @@ async function cleanup(admin: any, days: number) {
   return (count || 0) + (pooled || 0);
 }
 
+// Outreach templates (template.ts): redraft the emails still waiting for approval on a job.
+async function redraftWaiting(admin: any, jobId: string, s: any) {
+  const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).maybeSingle();
+  if (!job) return { ok: false, message: "Job not found" };
+  const { data: people } = await admin.from("prospects").select("id,first_name,full_name,title,company,fit_reason,data").eq("job_id", jobId).eq("status", "found").not("email", "is", null).limit(300);
+  const n = await draftFromTemplate(admin, job, people || [], String(s.senderName || "").split(" ")[0], s.includePay);
+  return { ok: true, redrafted: n, message: n ? `Redrafted ${n} waiting email${n === 1 ? "" : "s"} from the template.` : "No emails waiting for approval on this job." };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -194,6 +204,7 @@ Deno.serve(async (req: Request) => {
       }
       // Free X-ray search for one job (also started automatically for every newly live job).
       if (body.action === "xray" && body.jobId) return json(await startXray(admin, String(body.jobId), s, null, cleanGuide(body.guide)));
+      if (body.action === "redraft_template" && body.jobId) return json(await redraftWaiting(admin, String(body.jobId), s));
       // Someone applied, said no, unsubscribed or was deleted (database trigger): finish their
       // Apollo sequence so the follow-ups stop.
       if (body.action === "apollo_stop") {
@@ -269,6 +280,17 @@ Deno.serve(async (req: Request) => {
 
     // Free X-ray search (LinkedIn, and GitHub and technical sites for technical roles). No
     // credits are used, so it runs straight away for Rec Ops and Admins.
+    // The job's first outreach email in the agency's own words; saving redrafts the emails waiting for approval.
+    if (action === "save_template") {
+      if (!body.jobId) return json({ error: "jobId is required" }, 400);
+      const t = body.template === null ? null : cleanTemplate(body.template);
+      if (body.template !== null && !t) return json({ error: "A template needs a subject and a body" }, 400);
+      await admin.from("jobs").update({ outreach_template: t }).eq("id", String(body.jobId));
+      const r = t ? await redraftWaiting(admin, String(body.jobId), s) : { redrafted: 0 };
+      return json({ ok: true, template: t, redrafted: r.redrafted || 0 });
+    }
+    if (action === "redraft_template") return json(await redraftWaiting(admin, String(body.jobId || ""), s));
+
     if (action === "xray") {
       if (!body.jobId) return json({ error: "jobId is required" }, 400);
       // Optional direction (titles, places, must-haves, companies, exclusions, exact searches).

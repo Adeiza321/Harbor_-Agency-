@@ -7,6 +7,7 @@
 //   4. AI checks each revealed profile against the job; keeps Perfect/Good fits
 //   5. AI writes each person a short email; saved as prospects for review (or queued if auto)
 
+import { draftFromTemplate } from "./template.ts";
 import { askAI } from "./ai.ts";
 import { splitByArea } from "./area_check.ts";
 import { searchPeople, matchById, bestEmail, apolloKey, type ApolloPerson } from "./apollo.ts";
@@ -213,8 +214,10 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
       status: "found", data: { history: p.history, domain: p.domain },
     };
   });
-  const { data: inserted, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id");
+  const { data: inserted, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id,first_name,full_name,title,company,fit_reason,data");
   if (error) throw new Error(error.message);
+  // The job's outreach template (template.ts) replaces the AI note when the job has one or can get one.
+  try { await draftFromTemplate(admin, job, inserted || [], (s.senderName || "").split(" ")[0], s.includePay); } catch (e) { console.error("template drafts", String((e as Error)?.message || e)); }
   await record({ searched: total, ranked: picks.length, revealed, kept: rows.length });
   return { ok: true, found: rows.length, ids: (inserted || []).map((x: any) => x.id), revealed, message: `Found ${rows.length} strong outside ${rows.length === 1 ? "match" : "matches"} (${revealed} Apollo credits used).` };
 }

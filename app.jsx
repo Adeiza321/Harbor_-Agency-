@@ -7016,6 +7016,36 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
   );
 }
 
+// The first outreach email for this job, in the agency's own words (sourcing template.ts).
+// [First Name] and [specific skill/experience from their profile] are filled per person;
+// {{APPLY_LINK}} becomes the tracked apply link. Saving redrafts the emails waiting for approval.
+function OutreachTemplate({ job, S, toast, tpl, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [subject, setSubject] = useState((tpl && tpl.subject) || "");
+  const [body, setBody] = useState((tpl && tpl.body) || "");
+  const [busy, setBusy] = useState(false);
+  React.useEffect(() => { setSubject((tpl && tpl.subject) || ""); setBody((tpl && tpl.body) || ""); }, [tpl && tpl.at]); // eslint-disable-line
+  const dirty = subject !== ((tpl && tpl.subject) || "") || body !== ((tpl && tpl.body) || "");
+  const save = () => { setBusy(true); S.sourcing("save_template", { jobId: job.id, template: { subject, body } })
+    .then((r) => { toast("Template saved" + (r.redrafted ? ". " + r.redrafted + " waiting email" + (r.redrafted === 1 ? "" : "s") + " redrafted" : "")); onSaved && onSaved(); })
+    .catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
+  return (
+    <div className="mt-4 rounded-xl border" style={{ borderColor: C.line }}>
+      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left">
+        <span className="text-sm font-medium">Outreach email template <span className="font-normal" style={{ color: C.ink3 }}>· {tpl ? (tpl.source === "ai" ? "written by AI, edit it to your words" : "your template") : "none yet, one is written in your style on first use"}</span></span>
+        <ChevronDown size={16} color={C.ink3} style={{ transform: open ? "rotate(180deg)" : "none" }} />
+      </button>
+      {open && <div className="px-3 pb-3 flex flex-col gap-2">
+        <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject, e.g. Gas Safe Plumber – £25-30K, Croydon (Hybrid)" className={inp} style={{ borderColor: C.line, background: "#FAF8F3" }} aria-label="Template subject" />
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} className={inp + " font-mono"} style={{ borderColor: C.line, background: "#FAF8F3", fontSize: 13 }} aria-label="Template body" />
+        <div className="text-xs" style={{ color: C.ink3 }}>[First Name] and [specific skill/experience from their profile] are filled in for each person. {"{{APPLY_LINK}}"} becomes the job's tracked apply link (a pasted job link is turned into it). Lines starting "- " show as a list; **text** shows bold. The client is never named, so don't add it. The unsubscribe footer is added automatically.</div>
+        <div className="flex gap-2 justify-end">{dirty && <Btn onClick={() => { setSubject((tpl && tpl.subject) || ""); setBody((tpl && tpl.body) || ""); }}>Undo</Btn>}<Btn kind="primary" disabled={!dirty || busy || !subject.trim() || !body.trim()} onClick={save}>{busy ? "Saving…" : "Save and redraft waiting emails"}</Btn></div>
+      </div>}
+    </div>
+  );
+}
+
 // Job page: parallel titles, the bench result, and outside candidates found for this job.
 function JobSourcingCard({ job, S, toast }) {
   const [row, setRow] = useState(null);
@@ -7032,7 +7062,7 @@ function JobSourcingCard({ job, S, toast }) {
   const [pSize, setPSize] = useState(25);
   const canRun = S.role === "admin" || S.role === "recops";
   const load = () => Promise.all([
-    S.sb("/rest/v1/jobs?id=eq." + job.id + "&select=parallel_titles,parallel_titles_at,sourcing,xray").then((r) => setRow((r || [])[0] || {})),
+    S.sb("/rest/v1/jobs?id=eq." + job.id + "&select=parallel_titles,parallel_titles_at,sourcing,xray,outreach_template").then((r) => setRow((r || [])[0] || {})),
     canRun ? S.sb("/rest/v1/prospects?job_id=eq." + job.id + "&select=*&order=fit.desc.nullslast&limit=200").then((r) => setProspects(r || [])) : Promise.resolve(),
   ]).catch(() => {});
   React.useEffect(() => { load(); }, [job.id]); // eslint-disable-line
@@ -7128,6 +7158,7 @@ function JobSourcingCard({ job, S, toast }) {
       </div>
       {src.pool && src.pool.matched > 0 && job.status !== "Closed" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>Talent pool: {plural(src.pool.matched, "person", "people")} from earlier roles added for approval · {fdate(src.pool.at)}</div>}
       {canRun && job.status === "Closed" && prospects.some((p) => p.status === "archived") && <div className="text-sm mt-4 rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>This role is closed. {plural(prospects.filter((p) => p.status === "archived").length, "person", "people")} found for it moved to the talent pool: any emails still waiting were cancelled and Apollo follow-ups stopped. They come back automatically when a new role fits them.</div>}
+      {canRun && <OutreachTemplate job={job} S={S} toast={toast} tpl={row.outreach_template} onSaved={load} />}
       {canRun && (prospects.length > 0 || skipped.length > 0) && (
         <div className="mt-4">
           {(skipped.length > 0 || showSkipped) && <div className="flex justify-end mb-1"><button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => { setShowSkipped((v) => !v); setPPage(1); }}>{showSkipped ? "Back to people found" : "Skipped " + skipped.length}</button></div>}

@@ -13,6 +13,7 @@
 // Only verified work emails or Apollo-found personal emails are kept. Each person with an email gets the same short, personal draft as
 // Apollo's own prospects, ready for the usual approve-and-send flow (nothing is sent from here).
 
+import { draftFromTemplate } from "./template.ts";
 import { askAI } from "./ai.ts";
 import { apolloKey, bestEmail, matchByLinkedIn } from "./apollo.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
@@ -288,6 +289,8 @@ export async function draftEmails(admin: any, ids: string[], s: Settings, agency
   for (const [jobId, people] of Object.entries(byJob)) {
     const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).maybeSingle();
     if (!job) continue;
+    // The job's outreach template first (template.ts); the AI note below only if no template can be made.
+    try { if (await draftFromTemplate(admin, job, people, (s.senderName || "").split(" ")[0], s.includePay)) continue; } catch (e) { console.error("template drafts", String((e as Error)?.message || e)); }
     const sys = "You write short, honest recruiting emails to professionals who have not heard from us before. Reply with STRICT JSON only: " +
       "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 60-110 words, plain text, in this order: " +
       "(1) 'Hi <first name>,' (2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given. " +

@@ -6,7 +6,8 @@
 import { footerText, regionOf, countryCode, type Region } from "./regions.ts";
 import { emailHash, provider, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
-import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceText } from "./outreach.ts";
+import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceText, templateEmail } from "./outreach.ts";
+import { isTemplateBody, templateParts } from "./template.ts";
 import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
 
 // "City, Country" without repeating a country the location already names (same as the app's jobPlace).
@@ -70,10 +71,18 @@ export async function composeProspect(admin: any, p: any, s: Settings, agencyNam
   const pack = await jobPack(admin, p.job_id, cache);
   const region = (p.region as Region) || regionOf(countryCode(p.country));
   const b = brand || await loadBrand(admin);
-  const { paragraphs, signoff } = introOf(String(p.body || "").replace(/\{\{INTERESTED_LINK\}\}/g, ""));
   const job = pack?.job || {};
   const remote = /remote/i.test(job.work_setup || "");
   const q = (extra: string) => pack ? `${pack.page}?src=outreach&${extra}` : linkFor(p.unsub_token, "p", "interested");
+  // Written from the job's outreach template: the agency's own words, as written.
+  if (isTemplateBody(p.body)) {
+    const tp = templateParts(p.body);
+    return templateEmail({ brand: b, region, text: tp.text, signoff: tp.signoff, subject: p.subject || job.role_title || "",
+      senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
+      applyUrl: q("go=apply&pt=" + encodeURIComponent(p.unsub_token || "")),
+      unsubUrl: linkFor(p.unsub_token, "p", "unsubscribe"), deleteUrl: linkFor(p.unsub_token, "p", "delete"), source: sourceText(p) });
+  }
+  const { paragraphs, signoff } = introOf(String(p.body || "").replace(/\{\{INTERESTED_LINK\}\}/g, ""));
   return candidateEmail({
     brand: b, region, paragraphs, signoff,
     senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
