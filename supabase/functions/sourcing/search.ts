@@ -124,8 +124,8 @@ async function tavily(q: string): Promise<Hit[]> {
 // might make up gets through.
 const geminiModel = () => env("XRAY_GEMINI_MODEL") || env("GEMINI_MODEL") || "gemini-3.8-flash";
 const geminiOn = () => !!env("GEMINI_API_KEY") && geminiModel().toLowerCase() !== "off";
-async function gemini(q: string): Promise<Hit[]> {
-  const model = geminiModel();
+async function gemini(q: string, modelOverride = ""): Promise<Hit[]> {
+  const model = modelOverride || geminiModel();
   const prompt = "Use Google Search to run exactly this search query and report the results it returns. Do not add anything that is not in the results.\n" +
     `Query: ${q}\n` +
     "Reply with STRICT JSON only: {\"results\": [{\"url\": string, \"title\": string, \"snippet\": string}]} with every individual person's profile page found (up to 20).";
@@ -211,8 +211,14 @@ export async function searchWeb(admin: any, q: string, skip: Set<string> = new S
 }
 
 // Tests every connected engine with one real search (one credit each) and reports what came back.
-export async function checkEngines(admin: any, q = "site:linkedin.com/in recruiter Lagos Nigeria", only = "") {
+export async function checkEngines(admin: any, q = "site:linkedin.com/in recruiter Lagos Nigeria", only = "", models: string[] = []) {
   const out: Record<string, unknown>[] = [];
+  // Try named Gemini models (to find one with Google Search allowance left on this key).
+  for (const m of models.slice(0, 4)) {
+    try { const hits = await gemini(q, m); out.push({ engine: "gemini:" + m, ok: true, results: hits.length, profiles: hits.filter((h) => profileOf(h.url)).length, sample: hits.slice(0, 3).map((h) => h.url) }); }
+    catch (err) { out.push({ engine: "gemini:" + m, ok: false, error: String((err as Error)?.message || err).slice(0, 200) }); }
+  }
+  if (models.length) return { connected: searchEngines(), geminiModel: geminiOn() ? geminiModel() : null, results: out };
   for (const e of engines()) {
     if (only && e.name !== only) continue;
     const { data: ok } = await admin.rpc("use_search_quota", { p_provider: e.name, p_period: periodKey(e.period), p_limit: e.limit });
