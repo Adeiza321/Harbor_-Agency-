@@ -8,7 +8,7 @@ import {
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
   KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
-  Smile, SmilePlus, Mic, Play, Pause,
+  Smile, SmilePlus, Mic, Play, Pause, Brain,
 } from "lucide-react";
 
 /* Design tokens */
@@ -1932,6 +1932,15 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
   const [threads, setThreads] = useState(null);
   const [showList, setShowList] = useState(false);
   const [showUpdates, setShowUpdates] = useState(false);
+  // Memory: what the assistant has learned (assistant memory.ts), to look at, add to or delete from.
+  const [showMemory, setShowMemory] = useState(false);
+  const [memory, setMemory] = useState(null);
+  const [memNote, setMemNote] = useState("");
+  const [memTeam, setMemTeam] = useState(false);
+  const loadMemory = () => S.sb("/functions/v1/assistant", { method: "POST", body: { action: "memories" } }).then(setMemory).catch(() => setMemory({ mine: [], team: [] }));
+  const openMemory = () => { setShowMemory(true); setShowList(false); setShowUpdates(false); loadMemory(); };
+  const forgetMemory = (id) => S.sb("/functions/v1/assistant", { method: "POST", body: { action: "forget_memory", id } }).then(loadMemory).catch((e) => S.error(e.message));
+  const addMemory = () => { const t = memNote.trim(); if (!t) return; S.sb("/functions/v1/assistant", { method: "POST", body: { action: "add_memory", text: t, scope: memTeam ? "team" : "personal" } }).then(() => { setMemNote(""); loadMemory(); S.toast("Remembered"); }).catch((e) => S.error(e.message)); };
   const [freshIds, setFreshIds] = useState(() => new Set()); // unseen when you opened the updates
   const unseenUpdates = updates.filter((u) => !u.seen_at).length;
   const [threadId, setThreadId] = useState(() => { try { return sessionStorage.getItem(ASSIST_KEY + ".thread." + S.me.id) || null; } catch (e) { return null; } });
@@ -1969,9 +1978,9 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
       loadThreads();
     } catch (e) { /* the chat still works; it just isn't saved */ }
   };
-  const newChat = () => { setThreadId(null); setThreadJob(null); setMsgs([]); setShowList(false); setShowUpdates(false); setMode("work"); };
+  const newChat = () => { setThreadId(null); setThreadJob(null); setMsgs([]); setShowList(false); setShowUpdates(false); setShowMemory(false); setMode("work"); };
   const openThread = (t) => {
-    setShowList(false); setShowUpdates(false); setThreadId(t.id); setThreadJob(t.job_id || null); setMsgs([]);
+    setShowList(false); setShowUpdates(false); setShowMemory(false); setThreadId(t.id); setThreadJob(t.job_id || null); setMsgs([]);
     S.sb("/rest/v1/assistant_threads?select=messages,mode&id=eq." + t.id).then((r) => { if (r && r[0]) { setMsgs(r[0].messages || []); setMode(r[0].mode || "work"); } }).catch(() => {});
     if (t.kind === "brief" && !t.seen_at) S.sb("/rest/v1/assistant_threads?id=eq." + t.id, { method: "PATCH", body: { seen_at: new Date().toISOString() } }).then(loadThreads).catch(() => {});
   };
@@ -1995,7 +2004,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
     try {
       const history = next.map((m) => ({ role: m.role, content: m.content + (m.proposals && m.proposals.length ? "\n[Proposed: " + m.proposals.map((p) => proposalSummary(S, p).title + " (" + (p.state || "waiting") + ")").join("; ") + "]" : "") }));
       const page = { jobId: (opts && opts.jobId) || (pageCtx && pageCtx.jobId) || null, candidateId: (pageCtx && pageCtx.candidateId) || null };
-      const r = await S.sb("/functions/v1/assistant", { method: "POST", body: { messages: history, mode: (opts && opts.mode) || mode, page, tz: MY_TZ, smart: !!(opts && opts.smart) }, timeout: 150000 });
+      const r = await S.sb("/functions/v1/assistant", { method: "POST", body: { messages: history, mode: (opts && opts.mode) || mode, page, tz: MY_TZ, smart: !!(opts && opts.smart), threadId: (opts && opts.fresh) ? null : threadId }, timeout: 150000 });
       list = [...next, { role: "assistant", content: r.text || "", proposals: (r.proposals || []).map((p) => ({ ...p, state: p.tool === "propose_email" ? "draft" : "waiting" })) }];
     } catch (e) { list = [...next, { role: "assistant", content: e.message || "Something went wrong. Try again.", error: true }]; }
     setMsgs(list); setBusy(false); playAssistChime(S.me);
@@ -2010,7 +2019,12 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
   // quiet: no sound for this one (Approve all plays once at the end instead).
   const decide = async (mi, pi, approve, quiet) => {
     const patchAll = (patch) => { const list = msgsRef.current.map((x, a) => (a !== mi ? x : { ...x, proposals: x.proposals.map((p, b) => (b !== pi ? p : { ...p, ...patch })) })); setMsgs(list); return list; };
-    if (!approve) { save(patchAll({ state: "declined" })); return; }
+    if (!approve) {
+      save(patchAll({ state: "declined" }));
+      // Noted in the assistant's memory so it stops proposing the same thing.
+      S.sb("/functions/v1/assistant", { method: "POST", body: { action: "declined", title: proposalSummary(S, msgsRef.current[mi].proposals[pi]).title, threadId } }).catch(() => {});
+      return;
+    }
     patchAll({ state: "working" });
     try { const note = await runProposal(S, msgsRef.current[mi].proposals[pi]); save(patchAll({ state: "approved", note })); }
     catch (e) { save(patchAll({ state: "failed", note: e.message || "That didn't work." })); }
@@ -2052,7 +2066,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
   // "New" mark until you leave the view).
   const openUpdates = () => {
     setFreshIds(new Set(updates.filter((u) => !u.seen_at).map((u) => u.id)));
-    setShowUpdates(true); setShowList(false);
+    setShowUpdates(true); setShowList(false); setShowMemory(false);
     if (onRefreshUpdates) onRefreshUpdates();
     if (onUpdatesSeen) onUpdatesSeen();
   };
@@ -2098,7 +2112,8 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
       {open && (
         <div className="flex flex-col overflow-hidden" style={{ ...panelStyle, background: "#fff", borderRadius: desktop ? 16 : 0, border: desktop ? `1px solid ${C.line}` : "none", boxShadow: "0 16px 40px rgba(20,32,27,0.18)" }}>
           <div className="flex items-center gap-2 px-3 py-3 shrink-0" style={{ background: C.side, color: "#fff" }}>
-            <button onClick={() => { setShowList((v) => !v); setShowUpdates(false); }} aria-label="Conversations" title="Saved conversations" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showList ? "rgba(255,255,255,0.12)" : "transparent" }}><ListTodo size={17} /></button>
+            <button onClick={() => (showMemory ? setShowMemory(false) : openMemory())} aria-label="Memory" title="What the assistant remembers" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showMemory ? "rgba(255,255,255,0.12)" : "transparent" }}><Brain size={17} /></button>
+            <button onClick={() => { setShowList((v) => !v); setShowUpdates(false); setShowMemory(false); }} aria-label="Conversations" title="Saved conversations" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showList ? "rgba(255,255,255,0.12)" : "transparent" }}><ListTodo size={17} /></button>
             <button onClick={() => (showUpdates ? setShowUpdates(false) : openUpdates())} aria-label="Updates" title="Updates from the assistant" className="relative w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showUpdates ? "rgba(255,255,255,0.12)" : "transparent" }}>
               <Bell size={17} />
               {unseenUpdates > 0 && <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{unseenUpdates > 9 ? "9+" : unseenUpdates}</span>}
@@ -2107,7 +2122,33 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
             <button onClick={newChat} className="text-xs rounded-full px-2.5 py-1" style={{ border: "1px solid rgba(255,255,255,0.25)", color: "#fff" }}>+ New</button>
             <button onClick={() => setOpen(false)} aria-label="Close" className="w-8 h-8 rounded-full flex items-center justify-center"><X size={18} /></button>
           </div>
-          {showUpdates ? (
+          {showMemory ? (
+            <div className="flex-1 overflow-y-auto px-3 py-3" style={{ background: C.canvas }}>
+              <div className="text-xs font-semibold tracking-widest mb-1 px-1" style={{ color: C.ink3 }}>WHAT I REMEMBER</div>
+              <div className="text-xs mb-3 px-1" style={{ color: C.ink2 }}>I learn from our conversations: your preferences, corrections and facts about your clients and roles, and suggestions you decline. Say "remember…" in a chat, or add a note below. Delete anything that's wrong.</div>
+              <div className="rounded-xl p-2.5 mb-3" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+                <textarea value={memNote} onChange={(e) => setMemNote(e.target.value)} rows={2} placeholder="e.g. Keep candidate emails under 80 words" className="w-full text-sm outline-none resize-none" />
+                <div className="flex items-center justify-between gap-2 mt-1">
+                  {memory && memory.canTeam ? <label className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><input type="checkbox" checked={memTeam} onChange={(e) => setMemTeam(e.target.checked)} style={{ accentColor: C.em }} />For the whole team</label> : <span />}
+                  <Btn kind="primary" disabled={!memNote.trim()} onClick={addMemory}>Remember</Btn>
+                </div>
+              </div>
+              {memory == null ? <div className="text-sm px-1" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : [["About working with you", memory.mine || []], ["For the whole team", memory.team || []]].map(([label, list]) => (
+                <div key={label} className="mb-3">
+                  <div className="text-xs font-medium mb-1.5 px-1" style={{ color: C.ink2 }}>{label} · {list.length}</div>
+                  {!list.length && <div className="text-xs px-1" style={{ color: C.ink3 }}>Nothing yet.</div>}
+                  <div className="flex flex-col gap-1.5">
+                    {list.map((m) => (
+                      <div key={m.id} className="rounded-xl px-3 py-2 flex items-start gap-2" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+                        <div className="flex-1 min-w-0"><div className="text-sm leading-snug">{m.text}</div><div className="text-[11px] mt-0.5" style={{ color: C.ink3 }}>{m.kind !== "note" ? m.kind + " · " : ""}{fdate(m.created_at)}</div></div>
+                        {(label === "About working with you" || memory.canTeam) && <button onClick={() => forgetMemory(String(m.id))} aria-label="Forget" title="Forget this" className="p-1 shrink-0" style={{ color: C.ink3 }}><Trash2 size={14} /></button>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : showUpdates ? (
             <div className="flex-1 overflow-y-auto px-3 py-3" style={{ background: C.canvas }}>
               <div className="flex items-center justify-between mb-2 px-1">
                 <div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>UPDATES · LAST 7 DAYS</div>
@@ -2204,7 +2245,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
             {busy && <div className="text-sm" style={{ color: C.ink3 }}>{mode === "brainstorm" ? "Thinking" : "Looking into it"} <InlineDots /></div>}
           </div>
           )}
-          {!showList && !showUpdates && (
+          {!showList && !showUpdates && !showMemory && (
           <div className="p-3 shrink-0" style={{ borderTop: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-1.5 mb-2">
               {[["work", "Work"], ["brainstorm", "Brainstorm"]].map(([k, l]) => <button key={k} onClick={() => setMode(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: mode === k ? C.em : C.line, background: mode === k ? C.emTint : "#fff", color: mode === k ? C.em : C.ink2 }}>{l}</button>)}

@@ -1,3 +1,4 @@
+import { MEMORY_TOOLS, learnFromTurn, loadMemories, memoryPrompt, runMemoryTool } from "./memory.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 // The ProNext assistant: helps close roles. Signed-in staff only.
@@ -552,12 +553,13 @@ async function callClaude(key: string, payload: any, beta: string | null) {
 }
 
 // One assistant turn: lookups, web and proposals in a loop until it answers. Logs its cost.
-async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: string; messages: any[]; page: any; tz: string; smart?: boolean; forceModel?: string }) {
+async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: string; messages: any[]; page: any; tz: string; smart?: boolean; forceModel?: string; threadId?: string | null; learn?: boolean }) {
   const { admin, db, me, key, mode, page, tz } = o;
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  const [{ data: jobs }, { data: users }] = await Promise.all([
+  const [{ data: jobs }, { data: users }, mem] = await Promise.all([
     db.from("jobs").select("id,role_title,client").in("status", ["Open", "On hold"]).order("created_at", { ascending: false }).limit(80),
     db.from("profiles").select("id,full_name,role").eq("status", "Active"),
+    loadMemories(admin, me).catch(() => ({ mine: [], team: [] })),
   ]);
   const allowed = mode === "brainstorm" ? [] : (TOOLS_FOR[me.role] || TOOLS_FOR.recruiter);
   const last = String(o.messages[o.messages.length - 1]?.content || "").toLowerCase();
@@ -565,8 +567,10 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   // only for very short follow-ups like "ok" / "yes" with nothing to look up.
   const model = o.forceModel || (o.smart || mode === "brainstorm" || last.length > 12 || o.messages.length < 2 ? SMART : FAST);
   let useFetch = true;
-  const tools = () => [...READ_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => PROPOSE[n])];
-  const system = [{ type: "text", text: systemPrompt(me, mode, today, tz, page || {}, jobs || [], users || []), cache_control: { type: "ephemeral" } }];
+  const tools = () => [...READ_TOOLS, ...MEMORY_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => PROPOSE[n])];
+  // What it has learned (memory.ts) comes after the cached part, so learning something new doesn't undo the cache.
+  const system = [{ type: "text", text: systemPrompt(me, mode, today, tz, page || {}, jobs || [], users || []), cache_control: { type: "ephemeral" } },
+    { type: "text", text: memoryPrompt(me, mem) }];
   const convo: any[] = [...o.messages];
   const proposals: any[] = [];
   let text = "", inTok = 0, outTok = 0, searches = 0, steps = 0, error = "", status = 200;
@@ -606,7 +610,8 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
         results.push({ type: "tool_result", tool_use_id: u.id, content: "Proposed. The person will approve or decline it." });
       } else {
         let r: unknown;
-        try { r = await runRead(db, me, u.name, u.input || {}); } catch (e) { r = { error: String((e as Error)?.message || e) }; }
+        try { r = ["remember", "forget", "search_conversations"].includes(u.name) ? await runMemoryTool(admin, me, u.name, u.input || {}, o.threadId || null) : await runRead(db, me, u.name, u.input || {}); }
+        catch (e) { r = { error: String((e as Error)?.message || e) }; }
         results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r).slice(0, 30000) });
       }
     }
@@ -619,6 +624,12 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   // keep the answer too.
   const earlier = texts.filter((t) => t !== text).pop();
   if (text && text.length < 160 && earlier) text = earlier + "\n\n" + text;
+  // Learn from this exchange in the background (people's own conversations only, not the scheduled briefs).
+  if (o.learn && !error && text) {
+    const work = learnFromTurn(admin, key, FAST, me, o.messages, text, mem, o.threadId || null);
+    // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
+    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
+  }
   return { error, status, model, proposals, text: text || (proposals.length ? "Here's what I'd do. Approve to go ahead." : "I couldn't find an answer to that.") };
 }
 
@@ -692,6 +703,20 @@ Deno.serve(async (req: Request) => {
       db = createClient(url, Deno.env.get("SUPABASE_ANON_KEY")!, { global: { headers: { Authorization: "Bearer " + jwt } }, auth: { persistSession: false } });
     }
 
+    // Memory (memory.ts): what the assistant remembers about this person and the team, shown in the
+    // panel's Memory view, where people add to it or delete from it; declined suggestions are noted.
+    if (body.action === "memories") {
+      const m = await loadMemories(admin, me);
+      return json({ ok: true, mine: m.mine.filter((x: any) => x.kind !== "declined"), team: m.team, canTeam: me.role === "admin" || me.role === "recops" });
+    }
+    if (body.action === "add_memory") return json(await runMemoryTool(admin, me, "remember", { text: body.text, scope: body.scope, kind: "note" }, null));
+    if (body.action === "forget_memory") return json(await runMemoryTool(admin, me, "forget", { id: String(body.id || "") }, null));
+    if (body.action === "declined") {
+      const t = String(body.title || "").replace(/\s+/g, " ").trim().slice(0, 240);
+      if (t) await admin.from("assistant_memories").insert({ user_id: me.id, scope: "personal", kind: "declined", text: t, source: "declined", thread_id: body.threadId || null });
+      return json({ ok: true });
+    }
+
     const mode = body.mode === "brainstorm" ? "brainstorm" : "work";
     const tz = String(body.tz || "Africa/Lagos");
     const messages: any[] = (Array.isArray(body.messages) ? body.messages : []).slice(-20)
@@ -700,7 +725,7 @@ Deno.serve(async (req: Request) => {
     while (messages.length && messages[0].role !== "user") messages.shift();
     if (!messages.length || messages[messages.length - 1].role !== "user") return json({ error: "Ask something first" }, 400);
 
-    const r = await runAgent({ admin, db, me, key, mode, messages, page: body.page || {}, tz, smart: !!body.smart });
+    const r = await runAgent({ admin, db, me, key, mode, messages, page: body.page || {}, tz, smart: !!body.smart, threadId: typeof body.threadId === "string" ? body.threadId : null, learn: !opsKey });
     if (r.error) return json({ error: r.error }, r.status);
     return json({ ok: true, text: r.text, proposals: r.proposals, model: r.model });
   } catch (e) {
