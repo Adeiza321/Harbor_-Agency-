@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { logAiUsage } from "../sourcing/ai.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { prepareResume, type ResumeInput } from "./resume.ts";
 
@@ -65,6 +66,7 @@ async function askClaude(key: string, body: Record<string, unknown>): Promise<st
     await new Promise((res) => setTimeout(res, attempt === 0 ? 2000 : 5000));
   }
   const data = await r!.json().catch(() => ({}));
+  if (r!.ok) await logAiUsage(data.usage, String(data.model || ""), "job_redraft");
   if (!r!.ok) {
     const msg = String(data?.error?.message || r!.statusText);
     if ([429, 529].includes(r!.status)) throw new Error("Claude is very busy right now. Please try again in a minute.");

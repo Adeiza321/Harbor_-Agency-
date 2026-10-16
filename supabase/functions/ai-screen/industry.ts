@@ -7,6 +7,7 @@
 // (ANTHROPIC_API_KEY) does the lookup instead. If every lookup fails, nothing is saved, so
 // nothing unverified is presented as fact.
 
+import { logAiUsage } from "../sourcing/ai.ts";
 import type { ResumeInput } from "./resume.ts";
 
 export type IndustryItem = {
@@ -73,6 +74,7 @@ async function claudeWeb(key: string, resume: ResumeInput | null): Promise<{ jso
   });
   if (!res.ok) throw new Error("Web lookup failed (" + res.status + "): " + (await res.text()).slice(0, 200));
   const data = await res.json();
+  await logAiUsage(data.usage, String(data.model || ""), "screening_web_lookup");
   const blocks: any[] = data.content || [];
   // Claude narrates between searches; the JSON answer is in the text after the last search.
   const lastSearch = blocks.map((b) => b.type).lastIndexOf("web_search_tool_result");

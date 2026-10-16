@@ -1,6 +1,30 @@
 // Claude for sourcing: ranking prospects, checking fit, and writing outreach.
 // Same provider and model as screening (ANTHROPIC_API_KEY, ANTHROPIC_MODEL, default Haiku 4.5).
 
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+// What each Claude call costs, logged to ai_usage (Team audit and the AI spend figures), like the
+// assistant and screening. The request sets what it's for and who it's charged to (aiCharge);
+// scheduled runs have no user ("System").
+export type AiCharge = { feature: string; userId: string | null };
+export const aiCharge = new AsyncLocalStorage<AiCharge>();
+const PRICE: Record<string, [number, number]> = { haiku: [1, 5], sonnet: [3, 15], opus: [5, 25] };
+let usageDb: any = null;
+export async function logAiUsage(usage: any, model: string, fallbackFeature = "sourcing") {
+  if (!usage) return;
+  try {
+    usageDb = usageDb || createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const c = aiCharge.getStore();
+    const inTok = (usage.input_tokens || 0) + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+    const outTok = usage.output_tokens || 0;
+    const [pi, po] = PRICE[Object.keys(PRICE).find((k) => model.includes(k)) || "sonnet"];
+    const searches = Number(usage.server_tool_use?.web_search_requests) || 0;   // $10 per 1,000 web searches
+    const cost = (inTok * pi + outTok * po) / 1e6 + searches * 0.01;
+    await usageDb.from("ai_usage").insert({ user_id: c?.userId ?? null, feature: (c?.feature || fallbackFeature).slice(0, 60), model, input_tokens: inTok, output_tokens: outTok, cost_usd: Math.round(cost * 1e6) / 1e6 });
+  } catch (e) { console.error("ai usage log", String((e as Error)?.message || e)); }
+}
+
 const MODEL = () => Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5-20251001";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -32,6 +56,7 @@ export async function askAI(system: string, text: string, maxTokens = 4000): Pro
     throw new Error("AI request failed (" + res!.status + "): " + body);
   }
   const data = await res!.json();
+  await logAiUsage(data.usage, String(data.model || MODEL()));
   if (data.stop_reason === "max_tokens") throw new Error("Claude's answer was cut off before it finished");
   return parseJson((data.content || []).map((b: any) => b.text || "").join(""));
 }

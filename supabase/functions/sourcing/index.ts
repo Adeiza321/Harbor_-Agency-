@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiCharge } from "./ai.ts";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
@@ -17,6 +18,16 @@ import { contactoutKey } from "./contactout.ts";
 import { areaErrors } from "./area_check.ts";
 import { sourcePdl } from "./pdl_source.ts";
 import { cleanTemplate, draftFromTemplate } from "./template.ts";
+
+// The feature name each AI cost is filed under (Team audit), from the action that ran.
+function aiFeatureName(action: string) {
+  if (/xray/.test(action)) return "xray_search";
+  if (/tick|search|source|apollo|pdl|pool/.test(action)) return "sourcing";
+  if (/email|draft|template|approve/.test(action)) return "outreach_emails";
+  if (/location/.test(action)) return "location_check";
+  if (/lead/.test(action)) return "client_leads";
+  return "sourcing";
+}
 
 // Sourcing and outreach for Pronext.
 //   Candidate side: every job that goes live has its bench checked first (ai-screen bench_fits,
@@ -153,11 +164,14 @@ async function redraftWaiting(admin: any, jobId: string, s: any) {
   return { ok: true, redrafted: n, message: n ? `Redrafted ${n} waiting email${n === 1 ? "" : "s"} from the template.` : "No emails waiting for approval on this job." };
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve((req: Request) => aiCharge.run({ feature: "sourcing", userId: null }, () => handle(req)));
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const body = await req.json().catch(() => ({}));
+    const charged = aiCharge.getStore();
+    if (charged) charged.feature = aiFeatureName(String(body.action || ""));
     const { s, agencyName } = await loadSettings(admin);
 
     // Scheduled runs.
@@ -233,6 +247,7 @@ Deno.serve(async (req: Request) => {
     const { data: caller } = await admin.auth.getUser(token);
     if (!caller?.user) return json({ error: "Not signed in" }, 401);
     const { data: me } = await admin.from("profiles").select("id,role,status,full_name,email").eq("id", caller.user.id).single();
+    if (charged && me?.id) charged.userId = me.id;
     if (!me || me.status !== "Active") return json({ error: "Your account is not active" }, 403);
     if (!(me.role === "admin" || me.role === "recops")) return json({ error: "Only Rec Ops or Admins can run sourcing and outreach" }, 403);
     const { action } = body;
@@ -445,4 +460,4 @@ Deno.serve(async (req: Request) => {
   } catch (e) {
     return json({ error: errMsg(e) }, 500);
   }
-});
+}

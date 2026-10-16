@@ -1,3 +1,4 @@
+import { logAiUsage } from "../sourcing/ai.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Brand, button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
@@ -107,6 +108,7 @@ async function askClaude(system: string, text: string): Promise<string> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error("AI request failed (" + res.status + ")");
+  await logAiUsage(data.usage, String(data.model || ""), "message_drafts");
   return (data.content || []).map((x: any) => x.text || "").join("").trim();
 }
 

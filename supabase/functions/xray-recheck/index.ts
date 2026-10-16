@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { askAI } from "../sourcing/ai.ts";
+import { aiCharge, askAI } from "../sourcing/ai.ts";
 import { fitsToPercent } from "../sourcing/common.ts";
 import { judge, reviewHead, REVIEW_SYSTEM } from "../sourcing/xray_rules.ts";
 import { splitByArea } from "../sourcing/area_check.ts";
@@ -51,7 +51,7 @@ async function review(admin: any, limit: number) {
       try {
         const { kept: ok, dropped } = await splitByArea(admin, job, job.sourcing?.area, keepers, (d) => d.j.location || d.p.location);
         for (const { p: d, why } of dropped) { d.j = { ...d.j, keep: false, reasons: [why], verdict: "Not a fit" }; }
-        for (const { p: d, note } of ok) if (note) d.j = { ...d.j, gaps: [note, ...d.j.gaps].slice(0, 5), notes: [...d.j.notes, note] };
+        for (const { p: d, note, hold } of ok) if (note) d.j = { ...d.j, hold: hold || null, gaps: [note, ...d.j.gaps].slice(0, 5), notes: [...d.j.notes, note] };
       } catch (e) { console.error("area check", String((e as Error)?.message || e)); }
       for (const { p, r, j } of done) {
         await mark(admin, p, { ...j, why: clip(r.why, 140) }, j.reasons);
@@ -68,13 +68,14 @@ async function mark(admin: any, p: any, j: any, reasons: string[]) {
   const upd: Record<string, unknown> = { data };
   if (keep) {
     // Kept: refreshed with the current reading (location, tags, fit, checklist, notes).
-    Object.assign(data, { client_history: j.clientHistory, location_source: j.locationSource, remote_worker: j.remote, own_practice: j.ownPractice, checklist: j.checklist, gaps: j.gaps });
+    Object.assign(data, { ...(p.data?.location_ok ? {} : { location_hold: j.hold || null }), client_history: j.clientHistory, location_source: j.locationSource, remote_worker: j.remote, own_practice: j.ownPractice, checklist: j.checklist, gaps: j.gaps });
     upd.fit = j.fit; upd.verdict = j.verdict; if (j.location) upd.location = j.location;
   }
   await admin.from("prospects").update(upd).eq("id", p.id).eq("status", "found");
 }
 
-Deno.serve(async (req: Request) => {
+Deno.serve((req: Request) => aiCharge.run({ feature: "xray_recheck", userId: null }, () => handle(req)));
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return json({ ok: true });
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
@@ -119,4 +120,4 @@ Deno.serve(async (req: Request) => {
     console.error("xray-recheck", String((e as Error)?.message || e));
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
-});
+}
