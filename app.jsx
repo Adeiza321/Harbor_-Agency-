@@ -1367,7 +1367,7 @@ const NAV_RECOPS = [
 const NAV_ADMIN_EXTRA = [
   { key: "users", label: "Users & permissions", icon: Shield },
   { key: "emails", label: "Email tracking", icon: Mail },
-  { key: "audit", label: "Recruiter audit", icon: Trophy },
+  { key: "audit", label: "Team audit", icon: Trophy },
   { key: "settings", label: "Agency settings", icon: Settings },
 ];
 const NAV_RECRUITER = [
@@ -2484,10 +2484,11 @@ function RolePicker({ S, earnings }) {
    Points: placement 10, submission 3, interview held 2, candidate added 1, task done 1, and (for
    Admins, who can see the activity log) 0.5 for any other logged action. Per working day: 15+
    productive, 5-14 fairly productive, under 5 unproductive (so a week needs 5 times that). */
-function teamPeriod(S, from, to) {
+// everyone: Admins too (the Team audit); otherwise Recruiters and Rec Ops (the Overview's team table).
+function teamPeriod(S, from, to, everyone = false) {
   const inP = (t) => t && t >= from && t < to;
   const days = Math.max(1, workdays(from, Math.min(to, new Date(new Date().setHours(24, 0, 0, 0)).getTime())));
-  const people = (S.users || []).filter((u) => u.status === "Active" && ["recruiter", "recops"].includes(u.roleKey));
+  const people = (S.users || []).filter((u) => u.status === "Active" && (everyone ? ["recruiter", "recops", "admin"] : ["recruiter", "recops"]).includes(u.roleKey));
   return people.map((u) => {
     const mine = S.cands.filter((c) => c.recruiterId === u.id);
     const added = mine.filter((c) => inP(c.createdAt)).length;
@@ -2531,7 +2532,7 @@ function TeamToday({ S }) {
   );
 }
 
-/* ---- Recruiter audit (Admins) -----------------------------------------------------------------
+/* ---- Team audit (Admins): everyone on the system, Admins included -----------------------------------------------------------------
    For each recruiter over a period: what they did each working day, the hires they made, the
    revenue those bring, and what they cost. Recruiters are freelancers, so cost = the incentives on
    their placements + their share of tools (Apollo, Brevo; monthly costs set here, shared out by
@@ -2554,7 +2555,7 @@ function RecruiterAuditPage({ S, toast }) {
       .then((r) => setAi(Array.isArray(r) ? r : [])).catch(() => setAi([]));
   }, [from, to]); // eslint-disable-line
   const inP = (t) => t && t >= from && t < to;
-  const rows = teamPeriod(S, from, to);
+  const rows = teamPeriod(S, from, to, true);
   const totalPts = rows.reduce((a, r) => a + r.score, 0);
   const monthsShare = workdays(from, to) / WORKDAYS_PER_MONTH;
   const toolPool = ((Number(tc.apollo) || 0) + (Number(tc.brevo) || 0)) * monthsShare;
@@ -2575,7 +2576,7 @@ function RecruiterAuditPage({ S, toast }) {
   const m = (v) => money(v, cur);
   const m2 = (v) => money2(v, cur);
   const save = () => S.saveRevenueGoal({ ...goal, toolCosts: { apollo: num(f.apollo), brevo: num(f.brevo) } }).then(() => { setEdit(false); toast("Tool costs saved"); }).catch(() => {});
-  // A day-by-day breakdown for one recruiter (most recent working days first, up to 31).
+  // A day-by-day breakdown for one person (most recent working days first, up to 31).
   const days = (u) => {
     const out = [];
     for (let t = new Date(Math.min(to, Date.now() + 864e5)); t.getTime() > from && out.length < 31;) {
@@ -2596,7 +2597,7 @@ function RecruiterAuditPage({ S, toast }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Recruiter audit" sub="What each recruiter did, the hires they made, and what each hire cost the agency." />
+        <SectionTitle size="text-3xl md:text-4xl" title="Team audit" sub="What everyone on the team (Admins, Rec Ops and Recruiters) did, the hires they made, and what each person and each hire cost the agency." />
         <PeriodSelect id="audit-period" value={pr.key} onChange={pr.setKey} custom={pr.custom} setCustom={pr.setCustom} />
       </div>
       <KPIGrid>
@@ -2608,7 +2609,7 @@ function RecruiterAuditPage({ S, toast }) {
       <Card>
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div><div className="text-lg" style={{ ...SERIF }}>Tool costs</div>
-            <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Apollo {m(tc.apollo || 0)} and Brevo {m(tc.brevo || 0)} a month: {m(toolPool)} for {pr.label.toLowerCase()}, split by each recruiter's share of the team's activity.</div></div>
+            <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Apollo {m(tc.apollo || 0)} and Brevo {m(tc.brevo || 0)} a month: {m(toolPool)} for {pr.label.toLowerCase()}, split by each person's share of the team's activity.</div></div>
           {!edit && <button onClick={() => { setF({ apollo: String(tc.apollo || ""), brevo: String(tc.brevo || "") }); setEdit(true); }} className="text-xs font-medium" style={{ color: C.em }}>Change</button>}
         </div>
         {edit && (
@@ -2623,14 +2624,14 @@ function RecruiterAuditPage({ S, toast }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>
             <thead><tr className="text-xs text-left" style={{ color: C.ink3 }}>
-              <th className={th}>RECRUITER</th><th className={th}>ACTIVITY</th><th className={th}>HIRES</th><th className={th}>REVENUE</th><th className={th}>INCENTIVES</th><th className={th}>TOOLS</th><th className={th}>AI</th><th className={th}>TOTAL COST</th><th className={th}>COST PER HIRE</th><th className={th}>RETURN</th>
+              <th className={th}>PERSON</th><th className={th}>ACTIVITY</th><th className={th}>HIRES</th><th className={th}>REVENUE</th><th className={th}>INCENTIVES</th><th className={th}>TOOLS</th><th className={th}>AI</th><th className={th}>TOTAL COST</th><th className={th}>COST PER HIRE</th><th className={th}>RETURN</th>
             </tr></thead>
             <tbody>
-              {data.length === 0 && <tr><td colSpan={10} className="py-6 text-center" style={{ color: C.ink3 }}>No active recruiters.</td></tr>}
+              {data.length === 0 && <tr><td colSpan={10} className="py-6 text-center" style={{ color: C.ink3 }}>No active team members.</td></tr>}
               {data.map((r) => (
                 <React.Fragment key={r.u.id}>
                   <tr onClick={() => setOpenId(openId === r.u.id ? null : r.u.id)} className="cursor-pointer" style={{ borderTop: `1px solid ${C.line}` }}>
-                    <td className="py-2.5 pr-3 whitespace-nowrap"><span className="inline-flex items-center gap-1.5">{openId === r.u.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.u.name}</span></td>
+                    <td className="py-2.5 pr-3 whitespace-nowrap"><span className="inline-flex items-center gap-1.5">{openId === r.u.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.u.name}<span className="text-[11px]" style={{ color: C.ink3 }}>{r.u.roleKey === "admin" ? "Admin" : r.u.roleKey === "recops" ? "Rec Ops" : "Recruiter"}</span></span></td>
                     <td className="pr-3 whitespace-nowrap"><Pill tone={{ Productive: "em", "Fairly productive": "warn", Unproductive: "danger" }[r.band]}>{Math.round(r.score)} pts</Pill></td>
                     <td className="pr-3">{r.hires}</td><td className="pr-3">{m(r.revenue)}</td><td className="pr-3">{m(r.incentives)}</td><td className="pr-3">{m2(r.tools)}</td><td className="pr-3">{m2(r.aiCost)}</td>
                     <td className="pr-3 font-medium">{m2(r.cost)}</td><td className="pr-3">{r.perHire != null ? m(r.perHire) : "–"}</td><td className="pr-3">{r.ret != null ? (Math.round(r.ret * 10) / 10) + "×" : "–"}</td>
@@ -2659,7 +2660,7 @@ function RecruiterAuditPage({ S, toast }) {
             </tbody>
           </table>
         </div>
-        <div className="text-xs mt-3" style={{ color: C.ink3 }}>Revenue counts hires made in the period at their full value (contracts: monthly fee × months), in {cur}. AI is the assistant's actual cost plus CV screening estimated at {money2(AI_SCREEN_EST, "USD")} per candidate screened. Click a recruiter to see each working day.</div>
+        <div className="text-xs mt-3" style={{ color: C.ink3 }}>Revenue counts hires made in the period at their full value (contracts: monthly fee × months), in {cur}. AI is the assistant's actual cost plus CV screening estimated at {money2(AI_SCREEN_EST, "USD")} per candidate screened. Activity points: placement 10, submission 3, interview 2, candidate added or task done 1, any other recorded action 0.5. Click a person to see each working day.</div>
       </Card>
     </div>
   );
