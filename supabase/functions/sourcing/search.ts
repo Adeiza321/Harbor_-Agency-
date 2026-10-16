@@ -7,8 +7,10 @@
 //               model is named, because grounding on current Gemini models may be billed)
 //   GitHub      user search (technical roles) GITHUB_TOKEN optional (more profiles per run)
 // The allowances can be lowered (or raised, if a paid plan is added later) with SERPER_FREE_LIMIT,
-// BRAVE_FREE_LIMIT, TAVILY_FREE_LIMIT and GEMINI_FREE_LIMIT. Each search goes to the first engine
-// that has a key and allowance left; if one fails, the next is tried.
+// BRAVE_FREE_LIMIT, TAVILY_FREE_LIMIT and GEMINI_FREE_LIMIT.
+// Order: allowances that reset every month (Tavily, Brave) are spent first, because what isn't used
+// by the end of the month is lost; Serper's one-time allowance is kept for when they run out or
+// find nothing; Gemini last. A search that fails, or finds no profiles, is tried on the next engine.
 //
 // Only search-engine results are read (title, link, snippet). Profile sites themselves (LinkedIn
 // included) are never opened or scraped.
@@ -158,9 +160,9 @@ async function gemini(q: string): Promise<Hit[]> {
 
 function engines(): Engine[] {
   return [
-    { name: "serper", key: env("SERPER_API_KEY"), period: "total" as const, limit: limitOf("SERPER_FREE_LIMIT", 2400), run: serper },
-    { name: "brave", key: env("BRAVE_API_KEY"), period: "month" as const, limit: limitOf("BRAVE_FREE_LIMIT", 950), run: brave },
     { name: "tavily", key: env("TAVILY_API_KEY"), period: "month" as const, limit: limitOf("TAVILY_FREE_LIMIT", 950), run: tavily },
+    { name: "brave", key: env("BRAVE_API_KEY"), period: "month" as const, limit: limitOf("BRAVE_FREE_LIMIT", 950), run: brave },
+    { name: "serper", key: env("SERPER_API_KEY"), period: "total" as const, limit: limitOf("SERPER_FREE_LIMIT", 2400), run: serper },
     { name: "gemini", key: env("XRAY_GEMINI_MODEL") ? env("GEMINI_API_KEY") : "", period: "day" as const, limit: limitOf("GEMINI_FREE_LIMIT", 400), run: gemini },
   ].filter((e) => e.key);
 }
@@ -179,23 +181,44 @@ export async function searchUsage(admin: any) {
   return out;
 }
 
-// One search through the first engine with a key and free allowance left.
+// One search through the first engine with a key and free allowance left. When it finds no
+// profiles, the same search goes to the next engine (different indexes find different people).
 export async function searchWeb(admin: any, q: string, skip: Set<string> = new Set()): Promise<{ hits: Hit[]; engine: string | null; errors: string[] }> {
   const errors: string[] = [];
+  let empty: { hits: Hit[]; engine: string } | null = null;
   for (const e of engines()) {
     if (skip.has(e.name)) continue;
     const { data: ok } = await admin.rpc("use_search_quota", { p_provider: e.name, p_period: periodKey(e.period), p_limit: e.limit });
     if (!ok) { skip.add(e.name); errors.push(e.name + ": free allowance used up"); continue; }
-    try { return { hits: await e.run(q), engine: e.name, errors }; }
+    try {
+      const hits = await e.run(q);
+      if (hits.some((h) => profileOf(h.url))) return { hits, engine: e.name, errors };
+      empty = empty || { hits, engine: e.name };
+      continue;
+    }
     catch (err) {
       const msg = String((err as Error)?.message || err);
       errors.push(msg.slice(0, 200));
       console.error("search", e.name, msg.slice(0, 200));
       // A bad key or an exhausted plan won't recover within this run.
-      if (/\b(401|402|403|429)\b/.test(msg)) skip.add(e.name);
+      if (/\b(401|402|403|429|432|433)\b/.test(msg)) skip.add(e.name);
     }
   }
-  return { hits: [], engine: null, errors };
+  return empty ? { ...empty, errors } : { hits: [], engine: null, errors };
+}
+
+// Tests every connected engine with one real search (one credit each) and reports what came back.
+export async function checkEngines(admin: any, q = "site:linkedin.com/in recruiter Lagos Nigeria") {
+  const out: Record<string, unknown>[] = [];
+  for (const e of engines()) {
+    const { data: ok } = await admin.rpc("use_search_quota", { p_provider: e.name, p_period: periodKey(e.period), p_limit: e.limit });
+    if (!ok) { out.push({ engine: e.name, ok: false, error: "free allowance used up" }); continue; }
+    try {
+      const hits = await e.run(q);
+      out.push({ engine: e.name, ok: true, results: hits.length, profiles: hits.filter((h) => profileOf(h.url)).length, sample: hits.slice(0, 3).map((h) => h.url) });
+    } catch (err) { out.push({ engine: e.name, ok: false, error: String((err as Error)?.message || err).slice(0, 200) }); }
+  }
+  return { connected: searchEngines(), usage: await searchUsage(admin), results: out };
 }
 
 // GitHub's own user search (free): people in the area who code in the role's main language.
