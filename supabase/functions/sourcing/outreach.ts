@@ -138,15 +138,12 @@ ${signHtml(signName, m.senderTitle, m.agency)}`,
 // too). No role box or must-haves underneath: the template already carries them. Same footer.
 export function templateEmail(m: { brand: Brand; region: Region; text: string; signoff: string; senderName: string; senderTitle: string; agency: string; address: string; applyUrl: string; referUrl?: string; unsubUrl: string; deleteUrl: string; source?: string; subject: string }): { text: string; html: string } {
   const b = m.brand;
-  const why = m.region !== "US"
-    ? `Why you're getting this: we found ${m.source || "your work profile in Apollo.io, a business contact database"}, and it matches this role. We use only your name, job title and email address, only to tell you about roles like this, and delete them if you're not interested.`
-    : "";
   const signName = m.signoff || m.senderName.split(" ")[0] || "";
   const plain = m.text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\{\{APPLY_LINK\}\}/g, m.applyUrl);
-  const t = [plain, ...(m.referUrl ? ["", "Not quite right for you? If you know someone who'd be great, refer them here: " + m.referUrl] : []), "", signName, "", "--", [m.senderName, m.senderTitle].filter(Boolean).join(", ") + (m.agency ? ", " + m.agency : "")];
+  // Footer: the business address, unsubscribe and delete-my-details links, and the copyright line.
+  const t = [plain, ...(m.referUrl ? ["", "Not quite right for you? If you know someone who'd be great, refer them here: " + m.referUrl] : []), "", signName, "", "--"];
   if (m.address) t.push(m.address);
-  if (why) t.push("", why + " Delete my details: " + m.deleteUrl);
-  t.push("Not interested? Unsubscribe: " + m.unsubUrl);
+  t.push("Unsubscribe: " + m.unsubUrl, "Delete my details: " + m.deleteUrl, `© ${new Date().getFullYear()} ${b.legal || b.name}`);
   const inline = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
     .replace(/\{\{APPLY_LINK\}\}/g, `<a href="${esc(m.applyUrl)}" style="color:${b.color};">apply here</a>`)
     .replace(/apply here:?\s*<a /i, "<a ");
@@ -170,8 +167,8 @@ export function templateEmail(m: { brand: Brand; region: Region; text: string; s
   }).join("\n");
   const html = emailShell(b, m.subject, body + button(b, m.applyUrl, "Apply now") +
     (m.referUrl ? `<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Not quite right for you? If you know someone who'd be great, <a href="${esc(m.referUrl)}" style="color:${b.color};">refer them here</a>.</div>` : "") + signHtml(signName, m.senderTitle, m.agency), undefined, undefined,
-    footerHtml(b, { sender: [m.senderName, m.senderTitle].filter(Boolean).join(", "), agency: m.agency, address: m.address,
-      why: why || "You are receiving this email because we think this role fits your experience.", unsubUrl: m.unsubUrl, deleteUrl: why ? m.deleteUrl : "" }));
+    (m.address ? esc(m.address) + "<br>" : "") +
+    `<a href="${esc(m.unsubUrl)}" style="color:#56605A;text-decoration:underline;">Unsubscribe</a> &nbsp;&middot;&nbsp; <a href="${esc(m.deleteUrl)}" style="color:#56605A;text-decoration:underline;">Delete my details</a>`);
   return { text: t.join("\n").replace(/\n{3,}/g, "\n\n"), html };
 }
 
