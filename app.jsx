@@ -2536,8 +2536,9 @@ function TeamToday({ S }) {
    For each recruiter over a period: what they did each working day, the hires they made, the
    revenue those bring, and what they cost. Recruiters are freelancers, so cost = the incentives on
    their placements + their share of tools (Apollo, Brevo; monthly costs set here, shared out by
-   working day and split by each person's share of the team's activity) + AI (the assistant's actual
-   cost of every AI call, logged in ai_usage). Screening is charged to the person who put the
+   working day and split by each person's share of the team's activity) + their share of ad spend
+   (what was paid for job ads each month, entered here, split by each person's share of the hires so
+   all of it counts in the cost per hire) + AI (the actual cost of every AI call, logged in ai_usage). Screening is charged to the person who put the
    candidate forward for that job (candidate_jobs.added_by); screenings from before that logging
    began are estimated at AI_SCREEN_EST each, charged the same way. Calls with nobody behind them
    (scheduled runs) are shown as System.
@@ -2550,6 +2551,9 @@ function RecruiterAuditPage({ S, toast }) {
   const tc = { apollo: 0, brevo: 0, ...(goal.toolCosts || {}) };
   const [edit, setEdit] = useState(false);
   const [f, setF] = useState({ apollo: String(tc.apollo || ""), brevo: String(tc.brevo || "") });
+  const ads = goal.adSpend || {}; // ad spend actually paid, by month: { "2026-10": 250 }
+  const [adEdit, setAdEdit] = useState(false);
+  const [af, setAf] = useState({});
   const [ai, setAi] = useState(null);
   const [logFrom, setLogFrom] = useState(null); // when screening costs started being logged
   const [openId, setOpenId] = useState(null);
@@ -2567,6 +2571,19 @@ function RecruiterAuditPage({ S, toast }) {
   const totalPts = rows.reduce((a, r) => a + r.score, 0);
   const monthsShare = workdays(from, to) / WORKDAYS_PER_MONTH;
   const toolPool = ((Number(tc.apollo) || 0) + (Number(tc.brevo) || 0)) * monthsShare;
+  // Ad spend: each month the period touches, counted in full for whole months and by working days
+  // for part of one (a week). Shared out by each person's share of the period's hires (activity
+  // when nobody hired), so every penny spent on ads lands in the cost per hire.
+  const monthKey = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+  const adMonths = [];
+  for (let d = new Date(new Date(from).getFullYear(), new Date(from).getMonth(), 1); d.getTime() < to && adMonths.length < 24; d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+    const m0 = d.getTime(), m1 = new Date(d.getFullYear(), d.getMonth() + 1, 1).getTime();
+    const share = Math.min(1, workdays(Math.max(from, m0), Math.min(to, m1)) / (workdays(m0, m1) || 1));
+    adMonths.push({ key: monthKey(d), label: d.toLocaleDateString("en-GB", { month: "long", year: "numeric" }), share, amount: Number(ads[monthKey(d)]) || 0 });
+  }
+  const adPool = adMonths.reduce((a, x) => a + x.amount * x.share, 0);
+  const hiresOf = (id) => S.placements.filter((p) => p.recruiterId === id && inP(p.createdAt) && p.status !== "Fallout").length;
+  const teamHires = rows.reduce((a, r) => a + hiresOf(r.u.id), 0);
   const data = rows.map((r) => {
     const pl = S.placements.filter((p) => p.recruiterId === r.u.id && inP(p.createdAt) && p.status !== "Fallout");
     const inCur = (p, k, c) => (p[c] === cur ? Number(p[k]) || 0 : 0);
@@ -2580,15 +2597,21 @@ function RecruiterAuditPage({ S, toast }) {
       && l.ai.updatedAt && inP(new Date(l.ai.updatedAt).getTime()) && new Date(l.ai.updatedAt).getTime() < (logFrom == null ? Infinity : logFrom)).length, 0);
     const aiAssistant = byFeat("assistant"), aiScreening = byFeat("other") + oldScreens * AI_SCREEN_EST;
     const aiCost = aiAssistant + aiScreening;
-    const cost = incentives + tools + aiCost;
-    return { ...r, hires: pl.length, revenue, incentives, tools, aiCost, aiAssistant, aiScreening, oldScreens, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
+    const adsCost = adPool * (teamHires ? pl.length / teamHires : totalPts ? r.score / totalPts : rows.length ? 1 / rows.length : 0);
+    const cost = incentives + tools + adsCost + aiCost;
+    return { ...r, hires: pl.length, revenue, incentives, tools, adsCost, aiCost, aiAssistant, aiScreening, oldScreens, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
   });
   const sysAi = (ai || []).filter((x) => !x.user_id).reduce((a, x) => a + Number(x.cost_usd || 0), 0);
   const sum = (k) => data.reduce((a, x) => a + (x[k] || 0), 0);
-  const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), aiCost: sum("aiCost"), cost: sum("cost") };
+  const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost"), cost: sum("cost") };
   const m = (v) => money(v, cur);
   const m2 = (v) => money2(v, cur);
   const save = () => S.saveRevenueGoal({ ...goal, toolCosts: { apollo: num(f.apollo), brevo: num(f.brevo) } }).then(() => { setEdit(false); toast("Tool costs saved"); }).catch(() => {});
+  const saveAds = () => {
+    const next = { ...ads };
+    for (const x of adMonths) { const v = num(af[x.key]); if (v > 0) next[x.key] = v; else delete next[x.key]; }
+    S.saveRevenueGoal({ ...goal, adSpend: next }).then(() => { setAdEdit(false); toast("Ad spend saved"); }).catch(() => {});
+  };
   // A day-by-day breakdown for one person (most recent working days first, up to 31).
   const days = (u) => {
     const out = [];
@@ -2616,7 +2639,7 @@ function RecruiterAuditPage({ S, toast }) {
       <KPIGrid>
         <KPI dark label="Hires" value={tot.hires} foot={pr.label.toLowerCase()} />
         <KPI label="Revenue" value={m(tot.revenue)} foot="client fees on those hires" />
-        <KPI label="Cost" value={m(tot.cost)} foot="incentives + tools + AI" />
+        <KPI label="Cost" value={m(tot.cost)} foot="incentives + tools + ads + AI" />
         <KPI label="Cost per hire" value={tot.hires ? m(tot.cost / tot.hires) : "–"} foot={tot.cost ? "return " + (Math.round((tot.revenue / tot.cost) * 10) / 10) + "× cost" : "no cost yet"} />
       </KPIGrid>
       <Card>
@@ -2634,23 +2657,46 @@ function RecruiterAuditPage({ S, toast }) {
         )}
       </Card>
       <Card>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div><div className="text-lg" style={{ ...SERIF }}>Ad spend</div>
+            <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>
+              {adMonths.some((x) => x.amount)
+                ? adMonths.filter((x) => x.amount).map((x) => x.label + " " + m(x.amount)).join(" · ") + ": " + m(adPool) + " counted for " + pr.label.toLowerCase() + (adMonths.some((x) => x.amount && x.share < 1) ? " (part months by working day)" : "") + ", shared by each person's share of the hires, so all of it counts in the cost per hire."
+                : "Nothing entered for " + pr.label.toLowerCase() + " yet. Add what you paid for job ads and it counts in full towards the cost per hire."}
+            </div></div>
+          {!adEdit && <button onClick={() => { setAf(Object.fromEntries(adMonths.map((x) => [x.key, x.amount ? String(x.amount) : ""]))); setAdEdit(true); }} className="text-xs font-medium" style={{ color: C.em }}>Change</button>}
+        </div>
+        {adEdit && (
+          <div className="mt-3">
+            <div className="text-xs mb-2" style={{ color: C.ink2 }}>What you actually paid for job ads (LinkedIn, Indeed, Jobberman, boosted posts and so on) in each month, in {cur}. Leave a month empty for none.</div>
+            <div className="flex items-end gap-2 flex-wrap">
+              {adMonths.map((x) => (
+                <div key={x.key} className="flex flex-col"><label htmlFor={"ad-" + x.key} className="text-xs" style={{ color: C.ink2 }}>{x.label}</label>
+                  <input id={"ad-" + x.key} inputMode="decimal" value={af[x.key] || ""} onChange={(e) => setAf({ ...af, [x.key]: e.target.value })} className="rounded-lg border px-2.5 py-1.5 text-sm w-28" style={{ borderColor: C.line }} /></div>
+              ))}
+              <Btn kind="primary" onClick={saveAds}>Save</Btn><Btn onClick={() => setAdEdit(false)}>Cancel</Btn>
+            </div>
+          </div>
+        )}
+      </Card>
+      <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-sm" style={{ fontVariantNumeric: "tabular-nums" }}>
             <thead><tr className="text-xs text-left" style={{ color: C.ink3 }}>
-              <th className={th}>PERSON</th><th className={th}>ACTIVITY</th><th className={th}>HIRES</th><th className={th}>REVENUE</th><th className={th}>INCENTIVES</th><th className={th}>TOOLS</th><th className={th}>AI</th><th className={th}>TOTAL COST</th><th className={th}>COST PER HIRE</th><th className={th}>RETURN</th>
+              <th className={th}>PERSON</th><th className={th}>ACTIVITY</th><th className={th}>HIRES</th><th className={th}>REVENUE</th><th className={th}>INCENTIVES</th><th className={th}>TOOLS</th><th className={th}>ADS</th><th className={th}>AI</th><th className={th}>TOTAL COST</th><th className={th}>COST PER HIRE</th><th className={th}>RETURN</th>
             </tr></thead>
             <tbody>
-              {data.length === 0 && <tr><td colSpan={10} className="py-6 text-center" style={{ color: C.ink3 }}>No active team members.</td></tr>}
+              {data.length === 0 && <tr><td colSpan={11} className="py-6 text-center" style={{ color: C.ink3 }}>No active team members.</td></tr>}
               {data.map((r) => (
                 <React.Fragment key={r.u.id}>
                   <tr onClick={() => setOpenId(openId === r.u.id ? null : r.u.id)} className="cursor-pointer" style={{ borderTop: `1px solid ${C.line}` }}>
                     <td className="py-2.5 pr-3 whitespace-nowrap"><span className="inline-flex items-center gap-1.5">{openId === r.u.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}{r.u.name}<span className="text-[11px]" style={{ color: C.ink3 }}>{r.u.roleKey === "admin" ? "Admin" : r.u.roleKey === "recops" ? "Rec Ops" : "Recruiter"}</span></span></td>
                     <td className="pr-3 whitespace-nowrap"><Pill tone={{ Productive: "em", "Fairly productive": "warn", Unproductive: "danger" }[r.band]}>{Math.round(r.score)} pts</Pill></td>
-                    <td className="pr-3">{r.hires}</td><td className="pr-3">{m(r.revenue)}</td><td className="pr-3">{m(r.incentives)}</td><td className="pr-3">{m2(r.tools)}</td><td className="pr-3" title={"Assistant " + m2(r.aiAssistant) + " · Screening and CV reads " + m2(r.aiScreening) + (r.oldScreens ? " (" + r.oldScreens + " earlier screenings estimated)" : "")}>{m2(r.aiCost)}</td>
+                    <td className="pr-3">{r.hires}</td><td className="pr-3">{m(r.revenue)}</td><td className="pr-3">{m(r.incentives)}</td><td className="pr-3">{m2(r.tools)}</td><td className="pr-3">{m2(r.adsCost)}</td><td className="pr-3" title={"Assistant " + m2(r.aiAssistant) + " · Screening and CV reads " + m2(r.aiScreening) + (r.oldScreens ? " (" + r.oldScreens + " earlier screenings estimated)" : "")}>{m2(r.aiCost)}</td>
                     <td className="pr-3 font-medium">{m2(r.cost)}</td><td className="pr-3">{r.perHire != null ? m(r.perHire) : "–"}</td><td className="pr-3">{r.ret != null ? (Math.round(r.ret * 10) / 10) + "×" : "–"}</td>
                   </tr>
                   {openId === r.u.id && (
-                    <tr><td colSpan={10} className="pb-3">
+                    <tr><td colSpan={11} className="pb-3">
                       <div className="rounded-xl p-3" style={{ background: C.canvas }}>
                         <div className="text-xs font-semibold tracking-widest mb-2" style={{ color: C.ink3 }}>DAY BY DAY</div>
                         {days(r.u).map((d) => (
@@ -2667,7 +2713,7 @@ function RecruiterAuditPage({ S, toast }) {
               ))}
               {data.length > 0 && (
                 <tr className="font-medium" style={{ borderTop: `2px solid ${C.line}` }}>
-                  <td className="py-2.5">Total</td><td></td><td>{tot.hires}</td><td>{m(tot.revenue)}</td><td>{m(tot.incentives)}</td><td>{m2(tot.tools)}</td><td>{m2(tot.aiCost)}</td><td>{m2(tot.cost)}</td><td>{tot.hires ? m(tot.cost / tot.hires) : "–"}</td><td>{tot.cost ? (Math.round((tot.revenue / tot.cost) * 10) / 10) + "×" : "–"}</td>
+                  <td className="py-2.5">Total</td><td></td><td>{tot.hires}</td><td>{m(tot.revenue)}</td><td>{m(tot.incentives)}</td><td>{m2(tot.tools)}</td><td>{m2(tot.adsCost)}</td><td>{m2(tot.aiCost)}</td><td>{m2(tot.cost)}</td><td>{tot.hires ? m(tot.cost / tot.hires) : "–"}</td><td>{tot.cost ? (Math.round((tot.revenue / tot.cost) * 10) / 10) + "×" : "–"}</td>
                 </tr>
               )}
             </tbody>
@@ -8446,7 +8492,7 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
     const amount = num(g.amount);
     if (!amount || !g.by) { toast("Enter an amount and a date"); return; }
     setBusy(true);
-    S.saveRevenueGoal({ amount, currency: g.currency, by: g.by }).then(() => { setEditing(false); toast("Goal saved"); }).catch(() => {}).finally(() => setBusy(false));
+    S.saveRevenueGoal({ ...((S.settings && S.settings.revenueGoal) || {}), amount, currency: g.currency, by: g.by }).then(() => { setEditing(false); toast("Goal saved"); }).catch(() => {}).finally(() => setBusy(false));
   };
   const inp = "rounded-lg border px-3 py-2 text-sm outline-none";
   const inpS = { borderColor: C.line, background: "#FAF8F3" };
