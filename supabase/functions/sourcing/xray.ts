@@ -19,7 +19,7 @@ import { askAI } from "./ai.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fitsToPercent, type Settings } from "./common.ts";
-import { judge, reviewHead, REVIEW_SYSTEM, type Judged } from "./xray_rules.ts";
+import { broadPlace, judge, reviewHead, REVIEW_SYSTEM, type Judged } from "./xray_rules.ts";
 import { splitByArea } from "./area_check.ts";
 import { findGithubEmails } from "./emails.ts";
 import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
@@ -65,6 +65,24 @@ export async function startXray(admin: any, jobId: string, s: Settings, by: stri
   return { ok: true, started: true, message: "X-ray search started" + (guide ? " with your direction" : "") + ". Results appear under this job in a minute or two." };
 }
 
+// On-site / hybrid searches: whole countries or regions in quotes are dropped from a query; when no
+// nearby place is left, the office city is searched instead.
+export function narrowSearchPlaces(q: string, officeCity: string, _nearby: string[] = []) {
+  const quoted = [...q.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  const broad = quoted.filter((t) => broadPlace(t) || /^(uk|usa|us|u\.s\.|gb|great britain|britain)$/i.test(t.trim()));
+  if (!broad.length) return q;
+  let r = q;
+  // A broad place that stood on its own, or was the only place in its ( … OR … ) group, leaves the
+  // query with no place at all: the office city goes in its stead.
+  const standalone = broad.some((t) => { const i = q.indexOf(`"${t}"`); const before = q.slice(0, i); return (before.match(/\(/g) || []).length <= (before.match(/\)/g) || []).length; });
+  for (const t of broad) r = r.split(`"${t}"`).join("");
+  const emptied = /\(\s*(OR\s*)*\)/.test(r);
+  r = r.replace(/\s+/g, " ").replace(/\(\s*(OR\s+)+/g, "(").replace(/(\s+OR)+\s*\)/g, ")").replace(/"\s+(OR\s+)+"/g, '" OR "').replace(/\(\s*(OR\s*)*\)/g, "").replace(/\s+/g, " ").trim();
+  if ((standalone || emptied) && officeCity.length > 2 && !broadPlace(officeCity) && !r.toLowerCase().includes(`"${officeCity.toLowerCase()}"`))
+    r = /\s-jobs\b/.test(r) ? r.replace(/\s-jobs\b/, ` "${officeCity}" -jobs`) : `${r} "${officeCity}"`;
+  return r.replace(/\s+/g, " ").trim();
+}
+
 type Plan = { technical: boolean; checklist: string[]; linkedin: string[]; sites: { site: SiteKey; query: string }[]; github: { location?: string; language?: string; keywords?: string } | null };
 
 function guideText(g: XrayGuide | null) {
@@ -81,7 +99,7 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
     "{\"technical\": boolean, \"checklist\": string[], \"linkedin\": string[], \"sites\": [{\"site\": string, \"query\": string}], \"github\": {\"location\": string, \"language\": string, \"keywords\": string} | null}. " +
     "checklist: 5 to 8 of the job's most important must-haves, each a few words that a profile headline or summary could show (e.g. '8+ yrs technical accounting', 'Big 4 Advisory background', 'Senior Manager level', 'Based in Pacific or Mountain time zone'). Always include the seniority/title level and the location requirement. Add the lessons from past candidates when they apply. " +
     "linkedin: 4 to 8 search queries. Each MUST start with site:linkedin.com/in, then an OR group of 2 to 4 title variants in double quotes (the job title and its parallel titles, as people write them in headlines), " +
-    "then at most 2 must-have terms in double quotes that people actually write in a headline or summary: a core skill, tool, standard or certification (e.g. \"ServiceNow\", \"ASC 606\", \"CPA\"); never years, numbers or phrases like \"5 years\" or \"senior level\", then an OR group of up to 4 locations in double quotes taken from the search area, and finally -jobs -hiring -recruiter. " +
+    "then at most 2 must-have terms in double quotes that people actually write in a headline or summary: a core skill, tool, standard or certification (e.g. \"ServiceNow\", \"ASC 606\", \"CPA\"); never years, numbers or phrases like \"5 years\" or \"senior level\", then an OR group of up to 4 locations in double quotes taken from the search area (for on-site and hybrid roles: only towns, cities or boroughs from the search area, never a whole country, nation, state or region like \"UK\", \"England\" or \"Texas\"), and finally -jobs -hiring -recruiter. " +
     "Keep each under 30 words. Spread the locations of the search area across the queries so together they cover it, and vary the title groups and terms so the queries don't repeat each other. Never include the hiring company's name. Use Google syntax: \"A\" OR \"B\" inside parentheses. " +
     "technical: true for software, data, IT, engineering, security, DevOps, ML/AI, product design and similar roles. " +
     `sites: only when technical (otherwise []): up to 4 queries on the sites that suit this role, from: ${siteList}. Each query starts with that site's prefix, then quoted skills/titles and a location term; under 25 words. ` +
@@ -93,9 +111,17 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
     (lessons.length ? `\n\nLessons from past candidates for this role (add as checklist items when they apply):\n${lessons.map((l) => "- " + l).join("\n")}` : "") +
     guideText(guide);
   const out = await askAI(sys, text, 3000);
+  // On-site and hybrid roles: a whole country or region as a search place ("UK", "England",
+  // "United States", "Texas") pulls in people from hundreds of miles away, so it's taken out and,
+  // if no nearby place is left, the office itself is searched instead.
+  const onsite = !(/remote/i.test(String(job.work_setup || "")) && !/hybrid/i.test(String(job.work_setup || "")));
+  const officeCity = String(job.location || "").split(",")[0].trim();
+  const nearby = [officeCity, ...((guide?.locations || []) as string[]), ...((area?.locations || []) as string[])];
+  const narrowPlaces = (q: string) => narrowSearchPlaces(q, officeCity, nearby);
   const fix = (q: unknown, prefix: string) => {
     let s = clip(q, 400).replace(/\bsite:\S+/gi, "").replace(/\s+/g, " ").trim();
     if (!s) return "";
+    if (onsite) s = narrowPlaces(s);
     s = `${prefix} ${s}`;
     return s.split(" ").slice(0, 34).join(" ");
   };
@@ -203,10 +229,10 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
   try {
     const { kept: ok, dropped } = await splitByArea(admin, job, area, judged, (k) => k.j.location);
     tooFar = dropped.length;
-    placed = ok.map(({ p, note }) => (note ? { ...p, j: { ...p.j, gaps: [note, ...p.j.gaps].slice(0, 5) } } : p));
+    placed = ok.map(({ p, note, hold }) => (note ? { ...p, hold, j: { ...p.j, gaps: [note, ...p.j.gaps].slice(0, 5) } } : p));
   } catch (e) { errors.push("area check: " + errMsg(e).slice(0, 160)); }
   const kept = placed.sort((a, b) => b.j.fit - a.j.fit).slice(0, perJob);
-  const rows = kept.map(({ x, r, j }) => {
+  const rows = kept.map(({ x, r, j, hold }: any) => {
     const name = clip(r.name, 120) || clip(x.title.split(/\s[-–|·]\s/)[0], 120);
     const parts = name.split(/\s+/);
     return {
@@ -216,7 +242,7 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
       linkedin_url: x.site === "linkedin" ? x.key : null,
       fit: j.fit, verdict: j.verdict,
       fit_reason: clip(r.overview, 300) || null, status: "found",
-      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: j.clientHistory, location_source: j.locationSource, remote_worker: j.remote, own_practice: j.ownPractice, overview: clip(r.overview, 400), checklist: j.checklist, gaps: j.gaps, snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
+      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: j.clientHistory, location_source: j.locationSource, location_hold: hold || null, remote_worker: j.remote, own_practice: j.ownPractice, overview: clip(r.overview, 400), checklist: j.checklist, gaps: j.gaps, snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
     };
   });
   let inserted: any[] = [];

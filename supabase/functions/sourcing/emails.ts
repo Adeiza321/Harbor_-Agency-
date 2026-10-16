@@ -18,6 +18,7 @@ import { askAI } from "./ai.ts";
 import { apolloKey, bestEmail, matchByLinkedIn } from "./apollo.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
 import { splitByArea } from "./area_check.ts";
+import { broadPlace, cleanLocation } from "./xray_rules.ts";
 import { countryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { contactoutByLinkedIn, contactoutKey } from "./contactout.ts";
 import { bestPdlEmail, pdlByLinkedIn, pdlKey } from "./pdl.ts";
@@ -84,25 +85,42 @@ async function suppressed(admin: any, email: string) {
   return !!data;
 }
 
-// People whose location we just learned (or all found people on open roles, for the sweep): those
-// clearly too far from the office are moved to Skipped with the reason. Returns their ids.
-export async function skipTooFar(admin: any, people: { id: string; job_id: string; location: string }[], dry = false) {
+// Where people are, checked against the job (area_check.ts) whenever we learn something new about
+// them, and every 10 minutes for everyone still under Needs approval on open roles:
+//   - clearly too far: moved to Skipped with the reason (never emailed);
+//   - on-site / hybrid with no location, only a country or region, a vague place, or a check that
+//     failed: held (data.location_hold). Their email can still be drafted, but they can't be
+//     approved until someone presses "Location OK" (or a later check places them in the area);
+//   - in the area: any hold is lifted.
+// Someone a person marked "Location OK" is never held again. Returns the ids moved to Skipped.
+export async function skipTooFar(admin: any, people: { id: string; job_id: string; location: string | null }[], dry = false) {
   const out: string[] = [];
   const report: { id: string; location: string; why: string }[] = [];
   const byJob = new Map<string, typeof people>();
-  for (const p of people) if (p.location) byJob.set(p.job_id, [...(byJob.get(p.job_id) || []), p]);
+  for (const p of people) byJob.set(p.job_id, [...(byJob.get(p.job_id) || []), p]);
   for (const [jobId, list] of byJob) {
     const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).maybeSingle();
     if (!job || /remote/i.test(String(job.work_setup || "")) && !/hybrid/i.test(String(job.work_setup || "")) && !job.country) continue;
     const area = await searchArea(admin, job, jobCountryNames(job)).catch(() => null);
-    const { dropped } = await splitByArea(admin, job, area, list, (p) => p.location);
+    const { kept, dropped } = await splitByArea(admin, job, area, list, (p) => p.location || "");
     for (const { p, why } of dropped) {
-      report.push({ id: p.id, location: p.location, why });
+      report.push({ id: p.id, location: String(p.location || ""), why });
       if (dry) { out.push(p.id); continue; }
       const { data: cur } = await admin.from("prospects").select("data").eq("id", p.id).maybeSingle();
-      await admin.from("prospects").update({ status: "rejected", data: { ...(cur?.data || {}), skipped: { reason: why, by: "location check", at: new Date().toISOString() } } })
-        .eq("id", p.id).eq("status", "found");
+      if (cur?.data?.location_ok) continue;
+      await admin.from("prospects").update({ status: "rejected", data: { ...(cur?.data || {}), location_hold: null, skipped: { reason: why, by: "location check", at: new Date().toISOString() } } })
+        .eq("id", p.id).in("status", ["found", "approved"]);
       out.push(p.id);
+    }
+    if (dry) continue;
+    const ids = kept.map((k) => (k.p as any).id);
+    const { data: cur } = ids.length ? await admin.from("prospects").select("id,data").in("id", ids) : { data: [] };
+    const curOf = new Map((cur || []).map((r: any) => [r.id, r.data || {}]));
+    for (const k of kept) {
+      const d: any = curOf.get((k.p as any).id) || {};
+      const hold = d.location_ok ? null : (k.hold || null);
+      if ((d.location_hold || null) === hold) continue;
+      await admin.from("prospects").update({ data: { ...d, location_hold: hold } }).eq("id", (k.p as any).id);
     }
   }
   if (dry) (out as any).report = report;
@@ -137,10 +155,17 @@ export async function pdlEmails(admin: any, ids: string[], s: Settings, agencyNa
       ...(m ? { emails_found: { work: m.work_email ? [m.work_email] : [], personal: m.personal_emails }, ...(m.phones.length ? { phones: m.phones } : {}) } : {}),
       ...(good ? { email_source: "People Data Labs (from their LinkedIn profile)", history: p.data?.history || m.history } : {}) } };
     if (good) Object.assign(patch, { email: best.email, email_status: best.status, first_name: p.first_name || m.first_name || null, last_name: p.last_name || m.last_name || null,
-      title: p.title || m.title || null, company: p.company || m.company || null, location: p.location || [m.city, m.region].filter(Boolean).join(", ") || null });
+      title: p.title || m.title || null, company: p.company || m.company || null });
+    const pdlAt = m ? [m.city, m.region, m.country].filter(Boolean).join(", ") : "";
+    if (pdlAt && (!p.location || broadPlace(cleanLocation(p.location)) || /\b(area|greater|region)\b/i.test(String(p.location)))) patch.location = pdlAt;
     await admin.from("prospects").update(patch).eq("id", p.id);
     if (good) found.push(p.id);
     await sleep(250);
+  }
+  if (list.length) {
+    const { data: now } = await admin.from("prospects").select("id,job_id,location").in("id", list.map((p: any) => p.id)).eq("status", "found");
+    const far = await skipTooFar(admin, now || []);
+    for (const id of far) { const i = found.indexOf(id); if (i >= 0) found.splice(i, 1); }
   }
   if (found.length) await draftEmails(admin, found, s, agencyName);
   return { tried: list.length, found: found.length, ids: found, errors };
@@ -214,13 +239,15 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
       title: p.title || m?.title || null, company: p.company || m?.company || null,
       location: p.location || [m?.city, m?.state].filter(Boolean).join(", ") || null, country: cc || m?.country || p.country || null, region: cc ? regionOf(cc) : (p.region || null),
     });
-    if (!p.location && seenAt) { patch.location = seenAt; learned.push({ id: p.id, job_id: p.job_id, location: seenAt }); }
+    // A source's location replaces a missing or too-broad one ("United Kingdom", "London Area").
+    if (seenAt && (!p.location || broadPlace(cleanLocation(p.location)) || /\b(area|greater|region)\b/i.test(String(p.location)))) { patch.location = seenAt; learned.push({ id: p.id, job_id: p.job_id, location: seenAt }); }
     await admin.from("prospects").update(patch).eq("id", p.id);
     if (good) found.push(p.id);
     await sleep(400);
   }
   // Newly learned locations: anyone clearly too far from the office is skipped, not emailed.
-  const tooFar = await skipTooFar(admin, learned);
+  const { data: placedNow } = list.length ? await admin.from("prospects").select("id,job_id,location").in("id", list.map((p) => p.id)).eq("status", "found") : { data: [] };
+  const tooFar = await skipTooFar(admin, placedNow || []);
   for (const id of tooFar) { const i = found.indexOf(id); if (i >= 0) found.splice(i, 1); }
   if (found.length) await draftEmails(admin, found, s, agencyName);
   // Still nothing from ContactOut or Apollo: People Data Labs, within its daily allowance.

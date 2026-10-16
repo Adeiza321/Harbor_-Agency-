@@ -96,7 +96,7 @@ export async function matchPool(admin: any, job: any, s: Settings, agencyName: s
   if (rows.length) {
     const area = await searchArea(admin, job, jobCountryNames(job)).catch(() => null);
     const { kept: ok } = await splitByArea(admin, job, area, rows, (r: any) => r.location || "");
-    rows.splice(0, rows.length, ...ok.map(({ p, note }) => (note ? { ...p, data: { ...p.data, gaps: [note] } } : p)));
+    rows.splice(0, rows.length, ...ok.map(({ p, note, hold }) => (note ? { ...p, data: { ...p.data, gaps: [note], location_hold: hold || null } } : p)));
   }
   let ids: string[] = [];
   if (rows.length) {

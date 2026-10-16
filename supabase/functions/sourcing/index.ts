@@ -10,7 +10,7 @@ import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
 import { cleanGuide, startXray } from "./xray.ts";
 import { searchEngines, searchUsage, checkEngines } from "./search.ts";
-import { autoFindEmails, findEmails, skipTooFar } from "./emails.ts";
+import { autoFindEmails, draftEmails, findEmails, skipTooFar } from "./emails.ts";
 import { matchPool } from "./pool.ts";
 import { pdlKey } from "./pdl.ts";
 import { contactoutKey } from "./contactout.ts";
@@ -127,7 +127,7 @@ async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
 // Everyone still waiting under Needs approval on open roles, with a known location, checked against
 // the office: anyone clearly too far is moved to Skipped with the reason (nothing is deleted).
 async function locationSweep(admin: any, dry = false) {
-  const { data } = await admin.from("prospects").select("id,job_id,location,jobs!inner(status)").eq("status", "found").not("location", "is", null).neq("jobs.status", "Closed").limit(2000);
+  const { data } = await admin.from("prospects").select("id,job_id,location,jobs!inner(status)").eq("status", "found").neq("jobs.status", "Closed").limit(2000);
   const ids: any = await skipTooFar(admin, (data || []).map((p: any) => ({ id: p.id, job_id: p.job_id, location: p.location })), dry);
   return { checked: (data || []).length, [dry ? "wouldSkip" : "skipped"]: ids.length, ids, ...(dry ? { report: ids.report } : {}), ...(areaErrors.length ? { errors: areaErrors.slice(-5) } : {}) };
 }
@@ -192,7 +192,12 @@ Deno.serve(async (req: Request) => {
         return json(await sendTest(admin, String(body.prospectId), String(body.to), s, agencyName));
       }
       // Every 10 minutes (cron harbor-xray-emails): emails for the best X-ray people, within the daily cap.
-      if (body.action === "auto_emails") return json({ ok: true, ...(await autoFindEmails(admin, s, agencyName)) });
+      if (body.action === "auto_emails") {
+        const r = await autoFindEmails(admin, s, agencyName);
+        let loc: unknown = null;
+        try { loc = await locationSweep(admin); } catch (e) { loc = { error: errMsg(e) }; }
+        return json({ ok: true, ...r, locations: loc });
+      }
       if (body.action === "location_sweep") return json({ ok: true, ...(await locationSweep(admin, !!body.dry)) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
       if (body.action === "search_check") return json({ ok: true, ...(await checkEngines(admin, body.q ? String(body.q) : undefined, String(body.only || ""), Array.isArray(body.models) ? body.models.map(String) : [])) });
@@ -374,7 +379,21 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    if (action === "approve_prospects") return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName) });
+    if (action === "approve_prospects") {
+      const { data: held } = ids.length ? await admin.from("prospects").select("id").in("id", ids).not("data->>location_hold", "is", null).is("data->>location_ok", null) : { data: [] };
+      return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName), held: (held || []).length });
+    }
+    // "Location OK": a person checked where they are; they can be approved, and are never held again.
+    if (action === "location_ok") {
+      const { data: rows } = ids.length ? await admin.from("prospects").select("id,data,email,body").in("id", ids) : { data: [] };
+      for (const r of rows || []) {
+        const gaps = (Array.isArray(r.data?.gaps) ? r.data.gaps : []).filter((g: string) => !/check they can commute|Location not shown/i.test(String(g)));
+        await admin.from("prospects").update({ data: { ...(r.data || {}), location_hold: null, location_ok: { by: me.id, at: new Date().toISOString() }, gaps } }).eq("id", r.id);
+      }
+      const undrafted = (rows || []).filter((r: any) => r.email && !r.body).map((r: any) => r.id);
+      if (undrafted.length) await draftEmails(admin, undrafted, s, agencyName);
+      return json({ ok: true, cleared: (rows || []).length });
+    }
     if (action === "approve_leads") return json({ ok: true, queued: await queueLeads(admin, ids, me.id, s, agencyName) });
     if (action === "send_now") return json({ ok: true, ...(await processQueue(admin, s, 20)) });
     if (action === "manual_compose" || action === "manual_sent") {

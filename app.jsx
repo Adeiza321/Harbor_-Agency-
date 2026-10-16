@@ -1853,6 +1853,7 @@ async function runProposal(S, p) {
     const nm = i.name || "They";
     if (i.action === "approve_email") {
       const r = await S.sourcing("approve_prospects", { ids: [i.prospect_id] });
+      if (!r.queued && r.held) throw new Error(nm + "'s location needs checking first: open them on the role's Sourcing tab and press Location OK if they can work there.");
       if (!r.queued) throw new Error(nm + " can't be emailed yet: they need an email address and a drafted email. Find their email on the role's Sourcing tab first.");
       return "Approved. " + nm + "'s email goes out with the next send.";
     }
@@ -6781,7 +6782,7 @@ const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send",
 const EUROPE_LABEL = "Europe (EU, UK, EEA, Switzerland)";
 const leadPlaceLabel = (k) => k === "EU" ? EUROPE_LABEL : (COUNTRY_DATA.find((x) => x.iso === k) || {}).name || k;
 const LEAD_PLACE_OPTIONS = [{ value: "EU", label: EUROPE_LABEL }].concat(COUNTRY_DATA.map((x) => ({ value: x.iso, label: x.name })));
-const approvedMsg = (n) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected.";
+const approvedMsg = (n, held) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected." + (held ? " " + held + " not sent: their location needs checking first (Location OK on each)." : "");
 const copyText = (t, toast, label) => { try { navigator.clipboard.writeText(t); toast(label || "Copied"); } catch (e) { toast("Copy failed. Select and copy it manually."); } };
 
 // Paid work (Apollo, TheirStack): an Admin confirms the cost before it runs.
@@ -6982,7 +6983,11 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
   // yourself are in the ⋮ menu.
   const [manualKey, setManualKey] = useState(0);
   const [acting, setActing] = useState("");
-  const canApprove = S && p.email && p.body && p.status === "found";
+  // Held until someone confirms where they are (no location, only a country, a vague place, or a
+  // location check that couldn't run). Too far away people are skipped automatically instead.
+  const locHold = p.status === "found" && d.location_hold && !d.location_ok ? d.location_hold : "";
+  const canApprove = S && p.email && p.body && p.status === "found" && !locHold;
+  const locationOk = () => { setActing("loc"); S.sourcing("location_ok", { ids: [p.id] }).then(() => { toast("Location confirmed. " + (p.email ? "They can be approved now." : "")); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   const approveOne = () => { setActing("approve"); S.sourcing("approve_prospects", { ids: [p.id] }).then((r) => { toast(approvedMsg(r.queued)); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   const testOne = () => { setActing("test"); S.sourcing("test_email", { kind: "p", id: p.id }).then((r) => toast("Test sent to " + r.to)).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   return (
@@ -7002,6 +7007,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           <ApolloNote data={d} />
+          {locHold && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}><span className="font-medium">Check location before emailing:</span> {locHold}{p.location ? " (" + p.location + ")" : ""}. Open their profile, then press Location OK if they can work from {jobLabel ? "the role's location" : "the office"}, or Skip.</div>}
           {found && (d.client_history === "past" || d.location_source === "" || d.remote_worker) && (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {d.client_history === "past" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }}>Worked at {(jobLabel || "").split(",").slice(-1)[0].trim() || "the client"} before</span>}
@@ -7038,6 +7044,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             <div className="flex gap-2 mt-2 justify-end items-center flex-wrap">
               {xray && p.status === "found" && <Btn kind="primary" onClick={() => onStatus("contacted", { contacted_at: new Date().toISOString() })}>Mark contacted</Btn>}
               {canFind && onFindEmail && <Btn icon={Mail} onClick={onFindEmail}>Find email</Btn>}
+              {locHold && S && <Btn icon={MapPin} onClick={locationOk} disabled={!!acting}>{acting === "loc" ? "Saving…" : "Location OK"}</Btn>}
               {canApprove && <Btn kind="primary" icon={Send} onClick={approveOne} disabled={!!acting}>{acting === "approve" ? "Approving…" : "Approve"}</Btn>}
               {S && p.email && ["found", "approved", "queued"].includes(p.status) && <ManualSend kind="p" id={p.id} S={S} toast={toast} onDone={onChanged} openKey={manualKey} noButton />}
               {["contacted", "interested"].includes(p.status) && <Btn kind="primary" onClick={() => onStatus("converted")}>Mark converted</Btn>}
@@ -7143,7 +7150,7 @@ function JobSourcingCard({ job, S, toast }) {
   // People Data Labs (paid): Admins confirm the cost; anyone else's click goes to an Admin.
   const searchPdl = () => run("pdl", () => paidAction(S, toast, "search_pdl", { jobId: job.id }, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load));
   const ids = Object.keys(sel).filter((k) => sel[k]);
-  const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }));
+  const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }));
   const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
   // X-ray people without an email who haven't been looked up yet (LinkedIn via Apollo, GitHub free).
   const noEmail = prospects.filter((p) => p.data && p.data.xray && !p.email && p.status === "found" && !(p.data.email_lookup || {}).apollo && (p.linkedin_url || (p.source === "github" && !(p.data.email_lookup || {}).github)));
@@ -7560,7 +7567,7 @@ function CampaignsPage({ toast, S }) {
             {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed. When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["skipped", "Skipped"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
             {pfx === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
               <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
-              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length || ""}</Btn>
+              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
           {tab !== "pool" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>}
@@ -7580,7 +7587,7 @@ function CampaignsPage({ toast, S }) {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <Tabs tabs={[["new", "New"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(lAll, lGroups[k]) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
             <div className="flex gap-2 shrink-0 flex-wrap">
-              {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
+              {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
               {pendingLeads > 0 && <Btn disabled={!!busy} onClick={() => run("process", () => S.sourcing("process_leads", {}).then((r) => toast("Checked " + (r.processed || 0) + ", kept " + (r.kept || 0))))}>{busy === "process" ? "Checking…" : "Check " + pendingLeads + " waiting"}</Btn>}
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>

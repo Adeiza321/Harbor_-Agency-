@@ -130,6 +130,7 @@ export async function queueProspects(admin: any, ids: string[], approver: string
   const brand = await loadBrand(admin);
   for (const p of rows || []) {
     if (!p.email || !p.body) continue;
+    if (p.data?.location_hold && !p.data?.location_ok) continue;   // location to confirm first ("Location OK")
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
     if (sup) { await admin.from("prospects").update({ status: "unsubscribed" }).eq("id", p.id); continue; }
     const mail = await composeProspect(admin, p, s, agencyName, cache, brand);

@@ -57,6 +57,18 @@ export function countryIn(loc: string): string {
   return (COUNTRIES.find((x) => x.re.test(l)) || { c: "" }).c;
 }
 
+// Only a country, or a country plus a US state / UK nation / "area" words: too broad to place
+// someone for an on-site job ("United Kingdom", "England, United Kingdom", "Texas, United States",
+// "Philippines", "Greater London" is NOT broad: it names a city).
+export function broadPlace(loc: string): boolean {
+  let l = " " + String(loc || "").toLowerCase().replace(/[(),.\-\/]/g, " ") + " ";
+  const c = countryIn(loc);
+  if (!c || /district of columbia|\bd\s?c\b/.test(l)) return false;
+  for (const w of [c, ...Object.keys(ALIAS).filter((a) => ALIAS[a] === c), ...(c === "united states" ? US_STATE_NAMES : []), "area", "region", "metropolitan", "province", "republic of", "the"])
+    l = l.replace(new RegExp("(^|\\s)" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?=\\s|$)", "g"), " ");
+  return !l.trim() || (c === "united states" && /^[a-z]{2}$/i.test(l.trim()));
+}
+
 // ---- What the AI is asked ---------------------------------------------------------------------
 export const REVIEW_SYSTEM = "You are a recruitment researcher reviewing search-engine results for people's public profiles (LinkedIn and technical sites) against one job. " +
   "You only see each result's title line and short snippet, not the full profile. Reply with STRICT JSON only: " +

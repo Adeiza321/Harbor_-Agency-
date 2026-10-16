@@ -168,6 +168,7 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
   // Where they are, checked against the office (on-site / hybrid) or the country and time zones (remote).
   const placed = await splitByArea(admin, job, area, people, (p) => [p.city, p.state, p.country].filter(Boolean).join(", "));
   const tooFar = placed.dropped.length;
+  const holdOf = new Map(placed.kept.filter((k) => k.hold).map((k) => [k.p.id, k.hold]));
   people.splice(0, people.length, ...placed.kept.map((k) => k.p));
   if (!people.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0, tooFar }); return { ok: true, found: 0, message: `All ${tooFar} people found were too far from the office.` }; }
 
@@ -211,7 +212,7 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
       // The client's name is taken out if the AI slipped it in; the role overview and must-haves
       // are added under this note when the email is built (outreach.ts).
       body: anonymizeJd(String(m.body || "").slice(0, 3000), job.client),
-      status: "found", data: { history: p.history, domain: p.domain },
+      status: "found", data: { history: p.history, domain: p.domain, location_hold: holdOf.get(p.id) || null },
     };
   });
   const { data: inserted, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id,first_name,full_name,title,company,fit_reason,data");

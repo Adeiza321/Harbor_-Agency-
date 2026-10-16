@@ -12,11 +12,13 @@
 //   "Greater Chicago Area": kept with a note to check). An unknown location is the caller's matter.
 
 import { askAI } from "./ai.ts";
-import { cleanLocation, countryIn } from "./xray_rules.ts";
+import { cleanLocation, countryIn, broadPlace } from "./xray_rules.ts";
 export { cleanLocation };
 import { jobCountryNames } from "./regions.ts";
 
-export type AreaAnswer = { inArea: "yes" | "no" | "unsure"; note: string };
+// "error": the check itself failed (AI unreachable) - never cached, never treated as a pass; the
+// caller holds the person back until a later check answers.
+export type AreaAnswer = { inArea: "yes" | "no" | "unsure" | "error"; note: string };
 // Problems from the last checks (shown by the sweep), so a failing AI call never passes silently.
 export const areaErrors: string[] = [];
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -69,6 +71,9 @@ export async function checkPlaces(admin: any, job: any, area: any, places: strin
       continue;
     }
     if (o.city.length > 2 && (" " + k + " ").includes(" " + keyOf(o.city) + " ")) { out.set(raw, { inArea: "yes", note: "" }); continue; }
+    // Only a country or a state/region ("United Kingdom", "England", "Texas, United States"): can't
+    // tell, unless the job itself covers that whole state (an office given only as "Virginia").
+    if (broadPlace(raw) && !(o.city.length > 2 && keyOf(raw).includes(keyOf(o.city)))) { out.set(raw, { inArea: "unsure", note: "Only the country or region is shown" }); continue; }
     if (cache[k]) { out.set(raw, cache[k]); continue; }
     ask.push(raw);
   }
@@ -83,8 +88,12 @@ export async function checkPlaces(admin: any, job: any, area: any, places: strin
       const batch = ask.slice(i, i + 40);
       const head = `Office: ${o.text || "(not given)"}\nWork setup: ${job.work_setup || "on-site"}\nSearch area: ${area?.summary || o.text}\n\nPlaces (i | place):\n`;
       let res: any = null;
-      try { res = await askAI(sys, head + batch.map((p, n) => `${n} | ${p}`).join("\n"), 3000); } catch (e) { areaErrors.push(String((e as Error)?.message || e).slice(0, 200)); console.error("area check", areaErrors[areaErrors.length - 1]); }
-      if (res && !Array.isArray(res?.results)) areaErrors.push("unexpected answer: " + JSON.stringify(res).slice(0, 200));
+      // Two tries (a busy AI often answers the second time); a failure is never read as "in the area".
+      for (let t = 0; t < 2 && !Array.isArray(res?.results); t++) {
+        if (t) await new Promise((r) => setTimeout(r, 4000));
+        try { res = await askAI(sys, head + batch.map((p, n) => `${n} | ${p}`).join("\n"), 3000); } catch (e) { areaErrors.push(String((e as Error)?.message || e).slice(0, 200)); console.error("area check", areaErrors[areaErrors.length - 1]); }
+        if (res && !Array.isArray(res?.results)) { areaErrors.push("unexpected answer: " + JSON.stringify(res).slice(0, 200)); res = null; }
+      }
       for (const r of Array.isArray(res?.results) ? res.results : []) {
         const p = batch[Number(r?.i)];
         if (!p) continue;
@@ -92,9 +101,10 @@ export async function checkPlaces(admin: any, job: any, area: any, places: strin
         out.set(p, a);
         cache[keyOf(p)] = a;
       }
-      for (const p of batch) if (!out.has(p)) out.set(p, { inArea: "unsure", note: "" });
+      for (const p of batch) if (!out.has(p)) out.set(p, { inArea: res ? "unsure" : "error", note: res ? "" : "Location check failed: will retry" });
     }
     // Remember the answers on the job (the latest sourcing, so nothing else is overwritten).
+    if (!Object.keys(cache).length) return out;
     const { data: now } = await admin.from("jobs").select("sourcing").eq("id", job.id).maybeSingle();
     const keep = Object.fromEntries(Object.entries(cache).slice(-400));
     await admin.from("jobs").update({ sourcing: { ...(now?.sourcing || {}), geo: keep } }).eq("id", job.id);
@@ -112,11 +122,14 @@ export function answerFor(map: Map<string, AreaAnswer>, place: unknown): AreaAns
 // and dropped (clearly too far, with why). `loc` reads a person's location.
 export async function splitByArea<T>(admin: any, job: any, area: any, people: T[], loc: (p: T) => unknown) {
   const map = await checkPlaces(admin, job, area, people.map((p) => String(loc(p) || "")));
-  const kept: { p: T; note: string }[] = [], dropped: { p: T; why: string }[] = [];
+  const kept: { p: T; note: string; hold?: string }[] = [], dropped: { p: T; why: string }[] = [];
+  const onsite = !fullyRemote(job);
   for (const p of people) {
     const a = answerFor(map, loc(p));
-    if (a && a.inArea === "no") dropped.push({ p, why: "Outside the commute area" + (a.note ? ": " + a.note : "") });
-    else kept.push({ p, note: a && a.inArea === "unsure" ? "Location vague: check they can commute" : "" });
+    if (a && a.inArea === "no") { dropped.push({ p, why: "Outside the commute area" + (a.note ? ": " + a.note : "") }); continue; }
+    // hold: not emailed automatically until someone checks (or a later check answers).
+    const hold = !a ? (onsite ? "Location not shown" : "") : a.inArea === "error" ? "Location not checked yet" : a.inArea === "unsure" && onsite ? (a.note || "Location vague") : "";
+    kept.push({ p, note: hold ? hold + ": check they can commute" : "", ...(hold ? { hold } : {}) });
   }
   return { kept, dropped };
 }
