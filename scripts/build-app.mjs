@@ -46,7 +46,8 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  `connect-src 'self' ${SB} ${SB.replace("https://", "wss://")}`,
+  // open.er-api.com: today's exchange rates for the Team audit's currency conversion.
+  `connect-src 'self' ${SB} ${SB.replace("https://", "wss://")} https://open.er-api.com`,
   `frame-src 'self' blob: ${SB}`,
   "worker-src 'self' blob:",
   "object-src 'none'",

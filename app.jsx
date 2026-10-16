@@ -2544,11 +2544,43 @@ function TeamToday({ S }) {
    (scheduled runs) are shown as System.
    Cost per hire = cost / hires. Return = revenue / cost. Money in the goal currency (USD). */
 const AI_SCREEN_EST = 0.01;
+/* Exchange rates (US dollar base) from ExchangeRate-API's free daily feed, kept for 12 hours in this
+   browser. convert() returns null when a rate isn't known, so the caller can say what it left out. */
+const FX_KEY = "pronext-fx-v1";
+function useFxRates() {
+  const [fx, setFx] = useState(() => { try { const c = JSON.parse(localStorage.getItem(FX_KEY) || "null"); return c && c.rates ? c : null; } catch (e) { return null; } });
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (fx && Date.now() - fx.at < 12 * 3600e3) return;
+    fetch("https://open.er-api.com/v6/latest/USD").then((r) => r.json()).then((d) => {
+      if (d && d.result === "success" && d.rates) { const v = { at: Date.now(), rates: d.rates, updated: d.time_last_update_utc || "" }; setFx(v); try { localStorage.setItem(FX_KEY, JSON.stringify(v)); } catch (e) { /* private window */ } }
+      else setFailed(true);
+    }).catch(() => setFailed(true));
+  }, []); // eslint-disable-line
+  const convert = (n, from, to) => {
+    const v = Number(n) || 0;
+    if (!v || !from || from === to) return v;
+    const r = fx && fx.rates;
+    return r && r[from] && r[to] ? (v / r[from]) * r[to] : null;
+  };
+  return { fx, failed: failed && !fx, convert };
+}
+// Common currencies first in the pickers, then every other one.
+const TOP_CURRENCIES = ["USD", "NGN", "GBP", "EUR", "CAD", "AUD", "AED", "ZAR", "KES", "GHS", "INR", "SAR"];
+const CURRENCY_ORDER = [...TOP_CURRENCIES.filter((c) => CURRENCIES.includes(c)), ...CURRENCIES.filter((c) => !TOP_CURRENCIES.includes(c))];
 function RecruiterAuditPage({ S, toast }) {
   const pr = usePeriod("this_month");
   const goal = (S.settings && S.settings.revenueGoal) || {};
-  const cur = goal.currency || "USD";
+  const baseCur = goal.currency || "USD";
+  // The currency the page is shown in (remembered in this browser); every amount, whatever it was
+  // entered in, is converted to it at today's rate.
+  const [cur, setCurRaw] = useState(() => { try { return localStorage.getItem("pronext-audit-cur") || baseCur; } catch (e) { return baseCur; } });
+  const setCur = (c) => { setCurRaw(c); try { localStorage.setItem("pronext-audit-cur", c); } catch (e) { /* private window */ } };
+  const { fx, failed: fxFailed, convert } = useFxRates();
+  const missed = new Set(); // currencies we couldn't convert (left out)
+  const cv = (n, from) => { const v = convert(n, from || baseCur, cur); if (v == null) { missed.add(from); return 0; } return v; };
   const tc = { apollo: 0, brevo: 0, ...(goal.toolCosts || {}) };
+  const tcur = { apollo: baseCur, brevo: baseCur, ...(goal.toolCur || {}) }; // each tool's own currency
   // Job ads paid: [{ id, date: "2026-10-16", amount, jobId, recruiterId }]. Older month totals
   // (adSpend: { "2026-10": 250 }) are shown as unassigned entries until they're given a job/recruiter.
   const adList = [...(Array.isArray(goal.adEntries) ? goal.adEntries : []),
@@ -2584,13 +2616,13 @@ function RecruiterAuditPage({ S, toast }) {
     }
     return n;
   })();
-  const toolPool = ((Number(tc.apollo) || 0) + (Number(tc.brevo) || 0)) * monthsShare;
+  const toolPool = (cv(tc.apollo, tcur.apollo) + cv(tc.brevo, tcur.brevo)) * monthsShare;
   // Job ads paid in the period (by payment date), charged to the recruiter they were run for; with
   // only a job, split between that job's recruiters on the team; with neither (old month totals),
   // split by the period's hires so it still counts.
   const dayOf = (ymd) => new Date(ymd + "T00:00:00").getTime();
   const adsIn = adList.filter((x) => inP(dayOf(x.date)));
-  const adPool = adsIn.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const adPool = adsIn.reduce((a, x) => a + cv(x.amount, x.currency), 0);
   const teamIds = new Set(rows.map((r) => r.u.id));
   const hiresOf = (id) => S.placements.filter((p) => p.recruiterId === id && inP(p.createdAt) && p.status !== "Fallout").length;
   const teamHires = rows.reduce((a, r) => a + hiresOf(r.u.id), 0);
@@ -2603,30 +2635,29 @@ function RecruiterAuditPage({ S, toast }) {
   };
   const data = rows.map((r) => {
     const pl = S.placements.filter((p) => p.recruiterId === r.u.id && inP(p.createdAt) && p.status !== "Fallout");
-    const inCur = (p, k, c) => (p[c] === cur ? Number(p[k]) || 0 : 0);
-    const revenue = pl.reduce((a, p) => a + (p.payType === "monthly" ? placementMonthly(p) * (p.contractMonths || CONTRACT_DEFAULT_MONTHS) : inCur(p, "feeNum", "feeCurrency")), 0);
-    const incentives = pl.reduce((a, p) => a + inCur(p, "incentiveNum", "incentiveCurrency"), 0);
+    const revenue = pl.reduce((a, p) => a + cv(p.payType === "monthly" ? placementMonthly(p) * (p.contractMonths || CONTRACT_DEFAULT_MONTHS) : p.feeNum, p.feeCurrency), 0);
+    const incentives = pl.reduce((a, p) => a + cv(p.incentiveNum, p.incentiveCurrency), 0);
     const tools = toolPool * (totalPts ? r.score / totalPts : rows.length ? 1 / rows.length : 0);
     const mine = (ai || []).filter((x) => x.user_id === r.u.id);
-    const byFeat = (f) => mine.filter((x) => (f === "assistant" ? x.feature === "assistant" : x.feature !== "assistant")).reduce((a, x) => a + Number(x.cost_usd || 0), 0);
+    const byFeat = (f) => cv(mine.filter((x) => (f === "assistant" ? x.feature === "assistant" : x.feature !== "assistant")).reduce((a, x) => a + Number(x.cost_usd || 0), 0), "USD");
     // Screenings from before logging began: estimated, charged to whoever put the candidate forward.
     const oldScreens = S.cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => (l.addedBy || c.recruiterId) === r.u.id && l.ai && l.ai.stage
       && l.ai.updatedAt && inP(new Date(l.ai.updatedAt).getTime()) && new Date(l.ai.updatedAt).getTime() < (logFrom == null ? Infinity : logFrom)).length, 0);
-    const aiAssistant = byFeat("assistant"), aiScreening = byFeat("other") + oldScreens * AI_SCREEN_EST;
+    const aiAssistant = byFeat("assistant"), aiScreening = byFeat("other") + cv(oldScreens * AI_SCREEN_EST, "USD");
     const aiCost = aiAssistant + aiScreening;
-    const adsCost = adsIn.reduce((a, x) => a + (Number(x.amount) || 0) * adShare(x, r), 0);
+    const adsCost = adsIn.reduce((a, x) => a + cv(x.amount, x.currency) * adShare(x, r), 0);
     const cost = incentives + tools + adsCost + aiCost;
     return { ...r, hires: pl.length, revenue, incentives, tools, adsCost, aiCost, aiAssistant, aiScreening, oldScreens, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
   });
   const sum = (k) => data.reduce((a, x) => a + (x[k] || 0), 0);
   const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost"), cost: sum("cost") };
-  const m = (v) => money(v, cur);
+  const m = (v) => { try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: cur, currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(Number(v || 0)); } catch (e) { return money(v, cur); } };
   const m2 = (v) => money2(v, cur);
   const todayYmd = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
   const openCosts = () => {
-    setCf({ apollo: tc.apollo ? String(tc.apollo) : "", brevo: tc.brevo ? String(tc.brevo) : "" });
+    setCf({ apollo: tc.apollo ? String(tc.apollo) : "", brevo: tc.brevo ? String(tc.brevo) : "", apolloCur: tcur.apollo, brevoCur: tcur.brevo });
     setAdDraft(adList.map((x) => ({ ...x })));
-    setNa({ amount: "", date: todayYmd(), jobId: "", recruiterId: "" });
+    setNa({ amount: "", currency: cur, date: todayYmd(), jobId: "", recruiterId: "" });
     setCostsOpen(true);
   };
   const jobTitle = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? j.role + " · " + j.client : ""; };
@@ -2636,22 +2667,27 @@ function RecruiterAuditPage({ S, toast }) {
     if (!(amount > 0)) { toast("Enter what was paid"); return; }
     if (!na.jobId && !na.recruiterId) { toast("Choose the job or the recruiter the ad was for"); return; }
     if (!na.date) { toast("Enter the date it was paid"); return; }
-    setAdDraft([{ id: Math.random().toString(36).slice(2, 10), date: na.date, amount, jobId: na.jobId, recruiterId: na.recruiterId }, ...adDraft]);
-    setNa({ amount: "", date: na.date, jobId: "", recruiterId: "" });
+    setAdDraft([{ id: Math.random().toString(36).slice(2, 10), date: na.date, amount, currency: na.currency || cur, jobId: na.jobId, recruiterId: na.recruiterId }, ...adDraft]);
+    setNa({ amount: "", currency: na.currency, date: na.date, jobId: "", recruiterId: "" });
   };
   const saveCosts = () => {
     setCostsBusy(true);
-    const adEntries = adDraft.filter((x) => Number(x.amount) > 0).map(({ id, date, amount, jobId, recruiterId }) => ({ id: String(id).startsWith("m-") ? Math.random().toString(36).slice(2, 10) : id, date, amount: Number(amount), jobId: jobId || "", recruiterId: recruiterId || "" }));
-    S.saveRevenueGoal({ ...goal, toolCosts: { ...tc, apollo: Math.max(0, num(cf.apollo) || 0), brevo: Math.max(0, num(cf.brevo) || 0) }, adEntries, adSpend: {} })
+    const adEntries = adDraft.filter((x) => Number(x.amount) > 0).map(({ id, date, amount, currency, jobId, recruiterId }) => ({ id: String(id).startsWith("m-") ? Math.random().toString(36).slice(2, 10) : id, date, amount: Number(amount), currency: currency || baseCur, jobId: jobId || "", recruiterId: recruiterId || "" }));
+    S.saveRevenueGoal({ ...goal, toolCosts: { ...tc, apollo: Math.max(0, num(cf.apollo) || 0), brevo: Math.max(0, num(cf.brevo) || 0) }, toolCur: { apollo: cf.apolloCur || baseCur, brevo: cf.brevoCur || baseCur }, adEntries, adSpend: {} })
       .then(() => { setCostsOpen(false); toast("Costs saved"); }).catch(() => {}).finally(() => setCostsBusy(false));
   };
   const openJobs = S.jobs.filter((j) => j.status !== "Draft").slice().sort((a, b) => (a.status === "Closed") - (b.status === "Closed") || String(a.client).localeCompare(String(b.client)));
   const sel = "rounded-lg border px-2 py-1.5 text-sm w-full min-w-0";
+  const curPick = (value, onChange, label, cls) => (
+    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className={cls || "bg-transparent text-xs outline-none"} style={{ color: C.ink2 }}>
+      {CURRENCY_ORDER.map((c) => <option key={c} value={c}>{c}</option>)}
+    </select>
+  );
   const costField = (k, label, hint) => (
     <div className="flex items-center justify-between gap-3 py-2" style={{ borderTop: `1px solid ${C.line}` }}>
       <label htmlFor={"cost-" + k} className="text-sm">{label}{hint && <span className="block text-xs" style={{ color: C.ink3 }}>{hint}</span>}</label>
-      <div className="flex items-center gap-1 rounded-lg border px-2 py-1.5 w-32 shrink-0" style={{ borderColor: C.line }}>
-        <span className="text-xs" style={{ color: C.ink3 }}>{cur}</span>
+      <div className="flex items-center gap-1 rounded-lg border px-2 py-1.5 w-40 shrink-0" style={{ borderColor: C.line }}>
+        {curPick(cf[k + "Cur"] || baseCur, (c) => setCf({ ...cf, [k + "Cur"]: c }), label + " currency")}
         <input id={"cost-" + k} inputMode="decimal" placeholder="0" value={cf[k] || ""} onChange={(e) => setCf({ ...cf, [k]: e.target.value.replace(/[^0-9.,]/g, "") })}
           onKeyDown={(e) => { if (e.key === "Enter") saveCosts(); }} className="w-full min-w-0 bg-transparent outline-none text-sm text-right" style={{ fontVariantNumeric: "tabular-nums" }} />
       </div>
@@ -2681,6 +2717,7 @@ function RecruiterAuditPage({ S, toast }) {
         <SectionTitle size="text-3xl md:text-4xl" title="Team audit" sub="What everyone on the team (Admins, Rec Ops and Recruiters) did, the hires they made, and what each person and each hire cost the agency." />
         <div className="flex items-start gap-2 flex-wrap">
           <Btn onClick={openCosts}><Pencil size={14} /> Edit costs</Btn>
+          {curPick(cur, setCur, "Show amounts in", "rounded-lg border px-2 py-1.5 text-sm")}
           <PeriodSelect id="audit-period" value={pr.key} onChange={pr.setKey} custom={pr.custom} setCustom={pr.setCustom} />
         </div>
       </div>
@@ -2690,6 +2727,11 @@ function RecruiterAuditPage({ S, toast }) {
         <KPI label="Cost" value={m(tot.cost)} foot="incentives + tools + ads + AI" />
         <KPI label="Cost per hire" value={tot.hires ? m(tot.cost / tot.hires) : "–"} foot={tot.cost ? "return " + (Math.round((tot.revenue / tot.cost) * 10) / 10) + "× cost" : "no cost yet"} />
       </KPIGrid>
+      {missed.size > 0 && (
+        <div className="rounded-xl px-4 py-3 text-sm" style={{ background: C.warnBg, color: C.warnFg }}>
+          Amounts in {[...missed].filter(Boolean).join(", ") || "other currencies"} aren't counted here because {fxFailed || !fx ? "today's exchange rates couldn't load. Refresh to try again, or" : "there's no exchange rate for them, so"} switch the currency at the top to see them.
+        </div>
+      )}
       <Modal open={costsOpen} onClose={() => setCostsOpen(false)} title="Edit costs">
         <div className="text-xs mb-1" style={{ color: C.ink2 }}>Counted in the cost and cost per hire. Tools are split by each person's share of the activity; each job ad is charged to the recruiter it was run for.</div>
         <div className="text-xs font-semibold tracking-widest mt-3 mb-1" style={{ color: C.ink3 }}>TOOLS · A MONTH</div>
@@ -2698,8 +2740,10 @@ function RecruiterAuditPage({ S, toast }) {
         <div className="text-xs font-semibold tracking-widest mt-4 mb-1" style={{ color: C.ink3 }}>JOB ADS · WHAT YOU PAID</div>
         <div className="rounded-xl p-3 flex flex-col gap-2" style={{ background: C.canvas }}>
           <div className="grid grid-cols-2 gap-2">
-            <div className="flex flex-col min-w-0"><label htmlFor="ad-amount" className="text-xs" style={{ color: C.ink2 }}>Amount ({cur})</label>
-              <input id="ad-amount" inputMode="decimal" placeholder="0" value={na.amount} onChange={(e) => setNa({ ...na, amount: e.target.value.replace(/[^0-9.,]/g, "") })} className={sel} style={{ borderColor: C.line, background: C.card }} /></div>
+            <div className="flex flex-col min-w-0"><label htmlFor="ad-amount" className="text-xs" style={{ color: C.ink2 }}>Amount</label>
+              <div className="flex items-center gap-1 rounded-lg border px-2 py-1.5 min-w-0" style={{ borderColor: C.line, background: C.card }}>
+                {curPick(na.currency || cur, (c) => setNa({ ...na, currency: c }), "Ad payment currency")}
+                <input id="ad-amount" inputMode="decimal" placeholder="0" value={na.amount} onChange={(e) => setNa({ ...na, amount: e.target.value.replace(/[^0-9.,]/g, "") })} className="w-full min-w-0 bg-transparent outline-none text-sm" /></div></div>
             <div className="flex flex-col min-w-0"><label htmlFor="ad-date" className="text-xs" style={{ color: C.ink2 }}>Date paid</label>
               <input id="ad-date" type="date" value={na.date} onChange={(e) => setNa({ ...na, date: e.target.value })} className={sel} style={{ borderColor: C.line, background: C.card }} /></div>
           </div>
@@ -2723,11 +2767,12 @@ function RecruiterAuditPage({ S, toast }) {
                 <div className="truncate">{x.jobId ? jobTitle(x.jobId) || "A job no longer listed" : x.recruiterId ? "General ads" : "Not assigned yet"}</div>
                 <div className="text-xs truncate" style={{ color: x.jobId || x.recruiterId ? C.ink3 : C.dangerFg }}>{new Date(x.date + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })} · {x.recruiterId ? personName(x.recruiterId) : x.jobId ? "everyone on this job" : "old month total: remove it and add it with a job or recruiter"}</div>
               </div>
-              <div className="flex items-center gap-2 shrink-0"><span style={{ fontVariantNumeric: "tabular-nums" }}>{m2(x.amount)}</span>
+              <div className="flex items-center gap-2 shrink-0"><span style={{ fontVariantNumeric: "tabular-nums" }}>{money2(x.amount, x.currency || baseCur)}</span>
                 <button aria-label="Remove this payment" onClick={() => setAdDraft(adDraft.filter((y) => y.id !== x.id))} className="w-7 h-7 rounded-full flex items-center justify-center" style={{ background: C.canvas }}><X size={13} /></button></div>
             </div>
           ))}
         </div>
+        <div className="text-[11px] mt-3" style={{ color: C.ink3 }}>Enter each cost in the currency you paid it in. It's converted to {cur} at today's rate (<a href="https://www.exchangerate-api.com" target="_blank" rel="noopener noreferrer" className="underline">Rates By Exchange Rate API</a>).</div>
         <div className="flex gap-2 justify-end mt-4"><Btn onClick={() => setCostsOpen(false)} disabled={costsBusy}>Cancel</Btn><Btn kind="primary" onClick={saveCosts} disabled={costsBusy}>{costsBusy ? "Saving…" : "Save"}</Btn></div>
       </Modal>
       <Card>
