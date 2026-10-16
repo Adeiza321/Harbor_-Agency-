@@ -88,6 +88,16 @@ export function sourceText(p: any): string {
   return "your work profile in Apollo.io, a business contact database";
 }
 
+// The same, in a few words, for the one-line footer of template emails.
+export function sourceShort(p: any): string {
+  const src = String(p?.data?.email_source || "");
+  const site = p?.source === "github" ? "GitHub" : p?.source === "apollo" ? "" : "LinkedIn";
+  const via = /contactout/i.test(src) ? "ContactOut" : /apollo/i.test(src) || p?.source === "apollo" ? "Apollo.io" : /pdl|people data/i.test(src) || p?.source === "pdl" ? "People Data Labs" : "";
+  if (site && via) return `your public ${site} profile, with contact details from ${via}`;
+  if (site) return `your public ${site} profile`;
+  return via ? `${via}, a business contact database` : "a business contact database";
+}
+
 export function candidateEmail(m: CandidateMail): { text: string; html: string } {
   const b = m.brand;
   const meta = [m.role.location, m.role.workSetup, m.role.employmentType].filter(Boolean)
@@ -140,10 +150,10 @@ export function templateEmail(m: { brand: Brand; region: Region; text: string; s
   const b = m.brand;
   const signName = m.signoff || m.senderName.split(" ")[0] || "";
   const plain = m.text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\{\{APPLY_LINK\}\}/g, m.applyUrl);
-  // Footer: the business address, unsubscribe and delete-my-details links, and the copyright line.
+  // Footer: the business address; where we found their details, with unsubscribe and delete links; the copyright line.
   const t = [plain, ...(m.referUrl ? ["", "Not quite right for you? If you know someone who'd be great, refer them here: " + m.referUrl] : []), "", signName, "", "--"];
   if (m.address) t.push(m.address);
-  t.push("Unsubscribe: " + m.unsubUrl, "Delete my details: " + m.deleteUrl, `© ${new Date().getFullYear()} ${b.legal || b.name}`);
+  t.push(`We found your details on ${m.source || "a business contact database"}. Not interested? Unsubscribe: ${m.unsubUrl} or have your details deleted: ${m.deleteUrl}`, `© ${new Date().getFullYear()} ${b.legal || b.name}`);
   const inline = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
     .replace(/\{\{APPLY_LINK\}\}/g, `<a href="${esc(m.applyUrl)}" style="color:${b.color};">apply here</a>`)
     .replace(/apply here:?\s*<a /i, "<a ");
@@ -168,7 +178,7 @@ export function templateEmail(m: { brand: Brand; region: Region; text: string; s
   const html = emailShell(b, m.subject, body + button(b, m.applyUrl, "Apply now") +
     (m.referUrl ? `<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Not quite right for you? If you know someone who'd be great, <a href="${esc(m.referUrl)}" style="color:${b.color};">refer them here</a>.</div>` : "") + signHtml(signName, m.senderTitle, m.agency), undefined, undefined,
     (m.address ? esc(m.address) + "<br>" : "") +
-    `<a href="${esc(m.unsubUrl)}" style="color:#56605A;text-decoration:underline;">Unsubscribe</a> &nbsp;&middot;&nbsp; <a href="${esc(m.deleteUrl)}" style="color:#56605A;text-decoration:underline;">Delete my details</a>`);
+    `<div style="margin-top:4px;">We found your details on ${esc(m.source || "a business contact database")}. Not interested? <a href="${esc(m.unsubUrl)}" style="color:#56605A;text-decoration:underline;">Unsubscribe</a> or <a href="${esc(m.deleteUrl)}" style="color:#56605A;text-decoration:underline;">have your details deleted</a>.</div>`);
   return { text: t.join("\n").replace(/\n{3,}/g, "\n\n"), html };
 }
 

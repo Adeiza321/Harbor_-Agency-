@@ -6,7 +6,7 @@
 import { footerText, regionOf, countryCode, type Region } from "./regions.ts";
 import { emailHash, provider, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
-import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceText, templateEmail } from "./outreach.ts";
+import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceShort, sourceText, templateEmail } from "./outreach.ts";
 import { isTemplateBody, templateParts } from "./template.ts";
 import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
 
@@ -80,7 +80,7 @@ export async function composeProspect(admin: any, p: any, s: Settings, agencyNam
     return templateEmail({ brand: b, region, text: tp.text, signoff: tp.signoff, subject: p.subject || job.role_title || "",
       senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
       applyUrl: q("go=apply&pt=" + encodeURIComponent(p.unsub_token || "")), referUrl: q("refer=1&pt=" + encodeURIComponent(p.unsub_token || "")),
-      unsubUrl: linkFor(p.unsub_token, "p", "unsubscribe"), deleteUrl: linkFor(p.unsub_token, "p", "delete"), source: sourceText(p) });
+      unsubUrl: linkFor(p.unsub_token, "p", "unsubscribe"), deleteUrl: linkFor(p.unsub_token, "p", "delete"), source: sourceShort(p) });
   }
   const { paragraphs, signoff } = introOf(String(p.body || "").replace(/\{\{INTERESTED_LINK\}\}/g, ""));
   return candidateEmail({
