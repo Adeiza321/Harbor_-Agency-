@@ -49,6 +49,26 @@ function defaultReasonText(reason: string, kind: string) {
   }
 }
 
+// A short card about the role for a routed candidate: where, type, pay (the same facts the public job page
+// shows) and the opening lines of the description, so they know what it is before they click.
+function roleCard(job: any) {
+  if (!job) return "";
+  const money = (n: unknown, cur: string) => { const v = Number(n); if (!isFinite(v) || !v) return ""; try { return new Intl.NumberFormat("en-US", { style: "currency", currency: cur || "USD", maximumFractionDigits: 0 }).format(v); } catch { return v.toLocaleString() + " " + (cur || ""); } };
+  const per: Record<string, string> = { Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" };
+  const range = [money(job.min_pay, job.currency), money(job.max_pay, job.currency)].filter(Boolean);
+  const pay = job.commission_only ? "Commission only" : range.length ? (range.length === 2 && range[0] === range[1] ? range[0] : range.join(" – ")) + (per[job.salary_period] ? " " + per[job.salary_period] : "") : "";
+  const where = [job.work_setup, [job.location, job.country].filter(Boolean).join(", ")].filter(Boolean).join(" · ");
+  const rows = [["Where", where], ["Type", job.employment_type || ""], ["Pay", pay]].filter((r) => r[1]);
+  // The first paragraph of the description, cut at a sentence end near 320 characters.
+  let intro = String(job.description || "").split(/\n\s*\n/)[0].replace(/\s+/g, " ").trim();
+  if (intro.length > 320) { const cutAt = intro.slice(0, 320).lastIndexOf(". "); intro = (cutAt > 120 ? intro.slice(0, cutAt + 1) : intro.slice(0, 317).trimEnd() + "…"); }
+  if (!rows.length && !intro) return "";
+  return `<div style="margin-top:16px;padding:16px 18px;background:#F3EFE7;border-radius:12px;">
+    ${rows.length ? `<table role="presentation" cellpadding="0" cellspacing="0" style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">${rows.map(([k, v]) => `<tr><td style="color:#56605A;padding:2px 14px 2px 0;vertical-align:top;">${k}</td><td style="color:#14201B;padding:2px 0;font-weight:600;">${esc(v)}</td></tr>`).join("")}</table>` : ""}
+    ${intro ? `<div style="font-size:14px;line-height:1.6;color:#14201B;${rows.length ? "margin-top:10px;" : ""}">${esc(intro)}</div>` : ""}
+  </div>`;
+}
+
 // Short opt-in question with Yes / No. Each opens the candidate page with that answer picked,
 // where one click confirms it (mail scanners open links, so nothing is saved from the email).
 function pitchYesNo(b: Brand, portalUrl: string) {
@@ -138,7 +158,7 @@ Deno.serve(async (req: Request) => {
     if (!candidateId) return json({ error: "candidateId is required" }, 400);
     const { data: cand } = await admin.from("candidates").select("id,name,email,recruiter_id,portal_token,status,pitch_consent,pitch_consent_at,email_opt_out").eq("id", candidateId).single();
     if (!cand) return json({ error: "Candidate not found" }, 404);
-    const { data: job } = link ? await admin.from("jobs").select("role_title,client").eq("id", link.job_id).maybeSingle() : { data: null };
+    const { data: job } = link ? await admin.from("jobs").select("role_title,client,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,commission_only,description").eq("id", link.job_id).maybeSingle() : { data: null };
     if (!isStaff && cand.recruiter_id !== me.id) {
       const { data: jr } = link ? await admin.from("job_recruiters").select("recruiter_id").eq("job_id", link.job_id).eq("recruiter_id", me.id).maybeSingle() : { data: null };
       if (!jr) return json({ error: "You don't have access to this candidate" }, 403);
@@ -167,7 +187,8 @@ Deno.serve(async (req: Request) => {
         const routedHtml = emailShell(brand, subj,
           `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
            <div style="font-size:15px;line-height:1.6;"><b>${esc(recruiterName)}</b> thinks you'd be a strong fit for ${roleHtml} and would like to put you forward.</div>
-           <div style="font-size:15px;line-height:1.6;margin-top:12px;">Open your candidate page to see the role, answer any questions, and accept or decline. Nothing is shared with the employer until you accept.</div>
+           ${roleCard(job)}
+           <div style="font-size:15px;line-height:1.6;margin-top:16px;">Open your candidate page to see the role, answer any questions, and accept or decline. Nothing is shared with the employer until you accept.</div>
            ${button(brand, portalUrl, "View the role")}
            ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);
         const sentRouted = await sendBrevo(brand, { email: cand.email, name: cand.name }, subj, routedHtml);
