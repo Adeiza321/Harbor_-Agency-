@@ -1,5 +1,6 @@
 import { MEMORY_TOOLS, learnFromTurn, loadMemories, memoryPrompt, runMemoryTool } from "./memory.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { readAttachment } from "./attach.ts";
 
 // The ProNext assistant: helps close roles. Signed-in staff only.
 //   - It LOOKS THINGS UP itself (candidates, jobs, pipelines, interviews, client feedback, AI
@@ -29,11 +30,16 @@ const cors = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const FAST = Deno.env.get("ASSISTANT_MODEL") || Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5-20251001";
-const SMART = Deno.env.get("ASSISTANT_SMART_MODEL") || "claude-sonnet-4-5";
-// USD per million tokens, for the spend log (input, output). Web search: $10 per 1,000.
-const PRICE: Record<string, [number, number]> = { haiku: [1, 5], sonnet: [3, 15], opus: [5, 25] };
-const priceOf = (m: string) => PRICE[Object.keys(PRICE).find((k) => m.includes(k)) || "sonnet"];
+// Models: Sonnet for normal conversations, Haiku for one-word follow-ups (and background memory
+// notes), Opus when it has to think hardest (brainstorm mode, or the app asks for the smart model).
+// Each can be overridden with a secret. (ANTHROPIC_MODEL is deliberately not used here: other
+// functions set it for their own cheaper work.)
+const FAST = Deno.env.get("ASSISTANT_MODEL") || "claude-haiku-5-5";
+const SMART = Deno.env.get("ASSISTANT_SMART_MODEL") || "claude-sonnet-5-5";
+const DEEP = Deno.env.get("ASSISTANT_DEEP_MODEL") || "claude-opus-5-5";
+// USD per million tokens, for the spend log (input, output). Web search: $10 per 1,000. Most specific match first.
+const PRICE: [string, [number, number]][] = [["haiku-5", [0.1, 0.5]], ["sonnet-5", [2, 10]], ["opus-5", [4, 20]], ["haiku", [1, 5]], ["sonnet", [3, 15]], ["opus", [5, 25]]];
+const priceOf = (m: string) => (PRICE.find(([k]) => m.includes(k)) || PRICE[1])[1];
 const MAX_STEPS = 10;
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : "");
@@ -518,6 +524,7 @@ FINDING PEOPLE: when the person names someone, or pastes a LinkedIn link or an e
 BE EXACT: never say you checked, saw, found or did something unless a tool in this conversation actually did it; say "I searched X and found Y". You cannot open LinkedIn profiles (LinkedIn blocks it): never describe a LinkedIn profile you haven't been given. Use what ProNext holds about the person, or ask.
 PROSPECTS are people found by X-ray or Apollo for a role; they are not candidates yet, and their ids are prospect ids. propose_route, propose_message, propose_stage, propose_note and propose_interview only work for candidates. For a prospect use propose_prospect (approve their outreach email, mark them contacted after a LinkedIn message, skip, put back); write a LinkedIn message in its message field so the person can copy it.
 For "what changed / what moved today", briefs and round-ups, use recent_activity (and list_jobs / list_interviews) instead of guessing.
+FILES AND VOICE NOTES: the person can attach documents (CVs, job descriptions, client briefs, spreadsheets, screenshots) and send voice notes. They arrive inside <attachment name="…" kind="…"> tags as text read from the file, or as a transcript for a voice note. Treat a voice note exactly like a typed message (it's what they said; transcripts can mishear names, so check a name with find_person before acting on it). Read attachments carefully and work from them: for a CV, say who the person is and how they fit the role in view or the roles they ask about (check get_job for must-haves; a CV alone doesn't make them a candidate in ProNext, so check find_person first and propose adding or routing them only if asked); for a job description or brief, pull out title, location, pay, must-haves and nice-to-haves, and compare with ProNext's open roles; for a spreadsheet, work from the actual rows and give exact counts. Quote figures and names from the file exactly; say if the file looks cut off ("[…shortened]") or a scan was hard to read. On later turns an older file may be shortened; if you need the rest, ask them to attach it again.
 After your lookups and proposals, write your whole answer in your final message: what you found, then what you propose. Don't leave the answer in an earlier message.
 Write plainly and briefly. No markdown headings; short paragraphs or simple "-" lists are fine.`;
   const work = `
@@ -565,7 +572,8 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   const last = String(o.messages[o.messages.length - 1]?.content || "").toLowerCase();
   // The stronger model for conversations (it has to search, reason and stay exact); the fast one
   // only for very short follow-ups like "ok" / "yes" with nothing to look up.
-  const model = o.forceModel || (o.smart || mode === "brainstorm" || last.length > 12 || o.messages.length < 2 ? SMART : FAST);
+  const hasFiles = o.messages.some((m: any) => typeof m.content !== "string" || /<attachment /.test(String(m.content)));
+  const model = o.forceModel || (o.smart || mode === "brainstorm" ? DEEP : last.length > 12 || o.messages.length < 2 || hasFiles ? SMART : FAST);
   let useFetch = true;
   const tools = () => [...READ_TOOLS, ...MEMORY_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => PROPOSE[n])];
   // What it has learned (memory.ts) comes after the cached part, so learning something new doesn't undo the cache.
@@ -576,7 +584,7 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   let text = "", inTok = 0, outTok = 0, searches = 0, steps = 0, error = "", status = 200;
   const texts: string[] = [];
   while (steps++ < MAX_STEPS) {
-    const payload = { model, max_tokens: 3000, system, tools: tools(), messages: convo };
+    const payload = { model, max_tokens: 6000, system, tools: tools(), messages: convo };
     let res = await callClaude(key, payload, useFetch ? "web-fetch-2025-09-10" : null);
     if (!res.ok && res.status === 400 && useFetch) {
       const t = await res.text();
@@ -717,10 +725,35 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true });
     }
 
+    // A file or voice note added in the chat: read once into text (attach.ts); the page keeps the text
+    // with the message and sends it back on each turn.
+    if (body.action === "attach") {
+      const r = await readAttachment({ name: String(body.name || ""), mime: String(body.mime || ""), data: String(body.data || ""), anthropicKey: key });
+      if (r.costUsd > 0) await admin.from("ai_usage").insert({ user_id: me.id, feature: "assistant_files", model: r.model || "", input_tokens: 0, output_tokens: 0,
+        cost_usd: Math.round(r.costUsd * 1e6) / 1e6 }).then(() => {}, () => {});
+      return json({ ok: true, kind: r.kind, text: r.text, truncated: r.truncated });
+    }
+
     const mode = body.mode === "brainstorm" ? "brainstorm" : "work";
     const tz = String(body.tz || "Africa/Lagos");
-    const messages: any[] = (Array.isArray(body.messages) ? body.messages : []).slice(-20)
-      .map((m: any) => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "").slice(0, 6000) }))
+    // Files and voice notes ride along with the message they were sent with: in full on the newest
+    // message, shortened on older ones (the assistant can ask the person to re-send if it needs more).
+    const raw: any[] = (Array.isArray(body.messages) ? body.messages : []).slice(-20);
+    const withFiles = (m: any, newest: boolean) => {
+      const own = String(m.content || "").slice(0, 6000);
+      const files = (Array.isArray(m.attachments) ? m.attachments : []).slice(0, 6).filter((a: any) => a && a.text);
+      if (!files.length || m.role === "assistant") return own;
+      const lim = newest ? 100000 : 6000;
+      const parts = files.map((a: any) => {
+        const t = String(a.text);
+        const label = a.kind === "voice" ? "voice note (transcript)" : String(a.kind || "file");
+        return `<attachment name="${String(a.name || "file").replace(/"/g, "'").slice(0, 120)}" kind="${label}">\n${t.slice(0, lim)}${t.length > lim ? "\n[…shortened]" : ""}\n</attachment>`;
+      });
+      return (parts.join("\n\n") + (own ? "\n\n" + own : "")).trim();
+    };
+    const lastUser = raw.map((m: any) => m.role).lastIndexOf("user");
+    const messages: any[] = raw
+      .map((m: any, i: number) => ({ role: m.role === "assistant" ? "assistant" : "user", content: withFiles(m, i === lastUser) }))
       .filter((m: any) => m.content);
     while (messages.length && messages[0].role !== "user") messages.shift();
     if (!messages.length || messages[messages.length - 1].role !== "user") return json({ error: "Ask something first" }, 400);

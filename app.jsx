@@ -1945,6 +1945,46 @@ async function runProposal(S, p) {
 const gmailComposeUrl = (to, subject, body) => "https://mail.google.com/mail/?view=cm&fs=1" + (to ? "&to=" + encodeURIComponent(to) : "") + "&su=" + encodeURIComponent(subject || "") + "&body=" + encodeURIComponent(String(body || "").slice(0, 6000));
 // Ask the assistant from anywhere in the app: window.dispatchEvent(new CustomEvent("pronext-assistant", { detail: { text, jobId } })).
 const askAssistant = (text, extra) => { try { window.dispatchEvent(new CustomEvent("pronext-assistant", { detail: { text, ...(extra || {}) } })); } catch (e) { /* old browser */ } };
+/* Files and voice notes for the assistant. The page reads the file (or turns the recording into
+   16 kHz mono WAV, a format Gemini accepts from every browser) and the assistant function turns it into
+   text once (assistant attach.ts). The text then travels with the message for the rest of the chat. */
+const ASSIST_ACCEPT = ".pdf,.docx,.xlsx,.xls,.csv,.tsv,.txt,.md,.json,.png,.jpg,.jpeg,.webp,.gif,.mp3,.m4a,.wav,.ogg,.opus,.aac,.webm";
+const ASSIST_MAX_BYTES = 9 * 1024 * 1024;
+const ASSIST_MAX_VOICE_SECS = 300;
+const bytesToB64 = (u8) => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const fileToB64 = (file) => file.arrayBuffer().then((b) => bytesToB64(new Uint8Array(b)));
+const isAudioFile = (f) => /^audio\//.test(f.type || "") || /\.(mp3|m4a|wav|ogg|opus|aac|webm)$/i.test(f.name || "");
+async function audioToWavB64(blob) {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new Ctx();
+  let buf;
+  try { buf = await ctx.decodeAudioData(await blob.arrayBuffer()); } finally { try { ctx.close(); } catch (e) {} }
+  if (buf.duration > ASSIST_MAX_VOICE_SECS + 5) throw new Error("Voice notes can be up to 5 minutes. This one is " + Math.round(buf.duration / 60) + " minutes.");
+  const rate = 16000, len = Math.max(1, Math.ceil(buf.duration * rate));
+  const off = new OfflineAudioContext(1, len, rate);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const w = (o, t) => { for (let i = 0; i < t.length; i++) out.setUint8(o + i, t.charCodeAt(i)); };
+  w(0, "RIFF"); out.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVE"); w(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
+  out.setUint32(24, rate, true); out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); w(36, "data"); out.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) { const v = Math.max(-1, Math.min(1, pcm[i])); out.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true); }
+  return { data: bytesToB64(new Uint8Array(out.buffer)), secs: Math.round(buf.duration) };
+}
+function AttachmentChip({ a, onRemove, light }) {
+  const fg = light ? "#fff" : C.ink, sub = light ? "rgba(255,255,255,.75)" : C.ink3;
+  const Icon = a.kind === "voice" ? Mic : FileText;
+  return (
+    <div className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs max-w-full" style={{ background: light ? "rgba(255,255,255,.16)" : "#fff", border: light ? "none" : `1px solid ${C.line}`, color: fg }}>
+      <Icon size={13} className="shrink-0" />
+      <span className="truncate max-w-[170px]">{a.kind === "voice" ? "Voice note" + (a.secs ? " · " + mmss(a.secs) : "") : a.name}</span>
+      {a.status === "reading" && <span style={{ color: sub }}>{a.kind === "voice" ? "transcribing" : "reading"} <InlineDots /></span>}
+      {a.status === "error" && <span style={{ color: C.dangerFg }} title={a.error}>couldn't read</span>}
+      {a.truncated && <span style={{ color: sub }} title="Only the first part of this file was kept">(long, shortened)</span>}
+      {onRemove && <button type="button" onClick={onRemove} aria-label={"Remove " + (a.name || "file")} className="shrink-0" style={{ color: sub }}><X size={13} /></button>}
+    </div>
+  );
+}
 function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRefreshUpdates, goUpdate }) {
   const desktop = useDesktop();
   const [open, setOpen] = useState(false);
@@ -1956,6 +1996,65 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
   const [memory, setMemory] = useState(null);
   const [memNote, setMemNote] = useState("");
   const [memTeam, setMemTeam] = useState(false);
+  // Files waiting to go with the next message, and the voice recorder.
+  const [files, setFiles] = useState([]);
+  const [rec, setRec] = useState(null); // { secs } while recording
+  const recRef = React.useRef(null);
+  const filesRef = React.useRef([]); filesRef.current = files;
+  const readOne = (name, mime, data) => S.sb("/functions/v1/assistant", { method: "POST", body: { action: "attach", name, mime, data }, timeout: 180000 });
+  const addFiles = async (list) => {
+    for (const f of Array.from(list || [])) {
+      const id = Math.random().toString(36).slice(2);
+      const voice = isAudioFile(f);
+      if (f.size > ASSIST_MAX_BYTES * (voice ? 4 : 1)) { S.error(f.name + " is too big (the limit is 9 MB)."); continue; }
+      setFiles((x) => [...x, { id, name: f.name, kind: voice ? "voice" : "file", status: "reading" }]);
+      try {
+        let r;
+        if (voice) { const w = await audioToWavB64(f); r = await readOne(f.name.replace(/\.[^.]+$/, "") + ".wav", "audio/wav", w.data); r.secs = w.secs; }
+        else r = await readOne(f.name, f.type || "", await fileToB64(f));
+        setFiles((x) => x.map((a) => (a.id === id ? { ...a, status: "ready", kind: r.kind, text: r.text, truncated: !!r.truncated, secs: r.secs } : a)));
+      } catch (e) { setFiles((x) => x.map((a) => (a.id === id ? { ...a, status: "error", error: e.message } : a))); S.error((f.name || "File") + ": " + (e.message || "couldn't be read")); }
+    }
+  };
+  const startRec = async () => {
+    if (rec || busy) return;
+    if (!navigator.mediaDevices || !window.MediaRecorder) { S.error("This browser can't record audio. Try Chrome or Safari."); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { S.error("ProNext needs your permission to use the microphone. Allow it in your browser's address bar, then try again."); return; }
+    const mr = new MediaRecorder(stream);
+    const chunks = [];
+    mr.ondataavailable = (e) => e.data && e.data.size && chunks.push(e.data);
+    const started = Date.now();
+    const timer = setInterval(() => { const secs = (Date.now() - started) / 1000; setRec({ secs }); if (secs >= ASSIST_MAX_VOICE_SECS) stopRec(true); }, 250);
+    recRef.current = { mr, stream, chunks, timer, started, cancelled: false };
+    mr.start(500); setRec({ secs: 0 });
+  };
+  // send=true: transcribe and send it (with any text typed and files waiting); false: throw it away.
+  const stopRec = (sendIt) => {
+    const r = recRef.current; if (!r) return;
+    recRef.current = null;
+    r.mr.onstop = async () => {
+      r.stream.getTracks().forEach((t) => t.stop()); clearInterval(r.timer);
+      setRec(null);
+      if (!sendIt) return;
+      const secs = Math.round((Date.now() - r.started) / 1000);
+      if (secs < 1) { S.toast("Hold on a little longer to record"); return; }
+      const id = Math.random().toString(36).slice(2);
+      setFiles((x) => [...x, { id, name: "Voice note", kind: "voice", status: "reading", secs }]);
+      try {
+        const w = await audioToWavB64(new Blob(r.chunks, { type: r.mr.mimeType || "audio/webm" }));
+        const out = await readOne("voice-note.wav", "audio/wav", w.data);
+        const voice = { id, name: "Voice note", kind: "voice", status: "ready", text: out.text, truncated: !!out.truncated, secs: w.secs };
+        const others = filesRef.current.filter((a) => a.id !== id && a.status === "ready");
+        setFiles((x) => x.filter((a) => a.id !== id && a.status !== "ready"));
+        send(null, { attachments: [...others, voice] });
+      } catch (e) { setFiles((x) => x.filter((a) => a.id !== id)); S.error("Voice note: " + (e.message || "couldn't be transcribed")); }
+    };
+    clearInterval(r.timer);
+    try { r.mr.stop(); } catch (e) { r.mr.onstop(); }
+  };
+  useEffect(() => () => { const r = recRef.current; if (r) { try { r.mr.stop(); } catch (e) {} r.stream.getTracks().forEach((t) => t.stop()); clearInterval(r.timer); } }, []);
   const loadMemory = () => S.sb("/functions/v1/assistant", { method: "POST", body: { action: "memories" } }).then(setMemory).catch(() => setMemory({ mine: [], team: [] }));
   const openMemory = () => { setShowMemory(true); setShowList(false); setShowUpdates(false); loadMemory(); };
   const forgetMemory = (id) => S.sb("/functions/v1/assistant", { method: "POST", body: { action: "forget_memory", id } }).then(loadMemory).catch((e) => S.error(e.message));
@@ -2014,20 +2113,24 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
   const unread = (badges && badges.messages) || 0;
   const send = async (qText, opts) => {
     const ask = (qText || text).trim();
-    if (!ask || busy) return;
+    const fromFiles = opts && opts.attachments ? opts.attachments : !opts || !opts.fresh ? files.filter((a) => a.status === "ready") : [];
+    const atts = fromFiles.map((a) => ({ name: a.name, kind: a.kind, text: a.text, truncated: !!a.truncated, secs: a.secs || null }));
+    if ((!ask && !atts.length) || busy) return;
+    if (!(opts && opts.attachments) && files.some((a) => a.status === "reading")) { S.toast("Wait for the file to finish reading"); return; }
     setText(""); { const el = document.getElementById("assistant-input"); if (el) el.style.height = "auto"; }
+    if (!(opts && opts.attachments)) setFiles((x) => x.filter((a) => a.status !== "ready"));
     const base = opts && opts.fresh ? [] : msgsRef.current;
-    const next = [...base, { role: "user", content: ask }];
+    const next = [...base, { role: "user", content: ask, ...(atts.length ? { attachments: atts } : {}) }];
     setMsgs(next); setBusy(true);
     let list = next;
     try {
-      const history = next.map((m) => ({ role: m.role, content: m.content + (m.proposals && m.proposals.length ? "\n[Proposed: " + m.proposals.map((p) => proposalSummary(S, p).title + " (" + (p.state || "waiting") + ")").join("; ") + "]" : "") }));
+      const history = next.map((m) => ({ role: m.role, attachments: m.attachments || undefined, content: m.content + (m.proposals && m.proposals.length ? "\n[Proposed: " + m.proposals.map((p) => proposalSummary(S, p).title + " (" + (p.state || "waiting") + ")").join("; ") + "]" : "") }));
       const page = { jobId: (opts && opts.jobId) || (pageCtx && pageCtx.jobId) || null, candidateId: (pageCtx && pageCtx.candidateId) || null };
       const r = await S.sb("/functions/v1/assistant", { method: "POST", body: { messages: history, mode: (opts && opts.mode) || mode, page, tz: MY_TZ, smart: !!(opts && opts.smart), threadId: (opts && opts.fresh) ? null : threadId }, timeout: 150000 });
       list = [...next, { role: "assistant", content: r.text || "", proposals: (r.proposals || []).map((p) => ({ ...p, state: p.tool === "propose_email" ? "draft" : "waiting" })) }];
     } catch (e) { list = [...next, { role: "assistant", content: e.message || "Something went wrong. Try again.", error: true }]; }
     setMsgs(list); setBusy(false); playAssistChime(S.me);
-    save(list, base.length ? null : ask);
+    save(list, base.length ? null : ask || (atts[0] && (atts[0].kind === "voice" ? atts[0].text : atts[0].name)) || "New conversation");
   };
   // "Close this role with AI" and other buttons elsewhere start a fresh conversation here.
   useEffect(() => {
@@ -2234,6 +2337,13 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
             {msgs.length === 0 && <div className="flex flex-wrap gap-1.5">{chips.map((c) => <button key={c} onClick={() => send(c, c.startsWith("Close this role") ? { smart: true } : null)} className="text-xs rounded-full border px-3 py-1.5 text-left" style={{ borderColor: C.line, background: "#fff", color: C.ink2 }}>{c}</button>)}</div>}
             {msgs.map((m, mi) => (
               <div key={mi} className={"flex flex-col gap-2 " + (m.role === "user" ? "items-end" : "items-start")}>
+                {(m.attachments || []).filter((a) => a.kind !== "voice").length > 0 && <div className="flex flex-wrap gap-1.5 justify-end max-w-[92%]">{m.attachments.filter((a) => a.kind !== "voice").map((a, ai) => <AttachmentChip key={ai} a={a} />)}</div>}
+                {(m.attachments || []).filter((a) => a.kind === "voice").map((a, ai) => (
+                  <div key={"v" + ai} className="rounded-2xl px-3.5 py-2.5 text-sm max-w-[92%] whitespace-pre-wrap" style={{ background: C.em, color: "#fff" }}>
+                    <div className="flex items-center gap-1.5 text-xs mb-1" style={{ color: "rgba(255,255,255,.8)" }}><Mic size={13} />Voice note{a.secs ? " · " + mmss(a.secs) : ""}</div>
+                    {a.text}
+                  </div>
+                ))}
                 {m.content && (
                   <div className="rounded-2xl px-3.5 py-2.5 text-sm max-w-[92%] whitespace-pre-wrap" style={m.role === "user" ? { background: C.em, color: "#fff" } : { background: "#fff", border: `1px solid ${C.line}`, color: m.error ? C.dangerFg : C.ink }}>
                     {m.role === "assistant" ? boldText(m.content) : m.content}
@@ -2273,11 +2383,29 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                 : <button onClick={() => pinToRole(onJob.id)} className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }} title="Pin this conversation to the role so it shows under This role">Pin to {onJob.role}</button>)}
               {!onJob && threadJob && S.jobs.find((j) => j.id === threadJob) && <span className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }}>📌 {S.jobs.find((j) => j.id === threadJob).role}</span>}
             </div>
+            {files.length > 0 && <div className="flex flex-wrap gap-1.5 mb-2">{files.map((a) => <AttachmentChip key={a.id} a={a} onRemove={a.status === "reading" ? null : () => setFiles((x) => x.filter((b) => b.id !== a.id))} />)}</div>}
+            {rec ? (
+              <div className="flex items-center gap-2">
+                <button onClick={() => stopRec(false)} aria-label="Cancel the voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ border: `1px solid ${C.line}`, color: C.ink2, background: "#fff" }}><Trash2 size={16} /></button>
+                <div className="flex-1 min-w-0 flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm" style={{ background: C.dangerBg, color: C.dangerFg }} role="status" aria-live="polite">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: C.dangerFg, animation: "harborPulse 1.2s ease-in-out infinite" }} />
+                  Recording {mmss(rec.secs)}<span className="text-xs ml-auto" style={{ opacity: 0.8 }}>up to {mmss(ASSIST_MAX_VOICE_SECS)}</span>
+                </div>
+                <button onClick={() => stopRec(true)} aria-label="Send the voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: C.em, color: "#fff" }}><SendHorizontal size={17} /></button>
+              </div>
+            ) : (
             <div className="flex gap-2">
+              <label className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end cursor-pointer" style={{ color: C.ink2 }} title="Attach files: PDF, Word, Excel or CSV, text, images, audio">
+                <Paperclip size={18} />
+                <input type="file" multiple accept={ASSIST_ACCEPT} className="sr-only" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} aria-label="Attach files" />
+              </label>
               <textarea id="assistant-input" rows={1} value={text} onChange={(e) => setText(e.target.value)} onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }} enterKeyHint={isTouchDevice() ? "enter" : "send"} onKeyDown={(e) => { if (enterSends(e)) { e.preventDefault(); send(); } }}
                 placeholder={mode === "brainstorm" ? "What do you want to think through?" : "Close a role, research a candidate, draft a client email…"} className="flex-1 min-w-0 rounded-xl border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: "#FAF8F3", maxHeight: 120 }} />
-              <button onClick={() => send()} disabled={busy || !text.trim()} aria-label="Send" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy || !text.trim() ? 0.5 : 1 }}><SendHorizontal size={17} /></button>
+              {text.trim() || files.some((a) => a.status === "ready")
+                ? <button onClick={() => send()} disabled={busy || files.some((a) => a.status === "reading")} aria-label="Send" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy || files.some((a) => a.status === "reading") ? 0.5 : 1 }}><SendHorizontal size={17} /></button>
+                : <button onClick={startRec} disabled={busy} aria-label="Record a voice note" title="Record a voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy ? 0.5 : 1 }}><Mic size={17} /></button>}
             </div>
+            )}
           </div>
           )}
         </div>
