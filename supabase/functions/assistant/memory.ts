@@ -111,6 +111,6 @@ export async function learnFromTurn(admin: any, key: string, model: string, me: 
     })).filter((r: any) => r.text);
     if (rows.length) await admin.from("assistant_memories").insert(rows);
     await admin.from("ai_usage").insert({ user_id: me.id, feature: "assistant_memory", model, input_tokens: Number(out?.usage?.input_tokens) || 0, output_tokens: Number(out?.usage?.output_tokens) || 0,
-      cost_usd: ((Number(out?.usage?.input_tokens) || 0) * 1 + (Number(out?.usage?.output_tokens) || 0) * 5) / 1e6 }).then(() => {}, () => {});
+      cost_usd: ((Number(out?.usage?.input_tokens) || 0) * (/haiku-5/.test(model) ? 0.1 : 1) + (Number(out?.usage?.output_tokens) || 0) * (/haiku-5/.test(model) ? 0.5 : 5)) / 1e6 }).then(() => {}, () => {});
   } catch (e) { console.error("learn", String((e as Error)?.message || e)); }
 }
