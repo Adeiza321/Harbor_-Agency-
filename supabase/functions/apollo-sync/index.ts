@@ -460,6 +460,8 @@ Deno.serve(async (req: Request) => {
     }
     if (body.action !== "sync") return json({ error: "Unknown action" }, 400);
     const result = await sync(admin);
+    // The scheduled run also rebuilds the tracking snapshot (the "Check Apollo for replies" button doesn't wait for it).
+    if (!opsKey) return json(result);
     let tracking_rows: number | string = "";
     try { tracking_rows = (await buildSnapshot(admin)).rows.length; } catch (e) { tracking_rows = "failed: " + String((e as Error)?.message || e).slice(0, 200); }
     return json({ ...result, tracking_rows });
