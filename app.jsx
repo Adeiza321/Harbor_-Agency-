@@ -10929,6 +10929,34 @@ function JobsBoard() {
    shows a candidate's path from application to hire, with one lime marker that travels down to
    "Hired" when the page opens (it simply rests there if the person prefers reduced motion). */
 const AUTH_PATH = ["Applied", "In review", "Sent to employer", "Interview", "Offer", "Hired"];
+/* Line drawings scattered behind the sign-in card: the everyday objects of recruiting. Decorative only
+   (aria-hidden); the ones near the sides are hidden on phones so they never crowd the form. */
+const AUTH_ART = {
+  cv: <><rect x="10" y="4" width="44" height="56" rx="4" fill="#fff" /><circle cx="22" cy="17" r="5.5" fill={C.emTint} /><path d="M31 14h15M31 20h10M17 31h30M17 38h30M17 45h22M17 52h26" /></>,
+  search: <><circle cx="26" cy="26" r="16" fill="#fff" /><circle cx="26" cy="22" r="5" fill={C.emTint} /><path d="M17 34c2-5 5.5-7 9-7s7 2 9 7M38 38l14 14" strokeWidth="3" /></>,
+  briefcase: <><rect x="6" y="20" width="52" height="34" rx="5" fill="#fff" /><path d="M23 20v-6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v6M6 34h52" /><rect x="28" y="30" width="8" height="8" rx="1.5" fill={C.emTint} /></>,
+  calendar: <><rect x="7" y="11" width="50" height="46" rx="5" fill="#fff" /><path d="M7 24h50M20 6v10M44 6v10" /><path d="M23 40l6 6 12-12" strokeWidth="3" /></>,
+  chat: <><path d="M8 14a6 6 0 0 1 6-6h36a6 6 0 0 1 6 6v22a6 6 0 0 1-6 6H26l-12 10v-10h0a6 6 0 0 1-6-6z" fill="#fff" /><circle cx="22" cy="25" r="2.4" fill={C.em} stroke="none" /><circle cx="32" cy="25" r="2.4" fill={C.em} stroke="none" /><circle cx="42" cy="25" r="2.4" fill={C.em} stroke="none" /></>,
+  profile: <><rect x="5" y="12" width="54" height="40" rx="5" fill="#fff" /><circle cx="20" cy="28" r="6.5" fill={C.emTint} /><path d="M11 44c1.5-4 5-6 9-6s7.5 2 9 6M35 24h16M35 31h12M35 38h14" /><circle cx="52" cy="13" r="7" fill={C.lime} /><path d="M49 13l2 2 4-4" /></>,
+  offer: <><rect x="6" y="14" width="52" height="38" rx="4" fill="#fff" /><path d="M6 18l26 18 26-18" /><circle cx="50" cy="46" r="8" fill={C.lime} /><path d="M46.5 46l2.5 2.5 5-5" /></>,
+  team: <><circle cx="22" cy="22" r="8" fill="#fff" /><circle cx="44" cy="25" r="6.5" fill={C.emTint} /><path d="M8 52c1.5-9 7-14 14-14s12.5 5 14 14M35 40c2.5-2 5.5-3 9-3 6 0 10.5 4 12 12" /></>,
+};
+const AUTH_SCATTER = [
+  ["cv", "7%", "9%", 92, -8, ""], ["search", "80%", "6%", 78, 6, ""], ["briefcase", "4%", "44%", 74, 4, "hidden sm:block"],
+  ["calendar", "84%", "38%", 80, -5, "hidden sm:block"], ["profile", "10%", "74%", 96, 5, "hidden sm:block"],
+  ["offer", "79%", "72%", 84, -7, "hidden sm:block"], ["chat", "42%", "88%", 70, 3, ""], ["team", "44%", "3%", 70, -3, "hidden md:block"],
+];
+function AuthScatter() {
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
+      {AUTH_SCATTER.map(([k, left, top, size, rot, cls]) => (
+        <svg key={k} viewBox="0 0 64 64" width={size} height={size} className={"absolute " + cls}
+          style={{ left, top, transform: "rotate(" + rot + "deg)", opacity: 0.55 }}
+          fill="none" stroke={C.em} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{AUTH_ART[k]}</svg>
+      ))}
+    </div>
+  );
+}
 function AuthShell({ onSubmit, children }) {
   return (
     <div className="min-h-screen md:grid" style={{ background: C.canvas, gridTemplateColumns: "minmax(0,5fr) minmax(0,6fr)" }}>
@@ -10958,8 +10986,9 @@ function AuthShell({ onSubmit, children }) {
         </div>
         <p className="text-sm max-w-[30ch]" style={{ color: "rgba(243,239,231,.62)" }}>Every candidate, from the first application to the day they start.</p>
       </aside>
-      <main className="pnx-auth min-h-screen md:min-h-0 flex items-center justify-center px-4 py-10 md:px-10">
-        <form onSubmit={onSubmit} className="w-full max-w-[400px] rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
+      <main className="pnx-auth relative min-h-screen md:min-h-0 flex items-center justify-center px-4 py-24 md:px-10">
+        <AuthScatter />
+        <form onSubmit={onSubmit} className="relative w-full max-w-[400px] rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
           {children}
         </form>
       </main>
