@@ -4934,7 +4934,9 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
   const route = async () => {
     setBusy("route"); setErr("");
     try {
-      await S.aiScreen("route_with_questions", { candidateId: candidate.id, jobId: job.id, questions: chosen, review });
+      const r = await S.aiScreen("route_with_questions", { candidateId: candidate.id, jobId: job.id, questions: chosen, review });
+      // Same as the quick Route button: the candidate gets the "new role for you" email.
+      if (r && r.linkId) S.inviteToMessage(r.linkId);
       toast("Routed to " + job.client + ". " + first + " will see it" + (chosen.length ? " with " + chosen.length + " question" + (chosen.length > 1 ? "s" : "") : "") + " on their candidate page.");
       onClose();
     } catch (e) { setErr(e.message); }

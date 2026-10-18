@@ -160,6 +160,19 @@ Deno.serve(async (req: Request) => {
       const { data: rec } = cand.recruiter_id ? await admin.from("profiles").select("full_name").eq("id", cand.recruiter_id).maybeSingle() : { data: null };
       const recruiterName = String(rec?.full_name || me.full_name || "").trim() || "one of our recruiters";
       const roleHtml = job ? `the <b>${esc(job.role_title)}</b> role${job.client ? ` at <b>${esc(job.client)}</b>` : ""}` : "the role";
+      // Routed (put forward for a role by the team, waiting for them to accept): a "new role for you"
+      // email asking them to look and accept, not "your application is under review".
+      if (link?.candidate_response === "pending") {
+        const subj = job ? `A new role for you: ${job.role_title}` : "A new role for you";
+        const routedHtml = emailShell(brand, subj,
+          `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
+           <div style="font-size:15px;line-height:1.6;"><b>${esc(recruiterName)}</b> thinks you'd be a strong fit for ${roleHtml} and would like to put you forward.</div>
+           <div style="font-size:15px;line-height:1.6;margin-top:12px;">Open your candidate page to see the role, answer any questions, and accept or decline. Nothing is shared with the employer until you accept.</div>
+           ${button(brand, portalUrl, "View the role")}
+           ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);
+        const sentRouted = await sendBrevo(brand, { email: cand.email, name: cand.name }, subj, routedHtml);
+        return json({ ok: true, sent: sentRouted, kind: "routed" });
+      }
       const subject = job ? `Your application for ${job.role_title} is under review` : "Your application is under review";
       const html = emailShell(brand, subject,
         `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
