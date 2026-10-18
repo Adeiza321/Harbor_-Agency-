@@ -17,6 +17,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 const OUT = process.argv[2] || "_site";
 const app = readFileSync("app.jsx", "utf8");
@@ -167,8 +168,9 @@ function page({ title, description, canonical, head = "", body }) {
 <meta property="og:url" content="${esc(canonical)}" />
 ${org.logo ? `<meta property="og:image" content="${esc(org.logo)}" />\n` : ""}<meta name="twitter:card" content="summary" />
 ${head}`;
-  if (!shell.includes("<title>ProNext</title>") || !shell.includes('<div id="root"></div>')) throw new Error("index.html doesn't have the expected <title> and #root");
-  return shell.replace("<title>ProNext</title>", () => tags).replace('<div id="root"></div>', () => `<div id="root">${body}</div>`);
+  if (!shell.includes("<title>ProNext</title>") || !shell.includes('<div id="root">')) throw new Error("index.html doesn't have the expected <title> and #root");
+  // Hidden behind the loading mark for visitors (see build-app.mjs); still in the page for crawlers.
+  return shell.replace("<title>ProNext</title>", () => tags).replace('<div id="root">', () => `<div id="root"><div class="pnx-seo">${body}</div>`);
 }
 
 const jobBody = (j) => `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif">
@@ -186,6 +188,22 @@ writeFileSync(join(OUT, "index.html"), shell);
 writeFileSync(join(OUT, "404.html"), shell);
 // The app's styles, scripts and icon (built by scripts/build-app.mjs).
 if (existsSync("assets")) cpSync("assets", join(OUT, "assets"), { recursive: true });
+// Earlier builds' styles and scripts too. GitHub Pages lets browsers keep a page for up to 10 minutes,
+// so someone who loaded the site just before a deploy can still ask for the previous file names; without
+// these they'd get a page with no styles (or a blank one). Taken from the last few commits that touched
+// assets/ (the workflow checks out enough history); quietly skipped when there's no history.
+try {
+  const git = (a) => execFileSync("git", a, { encoding: "buffer", maxBuffer: 64 * 1024 * 1024 });
+  const commits = git(["log", "--format=%H", "-n", "12", "--", "assets"]).toString().split("\n").filter(Boolean);
+  let kept = 0;
+  for (const c of commits) {
+    for (const f of git(["ls-tree", "--name-only", c, "assets/"]).toString().split("\n")) {
+      if (!/^assets\/(style|app|public)-[0-9a-f]{10}\.(css|js)$/.test(f) || existsSync(join(OUT, f))) continue;
+      writeFileSync(join(OUT, f), git(["show", c + ":" + f])); kept++;
+    }
+  }
+  console.log("kept", kept, "earlier asset files");
+} catch (e) { console.log("earlier asset files skipped:", e.message); }
 if (domain) writeFileSync(join(OUT, "CNAME"), domain + "\n");
 
 for (const j of jobs) {

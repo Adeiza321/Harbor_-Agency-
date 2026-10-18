@@ -10941,21 +10941,27 @@ const AUTH_ART = {
   offer: <><rect x="6" y="14" width="52" height="38" rx="4" fill="#fff" /><path d="M6 18l26 18 26-18" /><circle cx="50" cy="46" r="8" fill={C.lime} /><path d="M46.5 46l2.5 2.5 5-5" /></>,
   team: <><circle cx="22" cy="22" r="8" fill="#fff" /><circle cx="44" cy="25" r="6.5" fill={C.emTint} /><path d="M8 52c1.5-9 7-14 14-14s12.5 5 14 14M35 40c2.5-2 5.5-3 9-3 6 0 10.5 4 12 12" /></>,
 };
-const AUTH_SCATTER = [
-  ["cv", "7%", "9%", 92, -8, ""], ["search", "80%", "6%", 78, 6, ""], ["briefcase", "4%", "44%", 74, 4, "hidden sm:block"],
-  ["calendar", "84%", "38%", 80, -5, "hidden sm:block"], ["profile", "10%", "74%", 96, 5, "hidden sm:block"],
-  ["offer", "79%", "72%", 84, -7, "hidden sm:block"], ["chat", "42%", "88%", 70, 3, ""], ["team", "44%", "3%", 70, -3, "hidden md:block"],
+// [drawing, position, size, rotation, opacity, extra classes]. Loose ones float around the page;
+// "tucked" ones sit behind the card's edges so they poke out from under it.
+const AUTH_LOOSE = [
+  ["profile", { left: "6%", top: "7%" }, 104, -16, 0.5, "hidden sm:block"], ["team", { left: "58%", top: "4%" }, 58, 9, 0.4, "hidden md:block"],
+  ["briefcase", { left: "3%", top: "57%" }, 66, 21, 0.45, "hidden sm:block"], ["chat", { right: "5%", top: "29%" }, 54, -11, 0.4, "hidden sm:block"],
+  ["team", { left: "22%", bottom: "4%" }, 48, -20, 0.35, "hidden md:block"], ["chat", { right: "18%", bottom: "6%" }, 74, 13, 0.5, ""],
 ];
+const AUTH_TUCKED = [
+  ["cv", { right: -44, top: -54 }, 112, 15], ["calendar", { left: -58, top: "34%" }, 88, -13],
+  ["offer", { left: -34, bottom: -46 }, 96, -19], ["search", { right: -52, bottom: 64 }, 82, 11],
+];
+const authSvg = (k, size, rot, style, cls, opacity) => (
+  <svg key={k + JSON.stringify(style)} viewBox="0 0 64 64" width={size} height={size} className={"absolute " + (cls || "")}
+    style={{ ...style, transform: "rotate(" + rot + "deg)", opacity }}
+    fill="none" stroke={C.em} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{AUTH_ART[k]}</svg>
+);
 function AuthScatter() {
-  return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
-      {AUTH_SCATTER.map(([k, left, top, size, rot, cls]) => (
-        <svg key={k} viewBox="0 0 64 64" width={size} height={size} className={"absolute " + cls}
-          style={{ left, top, transform: "rotate(" + rot + "deg)", opacity: 0.55 }}
-          fill="none" stroke={C.em} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{AUTH_ART[k]}</svg>
-      ))}
-    </div>
-  );
+  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_LOOSE.map(([k, pos, size, rot, op, cls]) => authSvg(k, size, rot, pos, cls, op))}</div>;
+}
+function AuthTucked() {
+  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_TUCKED.map(([k, pos, size, rot]) => authSvg(k, size, rot, pos, "", 0.85))}</div>;
 }
 function AuthShell({ onSubmit, children }) {
   return (
@@ -10986,11 +10992,14 @@ function AuthShell({ onSubmit, children }) {
         </div>
         <p className="text-sm max-w-[30ch]" style={{ color: "rgba(243,239,231,.62)" }}>Every candidate, from the first application to the day they start.</p>
       </aside>
-      <main className="pnx-auth relative min-h-screen md:min-h-0 flex items-center justify-center px-4 py-24 md:px-10">
+      <main className="pnx-auth relative overflow-hidden min-h-screen md:min-h-0 flex items-center justify-center px-4 py-24 md:px-10">
         <AuthScatter />
-        <form onSubmit={onSubmit} className="relative w-full max-w-[400px] rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
-          {children}
-        </form>
+        <div className="relative w-full max-w-[400px]">
+          <AuthTucked />
+          <form onSubmit={onSubmit} className="relative w-full rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
+            {children}
+          </form>
+        </div>
       </main>
     </div>
   );

@@ -54,6 +54,10 @@ const csp = [
   "base-uri 'self'",
   "form-action 'self'",
 ].join("; ");
+// Until the scripts arrive, the page shows only the ProNext mark on the app's background (inline, so
+// it needs nothing else to load). Job pages also carry a plain copy of the job for search engines
+// (.pnx-seo, added by build-job-pages.mjs): hidden here, shown only when JavaScript is off.
+const boot = "body{background:#F3EFE7}.pnx-boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#F3EFE7}.pnx-boot img{animation:pnx-boot 1s ease-in-out infinite alternate}@keyframes pnx-boot{from{opacity:.3;transform:scale(.92)}to{opacity:1;transform:scale(1)}}@media (prefers-reduced-motion:reduce){.pnx-boot img{animation:none}}.pnx-seo{display:none}";
 const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -66,9 +70,11 @@ const html = `<!doctype html>
 <link rel="preload" as="image" href="/assets/logo.png">
 <link rel="preconnect" href="https://acjmsihvvupqiikxckho.supabase.co" crossorigin>
 <link rel="stylesheet" href="${out.style}">
+<style>${boot}</style>
+<noscript><style>.pnx-boot{display:none}.pnx-seo{display:block}</style></noscript>
 <script>${pick}</script>
 </head>
-<body><div id="root"></div></body></html>
+<body><div id="root"><div class="pnx-boot" aria-hidden="true"><img src="/assets/mark.png" alt="" width="40" height="40"></div></div></body></html>
 `;
 writeFileSync("index.html", html);
 writeFileSync("404.html", html);

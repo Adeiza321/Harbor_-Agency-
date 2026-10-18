@@ -28,6 +28,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # History for the last few builds' asset files (see build-job-pages.mjs).
+          fetch-depth: 40
       - uses: actions/setup-node@v4
         with:
           node-version: 20
