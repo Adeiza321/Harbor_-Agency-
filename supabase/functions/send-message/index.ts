@@ -189,8 +189,7 @@ Deno.serve(async (req: Request) => {
            <div style="font-size:15px;line-height:1.6;"><b>${esc(recruiterName)}</b> thinks you'd be a strong fit for ${roleHtml} and would like to put you forward.</div>
            ${roleCard(job)}
            <div style="font-size:15px;line-height:1.6;margin-top:16px;">Open your candidate page to see the role, answer any questions, and accept or decline. Nothing is shared with the employer until you accept.</div>
-           ${button(brand, portalUrl, "View the role")}
-           ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);
+           ${button(brand, portalUrl, "View the role")}`, undefined, unsubUrl);
         const sentRouted = await sendBrevo(brand, { email: cand.email, name: cand.name }, subj, routedHtml);
         return json({ ok: true, sent: sentRouted, kind: "routed" });
       }
