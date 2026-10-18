@@ -260,6 +260,24 @@ function mapAll(d) {
   // out of every normal list — the whole point of a draft is that nobody sees it, not
   // even Admin/Rec Ops, until it's submitted. The "Add candidate" flow tracks its own
   // draft in local state, so it never needs to find it in here.
+  // Screening answers are saved two ways: a plain list in the job's question order (added in
+  // the dashboard) or [{q, a}] pairs (applications assigned from the Inbox). Everything on screen
+  // expects the plain list, so pairs are lined up with the job's questions here.
+  const jobQs = {}; d.jobs.forEach((j) => (jobQs[j.id] = Array.isArray(j.screening_questions) ? j.screening_questions : []));
+  const answersFor = (l) => {
+    const raw = Array.isArray(l.screening_answers) ? l.screening_answers : [];
+    if (!raw.some((a) => a && typeof a === "object")) return raw.map((a) => (a == null ? "" : String(a)));
+    const qs = jobQs[l.job_id] || [], norm = (t) => String(t || "").trim().toLowerCase();
+    const out = qs.map(() => "");
+    raw.forEach((a, i) => {
+      const ans = a && typeof a === "object" ? a.a : a;
+      if (ans == null || ans === "") return;
+      const at = a && typeof a === "object" ? qs.findIndex((q) => norm(q) === norm(a.q)) : -1;
+      const idx = at >= 0 ? at : i;
+      if (idx < out.length && !out[idx]) out[idx] = String(ans); else out.push(String(ans));
+    });
+    return out;
+  };
   const cands = d.candidates.filter((c) => !c.is_draft).map((c) => ({
     id: c.id, name: c.name, role: c.role_title, location: c.location, recruiterId: c.recruiter_id,
     recruiter: c.recruiter_id ? pname(c.recruiter_id) : null, recruiterInit: c.recruiter_id ? initialsOf(pname(c.recruiter_id)) : "",
@@ -270,7 +288,7 @@ function mapAll(d) {
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: l.screening_answers || [], ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: answersFor(l), ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at, emailStatus: m.email_status, emailError: m.email_error, deleted: !!m.deleted_at, file: m.attachment_path && !m.deleted_at ? { name: m.attachment_name, type: m.attachment_type, size: m.attachment_size } : null })) })),
@@ -4967,7 +4985,7 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
   const [saving, setSaving] = useState(false);
   const [scoring, setScoring] = useState(false);
   if (!qs.length) return null;
-  const answered = (link.screeningAnswers || []).filter((a) => a && a.trim()).length;
+  const answered = (link.screeningAnswers || []).filter((a) => String(a || "").trim()).length;
   const setA = (i, v) => setAnswers((arr) => arr.map((a, idx) => (idx === i ? v : a)));
   const save = () => {
     setSaving(true);
