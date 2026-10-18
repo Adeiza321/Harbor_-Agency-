@@ -9378,6 +9378,29 @@ function EmailPreviewModal({ row, onClose, S, load }) {
     </Modal>
   );
 }
+// Email tracking data stays in memory while ProNext is open, per view and period. Coming back to the
+// page (or switching Brevo/Apollo) shows what was loaded before straight away and updates it quietly
+// in the background; only the very first load, or Refresh, shows the loading state.
+const TRACK_CACHE = {};
+function useTrackingData(prefix, days, fetcher) {
+  const key = prefix + ":" + days;
+  const [res, setRes] = useState(() => TRACK_CACHE[key] || null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);       // nothing to show yet, or Refresh pressed
+  const [updating, setUpdating] = useState(false); // showing saved data while fetching newer
+  const seq = React.useRef(0);
+  const load = async (refresh) => {
+    const my = ++seq.current, hit = TRACK_CACHE[key];
+    setErr("");
+    if (hit) setRes(hit); else setRes(null);
+    if (refresh || !hit) setBusy(true); else setUpdating(true);
+    try { const r = await fetcher(days, !!refresh); TRACK_CACHE[key] = r; if (my === seq.current) setRes(r); }
+    catch (e) { if (my === seq.current && (refresh || !hit)) setErr(e.message || "Couldn't load the emails"); }
+    if (my === seq.current) { setBusy(false); setUpdating(false); }
+  };
+  useEffect(() => { load(false); }, [key]); // eslint-disable-line
+  return { res, err, busy, updating, refresh: () => load(true) };
+}
 // Email tracking has two views, switched at the top: Brevo (emails the app sends itself) and
 // Apollo (outreach emails sent through Apollo sequences).
 function EmailTrackingPage({ S }) {
@@ -9397,19 +9420,11 @@ function EmailTrackingPage({ S }) {
 }
 function BrevoTrackingView({ S, sw }) {
   const [days, setDays] = useState(30);
-  const [res, setRes] = useState(null);
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { res, err, busy, updating, refresh } = useTrackingData("brevo", days, S.emailTracking);
   const [filter, setFilter] = useState("all");
   const [type, setType] = useState("");
   const [q, setQ] = useState("");
   const [preview, setPreview] = useState(null);
-  const load = async (d, refresh) => {
-    setBusy(true); setErr("");
-    try { setRes(await S.emailTracking(d, refresh)); } catch (e) { setErr(e.message || "Couldn't load the email log"); }
-    setBusy(false);
-  };
-  useEffect(() => { load(days); }, [days]); // eslint-disable-line
   const rows = (res && res.rows) || [];
   const types = [...new Set(rows.map((r) => r.type))].sort();
   const ql = q.trim().toLowerCase();
@@ -9439,7 +9454,7 @@ function BrevoTrackingView({ S, sw }) {
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
             <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last 12 months</option>
           </select>
-          <Btn onClick={() => load(days, true)} disabled={busy} title="Fetch anything new from Brevo now">{busy ? "Loading…" : "Refresh"}</Btn>
+          <Btn onClick={refresh} disabled={busy} title="Fetch anything new from Brevo now">{busy ? "Loading…" : updating ? "Updating…" : "Refresh"}</Btn>
         </div>
       </div>
       {err && <Card><div className="text-sm flex items-start gap-2" style={{ color: C.dangerFg }}><AlertTriangle size={16} className="shrink-0 mt-0.5" />{err}</div></Card>}
@@ -9503,20 +9518,12 @@ function BrevoTrackingView({ S, sw }) {
 const APOLLO_FILTERS = [["all", "All"], ["scheduled", "Waiting to send"], ["sent", "Sent"], ["opened", "Opened"], ["clicked", "Clicked"], ["replied", "Replied"], ["problems", "Problems"]];
 function ApolloTrackingView({ S, sw }) {
   const [days, setDays] = useState(30);
-  const [res, setRes] = useState(null);
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { res, err, busy, updating, refresh } = useTrackingData("apollo", days, S.apolloTracking);
   const [filter, setFilter] = useState("all");
   const [kind, setKind] = useState("");
   const [step, setStep] = useState("");
   const [q, setQ] = useState("");
   const [preview, setPreview] = useState(null);
-  const load = async (d) => {
-    setBusy(true); setErr("");
-    try { setRes(await S.apolloTracking(d)); } catch (e) { setErr(e.message || "Couldn't load Apollo's emails"); }
-    setBusy(false);
-  };
-  useEffect(() => { load(days); }, [days]); // eslint-disable-line
   const rows = (res && res.rows) || [];
   const problem = (r) => r.state === "bounced" || r.state === "spam" || r.state === "not_sent" || r.unsubscribed;
   const ql = q.trim().toLowerCase();
@@ -9577,7 +9584,7 @@ function ApolloTrackingView({ S, sw }) {
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
             <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last 12 months</option>
           </select>
-          <Btn onClick={() => load(days)} disabled={busy} title="Check Apollo again now">{busy ? "Loading…" : "Refresh"}</Btn>
+          <Btn onClick={refresh} disabled={busy} title="Check Apollo again now">{busy ? "Loading…" : updating ? "Updating…" : "Refresh"}</Btn>
         </div>
       </div>
       {err && <Card><div className="text-sm flex items-start gap-2" style={{ color: C.dangerFg }}><AlertTriangle size={16} className="shrink-0 mt-0.5" />{err}</div></Card>}
@@ -11740,8 +11747,8 @@ export default function App() {
       return j;
     },
     /* Email tracking > Apollo: ProNext's Apollo sequence emails, live from Apollo (apollo-sync). */
-    apolloTracking: async (days) => {
-      const r = await fetch(SB_URL + "/functions/v1/apollo-sync", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "tracking", days }) });
+    apolloTracking: async (days, refresh) => {
+      const r = await fetch(SB_URL + "/functions/v1/apollo-sync", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "tracking", days, refresh: !!refresh }) });
       const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load Apollo's emails");
       return j;
     },

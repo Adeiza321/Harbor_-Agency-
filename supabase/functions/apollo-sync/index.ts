@@ -4,7 +4,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 // sequences, so a reply never sits unseen in Apollo.
 //   POST { action: "sync" } + x-harbor-ops     every 15 minutes (pg_cron, harbor-apollo-sync)
 //   POST { action: "sync" } signed in (staff)  the "Check Apollo for replies" button
-//   POST { action: "tracking", days } (admins)  Email tracking > Apollo: every email in ProNext's
+//   POST { action: "tracking", days, refresh? } (admins)  Email tracking > Apollo (from the saved snapshot, see buildSnapshot): every email in ProNext's
 //                                                sequences, live from Apollo: scheduled (and when),
 //                                                sent, opened, clicked, replied, bounced, not sent (why),
 //                                                each email's step, each sequence's steps, and where
@@ -304,7 +304,8 @@ async function tracking(admin: any, days: number, withSample = false) {
   // Opened / clicked / bounced etc. aren't on the email itself; Apollo filters by them instead.
   const STATS = ["delivered", "opened", "clicked", "bounced", "spam_blocked", "unsubscribed", "failed_other"];
   const flags = new Map<string, Set<string>>();
-  if (raw.length) for (const stat of STATS) {
+  // Each status is its own search; they run side by side (with the sequence lookups below) instead of one after another.
+  const statsTask = raw.length ? Promise.all(STATS.map(async (stat) => {
     for (let page = 1; page <= 20; page++) {
       const q = new URLSearchParams();
       seqs.forEach((id) => q.append("emailer_campaign_ids[]", id));
@@ -316,12 +317,12 @@ async function tracking(admin: any, days: number, withSample = false) {
       for (const m of list) { const id = String(m.id); if (!flags.has(id)) flags.set(id, new Set()); flags.get(id)!.add(stat); }
       if (list.length < 100) break;
     }
-  }
+  })) : Promise.resolve([]);
   // The sequences themselves (steps, daily cap) and where each person is in them.
   const sequences: any[] = [];
   const stepById = new Map<string, { position: number; seq: string }>();
   const sampleSeq: any[] = [];
-  for (const id of seqs) {
+  const seqTask = Promise.all(seqs.map(async (id) => {
     try {
       const c = await apollo("/emailer_campaigns/" + id, new URLSearchParams());
       const camp = c?.emailer_campaign || {};
@@ -338,9 +339,9 @@ async function tracking(admin: any, days: number, withSample = false) {
       sequences.push({ id, name: String(camp.name || ""), active: !!camp.active, maxPerDay: camp.max_emails_per_day ?? null, kind: id === clientSeq ? "client" : "candidate", steps,
         people: { active: 0, paused: 0, finished: 0, failed: 0, total: 0 } });
     } catch (e) { sequences.push({ id, name: "", steps: [], error: String((e as Error).message || e), people: { active: 0, paused: 0, finished: 0, failed: 0, total: 0 } }); }
-  }
+  }));
   const where = new Map<string, any>(); // `${contactId}|${seqId}` -> status in that sequence
-  for (const id of seqs) {
+  const contactsTask = seqTask.then(() => Promise.all(seqs.map(async (id) => {
     for (let page = 1; page <= 20; page++) {
       const d = await apolloPost("/contacts/search", { emailer_campaign_ids: [id], per_page: 100, page });
       const list: any[] = Array.isArray(d?.contacts) ? d.contacts : [];
@@ -356,7 +357,10 @@ async function tracking(admin: any, days: number, withSample = false) {
       }
       if (list.length < 100) break;
     }
-  }
+  })));
+  await Promise.all([statsTask, contactsTask]);
+  // Keep the sequences in the order they're configured.
+  sequences.sort((x, y) => seqs.indexOf(x.id) - seqs.indexOf(y.id));
   // Who each email went to in ProNext (name, role or company), by Apollo contact id.
   const ids = [...new Set(raw.map((m) => String(m.contact_id || "")).filter(Boolean))];
   const who = new Map<string, { name: string; role: string; kind: string; messageId: string }>();
@@ -404,6 +408,21 @@ async function tracking(admin: any, days: number, withSample = false) {
   return { ok: true, rows, sequences, truncated, fetchedAt: new Date().toISOString(), ...(withSample ? { sample: raw.slice(0, 1), sampleSeq } : {}) };
 }
 
+// The tracking view is kept ready in public.app_cache ("apollo_tracking"): rebuilt after every 15-minute
+// sync and whenever someone presses Refresh, so opening the page reads one row instead of ~15 Apollo calls.
+// The snapshot covers 12 months; shorter periods are cut from it.
+const SNAP_KEY = "apollo_tracking";
+async function buildSnapshot(admin: any) {
+  const snap = await tracking(admin, 365);
+  await admin.from("app_cache").upsert({ key: SNAP_KEY, payload: snap, fetched_at: new Date().toISOString() });
+  return snap;
+}
+function forDays(snap: any, days: number) {
+  const min = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10);
+  const rows = (snap.rows || []).filter((r: any) => r.state === "scheduled" || String(r.sentAt || r.dueAt || r.createdAt || "") >= min);
+  return { ...snap, rows };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
@@ -423,7 +442,16 @@ Deno.serve(async (req: Request) => {
       if (!me || me.status !== "Active") return json({ error: "Your account isn't active" }, 403);
       if ((body.action === "tracking" || body.action === "preview") && me.role !== "admin") return json({ error: "Only admins can see email tracking" }, 403);
     }
-    if (body.action === "tracking") return json(await tracking(admin, Math.max(1, Math.min(365, Number(body.days) || 30)), !!opsKey && !!body.sample));
+    if (body.action === "tracking") {
+      const days = Math.max(1, Math.min(365, Number(body.days) || 30));
+      if (opsKey && body.sample) return json(await tracking(admin, days, true));
+      if (!body.refresh) {
+        const { data: c } = await admin.from("app_cache").select("payload,fetched_at").eq("key", SNAP_KEY).maybeSingle();
+        // Older than an hour means the scheduled rebuild has stopped; fetch live rather than show stale numbers.
+        if (c?.payload && Date.now() - new Date(c.fetched_at).getTime() < 60 * 60000) return json({ ...forDays(c.payload, days), cached: true, fetchedAt: c.fetched_at });
+      }
+      return json(forDays(await buildSnapshot(admin), days));
+    }
     if (body.action === "preview") {
       const { data: m } = await admin.from("outreach_messages").select("to_email,to_name,subject,body,html,sent_at,created_at").eq("provider", "apollo")
         .eq("provider_ref", String(body.contactId || "")).order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -431,7 +459,10 @@ Deno.serve(async (req: Request) => {
       return json({ subject: m.subject, html: m.html || "<pre style='font-family:Arial;white-space:pre-wrap'>" + String(m.body || "").replace(/[&<>]/g, (c: string) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" } as any)[c]) + "</pre>", name: m.to_name, date: m.sent_at || m.created_at });
     }
     if (body.action !== "sync") return json({ error: "Unknown action" }, 400);
-    return json(await sync(admin));
+    const result = await sync(admin);
+    let tracking_rows: number | string = "";
+    try { tracking_rows = (await buildSnapshot(admin)).rows.length; } catch (e) { tracking_rows = "failed: " + String((e as Error)?.message || e).slice(0, 200); }
+    return json({ ...result, tracking_rows });
   } catch (e) {
     console.error("apollo-sync", String((e as Error)?.message || e));
     return json({ error: String((e as Error)?.message || e) }, 500);
