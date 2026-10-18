@@ -1964,6 +1964,10 @@ async function audioToWavB64(blob) {
   const off = new OfflineAudioContext(1, len, rate);
   const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
   const pcm = (await off.startRendering()).getChannelData(0);
+  // A silent recording (muted or wrong microphone) would come back as invented words, so it's refused here.
+  let peak = 0, sum = 0;
+  for (let i = 0; i < pcm.length; i++) { const a = Math.abs(pcm[i]); if (a > peak) peak = a; sum += a * a; }
+  if (peak < 0.02 || Math.sqrt(sum / Math.max(1, pcm.length)) < 0.002) throw new Error("I couldn't hear anything in that recording. Check your microphone is on and not muted, then try again.");
   const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
   const w = (o, t) => { for (let i = 0; i < t.length; i++) out.setUint8(o + i, t.charCodeAt(i)); };
   w(0, "RIFF"); out.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVE"); w(12, "fmt "); out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true);
