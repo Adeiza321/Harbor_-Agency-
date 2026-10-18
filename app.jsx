@@ -10446,6 +10446,174 @@ function PortalChat({ token, chats, startLink, onClose }) {
   );
 }
 
+/* A role the team put a candidate forward for, on their candidate page. One card takes them from
+   "what is this?" to applied: the role in brief, "View job description" (the full JD in a panel over the
+   page, so they never leave it), then the screening questions; answering them IS applying. Answers are
+   saved on this device as they type, so they can come back and finish. "Not for me" declines quietly.
+   Links from emails: &role=<link id> opens the job description; &go=questions jumps to the questions. */
+const fmtPay = (d) => {
+  if (!d) return "";
+  if (d.commissionOnly) return "Commission only";
+  const m = (n) => { const v = Number(n); if (!isFinite(v) || !v) return ""; try { return new Intl.NumberFormat("en-US", { style: "currency", currency: d.currency || "USD", maximumFractionDigits: 0 }).format(v); } catch (e) { return v.toLocaleString() + " " + (d.currency || ""); } };
+  const per = { Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" };
+  const r = [m(d.minPay), m(d.maxPay)].filter(Boolean);
+  return r.length ? (r.length === 2 && r[0] === r[1] ? r[0] : r.join(" – ")) + (per[d.salaryPeriod] ? " " + per[d.salaryPeriod] : "") : "";
+};
+const roleFacts = (d, r) => [
+  [d && d.workSetup, d ? [d.location, d.country].filter(Boolean).join(", ") : r.location].filter(Boolean).join(" · "),
+  d && d.employmentType, fmtPay(d),
+].filter(Boolean);
+const draftKey = (token, linkId) => "pn.answers." + token + "." + linkId;
+const readDraft = (token, linkId, n) => { try { const v = JSON.parse(localStorage.getItem(draftKey(token, linkId)) || "[]"); return Array.from({ length: n }, (_, i) => String(v[i] || "")); } catch (e) { return Array.from({ length: n }, () => ""); } };
+
+function JobDescriptionPanel({ r, detail, questions, onClose, onAnswer, onApply, busy }) {
+  const facts = roleFacts(detail, r);
+  const n = questions.length;
+  useEffect(() => {
+    const k = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", k);
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", k); document.body.style.overflow = prev; };
+  }, []); // eslint-disable-line
+  const paras = String((detail && detail.description) || "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center" role="dialog" aria-modal="true" aria-label={"Job description: " + r.role}>
+      <div className="absolute inset-0" style={{ background: "rgba(18,36,29,.45)" }} onClick={onClose} />
+      <div className="relative w-full md:max-w-2xl flex flex-col rounded-t-3xl md:rounded-3xl overflow-hidden" style={{ background: "#fff", maxHeight: "92vh" }}>
+        <div className="flex items-start gap-3 px-5 md:px-7 pt-5 pb-4" style={{ borderBottom: `1px solid ${C.line}` }}>
+          <div className="flex-1 min-w-0">
+            <div className="text-xl md:text-2xl leading-tight" style={{ ...SERIF }}>{r.role}</div>
+            <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{r.company}</div>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close the job description" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.canvas, color: C.ink2 }}><X size={18} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 md:px-7 py-5">
+          {facts.length > 0 && <div className="flex flex-wrap gap-1.5 mb-4">{facts.map((f) => <span key={f} className="text-xs font-medium rounded-full px-2.5 py-1" style={{ background: C.emTint, color: C.em }}>{f}</span>)}</div>}
+          {!detail ? <div className="text-sm py-6" style={{ color: C.ink3 }}>Loading the job description <InlineDots /></div>
+            : !paras.length ? <div className="text-sm" style={{ color: C.ink2 }}>The full description isn't available yet. Your recruiter can tell you more: message them from the top of this page.</div>
+            : paras.map((p, i) => {
+              const lines = p.split("\n");
+              const head = lines.length > 1 && lines[0].length < 60 && !/[.:]$/.test(lines[0]) ? lines.shift() : null;
+              return (
+                <div key={i} className="mb-4">
+                  {head && <div className="text-sm font-semibold mb-1.5" style={{ color: C.ink }}>{head}</div>}
+                  {lines.every((l) => /^\s*[•\-*]\s+/.test(l))
+                    ? <ul className="flex flex-col gap-1.5">{lines.map((l, k) => <li key={k} className="text-[15px] leading-relaxed flex gap-2" style={{ color: C.ink }}><span style={{ color: C.em }}>•</span><span>{l.replace(/^\s*[•\-*]\s+/, "")}</span></li>)}</ul>
+                    : <div className="text-[15px] leading-relaxed whitespace-pre-wrap" style={{ color: C.ink }}>{lines.join("\n")}</div>}
+                </div>
+              );
+            })}
+        </div>
+        <div className="px-5 md:px-7 py-4" style={{ borderTop: `1px solid ${C.line}`, paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}>
+          {n
+            ? <Btn kind="primary" full onClick={onAnswer}>{"Answer " + (n === 1 ? "1 question" : n + " questions") + " to apply"}</Btn>
+            : <Btn kind="primary" full disabled={!!busy} onClick={onApply}>{busy ? <>Applying <InlineDots color="#fff" /></> : "Apply for this role"}</Btn>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RoutedRoleCard({ r, q, token, recName, onDone }) {
+  const questions = (q && q.questions) || [];
+  const n = questions.length;
+  const [detail, setDetail] = useState(null);
+  const [panel, setPanel] = useState(false);
+  const [answers, setAnswers] = useState(() => readDraft(token, r.linkId, n));
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [declining, setDeclining] = useState(false);
+  const qRef = React.useRef(null);
+  useEffect(() => {
+    sbFetch("/rest/v1/rpc/candidate_role", { method: "POST", body: { p_token: token, p_link_id: r.linkId } }).then((d) => setDetail(d || {})).catch(() => setDetail({}));
+    const u = new URLSearchParams(window.location.search);
+    if (u.get("role") === r.linkId) { if (u.get("go") === "questions" && n) setTimeout(() => goQuestions(), 300); else setPanel(true); }
+  }, [r.linkId]); // eslint-disable-line
+  const setA = (i, v) => setAnswers((a) => { const next = a.map((x, k) => (k === i ? v : x)); try { localStorage.setItem(draftKey(token, r.linkId), JSON.stringify(next)); } catch (e) {} return next; });
+  const answered = answers.filter((a) => a.trim()).length;
+  const complete = answered === n;
+  const goQuestions = () => {
+    setPanel(false);
+    setTimeout(() => {
+      if (qRef.current) qRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+      const first = answers.findIndex((a) => !a.trim());
+      const el = document.getElementById("rq-" + r.linkId + "-" + (first < 0 ? 0 : first));
+      if (el) setTimeout(() => el.focus({ preventScroll: true }), 400);
+    }, 50);
+  };
+  const call = async (body) => {
+    const res = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, linkId: r.linkId, ...body }) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok && !j.already) throw new Error(j.error || "Something went wrong. Please try again.");
+    return j;
+  };
+  // Applying: answers first (so the screening that starts on accepting reads them), then accept.
+  const apply = async () => {
+    setBusy("apply"); setErr("");
+    try {
+      if (n) await call({ action: "portal_answer", answers });
+      await call({ action: "portal_respond", accept: true });
+      try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {}
+      setPanel(false);
+      await onDone("You've applied for " + r.role + ". " + (recName || "Your recruiter") + " will be in touch about next steps.");
+    } catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+  const decline = async () => {
+    setBusy("decline"); setErr("");
+    try { await call({ action: "portal_respond", accept: false }); try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {} await onDone("Got it. We won't put you forward for " + r.role + "."); }
+    catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+  const facts = roleFacts(detail, r);
+  const inputStyle = { borderColor: C.line, background: "#FAF8F3" };
+  return (
+    <Card>
+      <div className="text-xs font-semibold mb-2" style={{ color: C.warnFg }}>A NEW ROLE FOR YOU</div>
+      <div className="text-lg font-semibold leading-snug">{r.role}</div>
+      <div className="text-sm" style={{ color: C.ink2 }}>{r.company}</div>
+      {facts.length > 0 && <div className="flex flex-wrap gap-1.5 mt-2.5">{facts.map((f) => <span key={f} className="text-xs font-medium rounded-full px-2.5 py-1" style={{ background: C.emTint, color: C.em }}>{f}</span>)}</div>}
+      <div className="text-sm mt-3" style={{ color: C.ink2 }}>{recName || "Your recruiter"} thinks you'd be a strong fit and would like to put you forward. Nothing is shared with the employer until you apply.</div>
+      <button type="button" onClick={() => setPanel(true)} className="mt-3 w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ border: `1.5px solid ${C.em}`, color: C.em, background: "#fff" }}>
+        <FileText size={16} /> View job description
+      </button>
+      <div ref={qRef} className="mt-5 pt-4" style={{ borderTop: `1px solid ${C.line}`, scrollMarginTop: 16 }}>
+        {n > 0 && (
+          <>
+            <div className="flex items-baseline justify-between gap-3 mb-3">
+              <div className="text-sm font-semibold">{"Apply in " + (n === 1 ? "1 quick question" : n + " quick questions")}</div>
+              <div className="text-xs shrink-0" style={{ color: answered ? C.em : C.ink3 }} aria-live="polite">{answered ? answered + " of " + n + " answered" + (complete ? "" : " · saved") : "Takes a couple of minutes"}</div>
+            </div>
+            <div className="h-1 rounded-full mb-4 overflow-hidden" style={{ background: C.neutralBg }}><div className="h-full rounded-full" style={{ width: (answered / n) * 100 + "%", background: C.em, transition: "width .25s" }} /></div>
+            <div className="flex flex-col gap-3.5">
+              {questions.map((text, i) => (
+                <div key={i} className="flex flex-col gap-1.5">
+                  <label htmlFor={"rq-" + r.linkId + "-" + i} className="text-sm font-medium">{(n > 1 ? i + 1 + ". " : "") + text}</label>
+                  <textarea id={"rq-" + r.linkId + "-" + i} rows={3} value={answers[i] || ""} onChange={(e) => setA(i, e.target.value)} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={inputStyle} />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {err && <div className="text-sm rounded-lg px-3 py-2 mt-3" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+        <Btn kind="primary" full className="mt-4" disabled={!!busy || (n > 0 && !complete)} onClick={apply}>
+          {busy === "apply" ? <>Applying <InlineDots color="#fff" /></> : n === 0 ? "Apply for this role" : complete ? "Send answers and apply" : "Answer " + (n - answered === 1 ? "1 more question" : n - answered + " more questions") + " to apply"}
+        </Btn>
+        <div className="text-center mt-3">
+          {!declining
+            ? <button type="button" onClick={() => setDeclining(true)} className="text-xs underline" style={{ color: C.ink3 }}>Not for me</button>
+            : <div className="text-xs flex flex-wrap items-center justify-center gap-x-3 gap-y-1" style={{ color: C.ink2 }}>
+                <span>We won't put you forward for this role.</span>
+                <button type="button" disabled={!!busy} onClick={decline} className="font-semibold underline" style={{ color: C.dangerFg }}>{busy === "decline" ? "Saving…" : "Yes, not for me"}</button>
+                <button type="button" onClick={() => setDeclining(false)} className="underline">Cancel</button>
+              </div>}
+        </div>
+      </div>
+      {panel && <JobDescriptionPanel r={r} detail={detail} questions={questions} onClose={() => setPanel(false)} onAnswer={goQuestions} onApply={apply} busy={busy === "apply"} />}
+    </Card>
+  );
+}
+
 function CandidatePortal({ data, token, onChanged }) {
   const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], applications: [], ...(data || {}) };
   const [answers, setAnswers] = useState({});
@@ -10478,6 +10646,8 @@ function CandidatePortal({ data, token, onChanged }) {
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const apps = c.applications || [];
+  // Roles put forward but not applied for yet live in their own card above, not in "Your applications".
+  const appliedApps = apps.filter((a) => !(a.response === "pending" && c.routed.some((r) => r.linkId === a.linkId)));
   // Older applications recorded before roles were linked, shown if they aren't already listed.
   const pastOnly = (c.endorsements || []).filter((e) => !apps.some((a) => a.role === e.role && a.company === e.company));
   const convos = apps.filter((a) => a.response !== "declined");
@@ -10526,19 +10696,11 @@ function CandidatePortal({ data, token, onChanged }) {
         {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
 
         {c.routed.map((r) => (
-          <Card key={r.linkId}>
-            <div className="text-xs font-semibold mb-2" style={{ color: C.warnFg }}>A NEW ROLE FOR YOU</div>
-            <div className="text-base font-semibold">{r.role}</div>
-            <div className="text-sm" style={{ color: C.ink2 }}>{r.company}{r.location ? " · " + r.location : ""}</div>
-            <div className="text-sm mt-2 mb-3" style={{ color: C.ink2 }}>Your recruiter thinks you'd be a strong fit. Would you like to be put forward?</div>
-            <div className="flex gap-2">
-              <Btn kind="primary" className="flex-1" disabled={!!busy} onClick={() => act("accept" + r.linkId, { action: "portal_respond", linkId: r.linkId, accept: true }, "Thanks! You've been put forward for " + r.role + ".")}>{busy === "accept" + r.linkId ? <>Sending <InlineDots color="#fff" /></> : "Yes, put me forward"}</Btn>
-              <Btn disabled={!!busy} onClick={() => act("decline" + r.linkId, { action: "portal_respond", linkId: r.linkId, accept: false }, "Got it. We won't put you forward for " + r.role + ".")}>No thanks</Btn>
-            </div>
-          </Card>
+          <RoutedRoleCard key={r.linkId} r={r} q={c.questions.find((x) => x.linkId === r.linkId)} token={token} recName={recName}
+            onDone={async (msg) => { setNote(msg); if (onChanged) await onChanged(); }} />
         ))}
 
-        {c.questions.map((q) => {
+        {c.questions.filter((q) => !c.routed.some((r) => r.linkId === q.linkId)).map((q) => {
           const a = answers[q.linkId] || [];
           const complete = q.questions.every((_, i) => (a[i] || "").trim());
           return (
@@ -10561,10 +10723,10 @@ function CandidatePortal({ data, token, onChanged }) {
         })}
 
         <Card>
-          <SectionTitle title="Your applications" sub={apps.length + pastOnly.length ? "Tap a role to see where it's at." : ""} size="text-xl" />
-          {apps.length + pastOnly.length === 0 && <div className="text-sm py-4" style={{ color: C.ink3 }}>You haven't applied for any roles yet.</div>}
+          <SectionTitle title="Your applications" sub={appliedApps.length + pastOnly.length ? "Tap a role to see where it's at." : ""} size="text-xl" />
+          {appliedApps.length + pastOnly.length === 0 && <div className="text-sm py-4" style={{ color: C.ink3 }}>{c.routed.length ? "Roles you apply for will show here with how they're going." : "You haven't applied for any roles yet."}</div>}
           <div className="flex flex-col gap-2.5 mt-3">
-            {apps.map((a) => {
+            {appliedApps.map((a) => {
               const st = appStatus(a);
               const isOpen = !!openApps[a.linkId];
               return (

@@ -3,7 +3,9 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { Brand, button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
 // Recruiter -> candidate emails, branded with the agency name from Agency settings.
-//   invite   once a candidate is connected to a recruiter on a role
+//   invite   once a candidate is connected to a recruiter on a role (a routed role waiting for them
+//            gets "A new role for you" with a link that opens the job description on their page)
+//   route_reminders  (ops token, hourly) reminders for routed roles they haven't answered
 //   reply    a recruiter's message on a role's thread (also emailed)
 //   draft_reject / preview_reject / reject
 //            recording why a candidate was rejected (by the client, or by us before they were
@@ -67,6 +69,52 @@ function roleCard(job: any) {
     ${rows.length ? `<table role="presentation" cellpadding="0" cellspacing="0" style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">${rows.map(([k, v]) => `<tr><td style="color:#56605A;padding:2px 14px 2px 0;vertical-align:top;">${k}</td><td style="color:#14201B;padding:2px 0;font-weight:600;">${esc(v)}</td></tr>`).join("")}</table>` : ""}
     ${intro ? `<div style="font-size:14px;line-height:1.6;color:#14201B;${rows.length ? "margin-top:10px;" : ""}">${esc(intro)}</div>` : ""}
   </div>`;
+}
+
+// What the candidate does next for a routed role: answer its questions (that's how they apply), or just apply.
+function routedNext(link: any) {
+  const f = link?.ai?.followups;
+  const n = f && f.state === "sent" && Array.isArray(f.questions) ? f.questions.length : 0;
+  return n ? `Read the full job description, then answer ${n === 1 ? "one quick question" : n + " quick questions"} to apply.` : "Read the full job description and apply in one tap.";
+}
+
+// Reminders for routed roles nobody has answered (pg_cron "harbor-route-reminders", hourly, ops token):
+// the first 24 hours after routing, the second 3 days after the first, then never again. Only while the
+// role is still open, the candidate hasn't answered, and they haven't unsubscribed.
+async function routeReminders(admin: any) {
+  const brand = await loadBrand(admin);
+  const now = Date.now();
+  const { data: rows } = await admin.from("candidate_jobs")
+    .select("id,candidate_id,job_id,ai,created_at,route_reminders,route_reminded_at,candidate_response")
+    .eq("candidate_response", "pending").lt("route_reminders", 2)
+    .lt("created_at", new Date(now - 24 * 3600e3).toISOString()).gt("created_at", new Date(now - 30 * 864e5).toISOString()).limit(50);
+  const due = (rows || []).filter((r: any) => r.route_reminders === 0 || (r.route_reminded_at && now - new Date(r.route_reminded_at).getTime() >= 3 * 864e5));
+  const out: any[] = [];
+  for (const l of due.slice(0, 20)) {
+    // Claim it first so two runs can't both send.
+    const { data: claimed } = await admin.from("candidate_jobs").update({ route_reminders: l.route_reminders + 1, route_reminded_at: new Date().toISOString() })
+      .eq("id", l.id).eq("route_reminders", l.route_reminders).eq("candidate_response", "pending").select("id");
+    if (!claimed?.length) continue;
+    const { data: cand } = await admin.from("candidates").select("id,name,email,portal_token,email_opt_out").eq("id", l.candidate_id).maybeSingle();
+    const { data: job } = await admin.from("jobs").select("role_title,client,status,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,commission_only,description").eq("id", l.job_id).maybeSingle();
+    if (!cand?.email || cand.email_opt_out || !job || job.status !== "Open") { out.push({ id: l.id, skipped: true }); continue; }
+    const f = l.ai?.followups;
+    const n = f && f.state === "sent" && Array.isArray(f.questions) ? f.questions.length : 0;
+    const first = esc(String(cand.name || "there").split(" ")[0]);
+    const portalUrl = `${PORTAL_BASE}/?c=${cand.portal_token}`;
+    const last = l.route_reminders + 1 >= 2;
+    const subject = n ? `You're ${n === 1 ? "one quick question" : n + " quick questions"} away from applying for ${job.role_title}` : `Still interested in ${job.role_title}?`;
+    const html = emailShell(brand, subject,
+      `<div style="font-size:20px;margin-bottom:8px;">Hi ${first},</div>
+       <div style="font-size:15px;line-height:1.6;">We put you forward as a strong fit for the <b>${esc(job.role_title)}</b> role${job.client ? ` at <b>${esc(job.client)}</b>` : ""}, and it's still open.</div>
+       ${roleCard(job)}
+       <div style="font-size:15px;line-height:1.6;margin-top:16px;">${n ? `Answer ${n === 1 ? "one quick question" : n + " quick questions"} and you've applied. It takes a couple of minutes.` : "Have a look and apply in one tap."}${last ? " This is the last reminder we'll send about this role." : ""}</div>
+       ${button(brand, portalUrl + "&role=" + encodeURIComponent(l.id) + (n ? "&go=questions" : ""), n ? "Finish applying" : "See the role and apply")}`, undefined, portalUrl + "&unsub=1");
+    const sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, subject, html);
+    await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: (sent ? "Reminder sent about " : "Reminder couldn't be sent about ") + job.role_title + (job.client ? ", " + job.client : ""), done: true });
+    out.push({ id: l.id, sent, reminder: l.route_reminders + 1 });
+  }
+  return { ok: true, checked: (rows || []).length, due: due.length, done: out };
 }
 
 // Short opt-in question with Yes / No. Each opens the candidate page with that answer picked,
@@ -139,6 +187,14 @@ Deno.serve(async (req: Request) => {
     const body = await req.json();
     const { action, linkId } = body;
 
+    // Scheduled reminders (ops token from the database; no staff login).
+    if (action === "route_reminders") {
+      const opsKey = req.headers.get("x-harbor-ops") || "";
+      const { data: tok } = opsKey.length >= 32 ? await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle() : { data: null };
+      if (!tok) return json({ error: "Invalid ops token" }, 403);
+      return json(await routeReminders(admin));
+    }
+
     const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
     const { data: caller } = await admin.auth.getUser(token);
     if (!caller?.user) return json({ error: "Not signed in" }, 401);
@@ -150,7 +206,7 @@ Deno.serve(async (req: Request) => {
     // The link (candidate + role) when there is one; rejecting can also be done without a role.
     let link: any = null;
     if (linkId) {
-      const { data } = await admin.from("candidate_jobs").select("id,candidate_id,job_id,stage,candidate_response").eq("id", linkId).maybeSingle();
+      const { data } = await admin.from("candidate_jobs").select("id,candidate_id,job_id,stage,candidate_response,ai").eq("id", linkId).maybeSingle();
       if (!data) return json({ error: "This role link could not be found" }, 404);
       link = data;
     } else if (action === "invite" || action === "reply") return json({ error: "linkId is required" }, 400);
@@ -188,8 +244,8 @@ Deno.serve(async (req: Request) => {
           `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
            <div style="font-size:15px;line-height:1.6;"><b>${esc(recruiterName)}</b> thinks you'd be a strong fit for ${roleHtml} and would like to put you forward.</div>
            ${roleCard(job)}
-           <div style="font-size:15px;line-height:1.6;margin-top:16px;">Open your candidate page to see the role, answer any questions, and accept or decline. Nothing is shared with the employer until you accept.</div>
-           ${button(brand, portalUrl, "View the role")}`, undefined, unsubUrl);
+           <div style="font-size:15px;line-height:1.6;margin-top:16px;">${routedNext(link)} Nothing is shared with the employer until you apply.</div>
+           ${button(brand, portalUrl + "&role=" + encodeURIComponent(link.id), "See the role and apply")}`, undefined, unsubUrl);
         const sentRouted = await sendBrevo(brand, { email: cand.email, name: cand.name }, subj, routedHtml);
         return json({ ok: true, sent: sentRouted, kind: "routed" });
       }
