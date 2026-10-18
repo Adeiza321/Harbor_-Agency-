@@ -10925,6 +10925,47 @@ function JobsBoard() {
 /* ---------------------------------------------------------------------- */
 /* App root                                                                 */
 /* ---------------------------------------------------------------------- */
+/* Shared frame for sign-in, forgot password and account setup. On wide screens the left half
+   shows a candidate's path from application to hire, with one lime marker that travels down to
+   "Hired" when the page opens (it simply rests there if the person prefers reduced motion). */
+const AUTH_PATH = ["Applied", "In review", "Sent to employer", "Interview", "Offer", "Hired"];
+function AuthShell({ onSubmit, children }) {
+  return (
+    <div className="min-h-screen md:grid" style={{ background: C.canvas, gridTemplateColumns: "minmax(0,5fr) minmax(0,6fr)" }}>
+      <style>{`
+        @keyframes pnx-travel { from { top: 0; } to { top: calc(100% - 14px); } }
+        @keyframes pnx-arrive { from { opacity: .35; } to { opacity: 1; } }
+        .pnx-marker { animation: pnx-travel 1.8s cubic-bezier(.65,0,.25,1) .3s both; }
+        .pnx-hired { animation: pnx-arrive .5s ease-out 2s both; }
+        .pnx-auth input:focus-visible { border-color: ${C.em} !important; box-shadow: 0 0 0 3px ${C.emTint}; }
+        .pnx-auth button:focus-visible { outline: 2px solid ${C.em}; outline-offset: 2px; }
+        @media (prefers-reduced-motion: reduce) { .pnx-marker, .pnx-hired { animation: none; top: calc(100% - 14px); } }
+      `}</style>
+      <aside className="hidden md:flex flex-col justify-between relative overflow-hidden px-12 lg:px-16 py-12" style={{ background: C.side, color: C.canvas }} aria-hidden="true">
+        <BrandMark size={40} />
+        <div className="relative pl-10 my-12">
+          <div className="absolute left-[6px] top-[7px] bottom-[24px] w-px" style={{ background: "rgba(243,239,231,.18)" }} />
+          <div className="absolute left-0 top-[7px] bottom-[24px] w-[13px]">
+            <div className="pnx-marker absolute left-0 w-[13px] h-[13px] rounded-full" style={{ background: C.lime, boxShadow: "0 0 0 5px rgba(200,241,105,.16)", top: "calc(100% - 14px)" }} />
+          </div>
+          {AUTH_PATH.map((t, i) => {
+            const last = i === AUTH_PATH.length - 1;
+            return (
+              <div key={t} className={last ? "pnx-hired" : ""} style={{ ...SERIF, fontSize: last ? "clamp(40px,4.4vw,56px)" : "clamp(22px,2.2vw,28px)", lineHeight: last ? 1 : 1.55,
+                marginTop: last ? 14 : 0, color: last ? C.lime : C.canvas, opacity: last ? 1 : 0.28 + i * 0.1 }}>{t}</div>
+            );
+          })}
+        </div>
+        <p className="text-sm max-w-[30ch]" style={{ color: "rgba(243,239,231,.62)" }}>Every candidate, from the first application to the day they start.</p>
+      </aside>
+      <main className="pnx-auth min-h-screen md:min-h-0 flex items-center justify-center px-4 py-10 md:px-10">
+        <form onSubmit={onSubmit} className="w-full max-w-[400px] rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
+          {children}
+        </form>
+      </main>
+    </div>
+  );
+}
 function ForgotPassword({ onDone, initialEmail }) {
   const [step, setStep] = useState("request"); // request | verify | done
   const [email, setEmail] = useState(initialEmail || "");
@@ -10965,8 +11006,7 @@ function ForgotPassword({ onDone, initialEmail }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
-      <form onSubmit={step === "request" ? requestCode : verifyCode} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+    <AuthShell onSubmit={step === "request" ? requestCode : verifyCode}>
         <div className="flex items-center gap-2.5 mb-6">
           <BrandLogo height={34} />
         </div>
@@ -10997,8 +11037,7 @@ function ForgotPassword({ onDone, initialEmail }) {
           <Btn kind="primary" full onClick={onDone}>Back to sign in</Btn>
         </>)}
         {step !== "done" && <button type="button" onClick={onDone} className="w-full text-xs mt-4 text-center" style={{ color: C.ink3 }}>Back to sign in</button>}
-      </form>
-    </div>
+    </AuthShell>
   );
 }
 
@@ -11031,8 +11070,7 @@ function AccountSetup({ token, onDone }) {
   };
   const first = (info.name || "").trim().split(/\s+/)[0];
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
-      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+    <AuthShell onSubmit={submit}>
         <div className="flex items-center gap-2.5 mb-6"><BrandLogo height={34} /></div>
         {state === "checking" && <div className="text-sm py-6 text-center" style={{ color: C.ink2 }}>Checking your link <InlineDots /></div>}
         {state === "form" && (<>
@@ -11055,8 +11093,7 @@ function AccountSetup({ token, onDone }) {
           <div className="text-xs mb-4" style={{ color: C.ink2 }}>{err || "This link has expired or has already been used. Ask your admin to send a new welcome email."}</div>
           <Btn full onClick={onDone}>Go to sign in</Btn>
         </>)}
-      </form>
-    </div>
+    </AuthShell>
   );
 }
 
@@ -11077,11 +11114,12 @@ function SignIn({ onSignedIn, notice }) {
   };
   if (forgot) return <ForgotPassword initialEmail={email} onDone={() => setForgot(false)} />;
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
-      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+    <AuthShell onSubmit={submit}>
         <div className="flex items-center gap-2.5 mb-6">
           <BrandLogo height={34} />
         </div>
+        <h1 className="text-[28px] leading-tight mb-1" style={{ ...SERIF, color: C.ink }}>Sign in</h1>
+        <p className="text-sm mb-6" style={{ color: C.ink2 }}>Use the email your agency admin set up for you.</p>
         {notice && <div className="text-sm rounded-lg px-3 py-2.5 mb-4 flex items-start gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}><Lock size={15} className="shrink-0 mt-0.5" />{notice}</div>}
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
@@ -11092,9 +11130,8 @@ function SignIn({ onSignedIn, notice }) {
         <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
         {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
         <Btn type="submit" kind="primary" full className="mt-3" onClick={submit}>{busy ? <>Signing in <InlineDots color="#fff" /></> : "Sign in"}</Btn>
-        <div className="text-xs mt-4 text-center" style={{ color: C.ink3 }}>Accounts are created by your agency's admin. There is no self sign-up.</div>
-      </form>
-    </div>
+        <div className="text-xs mt-5 pt-4 border-t" style={{ color: C.ink3, borderColor: C.line }}>No account yet? Your agency's admin creates them; there's no self sign-up.</div>
+    </AuthShell>
   );
 }
 function AwaitingAccess({ onSignOut }) {
