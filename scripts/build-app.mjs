@@ -21,7 +21,8 @@ for (const f of ["main.jsx", "public.jsx", "lucide-shim.js"]) copyFileSync("src/
 
 sh("npx tailwindcss -c tailwind.config.cjs -i src/styles.css -o build/style.css --minify");
 const bun = (entry, out) => sh(`bun build build/${entry} --minify --target=browser --format=iife --define 'process.env.NODE_ENV="production"' --outfile=build/${out}`);
-bun("main.jsx", "app.js");
+// Dashboard: Preact instead of React too (see bundle-app.mjs).
+sh("bun scripts/bundle-app.mjs");
 // Public pages: Preact instead of React (see bundle-public.mjs).
 sh("bun scripts/bundle-public.mjs");
 
@@ -35,7 +36,7 @@ for (const [name, ext] of [["style", "css"], ["app", "js"], ["public", "js"]]) {
 }
 
 // The page itself: styles first, then whichever bundle this address needs (decided before anything downloads).
-const pick = `(function(){var l=location,q=new URLSearchParams(l.search),p=/^\\/(jobs|careers)(\\/|$)/.test(l.pathname)||["apply","jobs","careers","u","t","c"].some(function(k){return q.has(k)});var s=document.createElement("script");s.src=p?"${out.public}":"${out.app}";document.head.appendChild(s)})();`;
+const pick = `(function(){try{var t=localStorage.getItem("pn.theme");if(t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.className+=" pn-dark"}catch(e){}var l=location,q=new URLSearchParams(l.search),p=/^\\/(jobs|careers)(\\/|$)/.test(l.pathname)||["apply","jobs","careers","u","t","c"].some(function(k){return q.has(k)});var s=document.createElement("script");s.src=p?"${out.public}":"${out.app}";document.head.appendChild(s)})();`;
 // Content-Security-Policy: the browser only runs this site's own scripts (plus the one-line
 // loader above, allowed by its hash) and only talks to this site and Supabase. If someone ever
 // slipped a script into a page, it couldn't run or send a signed-in session anywhere.
@@ -57,7 +58,7 @@ const csp = [
 // Until the scripts arrive, the page shows only the ProNext mark on the app's background (inline, so
 // it needs nothing else to load). Job pages also carry a plain copy of the job for search engines
 // (.pnx-seo, added by build-job-pages.mjs): hidden here, shown only when JavaScript is off.
-const boot = "body{background:#F3EFE7}.pnx-boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#F3EFE7}.pnx-boot img{animation:pnx-boot 1s ease-in-out infinite alternate}@keyframes pnx-boot{from{opacity:.3;transform:scale(.92)}to{opacity:1;transform:scale(1)}}@media (prefers-reduced-motion:reduce){.pnx-boot img{animation:none}}.pnx-seo{display:none}";
+const boot = ".pn-dark body,.pn-dark .pnx-boot{background:#0D1813!important}body{background:#F3EFE7}.pnx-boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#F3EFE7}.pnx-boot img{animation:pnx-boot 1s ease-in-out infinite alternate}@keyframes pnx-boot{from{opacity:.3;transform:scale(.92)}to{opacity:1;transform:scale(1)}}@media (prefers-reduced-motion:reduce){.pnx-boot img{animation:none}}.pnx-seo{display:none}";
 const html = `<!doctype html>
 <html lang="en">
 <head>
