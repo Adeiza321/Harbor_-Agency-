@@ -11833,14 +11833,14 @@ const AUTH_PATH = ["Applied", "In review", "Sent to employer", "Interview", "Off
 /* Line drawings scattered behind the sign-in card: the everyday objects of recruiting. Decorative only
    (aria-hidden); the ones near the sides are hidden on phones so they never crowd the form. */
 const AUTH_ART = {
-  cv: <><rect x="10" y="4" width="44" height="56" rx="4" fill="#fff" /><circle cx="22" cy="17" r="5.5" fill={C.emTint} /><path d="M31 14h15M31 20h10M17 31h30M17 38h30M17 45h22M17 52h26" /></>,
-  search: <><circle cx="26" cy="26" r="16" fill="#fff" /><circle cx="26" cy="22" r="5" fill={C.emTint} /><path d="M17 34c2-5 5.5-7 9-7s7 2 9 7M38 38l14 14" strokeWidth="3" /></>,
-  briefcase: <><rect x="6" y="20" width="52" height="34" rx="5" fill="#fff" /><path d="M23 20v-6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v6M6 34h52" /><rect x="28" y="30" width="8" height="8" rx="1.5" fill={C.emTint} /></>,
-  calendar: <><rect x="7" y="11" width="50" height="46" rx="5" fill="#fff" /><path d="M7 24h50M20 6v10M44 6v10" /><path d="M23 40l6 6 12-12" strokeWidth="3" /></>,
-  chat: <><path d="M8 14a6 6 0 0 1 6-6h36a6 6 0 0 1 6 6v22a6 6 0 0 1-6 6H26l-12 10v-10h0a6 6 0 0 1-6-6z" fill="#fff" /><circle cx="22" cy="25" r="2.4" fill={C.em} stroke="none" /><circle cx="32" cy="25" r="2.4" fill={C.em} stroke="none" /><circle cx="42" cy="25" r="2.4" fill={C.em} stroke="none" /></>,
-  profile: <><rect x="5" y="12" width="54" height="40" rx="5" fill="#fff" /><circle cx="20" cy="28" r="6.5" fill={C.emTint} /><path d="M11 44c1.5-4 5-6 9-6s7.5 2 9 6M35 24h16M35 31h12M35 38h14" /><circle cx="52" cy="13" r="7" fill={C.lime} /><path d="M49 13l2 2 4-4" /></>,
-  offer: <><rect x="6" y="14" width="52" height="38" rx="4" fill="#fff" /><path d="M6 18l26 18 26-18" /><circle cx="50" cy="46" r="8" fill={C.lime} /><path d="M46.5 46l2.5 2.5 5-5" /></>,
-  team: <><circle cx="22" cy="22" r="8" fill="#fff" /><circle cx="44" cy="25" r="6.5" fill={C.emTint} /><path d="M8 52c1.5-9 7-14 14-14s12.5 5 14 14M35 40c2.5-2 5.5-3 9-3 6 0 10.5 4 12 12" /></>,
+  cv: <><rect x="10" y="4" width="44" height="56" rx="4" fill={C.card} /><circle cx="22" cy="17" r="5.5" fill={C.emTint} /><path d="M31 14h15M31 20h10M17 31h30M17 38h30M17 45h22M17 52h26" /></>,
+  search: <><circle cx="26" cy="26" r="16" fill={C.card} /><circle cx="26" cy="22" r="5" fill={C.emTint} /><path d="M17 34c2-5 5.5-7 9-7s7 2 9 7M38 38l14 14" strokeWidth="3" /></>,
+  briefcase: <><rect x="6" y="20" width="52" height="34" rx="5" fill={C.card} /><path d="M23 20v-6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v6M6 34h52" /><rect x="28" y="30" width="8" height="8" rx="1.5" fill={C.emTint} /></>,
+  calendar: <><rect x="7" y="11" width="50" height="46" rx="5" fill={C.card} /><path d="M7 24h50M20 6v10M44 6v10" /><path d="M23 40l6 6 12-12" strokeWidth="3" /></>,
+  chat: <><path d="M8 14a6 6 0 0 1 6-6h36a6 6 0 0 1 6 6v22a6 6 0 0 1-6 6H26l-12 10v-10h0a6 6 0 0 1-6-6z" fill={C.card} /><circle cx="22" cy="25" r="2.4" fill={C.em} stroke="none" /><circle cx="32" cy="25" r="2.4" fill={C.em} stroke="none" /><circle cx="42" cy="25" r="2.4" fill={C.em} stroke="none" /></>,
+  profile: <><rect x="5" y="12" width="54" height="40" rx="5" fill={C.card} /><circle cx="20" cy="28" r="6.5" fill={C.emTint} /><path d="M11 44c1.5-4 5-6 9-6s7.5 2 9 6M35 24h16M35 31h12M35 38h14" /><circle cx="52" cy="13" r="7" fill={C.lime} /><path d="M49 13l2 2 4-4" /></>,
+  offer: <><rect x="6" y="14" width="52" height="38" rx="4" fill={C.card} /><path d="M6 18l26 18 26-18" /><circle cx="50" cy="46" r="8" fill={C.lime} /><path d="M46.5 46l2.5 2.5 5-5" /></>,
+  team: <><circle cx="22" cy="22" r="8" fill={C.card} /><circle cx="44" cy="25" r="6.5" fill={C.emTint} /><path d="M8 52c1.5-9 7-14 14-14s12.5 5 14 14M35 40c2.5-2 5.5-3 9-3 6 0 10.5 4 12 12" /></>,
 };
 // [drawing, position, size, rotation, opacity, extra classes]. Loose ones float around the page;
 // (AuthTucked puts two small cards behind the sign-in card.)
@@ -11848,8 +11848,7 @@ const AUTH_ART = {
 // [icon, title, line, position, rotation, extra classes]. Example content, not real people.
 const AUTH_LOOSE = [
   ["profile", "New application", "Plumber · Croydon", { left: "5%", top: "7%" }, -6, "hidden sm:block"],
-  ["chat", "New message", "\u201cHappy to chat tomorrow\u201d", { right: "6%", top: "3%" }, 4, "hidden md:block"],
-  ["calendar", "Interview booked", "Thu, 10:00 · 2nd round", { left: "44%", bottom: "3%" }, 3, "hidden md:block"],
+  ["chat", "New message", "\u201cHappy to chat tomorrow\u201d", { right: "6%", top: "3%" }, 4, "hidden xl:block"],
   ["briefcase", "Role filled", "Qualified Electrician", { right: "5%", bottom: "7%" }, -5, ""],
 ];
 const AUTH_CARD = { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "9px 12px", fontSize: 12, color: C.ink2, boxShadow: "0 10px 24px -18px rgba(18,36,29,.5)", lineHeight: 1.4 };
@@ -11857,7 +11856,7 @@ function AuthScatter() {
   return (
     <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
       {AUTH_LOOSE.map(([k, title, line, pos, rot, cls], i) => (
-        <div key={title} className={"absolute pnx-drift " + cls} style={{ ...pos, rotate: rot + "deg", opacity: 0.92, animationName: "pnx-wander-" + "abcd"[i % 4], animationDelay: -(i * 3) + "s", animationDuration: 20 + i * 3 + "s" }}>
+        <div key={title} className={"absolute pnx-drift " + cls} style={{ ...pos, rotate: rot + "deg", opacity: 0.92, animationName: "pnx-wander-" + "abd"[i % 3], animationDelay: -(i * 3) + "s", animationDuration: 20 + i * 3 + "s" }}>
           <div className="flex items-center gap-2.5" style={AUTH_CARD}>
             <svg viewBox="0 0 64 64" width={26} height={26} fill="none" stroke={C.em} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">{AUTH_ART[k]}</svg>
             <div><div style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>{title}</div>{line}</div>
@@ -11873,13 +11872,13 @@ function AuthTucked() {
   const card = AUTH_CARD;
   return (
     <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-      <div className="absolute pnx-peek hidden sm:block" style={{ top: -46, right: -112, rotate: "5deg" }}>
+      <div className="absolute pnx-peek-r hidden xl:block" style={{ top: -46, right: -112, rotate: "5deg" }}>
         <div style={card}>
           <div style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>Ada Okafor</div>Moved to Interview<br />
           <span style={{ display: "inline-block", marginTop: 4, fontSize: 11, background: C.emTint, color: C.em, borderRadius: 999, padding: "2px 8px" }}>AI fit 91%</span>
         </div>
       </div>
-      <div className="absolute pnx-peek hidden sm:block" style={{ bottom: -36, left: -136, rotate: "-6deg", animationDelay: "-3.5s" }}>
+      <div className="absolute pnx-peek-l hidden xl:block" style={{ bottom: -30, left: -134, rotate: "-6deg", animationDelay: "-3.5s" }}>
         <div style={card}>
           <div className="flex items-center gap-1.5" style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: 4, background: C.lime, display: "inline-block" }} />Offer accepted</div>Staff Accountant
         </div>
@@ -11909,8 +11908,10 @@ function AuthShell({ onSubmit, children }) {
         .pnx-tick > div { position: absolute; inset: 0; opacity: 0; animation: pnx-tick 12s infinite; }
         .pnx-tick > div:nth-child(2) { animation-delay: 4s; } .pnx-tick > div:nth-child(3) { animation-delay: 8s; }
         .pnx-drift { animation: pnx-wander-a 22s ease-in-out infinite; }
-        @keyframes pnx-peek { 0% { translate: 0 0; } 30% { translate: 40px -20px; } 60% { translate: -10px 30px; } 100% { translate: 0 0; } }
-        .pnx-peek { animation: pnx-peek 14s ease-in-out infinite; }
+        /* The two cards beside the form drift up and down without sliding under it. */
+        @keyframes pnx-peek-l { 0% { translate: 0 0; } 35% { translate: -6px -18px; } 70% { translate: 0 18px; } 100% { translate: 0 0; } }
+        @keyframes pnx-peek-r { 0% { translate: 0 0; } 35% { translate: 0 -18px; } 70% { translate: -4px 16px; } 100% { translate: 0 0; } }
+        .pnx-peek-l { animation: pnx-peek-l 14s ease-in-out infinite; } .pnx-peek-r { animation: pnx-peek-r 14s ease-in-out infinite; }
         .pnx-card { animation: pnx-card .7s cubic-bezier(.2,.7,.2,1) both; }
         .pnx-card > * { animation: pnx-rise .6s cubic-bezier(.2,.7,.2,1) both; }
         .pnx-card > *:nth-child(1) { animation-delay: .12s; } .pnx-card > *:nth-child(2) { animation-delay: .2s; } .pnx-card > *:nth-child(3) { animation-delay: .28s; }
@@ -11920,7 +11921,7 @@ function AuthShell({ onSubmit, children }) {
         .pnx-auth input:focus-visible { border-color: ${C.em} !important; box-shadow: 0 0 0 3px ${C.emTint}; }
         .pnx-auth button:focus-visible { outline: 2px solid ${C.em}; outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) {
-          .pnx-marker, .pnx-st, .pnx-drift, .pnx-peek, .pnx-card, .pnx-card > *, .pnx-tick > div { animation: none !important; }
+          .pnx-marker, .pnx-st, .pnx-drift, .pnx-peek-l, .pnx-peek-r, .pnx-card, .pnx-card > *, .pnx-tick > div { animation: none !important; }
           .pnx-marker { top: calc(100% - 14px) !important; } .pnx-st { opacity: .92 !important; } .pnx-tick > div:first-child { opacity: 1; }
         }
       `}</style>
@@ -11935,14 +11936,14 @@ function AuthShell({ onSubmit, children }) {
             const last = i === AUTH_PATH.length - 1;
             return (
               <div key={t} className={"pnx-st" + (last ? " pnx-hired" : "")} style={{ ...SERIF, fontSize: last ? "clamp(40px,4.4vw,56px)" : "clamp(22px,2.2vw,28px)", lineHeight: last ? 1 : 1.55,
-                marginTop: last ? 14 : 0, color: last ? C.lime : C.canvas, "--o": last ? 0.3 : 0.28, opacity: last ? 0.3 : 0.28, animationDelay: (last ? 4.1 : i * 0.75) + "s" }}>{t}</div>
+                marginTop: last ? 14 : 0, color: last ? C.lime : C.onSide, "--o": last ? 0.3 : 0.28, opacity: last ? 0.3 : 0.28, animationDelay: (last ? 4.1 : i * 0.75) + "s" }}>{t}</div>
             );
           })}
         </div>
         <div>
           <div className="pnx-tick relative h-[22px] overflow-hidden text-[13px]" style={{ color: "rgba(243,239,231,.7)" }}>
             {["Applications land in your Inbox the moment they arrive", "AI screens every candidate against the role's must-haves", "Interviews, offers and placements in one place"].map((t) => (
-              <div key={t} className="flex items-center gap-2"><span style={{ color: C.lime }}>●</span>{t}</div>
+              <div key={t} className="flex items-center gap-2 min-w-0"><span className="shrink-0" style={{ color: C.lime }}>●</span><span className="truncate">{t}</span></div>
             ))}
           </div>
           <p className="text-sm max-w-[30ch] mt-2.5" style={{ color: "rgba(243,239,231,.62)" }}>Every candidate, from the first application to the day they start.</p>
