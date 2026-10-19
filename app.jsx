@@ -31,7 +31,8 @@ const C_DARK = {
   solid: "#2C4238", onSide: "#E8EEEA", warnText: "#F2C77A", dangerText: "#F6A28C", emText: "#9FDDBF", hover: "#1E3029",
 };
 const C = DARK ? C_DARK : C_LIGHT;
-const SERIF = { fontFamily: '"Iowan Old Style","Palatino Linotype",Georgia,serif' };
+// Headings and big numbers (the name is historic: they used to be a serif).
+const SERIF = { fontFamily: '"Manrope","DM Sans",ui-sans-serif,system-ui,sans-serif', fontWeight: 700, letterSpacing: "-0.02em" };
 const TONE = {
   em: { bg: C.emTint, fg: C.em }, warn: { bg: C.warnBg, fg: C.warnFg },
   danger: { bg: C.dangerBg, fg: C.dangerFg }, info: { bg: C.infoBg, fg: C.infoFg },
@@ -864,11 +865,22 @@ function downloadCSV(name, rows) {
   const keys = Object.keys(rows[0]);
   const esc = (v) => `"${String(Array.isArray(v) ? v.join("; ") : v ?? "").replace(/"/g, '""')}"`;
   const csv = [keys.join(","), ...rows.map((r) => keys.map((k) => esc(r[k])).join(","))].join("\n");
-  try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = name; a.click(); return true; } catch (e) { return false; }
+  try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" })); a.download = name; a.click(); return true; } catch (e) { return false; }
 }
 /* PLACEHOLDER scoring: replace with your real AI rating service */
 const scoreFor = (seed) => 60 + (Array.from(seed).reduce((a, c) => a + c.charCodeAt(0), 0) % 35);
-const flat = (c) => ({ name: c.name, role: c.role, location: c.location, recruiter: c.recruiter || "", status: c.status, ai: c.ai, email: c.email });
+// One spreadsheet row per candidate with their full details (Candidates page → Export).
+const flat = (c, jobs = []) => {
+  const day = (t) => (t ? new Date(t).toISOString().slice(0, 10) : "");
+  const roles = (c.jobLinks || []).map((l) => { const j = jobs.find((x) => x.id === l.jobId); return (j ? j.role + (j.client ? " (" + j.client + ")" : "") : "Role removed") + " – " + l.stage + (l.fit != null ? " – fit " + l.fit : ""); });
+  return {
+    Name: c.name, Email: c.emailAddr || "", "Email verified": c.email === "Verified" ? "Yes" : "No", Phone: c.phone || "", LinkedIn: c.linkedin || "",
+    "Current title": c.currentTitle || "", "Current company": c.currentCompany || "", Location: c.location || "",
+    "Current role": c.role || "", Status: c.status || "", "AI score": c.ai || "", Recruiter: c.recruiter || "", Source: c.source || "",
+    Experience: c.experience === "-" ? "" : c.experience || "", "Notice period": c.notice === "-" ? "" : c.notice || "", "Salary expectation": c.pay === "-" ? "" : c.pay || "",
+    Skills: (c.skills || []).join("; "), Roles: roles.join("; "), Added: day(c.createdAt), "Last updated": day(c.updatedAt),
+  };
+};
 /* How many company cards have follow-up questions in a given state (draft / sent / answered). */
 const countFollowups = (cands, state) => cands.reduce((n, c) => n + (c.jobLinks || []).filter((l) => l.ai && l.ai.followups && l.ai.followups.state === state).length, 0);
 // location/phone default to blank, never a guessed value: the AI screener (score_cv) only fills
@@ -3656,7 +3668,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" live={[{ n: data.filter((c) => Date.now() - c.createdAt < 7 * 864e5).length, label: "added this week", tone: "em" }, { n: data.filter((c) => c.status === "Interview").length, label: "in interview", tone: "info" }, { n: data.filter((c) => c.status === "Offer").length, label: "at offer", tone: "em" }]} title={scope === "recruiter" ? "Your candidate bench" : "All candidates"} sub={scope === "recruiter" ? "Every applicant you have sourced, and active file candidates ready to reuse." : `${data.length} candidates across every recruiter, client, and source.`} />
         <div className="flex gap-2.5">
-          <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
+          <Btn icon={Download} onClick={() => toast(downloadCSV("candidates-" + new Date().toLocaleDateString("en-CA") + ".csv", filtered.map((c) => flat(c, S.jobs))) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
           <Btn icon={UserPlus} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
@@ -8683,7 +8695,7 @@ function PreferencesDone({ p, name, preview, onClose }) {
    One question per screen, like a short career quiz: a top bar with back, logo and "3/12", a thin
    progress line, a big question, and full-width answers. Tapping a single-choice answer moves on;
    multi-choice and typed answers have Continue. Full screen, so it feels like an app on phones. */
-const QUIZ_FONT = { fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" };
+const QUIZ_FONT = { fontFamily: '"DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif' };
 function QuizOption({ selected, onClick, children, hint, multi }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={!!selected}
@@ -13007,7 +13019,7 @@ export default function App() {
   else content = <OverviewRecOps S={S} />;
 
   return (
-    <div className="flex min-h-screen" style={{ background: C.canvas, color: C.ink, fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' }}>
+    <div className="flex min-h-screen" style={{ background: C.canvas, color: C.ink }}>
       <TopProgressBar show={refreshing} />
       <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
       <div className="flex-1 min-w-0">

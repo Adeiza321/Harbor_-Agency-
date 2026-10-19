@@ -175,7 +175,7 @@ ${head}`;
   return shell.replace("<title>ProNext</title>", () => tags).replace('<div id="root">', () => `<div id="root"><div class="pnx-seo">${body}</div>`);
 }
 
-const jobBody = (j) => `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif">
+const jobBody = (j) => `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:"DM Sans",system-ui,sans-serif">
 <p><a href="${SITE}/jobs/">All jobs</a></p>
 <h1>${esc(j.title)}</h1>
 <p>${esc([org.name, jobPlace(j.location, j.country), j.workSetup, j.employmentType, payText(j.pay)].filter(Boolean).join(" · "))}</p>
@@ -230,7 +230,7 @@ writeFileSync(join(OUT, "jobs", "index.html"), page({
   description: `Browse ${jobs.length} open ${jobs.length === 1 ? "role" : "roles"} recruited by ${org.name}. Apply in about two minutes, or refer someone you know.`,
   canonical: `${SITE}/jobs/`,
   head: `<script type="application/ld+json">${jsonLd(boardList)}</script>\n`,
-  body: `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:system-ui,sans-serif"><h1>Jobs at ${esc(org.short)}</h1><ul>${jobs.map((j) =>
+  body: `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:"DM Sans",system-ui,sans-serif"><h1>Jobs at ${esc(org.short)}</h1><ul>${jobs.map((j) =>
     `<li><a href="${jobUrl(j.slug)}">${esc(j.title)}</a> – ${esc([jobPlace(j.location, j.country), j.workSetup, j.employmentType].filter(Boolean).join(" · "))}</li>`).join("")}</ul></main>`,
 }));
 

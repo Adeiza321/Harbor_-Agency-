@@ -69,6 +69,8 @@ const html = `<!doctype html>
 <title>ProNext</title>
 <link rel="icon" type="image/png" href="/assets/icon.png">
 <link rel="preload" as="image" href="/assets/logo.png">
+<link rel="preload" as="font" type="font/woff2" href="/assets/fonts/dm-sans-latin-wght-normal.woff2" crossorigin>
+<link rel="preload" as="font" type="font/woff2" href="/assets/fonts/manrope-latin-wght-normal.woff2" crossorigin>
 <link rel="preconnect" href="https://acjmsihvvupqiikxckho.supabase.co" crossorigin>
 <link rel="stylesheet" href="${out.style}">
 <style>${boot}</style>
