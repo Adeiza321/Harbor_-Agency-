@@ -5225,7 +5225,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
 /* Reject with a recorded reason, and tell the candidate why (email + their candidate page). */
 const REJECT_REASONS = [["experience", "Not enough experience"], ["skill", "Missing a must-have skill"], ["salary", "Salary expectation"], ["location", "Location / work authorisation"],
   ["notice", "Notice period"], ["other_candidate", "Client chose another candidate"], ["role_closed", "Role filled or paused"], ["interview", "Interview performance"], ["other", "Other"]];
-const REJECT_LABEL = Object.fromEntries(REJECT_REASONS);
+const REJECT_LABEL = { ...Object.fromEntries(REJECT_REASONS), rerouted: "Routed to another role" };
 function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose, onDone }) {
   const first = candidate.name.split(" ")[0];
   // Live roles first; roles already rejected stay pickable so their reason and feedback can be
@@ -5666,6 +5666,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
   const available = available0.filter((j) => onWorklist(S, j));
   const offList = available0.length - available.length;
   const sel = "text-sm rounded-lg border px-2 py-1.5 bg-white";
+  const liveLinks = candidate.jobLinks.filter((l) => !["Rejected", "Withdrawn", "Placed"].includes(l.stage));
   const pickedJob = pick ? S.jobs.find((j) => j.id === pick) : null;
   const pickedQs = (pickedJob && pickedJob.screeningQuestions) || [];
   const [pendingAnswers, setPendingAnswers] = useState([]);
@@ -5679,7 +5680,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
             <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: l.response === "accepted" ? C.ink2 : C.warnFg }}>{(j ? j.client : "") + (l.response === "pending" ? " · routed, waiting for them to accept" : l.response === "declined" ? " · declined" : l.fit != null ? " · fit " + l.fit + "%" : "")}</div></div>
             <div className="flex items-center gap-2 shrink-0">
               <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>
-              {S.role !== "recruiter" && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
+              {S.role !== "recruiter" && ["Rejected", "Withdrawn"].includes(l.stage) && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
             </div>
           </div>
           {j && <ScreeningAnswerRow link={l} job={j} S={S} toast={toast} />}
@@ -5693,8 +5694,9 @@ function CandidateJobsCard({ candidate, S, toast }) {
               <option value="">Add to a job…</option>
               {available.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
             </select>
-            <Btn kind="primary" onClick={() => { if (!pick) { toast("Pick a job first"); return; } S.linkJob(candidate.id, pick, candidate.ai || null, pendingAnswers).then(() => { setPick(""); setPendingAnswers([]); toast("Added to job"); }).catch(() => {}); }}>Add</Btn>
+            <Btn kind="primary" onClick={() => { if (!pick) { toast("Pick a job first"); return; } S.linkJob(candidate.id, pick, candidate.ai || null, pendingAnswers).then(() => { setPick(""); setPendingAnswers([]); toast(liveLinks.length ? "Moved to the new role. Earlier role marked Rejected" : "Added to job"); }).catch(() => {}); }}>Add</Btn>
           </div>
+          {pick && liveLinks.length > 0 && <div className="text-xs mt-2" style={{ color: C.warnFg }}>Adding this role moves {candidate.name.split(" ")[0]} off {liveLinks.map((l) => (S.jobs.find((x) => x.id === l.jobId) || {}).role).filter(Boolean).join(", ") || "their current role"}, which will be marked Rejected.</div>}
           {pickedQs.length > 0 && (
             <div className="mt-2 space-y-2">
               <div className="text-xs font-medium" style={{ color: C.ink2 }}>This job has screening questions — fill in the candidate's answers now if you have them:</div>
@@ -6388,7 +6390,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const gq = (S.query || "").toLowerCase();
   const hit = (j, t) => j.role.toLowerCase().includes(t) || j.client.toLowerCase().includes(t);
   const [tab, setTab] = useState("All");
-  const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.jobsView") || "cards"; } catch (e) { return "cards"; } });
+  const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.jobsView") || "list"; } catch (e) { return "list"; } });
   const setView = (v) => { setViewRaw(v); try { localStorage.setItem("pn.jobsView", v); } catch (e) {} };
   const mine = (j) => (j.engagedIds || []).includes(S.me.id);
   const inTab = (j, t) => t === "All" || (t === "Mine" ? mine(j) : j.status === t);
@@ -12780,8 +12782,10 @@ export default function App() {
       let rows;
       try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [] } }); }
       catch (e) { showError(e.message); throw e; }
-      reload();
       const row = rows && rows[0];
+      // Moving them onto a new role ends their other live roles (marked Rejected, "Routed to …").
+      if (row) await sbFetch("/rest/v1/rpc/reject_other_roles", { method: "POST", token: session.token, body: { p_link: row.id } }).catch(() => {});
+      reload();
       // Screening starts on the server the moment the row exists (no button to press).
       if (row) msgCall("invite", { linkId: row.id }).catch(() => {});
       return row;
