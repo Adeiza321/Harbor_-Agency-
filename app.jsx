@@ -11424,7 +11424,7 @@ function AuthScatter() {
   return (
     <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
       {AUTH_LOOSE.map(([k, title, line, pos, rot, cls], i) => (
-        <div key={title} className={"absolute pnx-drift " + cls} style={{ ...pos, rotate: rot + "deg", opacity: 0.92, animationDelay: -(i * 1.6) + "s", animationDuration: 6 + (i % 3) * 1.2 + "s" }}>
+        <div key={title} className={"absolute pnx-drift " + cls} style={{ ...pos, rotate: rot + "deg", opacity: 0.92, animationName: "pnx-wander-" + "abcd"[i % 4], animationDelay: -(i * 3) + "s", animationDuration: 20 + i * 3 + "s" }}>
           <div className="flex items-center gap-2.5" style={AUTH_CARD}>
             <svg viewBox="0 0 64 64" width={26} height={26} fill="none" stroke={C.em} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">{AUTH_ART[k]}</svg>
             <div><div style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>{title}</div>{line}</div>
@@ -11463,7 +11463,11 @@ function AuthShell({ onSubmit, children }) {
         @keyframes pnx-lit { 0%, 3% { opacity: var(--o); } 9%, 86% { opacity: .92; } 100% { opacity: var(--o); } }
         @keyframes pnx-hire { 0%, 3% { opacity: .3; transform: none; } 9% { opacity: 1; transform: scale(1.04); } 15%, 70% { opacity: 1; transform: none; } 100% { opacity: .3; } }
         @keyframes pnx-tick { 0% { opacity: 0; transform: translateY(8px); } 4%, 29% { opacity: 1; transform: none; } 33%, 100% { opacity: 0; transform: translateY(-8px); } }
-        @keyframes pnx-drift { 0% { translate: 0 0; } 25% { translate: 8px -14px; } 50% { translate: 14px -4px; } 75% { translate: 4px 10px; } 100% { translate: 0 0; } }
+        /* Cards wander slowly around their part of the page (sliding behind the form when they pass it). */
+        @keyframes pnx-wander-a { 0% { translate: 0 0; } 20% { translate: 70px 40px; } 45% { translate: 120px -10px; } 70% { translate: 40px 70px; } 100% { translate: 0 0; } }
+        @keyframes pnx-wander-b { 0% { translate: 0 0; } 25% { translate: -90px 50px; } 50% { translate: -40px 110px; } 75% { translate: -110px 20px; } 100% { translate: 0 0; } }
+        @keyframes pnx-wander-c { 0% { translate: 0 0; } 30% { translate: 80px -60px; } 60% { translate: -60px -90px; } 85% { translate: -30px -20px; } 100% { translate: 0 0; } }
+        @keyframes pnx-wander-d { 0% { translate: 0 0; } 25% { translate: -70px -50px; } 55% { translate: -130px -10px; } 80% { translate: -40px -80px; } 100% { translate: 0 0; } }
         @keyframes pnx-card { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
         @keyframes pnx-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
         .pnx-marker { animation: pnx-travel 6s linear infinite; }
@@ -11471,9 +11475,9 @@ function AuthShell({ onSubmit, children }) {
         .pnx-st.pnx-hired { animation-name: pnx-hire; }
         .pnx-tick > div { position: absolute; inset: 0; opacity: 0; animation: pnx-tick 12s infinite; }
         .pnx-tick > div:nth-child(2) { animation-delay: 4s; } .pnx-tick > div:nth-child(3) { animation-delay: 8s; }
-        .pnx-drift { animation: pnx-drift 7s ease-in-out infinite; }
-        @keyframes pnx-peek { 0% { translate: 0 0; } 50% { translate: -6px -14px; } 100% { translate: 0 0; } }
-        .pnx-peek { animation: pnx-peek 5.5s ease-in-out infinite; }
+        .pnx-drift { animation: pnx-wander-a 22s ease-in-out infinite; }
+        @keyframes pnx-peek { 0% { translate: 0 0; } 30% { translate: 40px -20px; } 60% { translate: -10px 30px; } 100% { translate: 0 0; } }
+        .pnx-peek { animation: pnx-peek 14s ease-in-out infinite; }
         .pnx-card { animation: pnx-card .7s cubic-bezier(.2,.7,.2,1) both; }
         .pnx-card > * { animation: pnx-rise .6s cubic-bezier(.2,.7,.2,1) both; }
         .pnx-card > *:nth-child(1) { animation-delay: .12s; } .pnx-card > *:nth-child(2) { animation-delay: .2s; } .pnx-card > *:nth-child(3) { animation-delay: .28s; }
