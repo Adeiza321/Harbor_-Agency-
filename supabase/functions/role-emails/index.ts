@@ -146,7 +146,7 @@ async function activity(admin: any, body: any) {
   };
   const quote = (t: string) => t ? `<div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;line-height:1.5;">${esc(t.slice(0, 600))}</div>` : "";
   const loadLink = async (id: string) => {
-    const { data } = await admin.from("candidate_jobs").select("id,stage,candidate_response,reject_kind,reject_reason,reject_feedback,candidates(id,name,recruiter_id),jobs(id,role_title,client)").eq("id", id).maybeSingle();
+    const { data } = await admin.from("candidate_jobs").select("id,stage,candidate_response,reject_kind,reject_reason,reject_feedback,candidates(id,name,recruiter_id,email,email_opt_out),jobs(id,role_title,client)").eq("id", id).maybeSingle();
     return data;
   };
   const roleOf = (j: any) => j ? j.role_title + (j.client ? " at " + j.client : "") : "a role";
@@ -177,6 +177,9 @@ async function activity(admin: any, body: any) {
         p(`${who} ${r === "accepted" ? "accepted" : "declined"} ${role}.`) + (r === "accepted" ? p("Their screening starts now; you'll see it on their profile.") : "") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
     }
     if (l.stage === "Sourced" && l.candidate_response === "pending") {
+      // A route: the recruiter is copied on the candidate's own "A new role for you" email
+      // (send-message invite), so no separate note, unless the candidate can't be emailed.
+      if (c.email && !c.email_opt_out) return { ok: true, skipped: "routed: recruiter is cc'd on the candidate's email" };
       return { ok: true, sent: await send(u, c.name + " was routed to " + (j?.role_title || "a new role"), p(`${who} was routed to ${role}${esc(await by())}.`) + p("They'll see it on their candidate page and can accept it there. Any earlier role they were on has been closed.") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
     }
     return { ok: true, sent: await send(u, c.name + " is on " + (j?.role_title || "a new role"), p(`${who} is now on ${role}${esc(await by()) || " (they applied)"}.`) + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };

@@ -2346,6 +2346,7 @@ async function runProposal(S, p) {
     const job = S.jobs.find((j) => j.id === i.job_id);
     if (!job) throw new Error("I couldn't find that role.");
     const r = await S.aiScreen("route_with_questions", { candidateId: i.candidate_id, jobId: i.job_id, questions: i.questions || [] });
+    if (r && r.linkId) S.inviteToMessage(r.linkId);
     return "Put forward for " + job.role + (r.questionsState === "draft" ? ". The questions wait for Rec Ops approval." : ".");
   }
   const { c, link } = assistantLink(S, i.candidate_id, i.job_id);
