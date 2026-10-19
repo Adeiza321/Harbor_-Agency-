@@ -978,9 +978,8 @@ function SearchInput({ value, onChange, placeholder }) {
    - ClearFilters: "Clear all", only shown while something is set. */
 const FILTER_CSS = `
 .pn-search:focus-within{border-color:${C.em}!important;box-shadow:0 0 0 3px ${C.emTint}}
-.pn-track{position:relative;display:inline-flex;max-width:100%;gap:2px;background:#F1EDE4;border-radius:12px;padding:4px;overflow-x:auto;scrollbar-width:none}
-.pn-track::-webkit-scrollbar{display:none}
-.pn-track-mark{position:absolute;top:4px;bottom:4px;left:0;background:#fff;border-radius:9px;box-shadow:0 1px 2px rgba(20,32,27,.08),0 2px 8px -4px rgba(20,32,27,.18);transition:transform .35s cubic-bezier(.3,.8,.3,1),width .35s cubic-bezier(.3,.8,.3,1)}
+.pn-track{position:relative;display:inline-flex;flex-wrap:wrap;max-width:100%;min-width:0;gap:2px;background:#F1EDE4;border-radius:12px;padding:4px}
+.pn-track-mark{position:absolute;top:0;left:0;background:#fff;border-radius:9px;box-shadow:0 1px 2px rgba(20,32,27,.08),0 2px 8px -4px rgba(20,32,27,.18);transition:transform .35s cubic-bezier(.3,.8,.3,1),width .35s cubic-bezier(.3,.8,.3,1),height .35s}
 .pn-track button{position:relative;z-index:1;flex:0 0 auto;border:0;background:none;font-size:13px;color:${C.ink2};padding:6px 12px;border-radius:9px;white-space:nowrap;display:flex;gap:6px;align-items:center;cursor:pointer}
 .pn-track button[aria-pressed="true"]{color:${C.ink};font-weight:600}
 .pn-track button:focus-visible{outline:2px solid ${C.em};outline-offset:-2px}
@@ -995,7 +994,7 @@ const FILTER_CSS = `
 .pn-pill.set b{font-weight:600;color:${C.ink}}
 .pn-pill .pn-plus{font-size:15px;line-height:1;color:${C.ink3}}
 .pn-pill .pn-x{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:12px;background:rgba(31,111,84,.14)}
-.pn-pop{position:absolute;top:calc(100% + 8px);left:0;z-index:40;width:270px;max-width:calc(100vw - 32px);background:#fff;border:1px solid ${C.line};border-radius:14px;box-shadow:0 18px 40px -16px rgba(18,36,29,.35);padding:8px;animation:pn-pop .18s cubic-bezier(.2,.8,.2,1)}
+.pn-pop{position:absolute;top:calc(100% + 8px);left:0;z-index:40;width:300px;max-width:calc(100vw - 32px);background:#fff;border:1px solid ${C.line};border-radius:14px;box-shadow:0 18px 40px -16px rgba(18,36,29,.35);padding:8px;animation:pn-pop .18s cubic-bezier(.2,.8,.2,1)}
 .pn-pop.right{left:auto;right:0}
 @keyframes pn-pop{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
 .pn-pop input[type=text],.pn-pop input[type=date]{width:100%;border:1px solid ${C.line};border-radius:9px;padding:7px 10px;font-size:13px;background:#FAF8F3;outline:none;color:${C.ink}}
@@ -1004,6 +1003,7 @@ const FILTER_CSS = `
 .pn-opt{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;font-size:13px;color:${C.ink};padding:8px 10px;border-radius:8px;cursor:pointer;text-align:left}
 .pn-opt:hover,.pn-opt:focus-visible{background:#F6F3EC;outline:none}
 .pn-opt .pn-box{width:16px;height:16px;border-radius:50%;border:1.5px solid #CFC8B8;display:grid;place-items:center;flex:none}
+.pn-opt.multi .pn-box{border-radius:5px}
 .pn-opt[aria-checked="true"] .pn-box{background:${C.em};border-color:${C.em}}
 .pn-opt[aria-checked="true"] .pn-box::after{content:"";width:7px;height:4px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
 .pn-opt .pn-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1021,15 +1021,17 @@ function Tabs({ tabs, active, setActive }) {
   const split = (label) => { const m = String(label).match(/^(.*?)\s*\(?(\d+)\)?$/); return m && m[1] ? [m[1], m[2]] : [label, null]; };
   React.useLayoutEffect(() => {
     const el = ref.current && ref.current.querySelector('[aria-pressed="true"]');
-    if (el) setMark({ w: el.offsetWidth, x: el.offsetLeft }); else setMark(null);
+    if (el) setMark({ w: el.offsetWidth, h: el.offsetHeight, x: el.offsetLeft, y: el.offsetTop }); else setMark(null);
   }, [active, tabs.map((t) => t.label).join("|")]); // eslint-disable-line
   React.useEffect(() => {
-    const on = () => { const el = ref.current && ref.current.querySelector('[aria-pressed="true"]'); if (el) setMark({ w: el.offsetWidth, x: el.offsetLeft }); };
-    window.addEventListener("resize", on); return () => window.removeEventListener("resize", on);
+    const on = () => { const el = ref.current && ref.current.querySelector('[aria-pressed="true"]'); if (el) setMark({ w: el.offsetWidth, h: el.offsetHeight, x: el.offsetLeft, y: el.offsetTop }); };
+    window.addEventListener("resize", on);
+    const ro = typeof ResizeObserver !== "undefined" && ref.current ? new ResizeObserver(on) : null; if (ro) ro.observe(ref.current);
+    return () => { window.removeEventListener("resize", on); if (ro) ro.disconnect(); };
   }, []);
   return (
     <div ref={ref} className="pn-track" role="group">
-      {mark && <div className="pn-track-mark" style={{ width: mark.w, transform: `translateX(${mark.x}px)` }} />}
+      {mark && <div className="pn-track-mark" style={{ width: mark.w, height: mark.h, transform: `translate(${mark.x}px, ${mark.y}px)` }} />}
       {tabs.map((t) => { const [l, n] = typeof t.label === "string" ? split(t.label) : [t.label, null]; return (
         <button key={t.key} type="button" aria-pressed={active === t.key} onClick={() => setActive(t.key)}>{l}{n != null && <span className="pn-ct">{n}</span>}</button>
       ); })}
@@ -1041,6 +1043,14 @@ function Tabs({ tabs, active, setActive }) {
 function usePopover() {
   const [open, setOpen] = useState(false);
   const ref = React.useRef(null);
+  React.useLayoutEffect(() => {
+    if (!open || !ref.current) return;
+    const pop = ref.current.querySelector(".pn-pop");
+    if (!pop) return;
+    const r = pop.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) pop.classList.add("right");
+    if (pop.getBoundingClientRect().left < 8) { pop.classList.remove("right"); pop.style.left = (8 - ref.current.getBoundingClientRect().left) + "px"; }
+  }, [open]);
   React.useEffect(() => {
     if (!open) return;
     const click = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -1065,32 +1075,42 @@ function PillButton({ label, shown, on, open, onClick, onClear, fixed }) {
   );
 }
 
-// options: [{ value, label, count? }] or plain strings. allValue: the "no filter" value ("All", "" or 0).
+// options: [{ value, label, count? }] or plain strings.
+// value as a list = several choices at once ([] = no filter); a single value (with allValue for
+// "no filter") = one choice, used for settings like a period (fixed).
 function FilterPill({ label, value, onChange, options, allValue = "All", searchable, align, fixed }) {
+  const multi = Array.isArray(value);
   const { open, setOpen, ref } = usePopover();
   const [q, setQ] = useState("");
   // Only what's actually in the list: an option with a count of 0 isn't offered (unless it's the one chosen).
-  const opts = (options || []).map((o) => (typeof o === "object" ? o : { value: o, label: String(o) })).filter((o) => o.count == null || o.count > 0 || o.value === value);
-  const on = value !== allValue && value !== undefined && value !== null;
-  const cur = opts.find((o) => o.value === value);
+  const picked = (v) => (multi ? value.includes(v) : v === value);
+  const opts = (options || []).map((o) => (typeof o === "object" ? o : { value: o, label: String(o) })).filter((o) => o.count == null || o.count > 0 || picked(o.value));
+  const on = multi ? value.length > 0 : value !== allValue && value !== undefined && value !== null;
+  const cur = multi ? null : opts.find((o) => o.value === value);
+  const shown = multi ? (value.length === 1 ? ((opts.find((o) => o.value === value[0]) || {}).label || String(value[0])) : value.length + " selected") : cur ? cur.label : String(value);
   const showSearch = searchable !== undefined ? searchable : opts.length > 7;
   const list = q ? opts.filter((o) => String(o.label).toLowerCase().includes(q.toLowerCase())) : opts;
   React.useEffect(() => { if (!open) setQ(""); }, [open]);
   if (!on && !fixed && !opts.length) return null;   // nothing in the list to filter by
   return (
     <div className="relative" ref={ref}>
-      <PillButton label={label} shown={cur ? cur.label : String(value)} on={on} fixed={fixed} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange(allValue); setOpen(false); }} />
+      <PillButton label={label} shown={shown} on={on} fixed={fixed} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange(multi ? [] : allValue); setOpen(false); }} />
       {open && (
         <div className={"pn-pop" + (align === "right" ? " right" : "")}>
           {showSearch && <input type="text" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={"Search " + label.toLowerCase()} aria-label={"Search " + label.toLowerCase()} />}
           <div className="pn-opts" role="menu">
             {list.map((o) => (
-              <button key={String(o.value)} type="button" role="menuitemradio" aria-checked={o.value === value} className="pn-opt" onClick={() => { onChange(o.value === value && !fixed ? allValue : o.value); setOpen(false); }}>
-                <span className="pn-box" /><span className="pn-lbl">{o.label}</span>{o.count != null && <span className="pn-n">{o.count}</span>}
+              <button key={String(o.value)} type="button" role={multi ? "menuitemcheckbox" : "menuitemradio"} aria-checked={picked(o.value)} className={"pn-opt" + (multi ? " multi" : "")}
+                onClick={() => { if (multi) { onChange(picked(o.value) ? value.filter((v) => v !== o.value) : [...value, o.value]); return; } onChange(o.value === value && !fixed ? allValue : o.value); setOpen(false); }}>
+                <span className="pn-box" /><span className="pn-lbl" title={String(o.label)}>{o.label}</span>{o.count != null && <span className="pn-n">{o.count}</span>}
               </button>
             ))}
             {!list.length && <div className="text-xs px-2.5 py-3" style={{ color: C.ink3 }}>Nothing matches.</div>}
           </div>
+          {multi && value.length > 0 && <div className="flex justify-between items-center px-2 pt-2 mt-1" style={{ borderTop: `1px solid ${C.line}` }}>
+            <button type="button" className="pn-clear" onClick={() => onChange([])}>Clear</button>
+            <button type="button" className="pn-clear" style={{ fontWeight: 600 }} onClick={() => setOpen(false)}>Done</button>
+          </div>}
         </div>
       )}
     </div>
@@ -3309,10 +3329,10 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   };
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
-  const [recF, setRecF] = useState("All");
+  const [recF, setRecF] = useState([]);
   const [minAi, setMinAi] = useState(0);
-  const [roleF, setRoleF] = useState("All");
-  const [sourceF, setSourceF] = useState("All");
+  const [roleF, setRoleF] = useState([]);
+  const [sourceF, setSourceF] = useState([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const gq = (S.query || "").toLowerCase();
@@ -3323,10 +3343,10 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   const toMs = dateTo ? new Date(dateTo + "T23:59:59").getTime() : null;
   const filtered = data.filter((c) =>
     (tab === "All" || c.status === tab) && hit(c, q.toLowerCase()) && hit(c, gq) &&
-    (recF === "All" || c.recruiter === recF) && c.ai >= minAi &&
-    (roleF === "All" || c.role === roleF) && (sourceF === "All" || c.source === sourceF) &&
+    (!recF.length || recF.includes(c.recruiter)) && c.ai >= minAi &&
+    (!roleF.length || roleF.includes(c.role)) && (!sourceF.length || sourceF.includes(c.source)) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
-  const activeFilterCount = [recF !== "All", minAi > 0, roleF !== "All", sourceF !== "All", !!dateFrom, !!dateTo].filter(Boolean).length;
+  const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, !!dateFrom, !!dateTo].filter(Boolean).length;
   const onTab = data.filter((c) => tab === "All" || c.status === tab);   // filter options come from what's on this tab
   const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
@@ -3347,7 +3367,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
           <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
           <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} />
           <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
-          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF("All"); setMinAi(0); setRoleF("All"); setSourceF("All"); setDateFrom(""); setDateTo(""); setQ(""); }} />
+          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
         </div>
         <DataTable
           rows={filtered}
@@ -5543,9 +5563,10 @@ function InboxPage({ toast, S }) {
   const canAct = S.me.roleKey === "admin" || S.me.roleKey === "recops";
   // Filter by how it came in: referrals (any), anything from outreach (applied or referred from an
   // outreach email), or one source.
-  const [src, setSrc] = useState("");
+  const [src, setSrc] = useState([]);
   const fromOutreach = (x) => x.source === "outreach" || !!(x.referrer && x.referrer.via && x.referrer.via.kind === "outreach");
-  const srcMatch = (x) => !src || (src === "outreach" ? fromOutreach(x) : src === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === src);
+  const srcIs = (x, k) => (k === "outreach" ? fromOutreach(x) : k === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === k);
+  const srcMatch = (x) => !src.length || src.some((k) => srcIs(x, k));
   const fresh = S.inbox.filter((x) => x.status === "new" && srcMatch(x)).sort((a, b) => b.at - a.at);
   const handled = S.inbox.filter((x) => x.status !== "new" && srcMatch(x)).sort((a, b) => (b.handledAt || b.at) - (a.handledAt || a.at));
   const srcCount = (k) => S.inbox.filter((x) => (tab === "new") === (x.status === "new")).filter((x) => k === "outreach" ? fromOutreach(x) : k === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === k).length;
@@ -5562,11 +5583,11 @@ function InboxPage({ toast, S }) {
       <Card>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <Tabs tabs={[{ key: "new", label: "New (" + fresh.length + ")" }, { key: "handled", label: "Handled (" + handled.length + ")" }]} active={tab} setActive={setTab} />
-          <div className="self-start sm:self-auto"><FilterPill label="Came in from" value={src} onChange={setSrc} allValue="" align="right" options={srcOpts.map(([k, l]) => ({ value: k, label: l, count: srcCount(k) }))} /></div>
+          <div className="self-start sm:self-auto"><FilterPill label="Came in from" value={src} onChange={setSrc} align="right" options={srcOpts.map(([k, l]) => ({ value: k, label: l, count: srcCount(k) }))} /></div>
         </div>
         {!canAct && tab === "new" && fresh.length > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>Rec Ops or an Admin assigns new applications.</div>}
         <div className="mt-2">
-          {list.length === 0 && <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>{src ? "Nothing here for this source." : tab === "new" ? "Nothing new. Applications from the apply page arrive here." : "Nothing handled yet."}</div>}
+          {list.length === 0 && <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>{src.length ? "Nothing here for this source." : tab === "new" ? "Nothing new. Applications from the apply page arrive here." : "Nothing handled yet."}</div>}
           {list.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />)}
         </div>
       </Card>
@@ -5582,7 +5603,7 @@ function InboxPage({ toast, S }) {
 function MessagesPage({ toast, S }) {
   // On phones an open conversation takes the whole screen (above the bottom navigation).
   const desktop = useDesktop();
-  const [jobFilter, setJobFilter] = useState("");
+  const [jobFilter, setJobFilter] = useState([]);
   const [openId, setOpenId] = useState(null);
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
@@ -5604,7 +5625,7 @@ function MessagesPage({ toast, S }) {
     || (t.last && filePreview(t.last).toLowerCase().includes(q));
   const threads = allThreads
     .filter((t) => t.hasMsgs)
-    .filter((t) => !jobFilter || (t.job && t.job.id === jobFilter))
+    .filter((t) => !jobFilter.length || (t.job && jobFilter.includes(t.job.id)))
     .filter(matches)
     .sort((a, b) => b.unread - a.unread || b.at - a.at);
 
@@ -5635,10 +5656,10 @@ function MessagesPage({ toast, S }) {
               <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
               <button onClick={() => setComposeOpen(true)} title="New message" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.side, color: "#fff" }}><Plus size={16} /></button>
             </div>
-            <div><FilterPill label="Job" value={jobFilter} onChange={setJobFilter} allValue="" searchable options={S.jobs.map((j) => ({ value: j.id, label: j.role + " · " + j.client, count: allThreads.filter((t) => t.hasMsgs && t.job && t.job.id === j.id).length }))} /></div>
+            <div><FilterPill label="Job" value={jobFilter} onChange={setJobFilter} searchable options={S.jobs.map((j) => ({ value: j.id, label: j.role + " · " + j.client, count: allThreads.filter((t) => t.hasMsgs && t.job && t.job.id === j.id).length }))} /></div>
           </div>
           <div className={"overflow-y-auto " + (openId ? "flex-1 min-h-0" : "max-h-[70vh] md:max-h-[28rem]")}>
-            {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
+            {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter.length ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
             {threads.map((t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
                 style={{ borderBottom: `1px solid ${C.line}`, background: openId === t.link.id ? C.canvas : "transparent" }}>
@@ -6649,12 +6670,12 @@ function IvRow({ iv, onOpen, clash, showDate = true }) {
 function InterviewsPage({ S, toast }) {
   const [view, setView] = useState("week");
   const [anchor, setAnchor] = useState(Date.now());
-  const [rec, setRec] = useState("All");
-  const [client, setClient] = useState("All");
+  const [rec, setRec] = useState([]);
+  const [client, setClient] = useState([]);
   const [open, setOpen] = useState(null);
   const [sched, setSched] = useState(null);
   const all = S.interviews || [];
-  const list = all.filter((iv) => (rec === "All" || iv.recruiterId === rec) && (client === "All" || iv.client === client) && iv.status !== "cancelled");
+  const list = all.filter((iv) => (!rec.length || rec.includes(iv.recruiterId)) && (!client.length || client.includes(iv.client)) && iv.status !== "cancelled");
   const clash = clashesOf(list);
   const clients = [...new Set(all.map((i) => i.client).filter(Boolean))].sort();
   const recs = [...new Map(all.filter((i) => i.recruiterId).map((i) => [i.recruiterId, i.recruiter])).entries()];
@@ -6691,7 +6712,7 @@ function InterviewsPage({ S, toast }) {
         <div className="flex gap-2 flex-wrap">
           <FilterPill label="Recruiter" value={rec} onChange={setRec} options={recs.map(([id, n]) => ({ value: id, label: n }))} />
           <FilterPill label="Client" value={client} onChange={setClient} align="right" options={clients} />
-          <ClearFilters show={rec !== "All" || client !== "All"} onClick={() => { setRec("All"); setClient("All"); }} />
+          <ClearFilters show={rec.length > 0 || client.length > 0} onClick={() => { setRec([]); setClient([]); }} />
         </div>
       </div>
       <div className="flex flex-col xl:flex-row gap-5">
@@ -7798,7 +7819,8 @@ function CampaignsPage({ toast, S }) {
   const [busy, setBusy] = useState("");
   // Search and filters (kept while switching between the status tabs), and pages of up to 50.
   const [q, setQ] = useState("");
-  const [fl, setFl] = useState({ role: "", job: "", source: "", email: "", fit: 0, country: "", channel: "", reply: "" });
+  // Each filter holds a list of choices ([] = no filter); fit is a minimum score.
+  const [fl, setFl] = useState({ role: [], job: [], source: [], email: [], fit: 0, country: [], channel: [], reply: [] });
   const setF = (k, v) => setFl((x) => ({ ...x, [k]: v }));
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
@@ -7827,14 +7849,13 @@ function CampaignsPage({ toast, S }) {
   const roleOf = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? String(j.role || "").trim() : ""; };
   const ql = low(q).trim();
   const pMatch = (p) => (!ql || [p.full_name, p.first_name, p.last_name, p.title, p.company, p.location, p.email].some((v) => low(v).includes(ql)))
-    && (!fl.role || low(roleOf(p.job_id)) === low(fl.role))
-    && (!fl.job || p.job_id === fl.job)
-    && (!fl.source || foundOn(p).key === fl.source)
-    && (!fl.email || (fl.email === "with" ? !!p.email : !p.email))
+    && (!fl.job.length || fl.job.includes(p.job_id))
+    && (!fl.source.length || fl.source.includes(foundOn(p).key))
+    && (!fl.email.length || fl.email.includes(p.email ? "with" : "without"))
     && (!fl.fit || (Number(p.fit) || 0) >= fl.fit)
-    && (!fl.reply || replyMatch(p.data || {}, fl.reply));
+    && (!fl.reply.length || fl.reply.some((k) => replyMatch(p.data || {}, k)));
   const lMatch = (l) => (!ql || [l.job_title, l.company, l.location, l.contact_name, l.contact_email].some((v) => low(v).includes(ql)))
-    && (!fl.role || low(l.job_title).trim() === low(fl.role)) && (!fl.country || l.country === fl.country) && (!fl.channel || l.channel === fl.channel);
+    && (!fl.role.length || fl.role.some((r) => low(l.job_title).trim() === low(r))) && (!fl.country.length || fl.country.includes(l.country)) && (!fl.channel.length || fl.channel.includes(l.channel));
   // Replies: anyone who referred someone (in a reply or with the email's form), replied at all, or
   // sent only an automatic reply.
   function replyMatch(d, k) {
@@ -7857,33 +7878,25 @@ function CampaignsPage({ toast, S }) {
   const pages = Math.max(1, Math.ceil(curList.length / size));
   const curPage = Math.min(page, pages);
   const pageOf = (list) => list.slice((curPage - 1) * size, curPage * size);
-  const nFilters = (tab === "leads" ? [fl.role, fl.country, fl.channel] : [fl.role, fl.job, fl.source, fl.email, fl.fit, fl.reply]).filter(Boolean).length;
+  const nFilters = (tab === "leads" ? [fl.role, fl.country, fl.channel] : [fl.job, fl.source, fl.email, fl.reply]).filter((v) => v.length).length + (tab !== "leads" && fl.fit ? 1 : 0);
   // Distinct roles, case-insensitive, first spelling kept.
   const roleOpts = (vals) => { const m = new Map(); vals.map((v) => String(v || "").trim()).filter(Boolean).forEach((v) => { if (!m.has(v.toLowerCase())) m.set(v.toLowerCase(), v); }); return [...m.values()].sort((a, b) => a.localeCompare(b)); };
-  const roleSelect = (vals) => (
-    <select value={fl.role} onChange={(e) => setF("role", e.target.value)} className={selCls} style={{ borderColor: C.line, maxWidth: 260 }} aria-label="Role">
-      <option value="">All roles</option>
-      {roleOpts(vals).map((r) => <option key={r} value={r}>{r}</option>)}
-    </select>
-  );
   const opts = (vals) => [...new Set(vals.filter(Boolean))];
-  const selCls = "text-sm rounded-lg border px-2.5 py-2 bg-white";
   const filterBar = (
     <div className="mt-3 flex flex-wrap gap-2 items-center">
       <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={setQ} placeholder={tab === "leads" ? "Search role, company, contact" : "Search name, title, company, email"} /></div>
       {tab === "leads" ? (<>
-        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts(lBase.map((l) => l.job_title)).map((r) => ({ value: r, label: r, count: lBase.filter((l) => low(l.job_title).trim() === low(r)).length }))} />
-        <FilterPill label="Country" value={fl.country} onChange={(v) => setF("country", v)} allValue="" options={[...countBy(lBase, (l) => l.country)].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([c, n]) => ({ value: c, label: (COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c, count: n }))} />
-        <FilterPill label="Contact by" value={fl.channel} onChange={(v) => setF("channel", v)} allValue="" options={[["email", "Email"], ["linkedin", "LinkedIn"], ["none", "No contact"]].map(([k, l]) => ({ value: k, label: l, count: lBase.filter((x) => x.channel === k).length }))} />
-        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: "", country: "", channel: "" }))} />
+        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} options={roleOpts(lBase.map((l) => l.job_title)).map((r) => ({ value: r, label: r, count: lBase.filter((l) => low(l.job_title).trim() === low(r)).length }))} />
+        <FilterPill label="Country" value={fl.country} onChange={(v) => setF("country", v)} options={[...countBy(lBase, (l) => l.country)].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([c, n]) => ({ value: c, label: (COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c, count: n }))} />
+        <FilterPill label="Contact by" value={fl.channel} onChange={(v) => setF("channel", v)} options={[["email", "Email"], ["linkedin", "LinkedIn"], ["none", "No contact"]].map(([k, l]) => ({ value: k, label: l, count: lBase.filter((x) => x.channel === k).length }))} />
+        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: [], country: [], channel: [] }))} />
       </>) : (<>
-        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts(pBase.map((p) => roleOf(p.job_id))).map((r) => ({ value: r, label: r, count: pBase.filter((p) => low(roleOf(p.job_id)) === low(r)).length }))} />
-        <FilterPill label="Job" value={fl.job} onChange={(v) => setF("job", v)} allValue="" options={[...countBy(pBase, (p) => p.job_id)].map(([id, n]) => ({ value: id, label: jobLabel(id) || "Closed or removed job", count: n })).sort((a, b) => a.label.localeCompare(b.label))} />
-        <FilterPill label="Found on" value={fl.source} onChange={(v) => setF("source", v)} allValue="" options={Object.values(Object.fromEntries(pBase.map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => ({ value: f.key, label: f.label, count: pBase.filter((p) => foundOn(p).key === f.key).length }))} />
-        <FilterPill label="Email" value={fl.email} onChange={(v) => setF("email", v)} allValue="" options={[{ value: "with", label: "Has an email", count: pBase.filter((p) => !!p.email).length }, { value: "without", label: "No email yet", count: pBase.filter((p) => !p.email).length }]} />
+        <FilterPill label="Job" value={fl.job} onChange={(v) => setF("job", v)} options={[...countBy(pBase, (p) => p.job_id)].map(([id, n]) => ({ value: id, label: jobLabel(id) || "Closed or removed job", count: n })).sort((a, b) => a.label.localeCompare(b.label))} />
+        <FilterPill label="Found on" value={fl.source} onChange={(v) => setF("source", v)} options={Object.values(Object.fromEntries(pBase.map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => ({ value: f.key, label: f.label, count: pBase.filter((p) => foundOn(p).key === f.key).length }))} />
+        <FilterPill label="Email" value={fl.email} onChange={(v) => setF("email", v)} options={[{ value: "with", label: "Has an email", count: pBase.filter((p) => !!p.email).length }, { value: "without", label: "No email yet", count: pBase.filter((p) => !p.email).length }]} />
         <ScorePill label="Fit" value={fl.fit} onChange={(v) => setF("fit", v)} max={90} step={10} />
-        <FilterPill label="Replies" value={fl.reply} onChange={(v) => setF("reply", v)} allValue="" align="right" options={[["replied", "Replied"], ["referred", "Referred someone"], ["auto", "Automatic replies"]].map(([k, l]) => ({ value: k, label: l, count: pBase.filter((p) => replyMatch(p.data || {}, k)).length }))} />
-        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: "", job: "", source: "", email: "", fit: 0, reply: "" }))} />
+        <FilterPill label="Replies" value={fl.reply} onChange={(v) => setF("reply", v)} align="right" options={[["replied", "Replied"], ["referred", "Referred someone"], ["auto", "Automatic replies"]].map(([k, l]) => ({ value: k, label: l, count: pBase.filter((p) => replyMatch(p.data || {}, k)).length }))} />
+        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, job: [], source: [], email: [], fit: 0, reply: [] }))} />
       </>)}
     </div>
   );
@@ -7907,7 +7920,7 @@ function CampaignsPage({ toast, S }) {
           <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue{conn.sender === "none" && !(status.blockers || []).length ? ", or use Send it myself on any email to send it from your own mailbox" : ""}. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
         </div>
       ) : null}
-      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "pool", label: "Talent pool " + cnt(prospects, pGroups.pool) }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); setFl((x) => ({ ...x, role: "" })); }} />
+      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "pool", label: "Talent pool " + cnt(prospects, pGroups.pool) }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); setFl((x) => ({ ...x, role: [], job: [] })); }} />
 
       {(tab === "candidates" || tab === "pool") && (
         <Card>
