@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { backfillMustHaves } from "./musthaves.ts";
 import { aiCharge } from "./ai.ts";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
@@ -192,6 +193,8 @@ async function handle(req: Request): Promise<Response> {
       }
       // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, clear cut-off ones.
       if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
+      // Summary + must-have checklist for people found outside X-ray (Apollo, PDL) who don't have one yet.
+      if (body.action === "musts_backfill") return json({ ok: true, ...(await backfillMustHaves(admin, body.jobId ? String(body.jobId) : undefined, Math.min(Number(body.max) || 60, 120))) });
       if (body.action === "search_area" && body.jobId) {
         const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();
         if (!job) return json({ error: "Job not found" }, 404);

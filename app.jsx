@@ -7130,6 +7130,7 @@ function ApolloNote({ data }) {
 
 function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEdit, S, toast, onChanged, onFindEmail }) {
   const [open, setOpen] = useState(false);
+  const [details, setDetails] = useState(false); // summary in full, must-haves and gaps
   const [subject, setSubject] = useState(p.subject || "");
   const [body, setBody] = useState(p.body || "");
   const dirty = subject !== (p.subject || "") || body !== (p.body || "");
@@ -7183,19 +7184,64 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
               {d.remote_worker && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }} title="Their profile may show their employer's country rather than where they live">Works remotely: confirm where they live</span>}
             </div>
           )}
-          {p.fit_reason && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>{p.fit_reason}</div>}
-          {found && checklist.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1.5">
-              {checklist.map((c, i) => { const st = CHECK_STYLE[c.status] || CHECK_STYLE.unconfirmed; return (
-                <span key={i} className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: st.bg, color: st.fg }} title={c.evidence || (c.status === "unconfirmed" ? "Not shown in their public profile summary" : "")}>{st.t} {c.item}</span>
-              ); })}
-            </div>
-          )}
-          {found && gaps.length > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
+          {/* Summary of the profile, the must-haves (met / not met / not shown), then the profile link.
+              Folded by default (two lines of summary and the tally); "Show details" opens the full list. */}
+          {(() => {
+            const summary = (d.overview || p.fit_reason || "").trim();
+            const why = d.overview && p.fit_reason && p.fit_reason.trim() !== d.overview.trim() ? p.fit_reason.trim() : "";
+            const count = (st) => checklist.filter((c) => c.status === st).length;
+            const metN = count("met"), notN = count("not met"), unN = checklist.length - metN - notN;
+            const MARK = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43", label: "Met" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E", label: "Not met" }, unconfirmed: { t: "?", bg: "#F3EFE6", fg: "#6B6455", label: "Not shown on their profile" } };
+            const dot = (st, n) => n > 0 && <span key={st} className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full inline-flex items-center justify-center text-[10px] font-bold" style={{ background: MARK[st].bg, color: MARK[st].fg }}>{MARK[st].t}</span>{n}</span>;
+            const hasMore = checklist.length > 0 || gaps.length > 0 || why || summary.length > 160;
+            return (
+              <div className="mt-2.5 flex flex-col gap-2.5">
+                {summary && (
+                  <div>
+                    <div className="text-[11px] font-semibold mb-0.5" style={{ color: C.ink3 }}>Summary</div>
+                    <div className="text-sm leading-relaxed" style={{ color: C.ink, ...(details ? {} : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }) }}>{summary}</div>
+                    {details && why && <div className="text-xs mt-1" style={{ color: C.ink2 }}>{why}</div>}
+                  </div>
+                )}
+                {details && (checklist.length > 0 ? (
+                  <div>
+                    <div className="flex items-baseline justify-between gap-2 mb-1">
+                      <div className="text-[11px] font-semibold" style={{ color: C.ink3 }}>Must-haves</div>
+                      <div className="text-[11px]" style={{ color: C.ink3 }}>{metN} of {checklist.length} met</div>
+                    </div>
+                    <ul className="flex flex-col gap-1">
+                      {checklist.map((c, i) => { const m = MARK[c.status] || MARK.unconfirmed; return (
+                        <li key={i} className="flex items-start gap-2 text-sm">
+                          <span aria-label={m.label} title={m.label} className="mt-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold" style={{ background: m.bg, color: m.fg }}>{m.t}</span>
+                          <span className="min-w-0"><span style={{ color: C.ink }}>{c.item}</span>{c.evidence ? <span className="text-xs" style={{ color: C.ink3 }}> · {c.evidence}</span> : c.status === "unconfirmed" ? <span className="text-xs" style={{ color: C.ink3 }}> · not shown on their profile</span> : null}</span>
+                        </li>
+                      ); })}
+                    </ul>
+                  </div>
+                ) : found ? null : <div className="text-xs" style={{ color: C.ink3 }}>Must-haves aren't checked for people found in {FOUND_ON[p.source] || "this source"} yet.</div>)}
+                {details && gaps.length > 0 && <div className="text-xs" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {profile && (
+                    <a href={profile} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold" style={{ border: `1px solid ${C.line}`, color: C.em, background: "#fff" }}>
+                      <ExternalLink size={13} /> {/linkedin\.com/i.test(profile) ? "View LinkedIn profile" : "View " + (FOUND_ON[p.source] || "") + " profile"}
+                    </a>
+                  )}
+                  {hasMore && (
+                    <button type="button" onClick={() => setDetails((v) => !v)} aria-expanded={details} className="inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium" style={{ color: C.ink2, background: C.canvas }}>
+                      {!details && checklist.length > 0 && <span className="inline-flex items-center gap-2" aria-label={metN + " met, " + notN + " not met, " + unN + " not shown"}>{dot("met", metN)}{dot("not met", notN)}{dot("unconfirmed", unN)}</span>}
+                      {details ? "Hide details" : "Show details"}
+                      <ChevronDown size={14} style={{ transform: details ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
           <div className="flex gap-3 mt-2 text-xs flex-wrap">
             {!xray && <button onClick={() => setOpen((o) => !o)} style={{ color: C.em }}>{open ? "Hide email" : editable ? "Review email" : "View email"}</button>}
-            {profile && <a href={profile} target="_blank" rel="noreferrer" style={{ color: C.em }}>{p.source === "linkedin" || (!xray && p.linkedin_url) ? "LinkedIn profile" : (FOUND_ON[p.source] || "Profile") + " profile"}</a>}
             {p.email && <span style={{ color: C.ink3 }}>{p.email}{d.email_source ? " · from " + d.email_source : ""}</span>}
+            {(() => { const t = String(d.snippet || "") + " " + String(d.result_title || ""); const hits = [...t.matchAll(/(\d[\d,]*)\+?\s*(connections|followers)\b/gi)].map((m) => ({ n: Number(m[1].replace(/,/g, "")), text: m[0].trim() })); if (!hits.length) return null; const top = hits.reduce((a, b) => (b.n > a.n ? b : a));
+              return <span style={{ color: top.n < 10 ? C.warnFg : C.ink3 }} title={top.n < 10 ? "Very little LinkedIn activity: they may not see a LinkedIn message" : ""}>{top.text}{/linkedin/i.test(top.text) ? "" : " on LinkedIn"}</span>; })()}
             {found && <span style={{ color: C.ink3 }}>From a public search result; confirm details with them</span>}
             {xray && lookedUp && <span style={{ color: C.ink3 }}>No verified email found</span>}
             {p.contacted_at && <span style={{ color: C.ink3 }}>{xray ? "Contacted" : "Emailed"} {fdate(p.contacted_at)}</span>}

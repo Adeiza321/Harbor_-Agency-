@@ -9,6 +9,7 @@
 
 import { draftFromTemplate } from "./template.ts";
 import { askAI } from "./ai.ts";
+import { checkMustHaves } from "./musthaves.ts";
 import { splitByArea } from "./area_check.ts";
 import { searchPeople, matchById, bestEmail, apolloKey, type ApolloPerson } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, jobCountryCode, jobCountryNames, regionOf } from "./regions.ts";
@@ -148,7 +149,7 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
     let p: ApolloPerson | null = null;
     try { p = await matchById(h.id); revealed++; } catch (e) { console.error("apollo match", String((e as Error)?.message || e)); break; }
     await sleep(700);
-    // Verified work email first; a personal email only when there's no verified work one.
+    // Personal email first; a verified work email when there's no personal one (apollo.ts bestEmail).
     const best = bestEmail(p);
     if (!p || !best.email) continue;
     // Never someone already in Pronext under either address.
@@ -215,10 +216,12 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
       status: "found", data: { history: p.history, domain: p.domain, location_hold: holdOf.get(p.id) || null },
     };
   });
-  const { data: inserted, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id,first_name,full_name,title,company,fit_reason,data");
+  const { data: inserted, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id,first_name,full_name,title,company,location,fit_reason,data");
   if (error) throw new Error(error.message);
   // The job's outreach template (template.ts) replaces the AI note when the job has one or can get one.
   try { await draftFromTemplate(admin, job, inserted || [], (s.senderName || "").split(" ")[0], s.includePay); } catch (e) { console.error("template drafts", String((e as Error)?.message || e)); }
+  // The same summary and must-have checklist X-ray people get (musthaves.ts).
+  try { await checkMustHaves(admin, job, inserted || []); } catch (e) { console.error("must-haves", String((e as Error)?.message || e)); }
   await record({ searched: total, ranked: picks.length, revealed, kept: rows.length });
   return { ok: true, found: rows.length, ids: (inserted || []).map((x: any) => x.id), revealed, message: `Found ${rows.length} strong outside ${rows.length === 1 ? "match" : "matches"} (${revealed} Apollo credits used).` };
 }

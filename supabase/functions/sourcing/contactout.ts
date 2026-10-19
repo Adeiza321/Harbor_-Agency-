@@ -2,8 +2,9 @@
 // Key: CONTACTOUT_API_KEY (sent as the `token` header). Docs: https://api.contactout.com
 //   GET /v1/people/linkedin?profile=<url>&email_type=<personal,work | work>
 //   1 email credit when an email comes back; nothing when none is found (404).
-// Both work and personal emails are asked for. The one used: a "Verified" work email first, else
-// the first personal email; every address found is returned so it can be kept on the prospect.
+// Both work and personal emails are asked for. The one used: the first personal email (the agency
+// reaches candidates at their own address first), else a "Verified" work email; every address found is
+// returned so it can be kept on the prospect.
 
 export const contactoutKey = () => (Deno.env.get("CONTACTOUT_API_KEY") || "").trim();
 
@@ -32,7 +33,7 @@ export async function contactoutByLinkedIn(profileUrl: string): Promise<ContactO
   const work = list(p.work_email), personal = list(p.personal_email);
   const location = typeof p.location === "string" ? p.location.trim().slice(0, 120) : "";
   const verifiedWork = work.find((e) => /^verified$/i.test(String(statuses[e] || "")));
-  if (verifiedWork) return { email: verifiedWork, status: "verified", found: true, work, personal, location };
   if (personal[0]) return { email: personal[0], status: "personal", found: true, work, personal, location };
+  if (verifiedWork) return { email: verifiedWork, status: "verified", found: true, work, personal, location };
   return { email: "", status: "", found: true, work, personal, location };
 }

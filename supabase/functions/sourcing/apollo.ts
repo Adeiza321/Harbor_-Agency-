@@ -76,13 +76,14 @@ export async function matchById(id: string): Promise<ApolloPerson | null> {
   return toPerson(data?.person);
 }
 
-// The address to email a candidate at: their verified work email first, otherwise the first
-// personal email Apollo found. Empty when there's neither.
+// The address to email a candidate at: their personal email first (candidates are reached at their own
+// address), otherwise their verified work email. Empty when there's neither.
 export function bestEmail(p: ApolloPerson | null): { email: string; status: string } {
   if (!p) return { email: "", status: "" };
-  if (p.email && p.email_status === "verified") return { email: p.email, status: "verified" };
   const personal = p.personal_emails.find((e) => e.toLowerCase() !== p.email.toLowerCase());
-  return personal ? { email: personal, status: "personal" } : { email: "", status: "" };
+  if (personal) return { email: personal, status: "personal" };
+  if (p.email && p.email_status === "verified") return { email: p.email, status: "verified" };
+  return { email: "", status: "" };
 }
 
 // Reveal a person from their LinkedIn profile address (X-ray results). 1 credit when an email comes back.

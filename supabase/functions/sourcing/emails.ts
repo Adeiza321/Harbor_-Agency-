@@ -1,16 +1,19 @@
 // Emails for people found by the X-ray search, who are saved without one.
 //   GitHub profiles: the email the person made public on their GitHub profile (free, automatic).
 //   LinkedIn profiles: ContactOut first (contactout.ts, CONTACTOUT_API_KEY), by their exact profile
-//     address: a verified work email, else a personal one. When it has nothing usable, Apollo:
-//     Apollo looks the person up by their exact profile address and returns their
-//     verified work email, or a personal email when there's no verified work one (1 Apollo credit per email found). This runs automatically, without an
+//     address: a personal email first, else a verified work one. When it has nothing usable, Apollo:
+//     Apollo looks the person up by their exact profile address and returns a personal email first,
+//     else their verified work email (1 Apollo credit per email found). This runs automatically, without an
 //     approval: every 10 minutes for the best X-ray people (fit >= outreach.xrayEmailMinFit), never more
 //     than outreach.xrayEmailsPerDay lookups a day (the daily cap stands in for the approval).
 //     Every address found by either is kept in data.emails_found. outreach.xrayEmailsPerDay caps the
 //     people looked up per day, whichever source answers.
 //     Then People Data Labs (pdl.ts, PDL_API_KEY) by the same profile, for anyone still without one:
 //     1 PDL credit per person it has an email for, never more than outreach.pdlEmailsPerDay a day.
-// Only verified work emails or Apollo-found personal emails are kept. Each person with an email gets the same short, personal draft as
+// Only personal emails or verified work emails are kept (personal first).
+// Low LinkedIn activity: when the search result shows fewer than 10 connections or followers and every
+// lookup came back without an email, the person is skipped (with the reason) instead of sitting in
+// To contact; Put back in pool brings them back. Each person with an email gets the same short, personal draft as
 // Apollo's own prospects, ready for the usual approve-and-send flow (nothing is sent from here).
 
 import { draftFromTemplate } from "./template.ts";
@@ -214,7 +217,7 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
         m = await matchByLinkedIn(p.linkedin_url);
         apTried++;
         lookup.apollo = new Date().toISOString();
-        // Verified work email first; a personal email when there's no verified work one.
+        // Personal email first; a verified work email when there's no personal one.
         const b = bestEmail(m);
         if (m?.email || b.email) credits++;
         const atClient = !!m && sameCompany(m.company, clientOf.get(p.job_id));
@@ -254,8 +257,11 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   const pdl = await pdlEmails(admin, list.map((p) => p.id).filter((id) => !found.includes(id)), s, agencyName).catch((e) => ({ tried: 0, found: 0, ids: [] as string[], errors: [String((e as Error)?.message || e)] }));
   errors.push(...pdl.errors);
   found.push(...pdl.ids);
+  // Looked up everywhere, still no email, and the profile shows almost no LinkedIn activity: skip them.
+  const lowSkipped = await skipLowActivity(admin, list.map((p) => p.id).filter((id) => !found.includes(id)));
   const total = gh.found + found.length;
   const parts = [`Found ${total} email${total === 1 ? "" : "s"}`];
+  if (lowSkipped) parts.push(`${lowSkipped} skipped (almost no LinkedIn activity and no email)`);
   if (coTried) parts.push(`${coFound} of ${coTried} through ContactOut`);
   if (apTried) parts.push(`${apFound} of ${apTried} more through Apollo (${credits} credit${credits === 1 ? "" : "s"} used)`);
   if (pdl.tried) parts.push(`${pdl.found} of ${pdl.tried} more through People Data Labs (${pdl.found} credit${pdl.found === 1 ? "" : "s"})`);
@@ -335,4 +341,25 @@ export async function draftEmails(admin: any, ids: string[], s: Settings, agency
       await admin.from("prospects").update({ subject: clip(m.subject || `${job.role_title} opportunity`, 120), body: anonymizeJd(String(m.body || "").slice(0, 3000), job.client) }).eq("id", p.id);
     }
   }
+}
+
+// "8 connections on LinkedIn", "5 followers": the highest count a search result shows, when it shows one.
+export function linkedinActivity(d: any): { count: number; text: string } | null {
+  const t = String(d?.snippet || "") + " " + String(d?.result_title || "");
+  const hits = [...t.matchAll(/(\d[\d,]*)\+?\s*(connections|followers)\b/gi)].map((m) => ({ n: Number(m[1].replace(/,/g, "")), text: m[0].trim() }));
+  if (!hits.length) return null;
+  const top = hits.reduce((a, b) => (b.n > a.n ? b : a));
+  return { count: top.n, text: top.text };
+}
+async function skipLowActivity(admin: any, ids: string[]) {
+  if (!ids.length) return 0;
+  const { data: rows } = await admin.from("prospects").select("id,email,status,data").in("id", ids).eq("status", "found").is("email", null);
+  let n = 0;
+  for (const r of rows || []) {
+    const a = linkedinActivity(r.data), lk = r.data?.email_lookup || {};
+    if (!a || a.count >= 10 || !(lk.contactout || lk.apollo || lk.pdl)) continue; // only once a lookup has actually been tried
+    await admin.from("prospects").update({ status: "rejected", data: { ...(r.data || {}), skipped: { by: "activity check", reason: `${a.text} and no email found`, at: new Date().toISOString() } } }).eq("id", r.id);
+    n++;
+  }
+  return n;
 }
