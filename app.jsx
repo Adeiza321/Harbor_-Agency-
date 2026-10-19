@@ -1069,12 +1069,14 @@ function PillButton({ label, shown, on, open, onClick, onClear, fixed }) {
 function FilterPill({ label, value, onChange, options, allValue = "All", searchable, align, fixed }) {
   const { open, setOpen, ref } = usePopover();
   const [q, setQ] = useState("");
-  const opts = (options || []).map((o) => (typeof o === "object" ? o : { value: o, label: String(o) }));
+  // Only what's actually in the list: an option with a count of 0 isn't offered (unless it's the one chosen).
+  const opts = (options || []).map((o) => (typeof o === "object" ? o : { value: o, label: String(o) })).filter((o) => o.count == null || o.count > 0 || o.value === value);
   const on = value !== allValue && value !== undefined && value !== null;
   const cur = opts.find((o) => o.value === value);
   const showSearch = searchable !== undefined ? searchable : opts.length > 7;
   const list = q ? opts.filter((o) => String(o.label).toLowerCase().includes(q.toLowerCase())) : opts;
   React.useEffect(() => { if (!open) setQ(""); }, [open]);
+  if (!on && !fixed && !opts.length) return null;   // nothing in the list to filter by
   return (
     <div className="relative" ref={ref}>
       <PillButton label={label} shown={cur ? cur.label : String(value)} on={on} fixed={fixed} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange(allValue); setOpen(false); }} />
@@ -3325,6 +3327,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
     (roleF === "All" || c.role === roleF) && (sourceF === "All" || c.source === sourceF) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
   const activeFilterCount = [recF !== "All", minAi > 0, roleF !== "All", sourceF !== "All", !!dateFrom, !!dateTo].filter(Boolean).length;
+  const onTab = data.filter((c) => tab === "All" || c.status === tab);   // filter options come from what's on this tab
   const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -3339,9 +3342,9 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
-          <FilterPill label="Recruiter" value={recF} onChange={setRecF} options={S.team.map((r) => ({ value: r.name, label: r.name, count: data.filter((c) => c.recruiter === r.name).length }))} />
-          <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: data.filter((c) => c.role === r).length }))} />
-          <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: data.filter((c) => c.source === x).length }))} />
+          <FilterPill label="Recruiter" value={recF} onChange={setRecF} options={S.team.map((r) => ({ value: r.name, label: r.name, count: onTab.filter((c) => c.recruiter === r.name).length }))} />
+          <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: onTab.filter((c) => c.role === r).length }))} />
+          <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
           <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} />
           <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
           <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF("All"); setMinAi(0); setRoleF("All"); setSourceF("All"); setDateFrom(""); setDateTo(""); setQ(""); }} />
@@ -5545,7 +5548,7 @@ function InboxPage({ toast, S }) {
   const srcMatch = (x) => !src || (src === "outreach" ? fromOutreach(x) : src === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === src);
   const fresh = S.inbox.filter((x) => x.status === "new" && srcMatch(x)).sort((a, b) => b.at - a.at);
   const handled = S.inbox.filter((x) => x.status !== "new" && srcMatch(x)).sort((a, b) => (b.handledAt || b.at) - (a.handledAt || a.at));
-  const srcCount = (k) => S.inbox.filter((x) => k === "outreach" ? fromOutreach(x) : k === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === k).length;
+  const srcCount = (k) => S.inbox.filter((x) => (tab === "new") === (x.status === "new")).filter((x) => k === "outreach" ? fromOutreach(x) : k === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === k).length;
   const srcOpts = [["referral", "Referrals"], ["outreach_referral", "Referrals from outreach"], ["outreach", "From outreach (applied or referred)"],
     ...[...new Set(S.inbox.map((x) => x.source))].filter((k) => k && k !== "referral" && k !== "outreach").map((k) => [k, SOURCE_LABEL[k] || k])];
   const list = tab === "new" ? fresh : handled;
@@ -5632,7 +5635,7 @@ function MessagesPage({ toast, S }) {
               <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
               <button onClick={() => setComposeOpen(true)} title="New message" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.side, color: "#fff" }}><Plus size={16} /></button>
             </div>
-            <div><FilterPill label="Job" value={jobFilter} onChange={setJobFilter} allValue="" searchable options={S.jobs.map((j) => ({ value: j.id, label: j.role + " · " + j.client }))} /></div>
+            <div><FilterPill label="Job" value={jobFilter} onChange={setJobFilter} allValue="" searchable options={S.jobs.map((j) => ({ value: j.id, label: j.role + " · " + j.client, count: allThreads.filter((t) => t.hasMsgs && t.job && t.job.id === j.id).length }))} /></div>
           </div>
           <div className={"overflow-y-auto " + (openId ? "flex-1 min-h-0" : "max-h-[70vh] md:max-h-[28rem]")}>
             {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
@@ -7841,6 +7844,10 @@ function CampaignsPage({ toast, S }) {
     return a.event === "reply" && !isAutoReply(a);
   }
   const pAll = (prospects || []).filter(pMatch);
+  // Filter options come from who's on this tab (and status) right now, with counts; never from every job.
+  const pBase = (prospects || []).filter((p) => pGroups[tab === "pool" ? "pool" : pf].includes(p.status));
+  const lBase = (leads || []).filter((l) => lGroups[lf].includes(l.status));
+  const countBy = (list, key) => { const m = new Map(); list.forEach((x) => { const k = key(x); if (k) m.set(k, (m.get(k) || 0) + 1); }); return m; };
   const lAll = (leads || []).filter(lMatch);
   const pfx = tab === "pool" ? "pool" : pf;
   const pList = pAll.filter((p) => pGroups[pfx].includes(p.status));
@@ -7865,17 +7872,17 @@ function CampaignsPage({ toast, S }) {
     <div className="mt-3 flex flex-wrap gap-2 items-center">
       <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={setQ} placeholder={tab === "leads" ? "Search role, company, contact" : "Search name, title, company, email"} /></div>
       {tab === "leads" ? (<>
-        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts((leads || []).map((l) => l.job_title))} />
-        <FilterPill label="Country" value={fl.country} onChange={(v) => setF("country", v)} allValue="" options={opts((leads || []).map((l) => l.country)).sort().map((c) => ({ value: c, label: (COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c }))} />
-        <FilterPill label="Contact by" value={fl.channel} onChange={(v) => setF("channel", v)} allValue="" options={[{ value: "email", label: "Email" }, { value: "linkedin", label: "LinkedIn" }, { value: "none", label: "No contact" }]} />
+        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts(lBase.map((l) => l.job_title)).map((r) => ({ value: r, label: r, count: lBase.filter((l) => low(l.job_title).trim() === low(r)).length }))} />
+        <FilterPill label="Country" value={fl.country} onChange={(v) => setF("country", v)} allValue="" options={[...countBy(lBase, (l) => l.country)].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([c, n]) => ({ value: c, label: (COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c, count: n }))} />
+        <FilterPill label="Contact by" value={fl.channel} onChange={(v) => setF("channel", v)} allValue="" options={[["email", "Email"], ["linkedin", "LinkedIn"], ["none", "No contact"]].map(([k, l]) => ({ value: k, label: l, count: lBase.filter((x) => x.channel === k).length }))} />
         <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: "", country: "", channel: "" }))} />
       </>) : (<>
-        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts((prospects || []).map((p) => roleOf(p.job_id)))} />
-        <FilterPill label="Job" value={fl.job} onChange={(v) => setF("job", v)} allValue="" options={opts((prospects || []).map((p) => p.job_id)).map((id) => ({ value: id, label: jobLabel(id) || "Closed or removed job", count: (prospects || []).filter((p) => p.job_id === id).length })).sort((a, b) => a.label.localeCompare(b.label))} />
-        <FilterPill label="Found on" value={fl.source} onChange={(v) => setF("source", v)} allValue="" options={Object.values(Object.fromEntries((prospects || []).map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => ({ value: f.key, label: f.label }))} />
-        <FilterPill label="Email" value={fl.email} onChange={(v) => setF("email", v)} allValue="" options={[{ value: "with", label: "Has an email" }, { value: "without", label: "No email yet" }]} />
+        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts(pBase.map((p) => roleOf(p.job_id))).map((r) => ({ value: r, label: r, count: pBase.filter((p) => low(roleOf(p.job_id)) === low(r)).length }))} />
+        <FilterPill label="Job" value={fl.job} onChange={(v) => setF("job", v)} allValue="" options={[...countBy(pBase, (p) => p.job_id)].map(([id, n]) => ({ value: id, label: jobLabel(id) || "Closed or removed job", count: n })).sort((a, b) => a.label.localeCompare(b.label))} />
+        <FilterPill label="Found on" value={fl.source} onChange={(v) => setF("source", v)} allValue="" options={Object.values(Object.fromEntries(pBase.map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => ({ value: f.key, label: f.label, count: pBase.filter((p) => foundOn(p).key === f.key).length }))} />
+        <FilterPill label="Email" value={fl.email} onChange={(v) => setF("email", v)} allValue="" options={[{ value: "with", label: "Has an email", count: pBase.filter((p) => !!p.email).length }, { value: "without", label: "No email yet", count: pBase.filter((p) => !p.email).length }]} />
         <ScorePill label="Fit" value={fl.fit} onChange={(v) => setF("fit", v)} max={90} step={10} />
-        <FilterPill label="Replies" value={fl.reply} onChange={(v) => setF("reply", v)} allValue="" align="right" options={[{ value: "replied", label: "Replied" }, { value: "referred", label: "Referred someone" }, { value: "auto", label: "Automatic replies" }]} />
+        <FilterPill label="Replies" value={fl.reply} onChange={(v) => setF("reply", v)} allValue="" align="right" options={[["replied", "Replied"], ["referred", "Referred someone"], ["auto", "Automatic replies"]].map(([k, l]) => ({ value: k, label: l, count: pBase.filter((p) => replyMatch(p.data || {}, k)).length }))} />
         <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: "", job: "", source: "", email: "", fit: 0, reply: "" }))} />
       </>)}
     </div>
