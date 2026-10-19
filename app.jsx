@@ -11410,15 +11410,11 @@ const AUTH_ART = {
   team: <><circle cx="22" cy="22" r="8" fill="#fff" /><circle cx="44" cy="25" r="6.5" fill={C.emTint} /><path d="M8 52c1.5-9 7-14 14-14s12.5 5 14 14M35 40c2.5-2 5.5-3 9-3 6 0 10.5 4 12 12" /></>,
 };
 // [drawing, position, size, rotation, opacity, extra classes]. Loose ones float around the page;
-// "tucked" ones sit behind the card's edges so they poke out from under it.
+// (AuthTucked puts two small cards behind the sign-in card.)
 const AUTH_LOOSE = [
   ["profile", { left: "6%", top: "7%" }, 104, -16, 0.5, "hidden sm:block"], ["team", { left: "58%", top: "4%" }, 58, 9, 0.4, "hidden md:block"],
   ["briefcase", { left: "3%", top: "57%" }, 66, 21, 0.45, "hidden sm:block"], ["chat", { right: "5%", top: "29%" }, 54, -11, 0.4, "hidden sm:block"],
   ["team", { left: "22%", bottom: "4%" }, 48, -20, 0.35, "hidden md:block"], ["chat", { right: "18%", bottom: "6%" }, 74, 13, 0.5, ""],
-];
-const AUTH_TUCKED = [
-  ["cv", { right: -44, top: -54 }, 112, 15], ["calendar", { left: -58, top: "34%" }, 88, -13],
-  ["offer", { left: -34, bottom: -46 }, 96, -19], ["search", { right: -52, bottom: 64 }, 82, 11],
 ];
 const authSvg = (k, size, rot, style, cls, opacity, i = 0) => (
   <svg key={k + JSON.stringify(style)} viewBox="0 0 64 64" width={size} height={size} className={"absolute pnx-drift " + (cls || "")}
@@ -11428,8 +11424,25 @@ const authSvg = (k, size, rot, style, cls, opacity, i = 0) => (
 function AuthScatter() {
   return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_LOOSE.map(([k, pos, size, rot, op, cls], i) => authSvg(k, size, rot, pos, cls, op, i))}</div>;
 }
+// Two small cards peeking out from behind the sign-in card: a candidate moving forward and an
+// accepted offer (example names, not real people), floating gently.
 function AuthTucked() {
-  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_TUCKED.map(([k, pos, size, rot], i) => authSvg(k, size, rot, pos, "", 0.85, i + 3))}</div>;
+  const card = { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 12px", fontSize: 12, color: C.ink2, boxShadow: "0 10px 24px -18px rgba(18,36,29,.5)", lineHeight: 1.45 };
+  return (
+    <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+      <div className="absolute pnx-peek hidden sm:block" style={{ top: -46, right: -112, rotate: "5deg" }}>
+        <div style={card}>
+          <div style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>Ada Okafor</div>Moved to Interview<br />
+          <span style={{ display: "inline-block", marginTop: 4, fontSize: 11, background: C.emTint, color: C.em, borderRadius: 999, padding: "2px 8px" }}>AI fit 91%</span>
+        </div>
+      </div>
+      <div className="absolute pnx-peek hidden sm:block" style={{ bottom: -36, left: -136, rotate: "-6deg", animationDelay: "-3.5s" }}>
+        <div style={card}>
+          <div className="flex items-center gap-1.5" style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}><span style={{ width: 8, height: 8, borderRadius: 4, background: C.lime, display: "inline-block" }} />Offer accepted</div>Staff Accountant
+        </div>
+      </div>
+    </div>
+  );
 }
 function AuthShell({ onSubmit, children }) {
   return (
@@ -11449,6 +11462,8 @@ function AuthShell({ onSubmit, children }) {
         .pnx-tick > div { position: absolute; inset: 0; opacity: 0; animation: pnx-tick 12s infinite; }
         .pnx-tick > div:nth-child(2) { animation-delay: 4s; } .pnx-tick > div:nth-child(3) { animation-delay: 8s; }
         .pnx-drift { animation: pnx-drift 9s ease-in-out infinite alternate; }
+        @keyframes pnx-peek { from { translate: 0 0; } to { translate: 0 -7px; } }
+        .pnx-peek { animation: pnx-peek 7s ease-in-out infinite alternate; }
         .pnx-card { animation: pnx-card .7s cubic-bezier(.2,.7,.2,1) both; }
         .pnx-card > * { animation: pnx-rise .6s cubic-bezier(.2,.7,.2,1) both; }
         .pnx-card > *:nth-child(1) { animation-delay: .12s; } .pnx-card > *:nth-child(2) { animation-delay: .2s; } .pnx-card > *:nth-child(3) { animation-delay: .28s; }
@@ -11458,7 +11473,7 @@ function AuthShell({ onSubmit, children }) {
         .pnx-auth input:focus-visible { border-color: ${C.em} !important; box-shadow: 0 0 0 3px ${C.emTint}; }
         .pnx-auth button:focus-visible { outline: 2px solid ${C.em}; outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) {
-          .pnx-marker, .pnx-st, .pnx-drift, .pnx-card, .pnx-card > *, .pnx-tick > div { animation: none !important; }
+          .pnx-marker, .pnx-st, .pnx-drift, .pnx-peek, .pnx-card, .pnx-card > *, .pnx-tick > div { animation: none !important; }
           .pnx-marker { top: calc(100% - 14px) !important; } .pnx-st { opacity: .92 !important; } .pnx-tick > div:first-child { opacity: 1; }
         }
       `}</style>
