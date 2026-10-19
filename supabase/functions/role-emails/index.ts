@@ -160,6 +160,9 @@ async function activity(admin: any, body: any) {
     if (kind === "stage") {
       const to = String(body.to || l.stage);
       if (!NOTE_STAGES.includes(to)) return { ok: true, skipped: "stage " + to };
+      // Routed to another role: the earlier role closes quietly. The recruiter gets the
+      // "routed" email for the new role instead of a rejection for the old one.
+      if (to === "Rejected" && l.reject_kind === "rerouted") return { ok: true, skipped: "rerouted" };
       if (to === "Placed") {
         return { ok: true, sent: await send(u, "Congratulations! " + c.name + " is placed", `<div style="font-size:30px;text-align:center;margin:6px 0 10px;">&#127881;</div>` +
           p(`${who} has been placed as ${role}. Brilliant work, this one's yours.`) + p("The team has been told, so expect some congratulations.") + button(brand, candLink(c.id), "See the placement")) };
@@ -172,6 +175,9 @@ async function activity(admin: any, body: any) {
       if (!["accepted", "declined"].includes(r)) return { ok: true, skipped: "response " + r };
       return { ok: true, sent: await send(u, c.name + (r === "accepted" ? " accepted " : " declined ") + (j?.role_title || "a role"),
         p(`${who} ${r === "accepted" ? "accepted" : "declined"} ${role}.`) + (r === "accepted" ? p("Their screening starts now; you'll see it on their profile.") : "") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
+    }
+    if (l.stage === "Sourced" && l.candidate_response === "pending") {
+      return { ok: true, sent: await send(u, c.name + " was routed to " + (j?.role_title || "a new role"), p(`${who} was routed to ${role}${esc(await by())}.`) + p("They'll see it on their candidate page and can accept it there. Any earlier role they were on has been closed.") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
     }
     return { ok: true, sent: await send(u, c.name + " is on " + (j?.role_title || "a new role"), p(`${who} is now on ${role}${esc(await by()) || " (they applied)"}.`) + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
   }
