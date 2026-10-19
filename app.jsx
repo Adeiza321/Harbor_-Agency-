@@ -4380,7 +4380,23 @@ const staffChatApi = (S, linkId) => ({
 // The top of a candidate's page: who they are, their AI fit as a ring, and where they are in the
 // pipeline (the current stage pulses). Rejected / active-file candidates show the line without a current stage.
 const PROFILE_STAGES = ["Applied", "In review", "With client", "Interview", "Offer", "Placed"];
-function ProfileHeader({ candidate, status }) {
+// The path a candidate took on a role that ended (rejected, withdrew, declined): the stages they
+// passed, where it stopped, then Active file, where they are now. null while a role is still live.
+function endedPath(candidate, status, S) {
+  if (!["Active file", "Rejected"].includes(status)) return null;
+  const at = (l) => (l.reject && l.reject.at ? new Date(l.reject.at).getTime() : 0) || l.createdAt || 0;
+  const ended = candidate.jobLinks.filter((l) => ["Rejected", "Withdrawn"].includes(l.stage) || l.response === "declined").sort((a, b) => at(b) - at(a))[0];
+  if (!ended) return null;
+  const job = S.jobs.find((j) => j.id === ended.jobId);
+  const declined = ended.response === "declined";
+  const hadIv = (S.interviews || []).some((iv) => iv.candidateId === candidate.id && (iv.linkId === ended.id || iv.jobId === ended.jobId));
+  const passed = declined ? ["Routed"] : ["Applied", "In review", ...(ended.submittedAt ? ["With client"] : []), ...(hadIv ? ["Interview"] : [])];
+  const r = ended.reject;
+  const label = declined ? "Declined" : ended.stage === "Withdrawn" ? "Withdrew" : r && r.kind === "rerouted" ? "Rerouted" : "Rejected";
+  const why = declined ? "They declined the role" : ended.stage === "Withdrawn" ? "They withdrew" : r ? (r.kind === "client" ? "Rejected by the client" : r.kind === "rerouted" ? "Routed to another role" : "Rejected by us") + (r.reason && r.kind !== "rerouted" ? ": " + (REJECT_LABEL[r.reason] || r.reason) : "") : "Rejected";
+  return { passed, label, why: why + (job ? " · " + job.role + (job.client ? ", " + job.client : "") : "") + (r && r.at ? " · " + fdate(r.at) : "") };
+}
+function ProfileHeader({ candidate, status, path }) {
   const idx = { "In review": 1, "With client": 2, Interview: 3, Offer: 4, Placed: 5, Hired: 5 }[status];
   const fit = Number(candidate.ai) || 0, R = 31, CIRC = 2 * Math.PI * R;
   return (
@@ -4406,6 +4422,28 @@ function ProfileHeader({ candidate, status }) {
           </div>
         )}
       </div>
+      {path ? (
+        <>
+          <div className="relative grid mt-5" style={{ gridTemplateColumns: `repeat(${path.passed.length + 2}, minmax(0,1fr))` }}>
+            {[...path.passed.map((t) => ({ t, k: "done" })), { t: path.label, k: "end" }, { t: "Active file", k: "now" }].map((x, i, a) => {
+              const red = path.label !== "Rerouted";
+              const dot = x.k === "done" ? { background: C.lime, border: `2px solid ${C.lime}` }
+                : x.k === "end" ? { background: red ? "#E5654B" : "#B9C2BD", border: `2px solid ${red ? "#E5654B" : "#B9C2BD"}` }
+                : { background: C.side, border: "2px solid rgba(243,239,231,.85)", boxShadow: "0 0 0 5px rgba(243,239,231,.08)" };
+              return (
+                <div key={i} className="relative pt-5 text-[11px] sm:text-xs min-w-0" style={{ color: x.k === "now" ? "#fff" : x.k === "end" ? (red ? "#F6A28C" : "rgba(243,239,231,.85)") : "rgba(243,239,231,.85)", fontWeight: x.k === "done" ? 400 : 600 }}>
+                  {i < a.length - 1 && <span className="absolute" style={{ top: 5, left: 6, right: -6, height: 2, background: x.k === "done" && a[i + 1].k !== "end" ? C.lime : x.k === "done" ? `linear-gradient(90deg, ${C.lime}, ${red ? "#E5654B" : "#B9C2BD"})` : "rgba(243,239,231,.22)" }} />}
+                  <span className={"absolute rounded-full grid place-items-center" + (x.k === "now" ? " pn-now" : "")} style={{ top: 0, left: 0, width: 12, height: 12, ...dot }}>
+                    {x.k === "end" && <X size={8} color="#fff" strokeWidth={4} />}
+                  </span>
+                  <span className="block pr-1 leading-tight text-[10px] sm:text-xs">{x.t}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="relative text-xs mt-3" style={{ color: "rgba(243,239,231,.62)" }}>{path.why}</div>
+        </>
+      ) : (
       <div className="relative grid mt-5" style={{ gridTemplateColumns: `repeat(${PROFILE_STAGES.length}, minmax(0,1fr))` }}>
         {PROFILE_STAGES.map((st, i) => {
           const done = idx != null && i < idx, now = idx === i || (idx == null && i === 0 && false);
@@ -4419,7 +4457,8 @@ function ProfileHeader({ candidate, status }) {
           );
         })}
       </div>
-      {idx == null && status && <div className="relative text-xs mt-3" style={{ color: "rgba(243,239,231,.6)" }}>Currently: {status}</div>}
+      )}
+      {!path && idx == null && status && <div className="relative text-xs mt-3" style={{ color: "rgba(243,239,231,.6)" }}>Currently: {status}</div>}
     </div>
   );
 }
@@ -4675,7 +4714,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       {rejectKind && <RejectModal candidate={candidate} kind={rejectKind} S={S} toast={toast} onClose={() => setRejectKind(null)} onDone={afterReject} />}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
-          <ProfileHeader candidate={candidate} status={status} />
+          <ProfileHeader candidate={candidate} status={status} path={endedPath(candidate, status, S)} />
           <Card>
             {candidate.ai_locked && (
               <div className="rounded-lg p-2.5 mb-3 flex items-center gap-2 text-xs flex-wrap" style={{ background: C.warnBg, color: C.warnFg }}>
