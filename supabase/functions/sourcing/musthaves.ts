@@ -37,10 +37,13 @@ export async function checkMustHaves(admin: any, job: any, people: { id: string;
   const musts = await roleMustHaves(admin, job);
   if (!musts.length || !people.length) return 0;
   let saved = 0;
-  for (let i = 0; i < people.length; i += 15) {
-    const batch = people.slice(i, i + 15);
+  // Small batches: each person's checklist is long, and a cut-off answer would lose the whole batch.
+  for (let i = 0; i < people.length; i += 5) {
+    const batch = people.slice(i, i + 5);
     const list = batch.map((p) => `id=${p.id} | ${p.title || "?"} at ${p.company || "?"} | ${p.location || "?"} | history: ${clip(p.data?.history, 400) || "?"}`).join("\n");
-    const out = await askAI(SYS, jobBrief(job, false) + `\n\nMust-haves:\n${musts.map((m) => "- " + m).join("\n")}\n\nPeople:\n${list}`, 6000);
+    let out: any = null;
+    try { out = await askAI(SYS, jobBrief(job, false) + `\n\nMust-haves:\n${musts.map((m) => "- " + m).join("\n")}\n\nPeople:\n${list}`, 8000); }
+    catch (e) { console.error("must-haves batch", String((e as Error)?.message || e)); continue; }
     const byId = new Map((Array.isArray(out?.results) ? out.results : []).map((r: any) => [String(r.id), r]));
     for (const p of batch) {
       const r: any = byId.get(p.id);
@@ -69,7 +72,7 @@ export async function backfillMustHaves(admin: any, jobId?: string, maxPeople = 
   let saved = 0;
   for (const [jid, people] of byJob) {
     const { data: job } = await admin.from("jobs").select("*").eq("id", jid).maybeSingle();
-    if (job) saved += await checkMustHaves(admin, job, people);
+    if (job) { try { saved += await checkMustHaves(admin, job, people); } catch (e) { console.error("must-haves job", jid, String((e as Error)?.message || e)); } }
   }
   const { count } = await admin.from("prospects").select("id", { count: "exact", head: true }).is("data->checklist", null).neq("source", "linkedin");
   return { checked: saved, remaining: count ?? null };
