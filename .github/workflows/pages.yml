@@ -46,3 +46,12 @@ jobs:
           path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Tell Google which job pages changed (Indexing API)
+        # Sends the job page URLs this deploy just put live; the google-indexing function tells Google
+        # about new, changed and closed jobs (it does nothing until GOOGLE_INDEXING_KEY is set in Supabase).
+        # Never fails the deploy.
+        continue-on-error: true
+        run: |
+          URLS=$(node -e 'const s=require("fs").readFileSync("_site/sitemap.xml","utf8");console.log(JSON.stringify({urls:[...s.matchAll(/<loc>([^<]+\/jobs\/[^<\/]+\/)<\/loc>/g)].map(m=>m[1])}))')
+          curl -sS -m 60 -X POST https://acjmsihvvupqiikxckho.supabase.co/functions/v1/google-indexing \
+            -H "Content-Type: application/json" -d "$URLS" || true
