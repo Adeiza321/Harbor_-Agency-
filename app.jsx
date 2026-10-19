@@ -11411,23 +11411,33 @@ const AUTH_ART = {
 };
 // [drawing, position, size, rotation, opacity, extra classes]. Loose ones float around the page;
 // (AuthTucked puts two small cards behind the sign-in card.)
+// Small cards scattered around the page, in the same style as the two beside the sign-in card:
+// [icon, title, line, position, rotation, extra classes]. Example content, not real people.
 const AUTH_LOOSE = [
-  ["profile", { left: "6%", top: "7%" }, 104, -16, 0.5, "hidden sm:block"], ["team", { left: "58%", top: "4%" }, 58, 9, 0.4, "hidden md:block"],
-  ["briefcase", { left: "3%", top: "57%" }, 66, 21, 0.45, "hidden sm:block"], ["chat", { right: "5%", top: "29%" }, 54, -11, 0.4, "hidden sm:block"],
-  ["team", { left: "22%", bottom: "4%" }, 48, -20, 0.35, "hidden md:block"], ["chat", { right: "18%", bottom: "6%" }, 74, 13, 0.5, ""],
+  ["profile", "New application", "Plumber · Croydon", { left: "5%", top: "7%" }, -6, "hidden sm:block"],
+  ["chat", "New message", "\u201cHappy to chat tomorrow\u201d", { right: "6%", top: "3%" }, 4, "hidden md:block"],
+  ["calendar", "Interview booked", "Thu, 10:00 · 2nd round", { left: "44%", bottom: "3%" }, 3, "hidden md:block"],
+  ["briefcase", "Role filled", "Qualified Electrician", { right: "5%", bottom: "7%" }, -5, ""],
 ];
-const authSvg = (k, size, rot, style, cls, opacity, i = 0) => (
-  <svg key={k + JSON.stringify(style)} viewBox="0 0 64 64" width={size} height={size} className={"absolute pnx-drift " + (cls || "")}
-    style={{ ...style, transform: "rotate(" + rot + "deg)", opacity, animationDelay: -(i * 1.7) + "s", animationDuration: 8 + (i % 3) * 1.5 + "s" }}
-    fill="none" stroke={C.em} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{AUTH_ART[k]}</svg>
-);
+const AUTH_CARD = { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "9px 12px", fontSize: 12, color: C.ink2, boxShadow: "0 10px 24px -18px rgba(18,36,29,.5)", lineHeight: 1.4 };
 function AuthScatter() {
-  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_LOOSE.map(([k, pos, size, rot, op, cls], i) => authSvg(k, size, rot, pos, cls, op, i))}</div>;
+  return (
+    <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+      {AUTH_LOOSE.map(([k, title, line, pos, rot, cls], i) => (
+        <div key={title} className={"absolute pnx-drift " + cls} style={{ ...pos, rotate: rot + "deg", opacity: 0.92, animationDelay: -(i * 1.7) + "s", animationDuration: 8 + (i % 3) * 1.5 + "s" }}>
+          <div className="flex items-center gap-2.5" style={AUTH_CARD}>
+            <svg viewBox="0 0 64 64" width={26} height={26} fill="none" stroke={C.em} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">{AUTH_ART[k]}</svg>
+            <div><div style={{ color: C.ink, fontSize: 13, fontWeight: 600 }}>{title}</div>{line}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 // Two small cards peeking out from behind the sign-in card: a candidate moving forward and an
 // accepted offer (example names, not real people), floating gently.
 function AuthTucked() {
-  const card = { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "10px 12px", fontSize: 12, color: C.ink2, boxShadow: "0 10px 24px -18px rgba(18,36,29,.5)", lineHeight: 1.45 };
+  const card = AUTH_CARD;
   return (
     <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
       <div className="absolute pnx-peek hidden sm:block" style={{ top: -46, right: -112, rotate: "5deg" }}>
