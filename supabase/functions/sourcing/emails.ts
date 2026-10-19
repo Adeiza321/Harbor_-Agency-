@@ -309,38 +309,26 @@ export async function autoFindEmails(admin: any, s: Settings, agencyName: string
     }
   }
   // Emails found without a note yet (e.g. found by an earlier version): write the usual draft.
-  const { data: undrafted } = await admin.from("prospects").select("id").neq("source", "apollo").not("email", "is", null).is("body", null).eq("status", "found").limit(20);
-  if (undrafted?.length) { await draftEmails(admin, undrafted.map((r: any) => r.id), s, agencyName); out.drafted = undrafted.length; }
+  const { data: undrafted } = await admin.from("prospects").select("id").not("email", "is", null).is("body", null).eq("status", "found").limit(20);
+  if (undrafted?.length) out.drafted = await draftEmails(admin, undrafted.map((r: any) => r.id), s, agencyName);
   return out;
 }
 
-// The same short, honest note Apollo prospects get, written from what the X-ray result showed.
-export async function draftEmails(admin: any, ids: string[], s: Settings, agencyName: string) {
+// Every first email comes from the job's outreach template (template.ts), so everyone on a job gets
+// the same email (their first name and one line about their background filled in). If the template
+// can't be written right now, the people stay undrafted and autoFindEmails tries again later.
+export async function draftEmails(admin: any, ids: string[], s: Settings, _agencyName: string) {
   const { data: rows } = await admin.from("prospects").select("*").in("id", ids);
   const byJob: Record<string, any[]> = {};
   for (const r of rows || []) (byJob[r.job_id] = byJob[r.job_id] || []).push(r);
+  let n = 0;
   for (const [jobId, people] of Object.entries(byJob)) {
     const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).maybeSingle();
     if (!job) continue;
-    // The job's outreach template first (template.ts); the AI note below only if no template can be made.
-    try { if (await draftFromTemplate(admin, job, people, (s.senderName || "").split(" ")[0], s.includePay)) continue; } catch (e) { console.error("template drafts", String((e as Error)?.message || e)); }
-    const sys = "You write short, honest recruiting emails to professionals who have not heard from us before. Reply with STRICT JSON only: " +
-      "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 60-110 words, plain text, in this order: " +
-      "(1) 'Hi <first name>,' (2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given. " +
-      "(3) say we're recruiting for the role (title and seniority) and came across their public professional profile while searching for people with their experience (never claim we met or were referred). If a person is marked 'emailed before about another role', say instead that we were in touch a while ago about a different role and this one looks a closer fit. " +
-      "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. Don't list the location, pay or requirements: they're shown under your note. " +
-      "(4) say we think they'd be a good fit because ... with the specific reasons from their headline, employer and what their profile shows (one or two sentences). " +
-      "(5) a sign-off line with only the sender's first name. No links, no job description, no postscript, no footer, no unsubscribe text (all added separately).";
-    const sender = `Sender first name: ${(s.senderName || "").split(" ")[0] || "the recruiter"}\nSender title: ${s.senderTitle || "(not given)"}\nAgency name: ${agencyName || "(not given)"}`;
-    const who = people.map((p) => `id=${p.id} | first name: ${p.first_name || ""} | ${p.title || ""} at ${p.company || ""} | ${clip(p.data?.overview || p.fit_reason, 300)} | ${clip(p.data?.history, 300)}${p.data?.pool?.contactedBefore ? " | emailed before about another role" : ""}`).join("\n");
-    let out: any = null;
-    try { out = await askAI(sys, jobBrief(job, s.includePay) + `\n\n${sender}\n\nPeople:\n` + who, 5000); } catch (e) { console.error("draft xray emails", String((e as Error)?.message || e)); continue; }
-    for (const m of Array.isArray(out?.emails) ? out.emails : []) {
-      const p = people.find((x) => x.id === String(m.id));
-      if (!p) continue;
-      await admin.from("prospects").update({ subject: clip(m.subject || `${job.role_title} opportunity`, 120), body: anonymizeJd(String(m.body || "").slice(0, 3000), job.client) }).eq("id", p.id);
-    }
+    try { n += await draftFromTemplate(admin, job, people, (s.senderName || "").split(" ")[0], s.includePay); }
+    catch (e) { console.error("template drafts", jobId, String((e as Error)?.message || e)); }
   }
+  return n;
 }
 
 // "8 connections on LinkedIn", "5 followers": the highest count a search result shows, when it shows one.

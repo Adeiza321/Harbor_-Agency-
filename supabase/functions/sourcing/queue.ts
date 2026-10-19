@@ -91,7 +91,7 @@ export async function composeProspect(admin: any, p: any, s: Settings, agencyNam
     summary: pack?.mustHaves?.summary || "", mustHaves: pack?.mustHaves?.items || [],
     applyUrl: q("go=apply&pt=" + encodeURIComponent(p.unsub_token || "")), referUrl: q("refer=1&pt=" + encodeURIComponent(p.unsub_token || "")),
     unsubUrl: linkFor(p.unsub_token, "p", "unsubscribe"), deleteUrl: linkFor(p.unsub_token, "p", "delete"),
-    source: sourceText(p),
+    source: sourceShort(p),   // the same wording template emails use
   });
 }
 

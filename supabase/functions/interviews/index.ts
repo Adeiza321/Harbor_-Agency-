@@ -63,13 +63,23 @@ function fmtTz(iso: string, tz?: string | null) {
 const seqOf = (_iv: any) => Math.floor((Date.now() - Date.UTC(2026, 0, 1)) / 60000);
 
 async function mailCandidate(admin: any, iv: any, kind: "invite" | "changed" | "cancel" | "noshow" | "day" | "hour") {
-  const { i } = await info(admin, iv);
+  const { i, cand } = await info(admin, iv);
   if (!i.candidateEmail || i.optedOut) return false;
+  // The candidate's recruiter (and whoever runs the interview, if different) is copied in on
+  // bookings, changes, cancellations and no-shows; not on the day/hour reminders.
+  let cc: any[] = [];
+  if (["invite", "changed", "cancel", "noshow"].includes(kind)) {
+    const ids = [...new Set([cand?.recruiter_id, iv.recruiter_id].filter(Boolean))];
+    if (ids.length) {
+      const { data: rs } = await admin.from("profiles").select("email,full_name,status").in("id", ids);
+      cc = (rs || []).filter((r: any) => r.email && r.status === "Active").map((r: any) => ({ email: r.email, name: r.full_name || undefined }));
+    }
+  }
   const b = await loadBrand(admin);
   const m = kind === "invite" ? inviteEmail(b, i) : kind === "changed" ? inviteEmail(b, i, true) : kind === "cancel" ? cancelEmail(b, i)
     : kind === "noshow" ? noShowEmail(b, i) : reminderEmail(b, i, kind);
   const attach = ["invite", "changed", "cancel"].includes(kind) ? { name: "interview.ics", content: ics({ ...i, id: iv.id, seq: seqOf(iv), cancelled: kind === "cancel" }) } : undefined;
-  return sendBrevo(b, { email: i.candidateEmail, name: i.candidateName }, m.subject, m.html, attach);
+  return sendBrevo(b, { email: i.candidateEmail, name: i.candidateName }, m.subject, m.html, attach, { cc });
 }
 
 async function timeline(admin: any, candidateId: string, title: string) {

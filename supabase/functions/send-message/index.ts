@@ -1,12 +1,13 @@
 import { logAiUsage } from "../sourcing/ai.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { Brand, button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
+import { Brand, button, ccList, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
 // Recruiter -> candidate emails, branded with the agency name from Agency settings.
 //   invite   once a candidate is connected to a recruiter on a role (a routed role waiting for them
 //            gets "A new role for you" with a link that opens the job description on their page)
 //   route_reminders  (ops token, hourly) reminders for routed roles they haven't answered
 //   reply    a recruiter's message on a role's thread (also emailed)
+//   The candidate's recruiter is copied in (cc) on the invite and rejection emails.
 //   draft_reject / preview_reject / reject
 //            recording why a candidate was rejected (by the client, or by us before they were
 //            put forward) and telling the candidate why, by email and on their candidate page.
@@ -147,20 +148,28 @@ function rejectEmail(b: Brand, o: { name: string; role: string; company: string;
 
 // Like brand.ts sendBrevo, but keeps Brevo's message id so the email-status function can later
 // find out whether the email was delivered or bounced (the chat's one / two ticks).
-async function sendTracked(b: Brand, to: { email: string; name?: string }, subject: string, html: string): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+async function sendTracked(b: Brand, to: { email: string; name?: string }, subject: string, html: string, cc?: any[]): Promise<{ ok: boolean; messageId?: string; error?: string }> {
   const key = Deno.env.get("BREVO_API_KEY"), senderEmail = Deno.env.get("BREVO_SENDER_EMAIL");
   if (!key || !senderEmail || !to.email) return { ok: false, error: "Email isn't set up" };
   try {
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", "api-key": key },
-      body: JSON.stringify({ sender: { email: senderEmail, name: b.name }, to: [to], subject, htmlContent: html }),
+      body: JSON.stringify({ sender: { email: senderEmail, name: b.name }, to: [to], ...(ccList(to, cc).length ? { cc: ccList(to, cc) } : {}), subject, htmlContent: html }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { console.error("brevo send failed", res.status, JSON.stringify(j).slice(0, 300)); return { ok: false, error: String(j?.message || "Brevo refused the email (" + res.status + ")").slice(0, 300) }; }
     return { ok: true, messageId: j?.messageId ? String(j.messageId) : undefined };
   } catch (e) { return { ok: false, error: String((e as Error)?.message || e).slice(0, 300) }; }
 }
+// The candidate's recruiter, copied in on emails about the candidate's status (role invites and
+// rejections), so they always know what the candidate was told. Only an active staff account.
+async function recruiterCc(admin: any, cand: any) {
+  if (!cand?.recruiter_id) return [];
+  const { data: r } = await admin.from("profiles").select("email,full_name,status").eq("id", cand.recruiter_id).maybeSingle();
+  return r?.email && r.status === "Active" ? [{ email: r.email, name: r.full_name || undefined }] : [];
+}
+
 // Email outcome stored on the chat message: 'sent' (waiting for Brevo's result) or 'not_sent'.
 const emailFields = (r: { ok: boolean; messageId?: string; error?: string } | null, why?: string) => r && r.ok
   ? { email_status: "sent", email_message_id: r.messageId || null, email_status_at: new Date().toISOString(), email_error: null }
@@ -246,7 +255,7 @@ Deno.serve(async (req: Request) => {
            ${roleCard(job)}
            <div style="font-size:15px;line-height:1.6;margin-top:16px;">${routedNext(link)} Nothing is shared with the employer until you apply.</div>
            ${button(brand, portalUrl + "&role=" + encodeURIComponent(link.id), "See the role and apply")}`, undefined, unsubUrl);
-        const sentRouted = await sendBrevo(brand, { email: cand.email, name: cand.name }, subj, routedHtml);
+        const sentRouted = await sendBrevo(brand, { email: cand.email, name: cand.name }, subj, routedHtml, undefined, { cc: await recruiterCc(admin, cand) });
         return json({ ok: true, sent: sentRouted, kind: "routed" });
       }
       const subject = job ? `Your application for ${job.role_title} is under review` : "Your application is under review";
@@ -256,7 +265,7 @@ Deno.serve(async (req: Request) => {
          <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message ${rec?.full_name || me.full_name ? esc(recruiterName.split(" ")[0]) : "your recruiter"} any time if you have questions or want to stay connected.</div>
          ${button(brand, portalUrl, "Message your recruiter")}
          ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);
-      const sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, subject, html);
+      const sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, subject, html, undefined, { cc: await recruiterCc(admin, cand) });
       return json({ ok: true, sent });
     }
 
@@ -336,7 +345,7 @@ Deno.serve(async (req: Request) => {
         let result: { ok: boolean; messageId?: string; error?: string } | null = null;
         if (cand.email && !optedOut) {
           const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
-          result = await sendTracked(brand, { email: cand.email, name: cand.name }, m.subject, m.html);
+          result = await sendTracked(brand, { email: cand.email, name: cand.name }, m.subject, m.html, await recruiterCc(admin, cand));
           emailed = result.ok;
         }
         if (msgRow) await admin.from("candidate_job_messages").update(emailFields(result, !cand.email ? "No email address on file" : "The candidate unsubscribed from emails")).eq("id", msgRow.id);

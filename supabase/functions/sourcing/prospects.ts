@@ -184,24 +184,10 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
   const keep = people.filter((p) => { const r = byId[p.id]; return r && (["Perfect fit", "Good fit"].includes(r.verdict) || Number(r.fit) >= 70); });
   if (!keep.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0 }); return { ok: true, found: 0, message: `Checked ${people.length} people; none were a strong enough fit.` }; }
 
-  // 5. Draft a short, personal email for each.
-  const mailSys = "You write short, honest recruiting emails to professionals who have not heard from us before. Reply with STRICT JSON only: " +
-    "{\"emails\": [{\"id\": string, \"subject\": string, \"body\": string}]}. Rules: subject under 60 characters, no clickbait. Body 60-110 words, plain text, in this order: " +
-    "(1) 'Hi <first name>,' " +
-    "(2) introduce the sender in one short sentence: their first name, their title if given, and the agency name if given (e.g. 'I'm Ahmed, a recruiter at Pronext.'). " +
-    "(3) say we're recruiting for the role (title and seniority) and came across their profile in a professional-contacts database while searching for people with their experience (never claim we met, were referred, or saw them on LinkedIn). " +
-    "NEVER name the hiring company: describe it instead (e.g. 'a US fintech') from the description. Don't list the location, pay or requirements: they're shown under your note. " +
-    "(4) say we think they'd be a good fit because ... and give the specific reasons from their title, employer and work history (one or two sentences). " +
-    "(5) a sign-off line with only the sender's first name. No links, no job description, no postscript, no footer, no unsubscribe text (all added separately).";
-  const who = keep.map((p) => `id=${p.id} | first name: ${p.first_name} | ${p.title} at ${p.company} | ${p.history.slice(0, 300)}`).join("\n");
-  const { data: ag } = await admin.from("agency_settings").select("agency_name").limit(1).maybeSingle();
-  const sender = `Sender first name: ${(s.senderName || "").split(" ")[0] || "the recruiter"}\nSender title: ${s.senderTitle || "(not given)"}\nAgency name: ${String(ag?.agency_name || "").trim() || "(not given)"}`;
-  const mails = await askAI(mailSys, jobBrief(job, s.includePay) + `\n\n${sender}\n\nPeople:\n` + who, 6000);
-  const mailById: Record<string, any> = {};
-  for (const m of Array.isArray(mails?.emails) ? mails.emails : []) mailById[String(m.id)] = m;
-
+  // 5. The first email comes from the job's outreach template (template.ts) after the insert below,
+  //    the same template every candidate on this job gets. No separate AI-written note.
   const rows = keep.map((p) => {
-    const r = byId[p.id] || {}, m = mailById[p.id] || {};
+    const r = byId[p.id] || {};
     const cc = countryCode(p.country);
     return {
       job_id: jobId, source: "apollo", external_id: p.id,
@@ -209,16 +195,14 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
       title: p.title, company: p.company, location: [p.city, p.state].filter(Boolean).join(", "), country: cc || p.country, region: regionOf(cc),
       linkedin_url: p.linkedin_url, email: p.email, email_status: p.email_status,
       fit: Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0))), verdict: String(r.verdict || ""), fit_reason: String(r.reason || "").slice(0, 300),
-      subject: String(m.subject || `${job.role_title} opportunity`).slice(0, 120),
-      // The client's name is taken out if the AI slipped it in; the role overview and must-haves
-      // are added under this note when the email is built (outreach.ts).
-      body: anonymizeJd(String(m.body || "").slice(0, 3000), job.client),
+      subject: null, body: null,   // written from the job's template just below
       status: "found", data: { history: p.history, domain: p.domain, location_hold: holdOf.get(p.id) || null },
     };
   });
   const { data: inserted, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id,first_name,full_name,title,company,location,fit_reason,data");
   if (error) throw new Error(error.message);
-  // The job's outreach template (template.ts) replaces the AI note when the job has one or can get one.
+  // The job's outreach template (template.ts). If it can't be written right now (AI unavailable), the
+  // emails stay unwritten and the next email check drafts them from the template (emails.ts).
   try { await draftFromTemplate(admin, job, inserted || [], (s.senderName || "").split(" ")[0], s.includePay); } catch (e) { console.error("template drafts", String((e as Error)?.message || e)); }
   // The same summary and must-have checklist X-ray people get (musthaves.ts).
   try { await checkMustHaves(admin, job, inserted || []); } catch (e) { console.error("must-haves", String((e as Error)?.message || e)); }

@@ -17,6 +17,15 @@ import { loadBrand, emailShell, button, esc, sendBrevo } from "./brand.ts";
 //   { kind: "task", taskId }                            a task given to them by someone else
 //   { kind: "assigned", candidateId, actorId }          a candidate assigned to them
 //   { kind: "comment", commentId }                      a teammate's note on their candidate
+//   Team activity (Admins and Rec Ops, plus recruiters where it's theirs):
+//   { kind: "new_candidate", candidateId, actorId }     a candidate was added (or a draft submitted).
+//                                                       Added by a recruiter: Admins and Rec Ops hear.
+//                                                       Given to a recruiter by someone else: that
+//                                                       recruiter gets "is now your candidate".
+//   { kind: "applied", applicationId }                  someone applied directly (apply page, outreach
+//                                                       "I'm interested", a job board) or a referral said
+//                                                       yes: Admins, Rec Ops and the role's recruiters
+//                                                       (every active recruiter when it's for no role).
 //   Team wins:
 //   { kind: "placed", cheerId }   a placement: every other active recruiter hears who made it
 //   { kind: "kudos", kudosId }    a teammate congratulated the recruiter on a placement
@@ -113,6 +122,7 @@ Deno.serve(async (req: Request) => {
 const uuid = (v: unknown) => /^[0-9a-f-]{36}$/i.test(String(v || "")) ? String(v) : "";
 const NOTE_STAGES = ["Screening", "Submitted", "Interview", "Offer", "Placed", "Rejected", "Withdrawn"];
 const PROFILE = "id,email,full_name,status,role,notification_prefs";
+const TEAM_FOOT = (name: string) => "You're receiving this because you're an Admin or Rec Ops at " + name + ". Turn activity emails off in ProNext: My profile, Notifications.";
 
 async function activity(admin: any, body: any) {
   const brand = await loadBrand(admin);
@@ -129,6 +139,11 @@ async function activity(admin: any, body: any) {
     return sendBrevo(brand, { email: u.email, name: u.full_name || undefined }, subject, html);
   };
   const candLink = (id: string) => APP_URL + "/?page=candidates&cand=" + id;
+  // Admins and Rec Ops who want activity emails.
+  const team = async () => {
+    const { data } = await admin.from("profiles").select(PROFILE).in("role", ["admin", "recops"]).eq("status", "Active");
+    return (data || []).filter((u: any) => u.email && (u.notification_prefs || {}).activityEmail !== false);
+  };
   const quote = (t: string) => t ? `<div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;line-height:1.5;">${esc(t.slice(0, 600))}</div>` : "";
   const loadLink = async (id: string) => {
     const { data } = await admin.from("candidate_jobs").select("id,stage,candidate_response,reject_kind,reject_reason,reject_feedback,candidates(id,name,recruiter_id),jobs(id,role_title,client)").eq("id", id).maybeSingle();
@@ -188,8 +203,9 @@ async function activity(admin: any, body: any) {
   }
 
   if (kind === "assigned") {
-    const { data: c } = await admin.from("candidates").select("id,name,recruiter_id").eq("id", uuid(body.candidateId)).maybeSingle();
+    const { data: c } = await admin.from("candidates").select("id,name,recruiter_id,is_draft").eq("id", uuid(body.candidateId)).maybeSingle();
     if (!c) return { ok: true, skipped: "no candidate" };
+    if (c.is_draft) return { ok: true, skipped: "still a draft (they'll hear when it's submitted)" };
     const u = await person(c.recruiter_id); if (!okFor(u)) return { ok: true, skipped: "not for them" };
     return { ok: true, sent: await send(u, c.name + " is now your candidate", p(`<b>${esc(c.name)}</b> has been assigned to you${esc(await by())}.`) + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
   }
@@ -225,6 +241,54 @@ async function activity(admin: any, body: any) {
     const from = await nameOf(k.from_id) || "A teammate";
     return { ok: true, sent: await send(u, from + " congratulated you", p(`<b>${esc(from)}</b> congratulated you on your <b>${esc(ch.role_title || "")}</b> placement${ch.client ? " at " + esc(ch.client) : ""}. &#127881;`) + quote(k.message || "") + button(brand, APP_URL + "/?page=myProfile", "See your congratulations"),
       "You're receiving this because a teammate congratulated you in " + brand.name + ".") };
+  }
+  if (kind === "new_candidate") {
+    const { data: c } = await admin.from("candidates").select("id,name,role_title,location,source,recruiter_id,is_draft").eq("id", uuid(body.candidateId)).maybeSingle();
+    if (!c || c.is_draft) return { ok: true, skipped: "no candidate" };
+    const actor = await person(actorId);
+    const out: any = { ok: true };
+    // Given to a recruiter by someone else (or by the Inbox): they hear it's theirs.
+    if (c.recruiter_id && c.recruiter_id !== actorId) {
+      const u = await person(c.recruiter_id);
+      if (okFor(u)) out.assigned = await send(u, c.name + " is now your candidate", p(`<b>${esc(c.name)}</b>${c.role_title ? " (" + esc(c.role_title) + ")" : ""} has been assigned to you${esc(await by())}.`) + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0]));
+    }
+    // Added by a recruiter: Admins and Rec Ops hear about it.
+    if (actor?.role === "recruiter") {
+      const meta = [c.role_title, c.location].filter(Boolean).join(" · ");
+      out.team = 0;
+      for (const u of (await team()).filter((u: any) => u.id !== actorId)) {
+        if (await send(u, (actor.full_name || "A recruiter") + " added " + c.name,
+          p(`<b>${esc(actor.full_name || "A recruiter")}</b> added a new candidate: <b>${esc(c.name)}</b>${meta ? " (" + esc(meta) + ")" : ""}.`) +
+          button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0]), TEAM_FOOT(brand.name))) out.team++;
+      }
+    }
+    return out;
+  }
+
+  if (kind === "applied") {
+    const { data: a } = await admin.from("applications").select("id,name,role_title,source,job_id,status,referrer,interest_at,jobs(id,role_title,client)").eq("id", uuid(body.applicationId)).maybeSingle();
+    if (!a || a.status === "dismissed") return { ok: true, skipped: "no application" };
+    if (a.source === "referral" && !a.interest_at) return { ok: true, skipped: "referral not interested yet" };
+    const j: any = a.jobs;
+    const how = a.source === "referral" ? "was referred" + (a.referrer?.name ? " by " + String(a.referrer.name) : "") + " and is interested in"
+      : a.source === "outreach" ? "replied to our outreach and applied for" : "applied for";
+    const what = j ? `<b>${esc(roleOf(j))}</b>` : a.role_title ? `<b>${esc(a.role_title)}</b>` : "a role (no specific job)";
+    const subject = "New application: " + a.name + (j?.role_title ? " · " + j.role_title : "");
+    const src = a.source && !["career_page", "outreach", "referral"].includes(a.source) ? p("Source: " + esc(a.source)) : "";
+    let sent = 0;
+    // Admins and Rec Ops: it's waiting in the Inbox to be assigned.
+    for (const u of await team()) {
+      if (await send(u, subject, p(`<b>${esc(a.name)}</b> ${esc(how)} ${what}.`) + src + p("It's in the Inbox, waiting to be assigned.") + button(brand, APP_URL + "/?page=inbox", "Open the Inbox"), TEAM_FOOT(brand.name))) sent++;
+    }
+    // Recruiters: the role's recruiters, or every active recruiter when it's for no particular role.
+    let recIds: string[] = [];
+    if (a.job_id) { const { data: jr } = await admin.from("job_recruiters").select("recruiter_id").eq("job_id", a.job_id); recIds = (jr || []).map((r: any) => r.recruiter_id); }
+    const { data: recs } = recIds.length ? await admin.from("profiles").select(PROFILE).in("id", recIds) : a.job_id ? { data: [] } : await admin.from("profiles").select(PROFILE).eq("role", "recruiter").eq("status", "Active");
+    for (const u of (recs || []).filter(okFor)) {
+      if (await send(u, subject, p(`<b>${esc(a.name)}</b> ${esc(how)} ${what}${j ? ", one of your roles" : ""}.`) + p("Admin or Rec Ops will assign them from the Inbox; you'll get an email if they're given to you.") +
+        (j ? button(brand, APP_URL + "/?page=jobDetail&job=" + j.id, "Open the role") : ""))) sent++;
+    }
+    return { ok: true, sent };
   }
   return { ok: true, skipped: "unknown kind" };
 }

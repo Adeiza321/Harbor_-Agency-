@@ -98,14 +98,21 @@ export function sourceShort(p: any): string {
   return via ? `${via}, a business contact database` : "a business contact database";
 }
 
+// The one "why you're getting this" line every candidate outreach email carries (template emails
+// and the older note-style ones alike), so the footer reads the same for everyone.
+export function candidateWhy(region: Region, source: string) {
+  const where = source || "your work profile in Apollo.io, a business contact database";
+  return region !== "US"
+    ? `Why you're getting this: we found ${where}, and it matches this role. We use only your name, job title and email address, only to tell you about roles like this, and delete them if you're not interested.`
+    : `We found ${where}, and it matches this role.`;
+}
+
 export function candidateEmail(m: CandidateMail): { text: string; html: string } {
   const b = m.brand;
   const meta = [m.role.location, m.role.workSetup, m.role.employmentType].filter(Boolean)
     .filter((v, i, a) => i === 0 || !String(a[0]).toLowerCase().includes(String(v).toLowerCase()));
   const signName = m.signoff || m.senderName.split(" ")[0] || "";
-  const why = m.region !== "US"
-    ? `Why you're getting this: we found ${m.source || "your work profile in Apollo.io, a business contact database"}, and it matches this role. We use only your name, job title and email address, only to tell you about roles like this, and delete them if you're not interested.`
-    : "";
+  const why = candidateWhy(m.region, m.source || "");
 
   // ---- plain text ----
   const t: string[] = [m.paragraphs.join("\n\n"), ""];
@@ -117,8 +124,7 @@ export function candidateEmail(m: CandidateMail): { text: string; html: string }
   t.push("", "I'm interested (apply in about two minutes): " + m.applyUrl, "Know someone who'd fit? Refer them: " + m.referUrl, "", signName);
   t.push("", "--", [m.senderName, m.senderTitle].filter(Boolean).join(", ") + (m.agency ? ", " + m.agency : ""));
   if (m.address) t.push(m.address);
-  if (why) t.push("", why + " Delete my details: " + m.deleteUrl);
-  t.push("Not interested? Unsubscribe: " + m.unsubUrl);
+  t.push("", why + " Delete my details: " + m.deleteUrl, "Not interested? Unsubscribe: " + m.unsubUrl);
   const text = t.join("\n").replace(/\n{3,}/g, "\n\n");
 
   // ---- HTML: the same design as every other ProNext candidate email (brand.ts emailShell) ----
@@ -139,7 +145,7 @@ ${button(b, m.applyUrl, "I'm interested")}
 ${signHtml(signName, m.senderTitle, m.agency)}`,
     undefined, undefined,
     footerHtml(b, { sender: [m.senderName, m.senderTitle].filter(Boolean).join(", "), agency: m.agency, address: m.address,
-      why: why || "You are receiving this email because we think this role fits your experience.", unsubUrl: m.unsubUrl, deleteUrl: why ? m.deleteUrl : "" }));
+      why, unsubUrl: m.unsubUrl, deleteUrl: m.deleteUrl }));
   return { text, html };
 }
 
@@ -152,8 +158,10 @@ export function templateEmail(m: { brand: Brand; region: Region; text: string; s
   const plain = m.text.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\{\{APPLY_LINK\}\}/g, m.applyUrl);
   // Footer: the business address; where we found their details, with unsubscribe and delete links; the copyright line.
   const t = [plain, ...(m.referUrl ? ["", "Not quite right for you? If you know someone who'd be great, refer them here: " + m.referUrl] : []), "", signName, "", "--"];
+  const why = candidateWhy(m.region, m.source || "");
+  t.push([m.senderName, m.senderTitle].filter(Boolean).join(", ") + (m.agency ? ", " + m.agency : ""));
   if (m.address) t.push(m.address);
-  t.push(`We found your details on ${m.source || "a business contact database"}. Not interested? Unsubscribe: ${m.unsubUrl} or have your details deleted: ${m.deleteUrl}`, `© ${new Date().getFullYear()} ${b.legal || b.name}`);
+  t.push("", why + " Delete my details: " + m.deleteUrl, "Not interested? Unsubscribe: " + m.unsubUrl);
   const inline = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>")
     .replace(/\{\{APPLY_LINK\}\}/g, `<a href="${esc(m.applyUrl)}" style="color:${b.color};">apply here</a>`)
     .replace(/apply here:?\s*<a /i, "<a ");
@@ -177,8 +185,7 @@ export function templateEmail(m: { brand: Brand; region: Region; text: string; s
   }).join("\n");
   const html = emailShell(b, m.subject, body + button(b, m.applyUrl, "Apply now") +
     (m.referUrl ? `<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Not quite right for you? If you know someone who'd be great, <a href="${esc(m.referUrl)}" style="color:${b.color};">refer them here</a>.</div>` : "") + signHtml(signName, m.senderTitle, m.agency), undefined, undefined,
-    (m.address ? esc(m.address) + "<br>" : "") +
-    `<div style="margin-top:4px;">We found your details on ${esc(m.source || "a business contact database")}. Not interested? <a href="${esc(m.unsubUrl)}" style="color:#56605A;text-decoration:underline;">Unsubscribe</a> or <a href="${esc(m.deleteUrl)}" style="color:#56605A;text-decoration:underline;">have your details deleted</a>.</div>`);
+    footerHtml(b, { sender: [m.senderName, m.senderTitle].filter(Boolean).join(", "), agency: m.agency, address: m.address, why, unsubUrl: m.unsubUrl, deleteUrl: m.deleteUrl }));
   return { text: t.join("\n").replace(/\n{3,}/g, "\n\n"), html };
 }
 

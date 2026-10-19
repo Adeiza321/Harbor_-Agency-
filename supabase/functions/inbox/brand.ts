@@ -44,14 +44,29 @@ export function button(b: Brand, href: string, label: string) {
   return `<a href="${esc(href)}" style="display:inline-block;margin-top:18px;padding:12px 22px;background:${b.color};color:#ffffff;text-decoration:none;border-radius:10px;font-family:Arial,sans-serif;font-size:14px;font-weight:600;">${esc(label)}</a>`;
 }
 
-export async function sendBrevo(b: Brand, to: { email: string; name?: string }, subject: string, html: string, attachment?: { name: string; content: string }): Promise<boolean> {
+// cc: people copied in (e.g. a candidate's recruiter on emails about their status). Anyone who is
+// also the recipient, has no address, or appears twice is left out.
+export function ccList(to: { email: string }, cc?: ({ email?: string | null; name?: string | null } | null)[]) {
+  const seen = new Set([String(to.email || "").trim().toLowerCase()]);
+  const out: { email: string; name?: string }[] = [];
+  for (const c of cc || []) {
+    const e = String(c?.email || "").trim().toLowerCase();
+    if (!e || seen.has(e)) continue;
+    seen.add(e);
+    out.push(c?.name ? { email: e, name: String(c.name) } : { email: e });
+  }
+  return out;
+}
+
+export async function sendBrevo(b: Brand, to: { email: string; name?: string }, subject: string, html: string, attachment?: { name: string; content: string }, opts?: { cc?: ({ email?: string | null; name?: string | null } | null)[] }): Promise<boolean> {
   const key = Deno.env.get("BREVO_API_KEY"), senderEmail = Deno.env.get("BREVO_SENDER_EMAIL");
   if (!key || !senderEmail || !to.email) { console.error("Brevo not configured or no recipient; email not sent"); return false; }
+  const cc = ccList(to, opts?.cc);
   try {
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", "api-key": key },
-      body: JSON.stringify({ sender: { email: senderEmail, name: b.name }, to: [to], subject, htmlContent: html, ...(attachment ? { attachment: [attachment] } : {}) }),
+      body: JSON.stringify({ sender: { email: senderEmail, name: b.name }, to: [to], ...(cc.length ? { cc } : {}), subject, htmlContent: html, ...(attachment ? { attachment: [attachment] } : {}) }),
     });
     if (!res.ok) { console.error("brevo send failed", res.status, (await res.text()).slice(0, 300)); return false; }
     return true;
