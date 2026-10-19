@@ -8,7 +8,7 @@ import {
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
   KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
-  Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor,
+  Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon,
 } from "lucide-react";
 
 /* Design tokens */
@@ -6335,13 +6335,33 @@ function jobHealth(j, S) {
 }
 // One job as a card: where its candidates are (a bar from added → submitted → interview → offer),
 // how long it's been open, who's on it, and its health (open jobs only).
-function JobCard({ j, S, mine, onOpen, onShare }) {
+function JobCard({ j, S, mine, onOpen, onShare, row }) {
   const links = S.cands.flatMap((c) => (c.jobLinks || []).filter((l) => l.jobId === j.id && l.response !== "declined"));
   const live = links.filter((l) => !["Rejected", "Withdrawn"].includes(l.stage));
   const n = { added: live.length, submitted: live.filter((l) => l.submittedAt || ["Submitted", "Interview", "Offer", "Placed"].includes(l.stage)).length,
     interview: live.filter((l) => ["Interview", "Offer", "Placed"].includes(l.stage)).length, offer: live.filter((l) => ["Offer", "Placed"].includes(l.stage)).length };
   const h = jobHealth(j, S);
   const seg = (v, col) => (n.added ? <i key={col} className="block h-full" style={{ width: (v / n.added) * 100 + "%", background: col }} /> : null);
+  const tag = h.key ? <span title={h.why}><Pill tone={h.tone}>{h.label}</Pill></span> : <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>;
+  const bar = (cls) => <div className={"flex h-2 rounded-full overflow-hidden " + cls} style={{ background: C.neutralBg }} aria-hidden="true">{[seg(n.added - n.submitted, "#C9D8CF"), seg(n.submitted - n.interview, "#6FA88A"), seg(n.interview - n.offer, C.em), seg(n.offer, C.lime)]}</div>;
+  const people = <>{j.recruiters.length > 0 && <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.slice(0, 3).map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={22} />)}</div>}
+    {mine && <span className="text-[11px] font-semibold" style={{ color: C.em }}>You</span>}</>;
+  const share = <button type="button" onClick={(e) => { e.stopPropagation(); onShare(); }} className="text-xs font-medium" style={{ color: C.em }}>Share</button>;
+  if (row) return (
+    <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift rounded-xl border px-4 py-3 cursor-pointer flex flex-wrap md:flex-nowrap items-center gap-x-5 gap-y-2" style={{ borderColor: C.line, background: C.card }}>
+      <div className="min-w-0 flex-1 basis-full md:basis-0">
+        <div className="flex items-center gap-2"><span className="font-medium truncate" title={j.role}>{j.role}</span><span className="md:hidden ml-auto shrink-0">{tag}</span></div>
+        <div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div>
+      </div>
+      <div className="w-full md:w-56 shrink-0">
+        {bar("mb-1")}
+        <div className="flex justify-between text-[11px]" style={{ color: C.ink3, fontVariantNumeric: "tabular-nums" }}><span>{n.added} added</span><span>{n.submitted} sub.</span><span>{n.interview} int.</span><span>{n.offer} offer</span></div>
+      </div>
+      <div className="text-xs md:w-60 shrink-0 truncate" style={{ color: C.ink2 }} title={h.why || ""}>Open {j.days}d{h.why ? " · " + h.why.toLowerCase() : ""}</div>
+      <div className="hidden md:block md:w-24 shrink-0">{tag}</div>
+      <div className="flex items-center gap-3 shrink-0 ml-auto md:ml-0">{people}{share}</div>
+    </div>
+  );
   return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift relative rounded-2xl border p-4 cursor-pointer flex flex-col" style={{ borderColor: C.line, background: C.card }}>
       <div className="flex items-start gap-2">
@@ -6368,6 +6388,8 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const gq = (S.query || "").toLowerCase();
   const hit = (j, t) => j.role.toLowerCase().includes(t) || j.client.toLowerCase().includes(t);
   const [tab, setTab] = useState("All");
+  const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.jobsView") || "cards"; } catch (e) { return "cards"; } });
+  const setView = (v) => { setViewRaw(v); try { localStorage.setItem("pn.jobsView", v); } catch (e) {} };
   const mine = (j) => (j.engagedIds || []).includes(S.me.id);
   const inTab = (j, t) => t === "All" || (t === "Mine" ? mine(j) : j.status === t);
   const filtered = S.jobs.filter((j) => inTab(j, tab) && hit(j, q.toLowerCase()) && hit(j, gq));
@@ -6381,11 +6403,24 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
       </div>
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
-        <div className="mb-3 flex w-full sm:w-72"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
-        {filtered.length ? (
+        <div className="mb-3 flex items-center gap-3">
+          <div className="flex flex-1 min-w-0 sm:flex-none sm:w-72"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
+          <div className="ml-auto flex rounded-xl p-1 shrink-0" style={{ background: C.neutralBg }} role="group" aria-label="Layout">
+            {[["cards", "Cards", LayoutGrid], ["list", "List", ListIcon]].map(([k, l, I]) => (
+              <button key={k} type="button" aria-pressed={view === k} title={l + " view"} onClick={() => setView(k)} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium"
+                style={view === k ? { background: C.card, color: C.ink, boxShadow: "0 1px 2px rgba(20,32,27,.1)" } : { color: C.ink3 }}><I size={15} /><span className="hidden sm:inline">{l}</span></button>
+            ))}
+          </div>
+        </div>
+        {filtered.length ? (view === "list" ? (
+          <div className="flex flex-col gap-2.5">
+            {filtered.map((j) => <JobCard row key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
+          </div>
+        ) : (
           <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
             {filtered.map((j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
           </div>
+        )
         ) : <EmptyState title={q || gq ? "No roles match your search" : "No roles here yet"} text={q || gq ? "Try another search or tab." : "Post a job to start finding candidates."} action={q || gq ? null : "Post a job"} onAction={() => setPage("postJob")} />}
       </Card>
     </div>
