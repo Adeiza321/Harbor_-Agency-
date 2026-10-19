@@ -3361,7 +3361,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
+          <div className="flex w-full sm:w-60"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
           <FilterPill label="Recruiter" value={recF} onChange={setRecF} options={S.team.map((r) => ({ value: r.name, label: r.name, count: onTab.filter((c) => c.recruiter === r.name).length }))} />
           <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: onTab.filter((c) => c.role === r).length }))} />
           <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
@@ -6009,7 +6009,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
       </div>
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
-        <div className="mb-3"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
+        <div className="mb-3 flex w-full sm:w-72"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
         <DataTable
           rows={filtered}
           onRowClick={(j) => onOpenJob(j.id)}
@@ -7884,7 +7884,7 @@ function CampaignsPage({ toast, S }) {
   const opts = (vals) => [...new Set(vals.filter(Boolean))];
   const filterBar = (
     <div className="mt-3 flex flex-wrap gap-2 items-center">
-      <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={setQ} placeholder={tab === "leads" ? "Search role, company, contact" : "Search name, title, company, email"} /></div>
+      <div className="flex w-full sm:w-64"><SearchInput value={q} onChange={setQ} placeholder={tab === "leads" ? "Search leads" : "Search name, company, email"} /></div>
       {tab === "leads" ? (<>
         <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} options={roleOpts(lBase.map((l) => l.job_title)).map((r) => ({ value: r, label: r, count: lBase.filter((l) => low(l.job_title).trim() === low(r)).length }))} />
         <FilterPill label="Country" value={fl.country} onChange={(v) => setF("country", v)} options={[...countBy(lBase, (l) => l.country)].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([c, n]) => ({ value: c, label: (COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c, count: n }))} />
