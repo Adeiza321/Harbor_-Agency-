@@ -30,8 +30,8 @@ const cors = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-// Models: Sonnet for normal conversations, Haiku for one-word follow-ups (and background memory
-// notes), Opus when it has to think hardest (brainstorm mode, or the app asks for the smart model).
+// Models: Haiku for everyday questions and background memory notes; Sonnet for files, brainstorm,
+// drafting, planning and long asks (see runAgent); Opus only when the app asks for the smart model.
 // Each can be overridden with a secret. (ANTHROPIC_MODEL is deliberately not used here: other
 // functions set it for their own cheaper work.)
 const FAST = Deno.env.get("ASSISTANT_MODEL") || "claude-haiku-5-5";
@@ -559,6 +559,18 @@ async function callClaude(key: string, payload: any, beta: string | null) {
   return res!;
 }
 
+// The conversation with a cache mark on its newest message: the next step of the same turn (after a
+// lookup) re-reads everything up to there from the cache at a tenth of the price.
+function cached(convo: any[]) {
+  if (!convo.length) return convo;
+  const out = convo.slice(0, -1);
+  const m = convo[convo.length - 1];
+  const blocks = typeof m.content === "string" ? [{ type: "text", text: m.content }] : (m.content as any[]).map((b) => ({ ...b }));
+  if (blocks.length) blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: "ephemeral" } };
+  out.push({ role: m.role, content: blocks });
+  return out;
+}
+
 // One assistant turn: lookups, web and proposals in a loop until it answers. Logs its cost.
 async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: string; messages: any[]; page: any; tz: string; smart?: boolean; forceModel?: string; threadId?: string | null; learn?: boolean }) {
   const { admin, db, me, key, mode, page, tz } = o;
@@ -573,7 +585,14 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   // The stronger model for conversations (it has to search, reason and stay exact); the fast one
   // only for very short follow-ups like "ok" / "yes" with nothing to look up.
   const hasFiles = o.messages.some((m: any) => typeof m.content !== "string" || /<attachment /.test(String(m.content)));
-  const model = o.forceModel || (o.smart || mode === "brainstorm" ? DEEP : last.length > 12 || o.messages.length < 2 || hasFiles ? SMART : FAST);
+  // Cost: Haiku is ~20x cheaper than Sonnet, so it answers everyday questions (look-ups, counts,
+  // "who's on X", quick help). Sonnet when the turn needs more: files or voice notes, brainstorm,
+  // drafting or planning, long or multi-part asks, or a conversation too long for Haiku. Opus only
+  // when the app explicitly asks for the smartest model.
+  const HEAVY = /\b(draft|write|rewrite|email|message to|pitch|plan\w*|strateg\w*|close (the|this)|unblock|brief|compar\w*|analy[sz]\w*|review|assess\w*|recommend\w*|why|explain|negotiat\w*|proposal|summari[sz]\w*|report|brainstorm|x-?ray|source|sourcing)\b/i;
+  const size = o.messages.reduce((n: number, m: any) => n + String(typeof m.content === "string" ? m.content : JSON.stringify(m.content)).length, 0);
+  const needsSmart = hasFiles || mode === "brainstorm" || HEAVY.test(last) || last.length > 400 || size > 150000;
+  const model = o.forceModel || (o.smart ? DEEP : needsSmart ? SMART : FAST);
   let useFetch = true;
   const tools = () => [...READ_TOOLS, ...MEMORY_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => PROPOSE[n])];
   // What it has learned (memory.ts) comes after the cached part, so learning something new doesn't undo the cache.
@@ -584,7 +603,7 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   let text = "", inTok = 0, outTok = 0, searches = 0, steps = 0, error = "", status = 200;
   const texts: string[] = [];
   while (steps++ < MAX_STEPS) {
-    const payload = { model, max_tokens: 6000, system, tools: tools(), messages: convo };
+    const payload = { model, max_tokens: 6000, system, tools: tools(), messages: cached(convo) };
     let res = await callClaude(key, payload, useFetch ? "web-fetch-2025-09-10" : null);
     if (!res.ok && res.status === 400 && useFetch) {
       const t = await res.text();
@@ -599,7 +618,7 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
       break;
     }
     const out = await res.json();
-    inTok += (Number(out?.usage?.input_tokens) || 0) + (Number(out?.usage?.cache_creation_input_tokens) || 0) + (Number(out?.usage?.cache_read_input_tokens) || 0) * 0.1;
+    inTok += (Number(out?.usage?.input_tokens) || 0) + (Number(out?.usage?.cache_creation_input_tokens) || 0) * 1.25 + (Number(out?.usage?.cache_read_input_tokens) || 0) * 0.1;
     outTok += Number(out?.usage?.output_tokens) || 0;
     searches += Number(out?.usage?.server_tool_use?.web_search_requests) || 0;
     const blocks: any[] = Array.isArray(out?.content) ? out.content : [];
@@ -620,7 +639,7 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
         let r: unknown;
         try { r = ["remember", "forget", "search_conversations"].includes(u.name) ? await runMemoryTool(admin, me, u.name, u.input || {}, o.threadId || null) : await runRead(db, me, u.name, u.input || {}); }
         catch (e) { r = { error: String((e as Error)?.message || e) }; }
-        results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r).slice(0, 30000) });
+        results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r).slice(0, 12000) });
       }
     }
     convo.push({ role: "user", content: results });
@@ -738,12 +757,14 @@ Deno.serve(async (req: Request) => {
     const tz = String(body.tz || "Africa/Lagos");
     // Files and voice notes ride along with the message they were sent with: in full on the newest
     // message, shortened on older ones (the assistant can ask the person to re-send if it needs more).
-    const raw: any[] = (Array.isArray(body.messages) ? body.messages : []).slice(-20);
-    const withFiles = (m: any, newest: boolean) => {
-      const own = String(m.content || "").slice(0, 6000);
+    // To keep each turn cheap: the last 12 messages only; the 4 newest in full, older ones shortened
+    // (the assistant can look things up again, or search_conversations, if it needs more).
+    const raw: any[] = (Array.isArray(body.messages) ? body.messages : []).slice(-12);
+    const withFiles = (m: any, newest: boolean, recent: boolean) => {
+      const own = String(m.content || "").slice(0, recent ? 6000 : 600);
       const files = (Array.isArray(m.attachments) ? m.attachments : []).slice(0, 6).filter((a: any) => a && a.text);
       if (!files.length || m.role === "assistant") return own;
-      const lim = newest ? 100000 : 6000;
+      const lim = newest ? 100000 : recent ? 3000 : 800;
       const parts = files.map((a: any) => {
         const t = String(a.text);
         const label = a.kind === "voice" ? "voice note (transcript)" : String(a.kind || "file");
@@ -753,7 +774,7 @@ Deno.serve(async (req: Request) => {
     };
     const lastUser = raw.map((m: any) => m.role).lastIndexOf("user");
     const messages: any[] = raw
-      .map((m: any, i: number) => ({ role: m.role === "assistant" ? "assistant" : "user", content: withFiles(m, i === lastUser) }))
+      .map((m: any, i: number) => ({ role: m.role === "assistant" ? "assistant" : "user", content: withFiles(m, i === lastUser, i >= raw.length - 4) }))
       .filter((m: any) => m.content);
     while (messages.length && messages[0].role !== "user") messages.shift();
     if (!messages.length || messages[messages.length - 1].role !== "user") return json({ error: "Ask something first" }, 400);
