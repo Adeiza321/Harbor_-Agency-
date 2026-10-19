@@ -1010,6 +1010,18 @@ function SectionTitle({ title, sub, size = "text-2xl", live }) {
 const isTouchDevice = () => { try { return window.matchMedia("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches; } catch (e) { return false; } };
 const enterSends = (e) => e.key === "Enter" && !e.shiftKey && !(e.nativeEvent && e.nativeEvent.isComposing) && !isTouchDevice();
 
+// A small icon-only action (copy, delete, share…). The label shows as a tooltip and is read by screen readers.
+function IconBtn({ icon: I, label, onClick, tone = "neutral", size = "md", bare = false, disabled = false, className = "" }) {
+  const d = size === "sm" ? 28 : size === "xs" ? 24 : 36, ic = size === "md" ? 16 : 14;
+  const fg = tone === "em" ? C.em : tone === "danger" ? C.dangerFg : C.ink2;
+  return (
+    <button type="button" title={label} aria-label={label} disabled={disabled} onClick={onClick}
+      className={"pn-ib inline-flex items-center justify-center shrink-0 rounded-lg " + className}
+      style={{ width: d, height: d, color: fg, background: bare ? "transparent" : C.card, border: bare ? "none" : `1px solid ${C.line}`, opacity: disabled ? 0.5 : 1 }}>
+      <I size={ic} />
+    </button>
+  );
+}
 function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", full = false, type = "button", disabled = false, title }) {
   const base = `inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${full ? "w-full" : ""}`;
   const style =
@@ -1084,6 +1096,7 @@ const FILTER_CSS = `
 .pn-lift:hover{transform:translateY(-2px);box-shadow:0 12px 26px -18px rgba(18,36,29,.45)!important}
 .pn-row{transition:background .15s}
 .pn-row:hover{background:${C.hover}}
+.pn-ib{transition:background .15s,transform .15s}.pn-ib:hover:not(:disabled){background:${C.hover}!important}.pn-ib:active:not(:disabled){transform:scale(.94)}
 .pn-att{transition:background .15s}
 .pn-att:hover{background:${C.hover}!important}
 .pn-nav{transition:background .2s,color .2s}
@@ -2788,7 +2801,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                 {m.content && (
                   <div className="rounded-2xl px-3.5 py-2.5 text-sm max-w-[92%] whitespace-pre-wrap" style={m.role === "user" ? { background: C.em, color: "#fff" } : { background: C.card, border: `1px solid ${C.line}`, color: m.error ? C.dangerFg : C.ink }}>
                     {m.role === "assistant" ? boldText(m.content) : m.content}
-                    {m.role === "assistant" && !m.error && m.content.length > 120 && <div className="mt-1.5"><button onClick={() => copy(m.content)} className="text-xs font-medium" style={{ color: C.em }}>Copy</button></div>}
+                    {m.role === "assistant" && !m.error && m.content.length > 120 && <div className="mt-1"><IconBtn icon={Copy} label="Copy reply" size="xs" bare onClick={() => copy(m.content)} /></div>}
                   </div>
                 )}
                 {(m.proposals || []).filter((p) => p.state === "waiting").length > 1 && (
@@ -2801,7 +2814,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                   <div key={pi} className="rounded-xl p-3 w-full" style={{ background: C.card, border: `1px solid ${p.state === "approved" ? C.em : p.state === "failed" ? C.dangerFg : C.line}` }}>
                     <div className="flex items-start gap-2"><Icon size={16} color={C.em} className="shrink-0 mt-0.5" /><div className="min-w-0 flex-1"><div className="text-sm font-medium">{sm.title}</div>{sm.detail && <div className={"text-xs mt-0.5 whitespace-pre-wrap " + (isEmail ? "max-h-60 overflow-y-auto" : "")} style={{ color: C.ink2 }}>{sm.detail}</div>}</div></div>
                     {isEmail && p.state !== "approved" && <label className="flex items-center justify-end gap-1.5 mt-2.5 text-xs cursor-pointer select-none" style={{ color: C.ink2 }} title="Use your agency's email design (logo, colours, footer) instead of a plain email"><input type="checkbox" checked={branded} onChange={(e) => pickBranded(e.target.checked)} style={{ accentColor: C.em }} />Branded design</label>}
-                    {isEmail && <div className="flex flex-wrap gap-2 mt-2 justify-end"><Btn onClick={() => copy((p.input.subject ? "Subject: " + p.input.subject + "\n\n" : "") + (p.input.body || ""))}>Copy</Btn><a href={gmailComposeUrl(p.input.to, p.input.subject, p.input.body)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ border: `1px solid ${C.line}`, color: C.ink }}>Open in Gmail</a>{p.state !== "approved" && <Btn kind="primary" icon={Mail} disabled={p.state === "working"} onClick={() => toDrafts(mi, pi)}>Save to Gmail drafts</Btn>}</div>}
+                    {isEmail && <div className="flex flex-wrap gap-2 mt-2 justify-end"><IconBtn icon={Copy} label="Copy email" onClick={() => copy((p.input.subject ? "Subject: " + p.input.subject + "\n\n" : "") + (p.input.body || ""))} className="!w-10 !h-10 !rounded-xl" /><a href={gmailComposeUrl(p.input.to, p.input.subject, p.input.body)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ border: `1px solid ${C.line}`, color: C.ink }}>Open in Gmail</a>{p.state !== "approved" && <Btn kind="primary" icon={Mail} disabled={p.state === "working"} onClick={() => toDrafts(mi, pi)}>Save to Gmail drafts</Btn>}</div>}
                     {p.tool === "propose_prospect" && (p.input.message || p.input.linkedin_url) && <div className="flex flex-wrap gap-2 mt-2 justify-end">{p.input.message && <Btn onClick={() => copy(p.input.message)}>Copy message</Btn>}{/^https:\/\/([a-z]+\.)?linkedin\.com\//i.test(p.input.linkedin_url || "") && <a href={p.input.linkedin_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ border: `1px solid ${C.line}`, color: C.ink }}>Open LinkedIn</a>}</div>}
                     {!isEmail && p.state === "waiting" && <div className="flex gap-2 mt-2.5 justify-end"><Btn onClick={() => decide(mi, pi, false)}>Decline</Btn><Btn kind="primary" icon={Check} onClick={() => decide(mi, pi, true)}>Approve</Btn></div>}
                     {p.state === "working" && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Working <InlineDots /></div>}
@@ -4243,8 +4256,8 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
                       </>
                     ) : (
                       <>
-                        <button onClick={() => copyMsg(m)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: C.card, border: `1px solid ${C.line}` }}><Copy size={12} /> Copy</button>
-                        {isMine && !m.failed && !String(m.id).startsWith("tmp") && api.del && <button onClick={() => setConfirmDel(m.id)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: C.card, border: `1px solid ${C.line}`, color: C.dangerFg }}><Trash2 size={12} /> Delete</button>}
+                        <button onClick={() => copyMsg(m)} title="Copy" aria-label="Copy" className="rounded-full w-8 h-8 inline-flex items-center justify-center" style={{ background: C.card, border: `1px solid ${C.line}` }}><Copy size={14} /></button>
+                        {isMine && !m.failed && !String(m.id).startsWith("tmp") && api.del && <button onClick={() => setConfirmDel(m.id)} title="Delete" aria-label="Delete" className="rounded-full w-8 h-8 inline-flex items-center justify-center" style={{ background: C.card, border: `1px solid ${C.line}`, color: C.dangerFg }}><Trash2 size={14} /></button>}
                       </>
                     )}
                   </div>
@@ -4928,7 +4941,7 @@ function ClientLinkBox({ link, job, candidate, S, toast }) {
         </div>
       </div>
       <div className="flex gap-2 shrink-0">
-        <Btn icon={Copy} onClick={copy}>Copy link</Btn>
+        <IconBtn icon={Copy} label="Copy client link" onClick={copy} className="!w-10 !h-10 !rounded-xl" />
         {canManage && !link.clientRevealed && <Btn kind="primary" disabled={busy} onClick={reveal}>{busy ? "Revealing…" : "Reveal full details"}</Btn>}
       </div>
     </div>
@@ -5740,7 +5753,7 @@ function ApplyLinks({ S, toast }) {
           <div className="text-xs truncate" style={{ color: C.ink2 }}>{JOBS_URL()}</div>
         </div>
         <a href={JOBS_URL()} target="_blank" rel="noreferrer" className="text-xs underline shrink-0" style={{ color: C.em }}>Open</a>
-        <Btn icon={Copy} onClick={() => { try { navigator.clipboard.writeText(JOBS_URL()); toast("Jobs page link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} className="shrink-0 !px-3 !py-1.5 text-xs">Copy</Btn>
+        <Btn icon={Copy} title="Copy link" onClick={() => { try { navigator.clipboard.writeText(JOBS_URL()); toast("Jobs page link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} className="shrink-0 !px-0 !py-0 w-8 h-8 !rounded-lg" />
       </div>
       {jobs.map((j) => (
         <div key={j.id} className="rounded-xl border px-3 py-2.5 flex items-center gap-3" style={{ borderColor: C.line }}>
@@ -5748,7 +5761,7 @@ function ApplyLinks({ S, toast }) {
             <div className="text-sm font-medium truncate">{j.role} <span style={{ color: C.ink3, fontWeight: 400 }}>· {j.client}</span></div>
             <div className="text-xs truncate" style={{ color: C.ink3 }}>{applyUrl(j.slug)}</div>
           </div>
-          <Btn icon={Copy} onClick={() => copy(j)} className="shrink-0 !px-3 !py-1.5 text-xs">Copy</Btn>
+          <IconBtn icon={Copy} label="Copy link" size="sm" onClick={() => copy(j)} />
         </div>
       ))}
     </div>
@@ -6198,7 +6211,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         <Card>
           <div className="flex items-start justify-between gap-3">
             <SectionTitle title="Screening questions" sub="Ask every applicant these before recording their answers on the candidate's profile." size="text-xl" />
-            <Btn icon={Copy} onClick={copyQuestions} className="shrink-0">Copy all</Btn>
+            <IconBtn icon={Copy} label="Copy all questions" onClick={copyQuestions} className="!w-10 !h-10 !rounded-xl" />
           </div>
           <div className="flex flex-col gap-2 mt-3">
             {job.screeningQuestions.map((q, i) => <div key={i} className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.canvas, color: C.ink }}>{i + 1}. {q}</div>)}
@@ -6348,7 +6361,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
   const bar = (cls) => <div className={"flex h-2 rounded-full overflow-hidden " + cls} style={{ background: C.neutralBg }} aria-hidden="true">{[seg(n.added - n.submitted, "#C9D8CF"), seg(n.submitted - n.interview, "#6FA88A"), seg(n.interview - n.offer, C.em), seg(n.offer, C.lime)]}</div>;
   const people = <>{j.recruiters.length > 0 && <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.slice(0, 3).map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={22} />)}</div>}
     {mine && <span className="text-[11px] font-semibold" style={{ color: C.em }}>You</span>}</>;
-  const share = <button type="button" onClick={(e) => { e.stopPropagation(); onShare(); }} className="text-xs font-medium" style={{ color: C.em }}>Share</button>;
+  const share = <IconBtn icon={Share2} label="Share job link" tone="em" size="sm" bare onClick={(e) => { e.stopPropagation(); onShare(); }} />;
   if (row) return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift rounded-xl border px-4 py-3 cursor-pointer flex flex-wrap md:flex-nowrap items-center gap-x-5 gap-y-2" style={{ borderColor: C.line, background: C.card }}>
       <div className="min-w-0 flex-1 basis-full md:basis-0">
@@ -6379,7 +6392,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
         <div className="flex items-center gap-2 shrink-0">
           {j.recruiters.length > 0 && <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.slice(0, 3).map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={22} />)}</div>}
           {mine && <span className="text-[11px] font-semibold" style={{ color: C.em }}>You</span>}
-          <button type="button" onClick={(e) => { e.stopPropagation(); onShare(); }} className="text-xs font-medium" style={{ color: C.em }}>Share</button>
+          {share}
         </div>
       </div>
     </div>
@@ -7331,7 +7344,7 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
         </div>
         <div className="flex flex-wrap gap-2">
           {cand && <Btn onClick={() => { onClose(); S.openCandidate(cand.id); }}>Open candidate</Btn>}
-          <Btn icon={Copy} onClick={copy}>Copy details</Btn>
+          <IconBtn icon={Copy} label="Copy interview details" onClick={copy} className="!w-10 !h-10 !rounded-xl" />
           {upcoming && <Btn onClick={() => onReschedule(iv)}>Reschedule</Btn>}
           {upcoming && <Btn onClick={() => setCancelOpen(true)}>Cancel interview</Btn>}
         </div>
@@ -7629,17 +7642,17 @@ function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
         {mail && (
           <div className="flex flex-col gap-3">
             <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
-            <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.to, toast, "Address copied")}>Copy</button></div>
-            <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.subject, toast, "Subject copied")}>Copy</button></div>
+            <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <IconBtn icon={Copy} label="Copy address" size="xs" bare tone="em" className="align-middle" onClick={() => copyText(mail.to, toast, "Address copied")} /></div>
+            <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <IconBtn icon={Copy} label="Copy subject" size="xs" bare tone="em" className="align-middle" onClick={() => copyText(mail.subject, toast, "Subject copied")} /></div>
             <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
             <div className="flex flex-wrap gap-2">
               <a href={gmail} target="_blank" rel="noreferrer"><Btn kind="primary">Open in Gmail</Btn></a>
               <a href={outlook} target="_blank" rel="noreferrer"><Btn>Open in Outlook</Btn></a>
               <a href={mailto}><Btn>Mail app</Btn></a>
-              <Btn onClick={() => copyText(mail.body, toast, "Email copied")}>Copy email</Btn>
+              <IconBtn icon={Copy} label="Copy email" onClick={() => copyText(mail.body, toast, "Email copied")} className="!w-10 !h-10 !rounded-xl" />
               {kind === "p" && <Btn onClick={sendTest} disabled={testing}>{testing ? "Sending…" : "Email me a test"}</Btn>}
             </div>
-            {mail.body.length > 6000 && <div className="text-xs" style={{ color: C.warnFg }}>This email is long, so some mail apps may cut it short when opening. If that happens, use Copy email and paste it in.</div>}
+            {mail.body.length > 6000 && <div className="text-xs" style={{ color: C.warnFg }}>This email is long, so some mail apps may cut it short when opening. If that happens, use the copy button and paste it in.</div>}
             <div className="pt-3 flex justify-end" style={{ borderTop: `1px solid ${C.line}` }}><Btn kind="primary" onClick={done} disabled={busy}>{busy ? "Saving…" : "I've sent it"}</Btn></div>
           </div>
         )}
@@ -8980,7 +8993,7 @@ function PortalPreferences({ token, pitchConsent, openSignal, name }) {
               <div className="text-xl" style={{ ...SERIF }}>My job preferences</div>
               <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>We only recommend you for roles that fit these.</div>
             </div>
-            <Btn icon={Pencil} onClick={() => setOpen(true)} className="!px-3 !py-1.5 text-xs shrink-0">Update</Btn>
+            <IconBtn icon={Pencil} label="Edit my job preferences" onClick={() => setOpen(true)} />
           </div>
           <div className="mt-3"><PreferencesSummary p={state.preferences} /></div>
         </Card>
@@ -10496,7 +10509,7 @@ function AgencyTab({ toast, S }) {
         <div className="flex items-center gap-3 mt-1.5">
           {company.logoUrl ? <img src={company.logoUrl} alt="Agency logo" className="h-9 max-w-[160px] object-contain rounded" style={{ background: C.canvas }} /> : <div className="rounded-lg border" style={{ borderColor: C.line }}><BrandMark size={36} /></div>}
           <label className="text-sm rounded-lg border px-3 py-2 cursor-pointer" style={{ borderColor: C.line }}>{company.logoUrl ? "Change logo" : "Upload logo"}<input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (!f) return; S.uploadLogo(f).then((url) => { setCompany({ ...company, logoUrl: url }); toast("Logo uploaded. Save changes to use it."); }).catch(() => {}); }} /></label>
-          {company.logoUrl && <button type="button" className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setCompany({ ...company, logoUrl: "" })}>Remove</button>}
+          {company.logoUrl && <IconBtn icon={Trash2} label="Remove logo" tone="danger" size="sm" onClick={() => setCompany({ ...company, logoUrl: "" })} />}
         </div>
       </div>
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
@@ -10970,7 +10983,7 @@ function PortalPhoto({ src, name, token, onChanged, onError }) {
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={pick} />
       <div className="flex items-center gap-2 text-xs">
         <button onClick={() => fileRef.current && fileRef.current.click()} disabled={busy} className="font-medium" style={{ color: C.em }}>{src ? "Change photo" : "Add photo"}</button>
-        {src && <><span style={{ color: C.line }}>|</span><button onClick={() => call({ action: "remove" })} disabled={busy} style={{ color: C.ink3 }}>Remove</button></>}
+        {src && <IconBtn icon={Trash2} label="Remove photo" tone="danger" size="xs" bare disabled={busy} onClick={() => call({ action: "remove" })} />}
       </div>
     </div>
   );
