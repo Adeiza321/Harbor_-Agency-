@@ -8,17 +8,29 @@ import {
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
   KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
-  Smile, SmilePlus, Mic, Play, Pause, Brain,
+  Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor,
 } from "lucide-react";
 
 /* Design tokens */
-const C = {
-  canvas: "#F3EFE7", card: "#FFFFFF", ink: "#14201B", ink2: "#56605A",
-  ink3: "#8C948E", line: "#E6E1D6", side: "#12241D", lime: "#C8F169",
+const THEME_KEY = "pn.theme";
+const DARK = (() => { try { const t = localStorage.getItem(THEME_KEY); return t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) { return false; } })();
+const C_LIGHT = {
+  canvas: "#F3EFE7", card: "#FFFFFF", soft: "#FAF8F3", ink: "#14201B", ink2: "#56605A",
+  ink3: "#8C948E", line: "#E6E1D6", line2: "#D5D2C7", side: "#12241D", lime: "#C8F169",
   em: "#1F6F54", emTint: "#DDEFE6", warnBg: "#FBEFD8", warnFg: "#A5670A",
   dangerBg: "#FBE4DD", dangerFg: "#B8432A", infoBg: "#E5E8FB", infoFg: "#3B4BB8",
   neutralBg: "#EFEBE1", neutralFg: "#56605A",
+  solid: "#14201B", onSide: "#F3EFE7", warnText: "#7A4B05", dangerText: "#8E3320", emText: "#14503C", hover: "#F4F2EC",
 };
+const C_DARK = {
+  canvas: "#0D1813", card: "#15231D", soft: "#1A2A23", ink: "#E8EEEA", ink2: "#AEBAB3",
+  ink3: "#7D8B84", line: "#263830", line2: "#34483F", side: "#09130F", lime: "#C8F169",
+  em: "#2E9470", emTint: "#173A2D", warnBg: "#3A2C14", warnFg: "#EDB95C",
+  dangerBg: "#3E1F18", dangerFg: "#F28B70", infoBg: "#1F2647", infoFg: "#A3AEF7",
+  neutralBg: "#21302A", neutralFg: "#AEBAB3",
+  solid: "#2C4238", onSide: "#E8EEEA", warnText: "#F2C77A", dangerText: "#F6A28C", emText: "#9FDDBF", hover: "#1E3029",
+};
+const C = DARK ? C_DARK : C_LIGHT;
 const SERIF = { fontFamily: '"Iowan Old Style","Palatino Linotype",Georgia,serif' };
 const TONE = {
   em: { bg: C.emTint, fg: C.em }, warn: { bg: C.warnBg, fg: C.warnFg },
@@ -537,7 +549,7 @@ function BarChart({ labels, longLabels, series, height = 220, valueLabels = fals
         })}
       </svg>
       {hover != null && (
-        <div className="absolute pointer-events-none rounded-lg border px-2.5 py-1.5 text-xs" style={{ top: 0, left: `${Math.min(78, Math.max(0, ((L + (hover + 0.5) * gw) / W) * 100 - 10))}%`, background: "#fff", borderColor: C.line, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
+        <div className="absolute pointer-events-none rounded-lg border px-2.5 py-1.5 text-xs" style={{ top: 0, left: `${Math.min(78, Math.max(0, ((L + (hover + 0.5) * gw) / W) * 100 - 10))}%`, background: C.card, borderColor: C.line, boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}>
           <div className="font-medium mb-0.5" style={{ color: C.ink }}>{(longLabels || labels)[hover]}</div>
           {series.map((sr) => <div key={sr.name} className="flex items-center gap-1.5" style={{ color: C.ink2 }}><span className="w-2 h-2 rounded-sm inline-block" style={{ background: sr.color }} />{sr.name}: <span className="font-medium" style={{ color: C.ink }}>{sr.data[hover] || 0}</span></div>)}
         </div>
@@ -570,7 +582,7 @@ function SubmissionsCard({ S, recruiterId, title = "Submissions and placements" 
   const inR = (arr, a, b) => arr.filter((t) => t >= a && t < b).length;
   const pr = prevRange(range, from, to);
   const sNow = inR(subs, from, to + 1), sPrev = inR(subs, pr.from, pr.to), pNow = inR(plc, from, to + 1), pPrev = inR(plc, pr.from, pr.to);
-  const sel = { borderColor: C.line, background: "#FAF8F3" };
+  const sel = { borderColor: C.line, background: C.soft };
   return (
     <Card className="md:col-span-2 flex flex-col">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -613,7 +625,7 @@ function TeamWins({ S }) {
     <div className="mt-3 flex flex-col gap-2">
       {wins.map((c) => (
         <div key={c.id} className="flex items-center gap-3 rounded-xl px-3 py-2.5" style={{ background: C.emTint }}>
-          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-lg" style={{ background: "#fff" }} aria-hidden>🎉</div>
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 text-lg" style={{ background: C.card }} aria-hidden>🎉</div>
           <div className="flex-1 min-w-0"><div className="text-sm font-medium">{userName(S, c.recruiter_id)} made a placement</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[c.role_title, c.client].filter(Boolean).join(" at ")} · {ago(c.created_at)}</div></div>
           <Btn kind="primary" onClick={() => cheer(c)} disabled={busy === c.id}>{busy === c.id ? "Sending…" : "Congratulate"}</Btn>
         </div>
@@ -662,7 +674,7 @@ function Celebration({ S }) {
       <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden>
         {Array.from({ length: 70 }).map((_, i) => <span key={i} style={{ position: "absolute", left: (i * 37) % 100 + "%", top: 0, width: 8, height: 14, borderRadius: 2, background: colors[i % colors.length], animation: `pnx-fall ${2.4 + (i % 7) * 0.35}s linear ${(i % 10) * 0.18}s infinite` }} />)}
       </div>
-      <div className="relative rounded-2xl p-7 max-w-sm w-full text-center" style={{ background: "#fff", animation: "pnx-pop .45s ease-out" }} onClick={(e) => e.stopPropagation()}>
+      <div className="relative rounded-2xl p-7 max-w-sm w-full text-center" style={{ background: C.card, animation: "pnx-pop .45s ease-out" }} onClick={(e) => e.stopPropagation()}>
         <div className="text-5xl" aria-hidden>🎉</div>
         <div className="text-2xl mt-3" style={SERIF}>{mineWin ? "Congratulations, " + S.me.name.split(" ")[0] + "!" : "Placement recorded!"}</div>
         <div className="text-sm mt-2" style={{ color: C.ink2 }}>{mineWin ? "You made a placement: " : userName(S, c.recruiter_id) + " made a placement: "}<b style={{ color: C.ink }}>{[c.role_title, c.client].filter(Boolean).join(" at ")}</b>.</div>
@@ -699,7 +711,7 @@ function AttentionList({ title, items, S, extra }) {
             if (r.go) S.go(r.go);
           };
           return (
-            <div key={i} className="pn-att relative rounded-xl mb-2 overflow-hidden" style={{ background: "#FBF9F4" }}>
+            <div key={i} className="pn-att relative rounded-xl mb-2 overflow-hidden" style={{ background: C.soft }}>
               <span className="absolute left-0 top-0 bottom-0" style={{ width: 4, background: TONE[r.tone].fg }} />
               <button type="button" onClick={click} aria-expanded={people.length > 1 ? open === i : undefined} className="w-full flex items-center gap-3 py-3 pl-4 pr-3 text-left">
                 <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: TONE[r.tone].bg }}><r.icon size={17} color={TONE[r.tone].fg} /></div>
@@ -762,7 +774,7 @@ function RecruiterPerformanceChart({ S }) {
     };
   }).sort((a, b) => b.passed - a.passed || b.lineup - a.lineup);
   const label = mode === "month" ? months.find((m) => m.v === month)?.l : year;
-  const sel = { borderColor: C.line, background: "#FAF8F3" };
+  const sel = { borderColor: C.line, background: C.soft };
   const series = [["Lineup", "lineup"], ["Submitted", "submitted"], ["Failed", "failed"], ["Passed (placed)", "placed"]].map(([name, k]) => ({ name, color: SERIES_COLORS[k], data: rows.map((r) => r[k === "placed" ? "passed" : k]) }));
   return (
     <div>
@@ -912,7 +924,7 @@ function ScoreRing({ value, size = 38 }) {
   return (
     <span className="relative inline-grid place-items-center shrink-0" style={{ width: size, height: size }} title={"AI fit " + v + "%"}>
       <svg width={size} height={size} className="absolute inset-0" style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#EFEBE1" strokeWidth="3.5" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={C.neutralBg} strokeWidth="3.5" />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(c * v) / 100} ${c}`} />
       </svg>
       <span className="text-[11px] font-semibold" style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
@@ -978,11 +990,17 @@ function KPIGrid({ children, cols = 4 }) {
   return <div className={`grid grid-cols-2 ${mdCols} gap-3 md:gap-4`}>{children}</div>;
 }
 
-function SectionTitle({ title, sub, size = "text-2xl" }) {
+// live: [{ n, label, tone }] counts shown as chips under the title (only those above zero).
+function SectionTitle({ title, sub, size = "text-2xl", live }) {
+  const chips = (live || []).filter((x) => x && x.n > 0);
   return (
     <div>
       <div className={size} style={{ ...SERIF, color: C.ink }}>{title}</div>
       {sub && <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{sub}</div>}
+      {chips.length > 0 && <div className="flex flex-wrap gap-2 mt-2">{chips.map((x) => (
+        <span key={x.label} className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs" style={{ borderColor: C.line, background: C.card, color: C.ink2 }}>
+          {x.tone && <span className="w-1.5 h-1.5 rounded-full" style={{ background: (TONE[x.tone] || TONE.neutral).fg }} />}<b style={{ color: C.ink }}>{x.n}</b> {x.label}
+        </span>))}</div>}
     </div>
   );
 }
@@ -996,9 +1014,9 @@ function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", fu
   const base = `inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${full ? "w-full" : ""}`;
   const style =
     kind === "primary" ? { background: C.em, color: "#fff" } :
-    kind === "dark" ? { background: C.ink, color: "#fff" } :
+    kind === "dark" ? { background: C.solid, color: "#fff" } :
     kind === "danger" ? { background: C.dangerFg, color: "#fff" } :
-    { background: "#fff", color: C.ink, border: `1px solid ${C.line}` };
+    { background: C.card, color: C.ink, border: `1px solid ${C.line}` };
   return (
     <button type={type} onClick={onClick} disabled={disabled} title={title || undefined} className={`${base} ${className}`} style={{ ...style, ...(disabled ? { opacity: 0.6, cursor: "not-allowed" } : {}) }}>
       {Icon && <Icon size={16} />}
@@ -1009,7 +1027,7 @@ function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", fu
 
 function SearchInput({ value, onChange, placeholder }) {
   return (
-    <label className="pn-search flex items-center gap-2 rounded-full border px-3.5 flex-1 min-w-0" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+    <label className="pn-search flex items-center gap-2 rounded-full border px-3.5 flex-1 min-w-0" style={{ borderColor: C.line, background: C.soft }}>
       <Search size={15} color={C.ink3} className="shrink-0" />
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="bg-transparent outline-none text-sm flex-1 min-w-0 py-2.5" style={{ color: C.ink }} />
     </label>
@@ -1028,14 +1046,14 @@ function SearchInput({ value, onChange, placeholder }) {
    - ClearFilters: "Clear all", only shown while something is set. */
 const FILTER_CSS = `
 .pn-search:focus-within{border-color:${C.em}!important;box-shadow:0 0 0 3px ${C.emTint}}
-.pn-track{position:relative;display:inline-flex;flex-wrap:wrap;max-width:100%;min-width:0;gap:2px;background:#F1EDE4;border-radius:12px;padding:4px}
-.pn-track-mark{position:absolute;top:0;left:0;background:#fff;border-radius:9px;box-shadow:0 1px 2px rgba(20,32,27,.08),0 2px 8px -4px rgba(20,32,27,.18);transition:transform .35s cubic-bezier(.3,.8,.3,1),width .35s cubic-bezier(.3,.8,.3,1),height .35s}
+.pn-track{position:relative;display:inline-flex;flex-wrap:wrap;max-width:100%;min-width:0;gap:2px;background:${DARK ? "#0F1C17" : "#F1EDE4"};border-radius:12px;padding:4px}
+.pn-track-mark{position:absolute;top:0;left:0;background:${C.card};border-radius:9px;box-shadow:0 1px 2px rgba(20,32,27,.08),0 2px 8px -4px rgba(20,32,27,.18);transition:transform .35s cubic-bezier(.3,.8,.3,1),width .35s cubic-bezier(.3,.8,.3,1),height .35s}
 .pn-track button{position:relative;z-index:1;flex:0 0 auto;border:0;background:none;font-size:13px;color:${C.ink2};padding:6px 12px;border-radius:9px;white-space:nowrap;display:flex;gap:6px;align-items:center;cursor:pointer}
 .pn-track button[aria-pressed="true"]{color:${C.ink};font-weight:600}
 .pn-track button:focus-visible{outline:2px solid ${C.em};outline-offset:-2px}
 .pn-track .pn-ct{font-size:11px;font-variant-numeric:tabular-nums;color:${C.ink3};font-weight:500}
 .pn-track button[aria-pressed="true"] .pn-ct{color:${C.em}}
-.pn-pill{display:inline-flex;align-items:center;gap:6px;border:1px dashed #CFC8B8;background:#fff;border-radius:999px;padding:6px 12px;font-size:13px;color:${C.ink2};cursor:pointer;white-space:nowrap;max-width:100%;transition:background .2s,border-color .2s,color .2s}
+.pn-pill{display:inline-flex;align-items:center;gap:6px;border:1px dashed ${C.line2};background:${C.card};border-radius:999px;padding:6px 12px;font-size:13px;color:${C.ink2};cursor:pointer;white-space:nowrap;max-width:100%;transition:background .2s,border-color .2s,color .2s}
 .pn-pill:hover{border-color:${C.ink3};color:${C.ink}}
 .pn-pill:focus-visible{outline:2px solid ${C.em};outline-offset:2px}
 .pn-pill.on{border-style:solid;border-color:${C.em};background:${C.emTint};color:${C.em}}
@@ -1044,30 +1062,30 @@ const FILTER_CSS = `
 .pn-pill.set b{font-weight:600;color:${C.ink}}
 .pn-pill .pn-plus{font-size:15px;line-height:1;color:${C.ink3}}
 .pn-pill .pn-x{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:12px;background:rgba(31,111,84,.14)}
-.pn-pop{position:absolute;top:calc(100% + 8px);left:0;z-index:40;width:300px;max-width:calc(100vw - 32px);background:#fff;border:1px solid ${C.line};border-radius:14px;box-shadow:0 18px 40px -16px rgba(18,36,29,.35);padding:8px;animation:pn-pop .18s cubic-bezier(.2,.8,.2,1)}
+.pn-pop{position:absolute;top:calc(100% + 8px);left:0;z-index:40;width:300px;max-width:calc(100vw - 32px);background:${C.card};border:1px solid ${C.line};border-radius:14px;box-shadow:0 18px 40px -16px rgba(18,36,29,.35);padding:8px;animation:pn-pop .18s cubic-bezier(.2,.8,.2,1)}
 .pn-pop.right{left:auto;right:0}
 @keyframes pn-pop{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
-.pn-pop input[type=text],.pn-pop input[type=date]{width:100%;border:1px solid ${C.line};border-radius:9px;padding:7px 10px;font-size:13px;background:#FAF8F3;outline:none;color:${C.ink}}
+.pn-pop input[type=text],.pn-pop input[type=date]{width:100%;border:1px solid ${C.line};border-radius:9px;padding:7px 10px;font-size:13px;background:${C.soft};outline:none;color:${C.ink}}
 .pn-pop input:focus{border-color:${C.em}}
 .pn-opts{max-height:260px;overflow-y:auto;margin-top:6px}
 .pn-opt{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;font-size:13px;color:${C.ink};padding:8px 10px;border-radius:8px;cursor:pointer;text-align:left}
-.pn-opt:hover,.pn-opt:focus-visible{background:#F6F3EC;outline:none}
-.pn-opt .pn-box{width:16px;height:16px;border-radius:50%;border:1.5px solid #CFC8B8;display:grid;place-items:center;flex:none}
+.pn-opt:hover,.pn-opt:focus-visible{background:${C.hover};outline:none}
+.pn-opt .pn-box{width:16px;height:16px;border-radius:50%;border:1.5px solid ${C.line2};display:grid;place-items:center;flex:none}
 .pn-opt.multi .pn-box{border-radius:5px}
 .pn-opt[aria-checked="true"] .pn-box{background:${C.em};border-color:${C.em}}
 .pn-opt[aria-checked="true"] .pn-box::after{content:"";width:7px;height:4px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
 .pn-opt .pn-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pn-opt .pn-n{margin-left:auto;font-size:11px;color:${C.ink3};font-variant-numeric:tabular-nums}
 .pn-presets{display:flex;flex-wrap:wrap;gap:6px;padding:4px}
-.pn-presets button{border:1px solid ${C.line};background:#fff;border-radius:999px;padding:6px 11px;font-size:12px;cursor:pointer;color:${C.ink2}}
-.pn-presets button[aria-pressed="true"]{background:${C.ink};color:#fff;border-color:${C.ink}}
+.pn-presets button{border:1px solid ${C.line};background:${C.card};border-radius:999px;padding:6px 11px;font-size:12px;cursor:pointer;color:${C.ink2}}
+.pn-presets button[aria-pressed="true"]{background:${C.solid};color:#fff;border-color:${C.solid}}
 .pn-clear{border:0;background:none;font-size:13px;color:${C.em};cursor:pointer;padding:6px 4px}
 .pn-lift{transition:transform .2s,box-shadow .2s}
 .pn-lift:hover{transform:translateY(-2px);box-shadow:0 12px 26px -18px rgba(18,36,29,.45)!important}
 .pn-row{transition:background .15s}
-.pn-row:hover{background:#FAF7F1}
+.pn-row:hover{background:${C.hover}}
 .pn-att{transition:background .15s}
-.pn-att:hover{background:#F6F2E9!important}
+.pn-att:hover{background:${C.hover}!important}
 .pn-nav{transition:background .2s,color .2s}
 .pn-nav:hover{background:rgba(255,255,255,.06);color:#fff!important}
 .pn-page{animation:pn-page .35s cubic-bezier(.2,.7,.2,1)}
@@ -1079,9 +1097,20 @@ const FILTER_CSS = `
 @keyframes pn-arc{from{stroke-dasharray:0 200}}
 .pn-now{animation:pn-pulse 1.8s ease-in-out infinite}
 @keyframes pn-pulse{50%{box-shadow:0 0 0 9px rgba(200,241,105,.06)}}
-.pn-sk{border-radius:8px;background:linear-gradient(90deg,#EFEBE1 0%,#F7F4EE 40%,#EFEBE1 80%);background-size:200% 100%;animation:pn-shimmer 1.4s linear infinite}
+.pn-sk{border-radius:8px;background:linear-gradient(90deg,${C.neutralBg} 0%,${C.soft} 40%,${C.neutralBg} 80%);background-size:200% 100%;animation:pn-shimmer 1.4s linear infinite}
 @keyframes pn-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
 @media (prefers-reduced-motion: reduce){.pn-track-mark,.pn-pop,.pn-lift,.pn-page,.pn-fade,.pn-toast,.pn-sk,.pn-ring-arc,.pn-now{transition:none!important;animation:none!important}}
+${DARK ? `
+:root{color-scheme:dark}
+body{background:${C.canvas};color:${C.ink}}
+.bg-white{background-color:${C.card}!important}
+.hover\\:bg-\\[\\#F4F2EC\\]:hover{background-color:${C.hover}!important}
+.hover\\:bg-black\\/5:hover{background-color:rgba(255,255,255,.06)!important}
+input,select,textarea{color:${C.ink}}
+input::placeholder,textarea::placeholder{color:${C.ink3}}
+option{background:${C.card};color:${C.ink}}
+img[src$=".svg"].pn-invert{filter:invert(1) hue-rotate(180deg)}
+` : ""}
 `;
 
 function Tabs({ tabs, active, setActive }) {
@@ -1239,7 +1268,7 @@ function ClearFilters({ show, onClick, label = "Clear all" }) {
 
 function ProgressBar({ pct, w = 80, tone = C.em }) {
   return (
-    <div className="rounded-full h-2" style={{ width: w, background: "#EFEBE1" }}>
+    <div className="rounded-full h-2" style={{ width: w, background: C.neutralBg }}>
       <div className="rounded-full h-2" style={{ width: `${Math.min(100, pct)}%`, background: tone }} />
     </div>
   );
@@ -1316,7 +1345,7 @@ function DashboardSkeleton({ onRetry }) {
   const desktop = useDesktop();
   const [slow, setSlow] = useState(false);
   useEffect(() => { const t = setTimeout(() => setSlow(true), 8000); return () => clearTimeout(t); }, []);
-  const card = { background: "#fff", border: "1px solid " + C.line };
+  const card = { background: C.card, border: "1px solid " + C.line };
   return (
     <div className="flex min-h-screen" style={{ background: C.canvas }} aria-busy="true" aria-label="Loading your workspace">
       {desktop && (
@@ -1404,7 +1433,7 @@ function Modal({ open, onClose, title, children, wide }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center">
       <div className="absolute inset-0" style={{ background: "rgba(20,32,27,0.45)" }} onClick={onClose} />
-      <div className={"relative w-full rounded-t-2xl md:rounded-2xl p-5 md:p-6 overflow-y-auto " + (wide ? "md:max-w-2xl" : "md:max-w-lg")} style={{ background: "#fff", maxHeight: "88vh" }}>
+      <div className={"relative w-full rounded-t-2xl md:rounded-2xl p-5 md:p-6 overflow-y-auto " + (wide ? "md:max-w-2xl" : "md:max-w-lg")} style={{ background: C.card, maxHeight: "88vh" }}>
         <div className="flex items-center justify-between mb-4">
           <div className="text-xl" style={{ ...SERIF }}>{title}</div>
           <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: C.canvas }}><X size={16} /></button>
@@ -1464,7 +1493,7 @@ function RowMenu({ items, label = "More actions", busy = false, size = 18 }) {
         {busy ? <InlineDots color={C.ink3} /> : <MoreVertical size={size} />}
       </button>
       {open && pos && (
-        <div ref={listRef} role="menu" className="fixed z-[60] rounded-xl p-1.5 shadow-lg overflow-y-auto" style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: 360, background: "#fff", border: `1px solid ${C.line}` }}>
+        <div ref={listRef} role="menu" className="fixed z-[60] rounded-xl p-1.5 shadow-lg overflow-y-auto" style={{ top: pos.top, left: pos.left, width: pos.width, maxHeight: 360, background: C.card, border: `1px solid ${C.line}` }}>
           {shown.map((x, i) => {
             const Icon = x.icon;
             return (
@@ -1521,9 +1550,9 @@ function PickList({ value, onChange, options, placeholder = "Select…", searchP
         <ChevronDown size={14} color={C.ink3} className="shrink-0" />
       </button>
       {open && (
-        <div className="absolute left-0 right-0 z-[60] mt-1 rounded-xl shadow-lg" style={{ background: "#fff", border: `1px solid ${C.line}`, minWidth: 220 }}>
+        <div className="absolute left-0 right-0 z-[60] mt-1 rounded-xl shadow-lg" style={{ background: C.card, border: `1px solid ${C.line}`, minWidth: 220 }}>
           <div className="p-2" style={{ borderBottom: `1px solid ${C.line}` }}>
-            <div className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+            <div className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5" style={{ borderColor: C.line, background: C.soft }}>
               <Search size={14} color={C.ink3} />
               <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={key} placeholder={searchPlaceholder} className="bg-transparent outline-none text-sm flex-1 min-w-0" />
             </div>
@@ -1559,7 +1588,7 @@ function pageList(page, pages) {
 }
 function Pager({ page, pages, size, total, onPage, onSize }) {
   const from = total ? (page - 1) * size + 1 : 0, to = Math.min(total, page * size);
-  const btn = (active) => ({ minWidth: 32, height: 32, borderRadius: 8, fontSize: 13, border: `1px solid ${active ? C.ink : C.line}`, background: active ? C.ink : "#fff", color: active ? "#fff" : C.ink });
+  const btn = (active) => ({ minWidth: 32, height: 32, borderRadius: 8, fontSize: 13, border: `1px solid ${active ? C.ink : C.line}`, background: active ? C.solid : C.card, color: active ? "#fff" : C.ink });
   return (
     <nav aria-label="Pages" className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-3 mt-2" style={{ borderTop: `1px solid ${C.line}` }}>
       <div className="text-xs" style={{ color: C.ink2 }}>Showing {from}–{to} of {total}</div>
@@ -1569,7 +1598,7 @@ function Pager({ page, pages, size, total, onPage, onSize }) {
           ? <span key={n} className="px-1 text-xs" style={{ color: C.ink3 }}>…</span>
           : <button type="button" key={n} onClick={() => onPage(n)} aria-current={n === page ? "page" : undefined} style={btn(n === page)}>{n}</button>)}
         <button type="button" onClick={() => onPage(page + 1)} disabled={page >= pages} className="px-2.5 text-xs disabled:opacity-40" style={btn(false)} aria-label="Next page">Next ›</button>
-        <select value={size} onChange={(e) => onSize(Number(e.target.value))} aria-label="Rows per page" className="text-xs rounded-lg border px-2 ml-1" style={{ borderColor: C.line, height: 32, background: "#fff" }}>
+        <select value={size} onChange={(e) => onSize(Number(e.target.value))} aria-label="Rows per page" className="text-xs rounded-lg border px-2 ml-1" style={{ borderColor: C.line, height: 32, background: C.card }}>
           {[10, 25, 50].map((n) => <option key={n} value={n}>{n} per page</option>)}
         </select>
       </div>
@@ -1577,7 +1606,29 @@ function Pager({ page, pages, size, total, onPage, onSize }) {
   );
 }
 
-function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty = "Nothing here yet.", pageSize = 10 }) {
+// On a phone, a row can be dragged left to show quick actions: [{ label, color, onClick }].
+function SwipeRow({ actions, children }) {
+  const [dx, setDx] = useState(0);
+  const st = React.useRef({ x: null, y: null, drag: false });
+  if (!actions || !actions.length) return children;
+  const W = actions.length * 76;
+  return (
+    <div className="relative rounded-xl overflow-hidden">
+      <div className="absolute inset-y-0 right-0 flex" aria-hidden={dx === 0}>
+        {actions.map((a) => <button key={a.label} type="button" tabIndex={dx ? 0 : -1} onClick={(e) => { e.stopPropagation(); setDx(0); a.onClick(); }} className="h-full text-xs font-semibold text-white" style={{ width: 76, background: a.color }}>{a.label}</button>)}
+      </div>
+      <div style={{ transform: `translateX(${dx}px)`, transition: st.current.drag ? "none" : "transform .3s cubic-bezier(.2,.8,.2,1)", touchAction: "pan-y", position: "relative" }}
+        onPointerDown={(e) => { st.current = { x: e.clientX, y: e.clientY, drag: false, base: dx }; }}
+        onPointerMove={(e) => { const s0 = st.current; if (s0.x == null) return; const mx = e.clientX - s0.x; if (!s0.drag && Math.abs(mx) > 8 && Math.abs(mx) > Math.abs(e.clientY - s0.y)) s0.drag = true; if (s0.drag) setDx(Math.min(0, Math.max(-W, s0.base + mx))); }}
+        onPointerUp={() => { const s0 = st.current; if (s0.drag) setDx((d) => (d < -W / 2 ? -W : 0)); st.current = { x: null, drag: false }; }}
+        onPointerCancel={() => { st.current = { x: null, drag: false }; setDx(0); }}
+        onClickCapture={(e) => { if (dx !== 0) { e.stopPropagation(); setDx(0); } }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty = "Nothing here yet.", pageSize = 10, swipe }) {
   const desktop = useDesktop();
   const primary = columns[0];
   const rest = columns.slice(1);
@@ -1606,7 +1657,8 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
       </table>
       <div className="flex flex-col gap-2.5" style={{ display: desktop ? "none" : "flex" }}>
         {rows.map((row, i) => (
-          <div key={row[keyField] ?? i} onClick={() => onRowClick && onRowClick(row)} className={"rounded-xl border p-3.5" + (onRowClick ? " pn-row" : "")} style={{ borderColor: C.line, cursor: onRowClick ? "pointer" : "default" }}>
+          <SwipeRow key={row[keyField] ?? i} actions={swipe ? swipe(row) : null}>
+          <div onClick={() => onRowClick && onRowClick(row)} className={"rounded-xl border p-3.5" + (onRowClick ? " pn-row" : "")} style={{ borderColor: C.line, cursor: onRowClick ? "pointer" : "default", background: C.card }}>
             <div className="mb-2">{primary.render(row)}</div>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5">
               {rest.map((c) => (
@@ -1617,6 +1669,7 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
               ))}
             </div>
           </div>
+          </SwipeRow>
         ))}
       </div>
       {allRows.length === 0 && (typeof empty === "string" ? <EmptyState title={empty} /> : empty)}
@@ -1625,6 +1678,23 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
   );
 }
 
+// An X-ray search, step by step: planning, searching (n of total, people so far), reviewing.
+function XrayProgress({ p }) {
+  const pr = p || {};
+  const steps = [["plan", "Planning searches"], ["search", "Searching profiles"], ["review", "Reviewing results"]];
+  const at = Math.max(0, steps.findIndex((x) => x[0] === pr.step));
+  const within = pr.total ? Math.min(1, (pr.done || 0) / pr.total) : 0;
+  const pct = Math.round(((at + within) / steps.length) * 100);
+  const label = pr.step === "search" ? `Searching ${Math.min((pr.done || 0) + 1, pr.total || 1)} of ${pr.total || "…"}${pr.found ? " · " + pr.found + " found so far" : ""}`
+    : pr.step === "review" ? `Reviewing ${pr.found || ""} profiles against the must-haves` : "Planning the searches";
+  return (
+    <div className="mt-1" style={{ maxWidth: 460 }}>
+      <div className="flex justify-between gap-2 text-xs" style={{ color: C.ink2 }}><span>{label}</span><span style={{ fontVariantNumeric: "tabular-nums" }}>{pct}%</span></div>
+      <div className="rounded-full overflow-hidden my-1.5" style={{ height: 7, background: C.neutralBg }}><div className="h-full rounded-full" style={{ width: Math.max(4, pct) + "%", background: `linear-gradient(90deg, ${C.em}, ${C.lime})`, transition: "width .6s ease" }} /></div>
+      <div className="flex flex-wrap gap-1.5">{steps.map(([k, l], i) => <span key={k} className="rounded-full px-2 py-0.5 text-[11px]" style={i < at ? { background: C.emTint, color: C.em } : i === at ? { background: C.solid, color: "#fff" } : { background: C.neutralBg, color: C.ink3 }}>{i < at ? "✓ " : ""}{l}</span>)}</div>
+    </div>
+  );
+}
 // Grey outlines of rows while a list loads (shimmering), instead of "Loading…".
 function SkeletonRows({ n = 3 }) {
   return (
@@ -1743,7 +1813,7 @@ function AccountTab({ S, toast }) {
       <div className="flex flex-col gap-4">
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
@@ -1754,7 +1824,7 @@ function AccountTab({ S, toast }) {
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone number</label>
-          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Not set" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Not set" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label>
@@ -1772,7 +1842,7 @@ function MsgPrefRow({ label, sub, on, onToggle, extra }) {
     <div role="button" tabIndex={0} onClick={onToggle} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}
       className="py-3 flex items-center justify-between gap-3 text-left cursor-pointer" style={{ borderTop: `1px solid ${C.line}` }}>
       <div><div className="text-sm font-medium flex items-center gap-2">{label} {extra}</div><div className="text-xs" style={{ color: C.ink2 }}>{sub}</div></div>
-      <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: on ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${on ? "ml-auto" : ""}`} /></div>
+      <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: on ? C.em : C.line2 }}><div className={`w-5 h-5 rounded-full bg-white ${on ? "ml-auto" : ""}`} /></div>
     </div>
   );
 }
@@ -1802,7 +1872,7 @@ function NotificationsTab({ S, toast }) {
         {NOTIF_EVENTS.map((e) => (
           <button key={e.key} onClick={() => toggle(e.key)} className="py-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
             <div><div className="text-sm font-medium">{e.label}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.sub}</div></div>
-            <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: prefs[e.key] ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${prefs[e.key] ? "ml-auto" : ""}`} /></div>
+            <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: prefs[e.key] ? C.em : C.line2 }}><div className={`w-5 h-5 rounded-full bg-white ${prefs[e.key] ? "ml-auto" : ""}`} /></div>
           </button>
         ))}
       </div>
@@ -1875,8 +1945,8 @@ function SecurityTab({ S, toast }) {
       <Card>
         <SectionTitle title="Change password" size="text-lg" />
         <div className="flex flex-col gap-3 mt-4">
-          <input type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="New password" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-          <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Confirm new password" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input type="password" value={pw1} onChange={(e) => setPw1(e.target.value)} placeholder="New password" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+          <input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="Confirm new password" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           <Btn kind="primary" disabled={!pw1 || !pw2 || pwBusy} onClick={savePassword}>{pwBusy ? <>Updating <InlineDots color="#fff" /></> : "Update password"}</Btn>
         </div>
       </Card>
@@ -1898,7 +1968,7 @@ function SecurityTab({ S, toast }) {
               <div className="text-sm" style={{ color: C.ink2 }}>Scan this in your authenticator app, or enter the code manually, then type the 6-digit code it shows.</div>
               {enroll.qr && <div className="w-40 h-40 [&_svg]:w-full [&_svg]:h-full" dangerouslySetInnerHTML={{ __html: enroll.qr }} />}
               {enroll.secret && <div className="text-xs font-mono rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{enroll.secret}</div>}
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
               <div className="flex gap-2">
                 <Btn onClick={() => { setEnroll(null); setCode(""); }} disabled={mfaBusy}>Cancel</Btn>
                 <Btn kind="primary" disabled={mfaBusy} onClick={confirmEnroll}>{mfaBusy ? <>Verifying <InlineDots color="#fff" /></> : "Verify and turn on"}</Btn>
@@ -1916,6 +1986,28 @@ function SecurityTab({ S, toast }) {
   );
 }
 
+// Light / Dark / Match device. Saved on this browser; the page reloads so every colour switches at once.
+function themeNow() { try { return localStorage.getItem(THEME_KEY) || "light"; } catch (e) { return "light"; } }
+function setTheme(t) { try { localStorage.setItem(THEME_KEY, t); } catch (e) {} location.reload(); }
+function AppearanceCard() {
+  const cur = themeNow();
+  const opts = [["light", "Light", Sun], ["dark", "Dark", Moon], ["system", "Match device", Monitor]];
+  return (
+    <div className="rounded-2xl border p-5" style={{ background: C.card, borderColor: C.line }}>
+      <div className="font-medium" style={{ color: C.ink }}>Appearance</div>
+      <div className="text-sm mt-0.5 mb-3" style={{ color: C.ink2 }}>Choose how ProNext looks on this device.</div>
+      <div className="grid grid-cols-3 gap-2">
+        {opts.map(([k, l, I]) => (
+          <button key={k} type="button" aria-pressed={cur === k} onClick={() => cur !== k && setTheme(k)} className="rounded-xl border px-3 py-3 flex flex-col items-center gap-1.5 text-sm"
+            style={{ borderColor: cur === k ? C.em : C.line, background: cur === k ? C.emTint : C.soft, color: cur === k ? C.em : C.ink2, fontWeight: cur === k ? 500 : 400 }}>
+            <I size={18} />{l}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function MyProfilePage({ S, toast, onBack, initialTab }) {
   const [tab, setTab] = useState(["account", "notifications", "security", "calendar"].includes(initialTab) ? initialTab : "account");
   return (
@@ -1923,6 +2015,7 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
       <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }, { key: "calendar", label: "Calendar" }]} active={tab} setActive={setTab} />
+      {tab === "account" && <AppearanceCard />}
       {tab === "account" && <MyWins S={S} />}
       {tab === "account" && <AccountTab S={S} toast={toast} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
@@ -2007,13 +2100,13 @@ function MobileBottomNav({ role, page, setPage, onMore, badges = {} }) {
   const desktop = useDesktop();
   const items = MOBILE_TABS[role];
   return (
-    <div className="fixed bottom-0 left-0 right-0 items-stretch border-t z-40" style={{ display: desktop ? "none" : "flex", background: "#fff", borderColor: C.line }}>
+    <div className="fixed bottom-0 left-0 right-0 items-stretch border-t z-40 px-1" style={{ display: desktop ? "none" : "flex", background: C.card, borderColor: C.line, paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>
       {items.map((it) => {
         const active = page === it.key;
         const Icon = it.icon;
         return (
-          <button key={it.key} onClick={() => setPage(it.key)} className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5">
-            <span className="relative"><Icon size={20} color={active ? C.em : C.ink3} />{badges[it.key] > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}</span>
+          <button key={it.key} onClick={() => setPage(it.key)} className="flex-1 flex flex-col items-center justify-center gap-1 py-2 mx-0.5 my-1 rounded-xl transition-colors" style={{ background: active ? C.emTint : "transparent" }} aria-current={active ? "page" : undefined}>
+            <span className="relative"><Icon size={21} color={active ? C.em : C.ink3} />{badges[it.key] > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}</span>
             <span className="leading-none" style={{ fontSize: 10, color: active ? C.em : C.ink3, fontWeight: active ? 600 : 400 }}>{it.label}</span>
           </button>
         );
@@ -2036,7 +2129,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0" style={{ background: "rgba(20,32,27,0.45)" }} onClick={onClose} />
-      <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl p-5 overflow-y-auto" style={{ background: "#fff", maxHeight: "80vh" }}>
+      <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl p-5 overflow-y-auto" style={{ background: C.card, maxHeight: "80vh" }}>
         <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: C.line }} />
         <NavList items={[...items, ...extra]} page={page} setPage={setPage} onNavigate={onClose} badges={badges} />
         <div className="pt-3 mt-3" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -2051,7 +2144,56 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
   );
 }
 
-function TopBar({ query, setQuery, S }) {
+const RECENT_KEY = "pn.recentJumps";
+function CommandPalette({ open, onClose, S, role, setPage }) {
+  const [q, setQ] = useState("");
+  const [sel, setSel] = useState(0);
+  React.useEffect(() => { if (open) { setQ(""); setSel(0); } }, [open]);
+  if (!open) return null;
+  const recent = (() => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { return []; } })();
+  const pages = [...(role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS), ...(role === "admin" ? NAV_ADMIN_EXTRA : []), { key: "myProfile", label: "My profile", icon: Users }];
+  const all = [
+    ...S.cands.map((c) => ({ id: "c:" + c.id, kind: "Candidate", title: c.name, sub: [c.role, c.status].filter(Boolean).join(" · "), init: initialsOf(c.name), go: () => S.openCandidate(c.id) })),
+    ...S.jobs.map((j) => ({ id: "j:" + j.id, kind: "Job", title: j.role, sub: [j.client, j.status].filter(Boolean).join(" · "), icon: Briefcase, go: () => S.openJob(j.id) })),
+    ...pages.map((pg) => ({ id: "p:" + pg.key, kind: "Page", title: pg.label, sub: "Page", icon: pg.icon, go: () => setPage(pg.key) })),
+  ];
+  const t = q.trim().toLowerCase();
+  const list = t ? all.filter((x) => (x.title + " " + x.sub).toLowerCase().includes(t)).sort((a, b) => (a.title.toLowerCase().startsWith(t) ? 0 : 1) - (b.title.toLowerCase().startsWith(t) ? 0 : 1)).slice(0, 8)
+    : [...recent.map((id) => all.find((x) => x.id === id)).filter(Boolean), ...pages.slice(0, 5).map((pg) => all.find((x) => x.id === "p:" + pg.key))].filter((x, i, a) => x && a.findIndex((y) => y && y.id === x.id) === i).slice(0, 8);
+  const pick = (x) => { if (!x) return; try { localStorage.setItem(RECENT_KEY, JSON.stringify([x.id, ...recent.filter((r) => r !== x.id)].slice(0, 6))); } catch (e) { /* fine */ } onClose(); x.go(); };
+  const key = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setSel((n) => Math.min(list.length - 1, n + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSel((n) => Math.max(0, n - 1)); }
+    else if (e.key === "Enter") { e.preventDefault(); pick(list[sel]); }
+    else if (e.key === "Escape") onClose();
+  };
+  return (
+    <div className="fixed inset-0 z-[70] flex items-start justify-center px-4 pt-[12vh]" role="dialog" aria-modal="true" aria-label="Quick search">
+      <div className="absolute inset-0" style={{ background: "rgba(20,32,27,.45)" }} onClick={onClose} />
+      <div className="relative w-full max-w-xl rounded-2xl border overflow-hidden pn-fade" style={{ background: C.card, borderColor: C.line, boxShadow: "0 30px 60px -20px rgba(0,0,0,.45)" }}>
+        <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${C.line}` }}>
+          <Search size={17} color={C.ink3} />
+          <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setSel(0); }} onKeyDown={key} placeholder="Jump to a candidate, job or page…" aria-label="Search" className="flex-1 min-w-0 bg-transparent outline-none text-base" style={{ color: C.ink }} />
+          <span className="text-[11px] rounded-md border px-1.5 py-0.5" style={{ borderColor: C.line, color: C.ink3 }}>esc</span>
+        </div>
+        <div className="py-1.5 max-h-[55vh] overflow-y-auto">
+          {!t && <div className="px-4 pt-2 pb-1 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>{recent.length ? "RECENT" : "GO TO"}</div>}
+          {list.map((x, i) => (
+            <button key={x.id} type="button" onMouseEnter={() => setSel(i)} onClick={() => pick(x)} className="w-full flex items-center gap-3 px-4 py-2.5 text-left" style={{ background: i === sel ? C.canvas : "transparent" }}>
+              {x.init ? <Avatar init={x.init} tone="em" size={28} /> : <span className="w-7 h-7 rounded-full grid place-items-center shrink-0" style={{ background: C.emTint }}>{x.icon ? <x.icon size={14} color={C.em} /> : null}</span>}
+              <span className="flex-1 min-w-0"><span className="block text-sm font-medium truncate" style={{ color: C.ink }}>{x.title}</span><span className="block text-xs truncate" style={{ color: C.ink3 }}>{x.sub}</span></span>
+              <span className="text-[11px] shrink-0" style={{ color: C.ink3 }}>{x.kind}</span>
+            </button>
+          ))}
+          {!list.length && <div className="px-4 py-6 text-sm text-center" style={{ color: C.ink3 }}>Nothing matches “{q}”.</div>}
+        </div>
+        <div className="px-4 py-2 text-[11px] flex gap-4" style={{ borderTop: `1px solid ${C.line}`, color: C.ink3 }}><span>↑ ↓ to move</span><span>Enter to open</span></div>
+      </div>
+    </div>
+  );
+}
+
+function TopBar({ query, setQuery, S, onCmd }) {
   const desktop = useDesktop();
   const [notifOpen, setNotifOpen] = useState(false);
   const feed = S ? buildActivityFeed(S, 30) : [];
@@ -2059,20 +2201,23 @@ function TopBar({ query, setQuery, S }) {
   return (
     <div className="flex items-center gap-3 px-4 md:px-8 py-4 md:py-5">
       <div className="shrink-0" style={{ display: desktop ? "none" : "block" }}><BrandMark size={32} /></div>
-      <div className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5 flex-1 max-w-xl" style={{ borderColor: C.line, background: "#fff" }}>
+      <div className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5 flex-1 max-w-xl" style={{ borderColor: C.line, background: C.card }}>
         <Search size={17} color={C.ink3} />
         <input id="harbor-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="bg-transparent outline-none text-sm flex-1 min-w-0" />
-        <span className="rounded px-1.5 py-0.5" style={{ display: desktop ? "inline" : "none", fontSize: 11, background: C.canvas, color: C.ink2 }}>Ctrl K</span>
+        <button type="button" onClick={onCmd} title="Jump to any candidate, job or page" className="rounded px-1.5 py-0.5" style={{ display: desktop ? "inline" : "none", fontSize: 11, background: C.canvas, color: C.ink2 }}>{/Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘ K" : "Ctrl K"}</button>
       </div>
+      <button aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"} onClick={() => setTheme(DARK ? "light" : "dark")} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border hidden md:flex items-center justify-center shrink-0" style={{ borderColor: C.line, background: C.card }}>
+        {DARK ? <Sun size={18} color={C.lime} /> : <Moon size={18} color={C.ink} />}
+      </button>
       <div className="relative shrink-0">
-        <button aria-label="Notifications" onClick={() => setNotifOpen((v) => !v)} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative" style={{ borderColor: C.line, background: "#fff" }}>
+        <button aria-label="Notifications" onClick={() => setNotifOpen((v) => !v)} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative" style={{ borderColor: C.line, background: C.card }}>
           <Bell size={18} color={C.ink} />
           {unread > 0 && <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />}
         </button>
         {notifOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
-            <div className="absolute right-0 top-12 z-50 w-80 rounded-xl border p-2" style={{ borderColor: C.line, background: "#fff", boxShadow: "0 12px 32px rgba(20,32,27,0.16)" }}>
+            <div className="absolute right-0 top-12 z-50 w-80 rounded-xl border p-2" style={{ borderColor: C.line, background: C.card, boxShadow: "0 12px 32px rgba(20,32,27,0.16)" }}>
               <div className="text-xs font-semibold px-2 py-1.5 tracking-widest" style={{ color: C.ink3 }}>ACTIVITY</div>
               <div className="flex flex-col overflow-y-auto" style={{ maxHeight: 380 }}>
                 {feed.length === 0 && <div className="text-sm px-2 py-3" style={{ color: C.ink2 }}>Nothing has happened yet.</div>}
@@ -2271,7 +2416,7 @@ function AttachmentChip({ a, onRemove, light }) {
   const fg = light ? "#fff" : C.ink, sub = light ? "rgba(255,255,255,.75)" : C.ink3;
   const Icon = a.kind === "voice" ? Mic : FileText;
   return (
-    <div className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs max-w-full" style={{ background: light ? "rgba(255,255,255,.16)" : "#fff", border: light ? "none" : `1px solid ${C.line}`, color: fg }}>
+    <div className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs max-w-full" style={{ background: light ? "rgba(255,255,255,.16)" : C.card, border: light ? "none" : `1px solid ${C.line}`, color: fg }}>
       <Icon size={13} className="shrink-0" />
       <span className="truncate max-w-[170px]">{a.kind === "voice" ? "Voice note" + (a.secs ? " · " + mmss(a.secs) : "") : a.name}</span>
       {a.status === "reading" && <span style={{ color: sub }}>{a.kind === "voice" ? "transcribing" : "reading"} <InlineDots /></span>}
@@ -2528,7 +2673,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
         </button>
       )}
       {open && (
-        <div className="flex flex-col overflow-hidden" style={{ ...panelStyle, background: "#fff", borderRadius: desktop ? 16 : 0, border: desktop ? `1px solid ${C.line}` : "none", boxShadow: "0 16px 40px rgba(20,32,27,0.18)" }}>
+        <div className="flex flex-col overflow-hidden" style={{ ...panelStyle, background: C.card, borderRadius: desktop ? 16 : 0, border: desktop ? `1px solid ${C.line}` : "none", boxShadow: "0 16px 40px rgba(20,32,27,0.18)" }}>
           <div className="flex items-center gap-2 px-3 py-3 shrink-0" style={{ background: C.side, color: "#fff" }}>
             <button onClick={() => (showMemory ? setShowMemory(false) : openMemory())} aria-label="Memory" title="What the assistant remembers" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showMemory ? "rgba(255,255,255,0.12)" : "transparent" }}><Brain size={17} /></button>
             <button onClick={() => { setShowList((v) => !v); setShowUpdates(false); setShowMemory(false); }} aria-label="Conversations" title="Saved conversations" className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: showList ? "rgba(255,255,255,0.12)" : "transparent" }}><ListTodo size={17} /></button>
@@ -2544,7 +2689,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
             <div className="flex-1 overflow-y-auto px-3 py-3" style={{ background: C.canvas }}>
               <div className="text-xs font-semibold tracking-widest mb-1 px-1" style={{ color: C.ink3 }}>WHAT I REMEMBER</div>
               <div className="text-xs mb-3 px-1" style={{ color: C.ink2 }}>I learn from our conversations: your preferences, corrections and facts about your clients and roles, and suggestions you decline. Say "remember…" in a chat, or add a note below. Delete anything that's wrong.</div>
-              <div className="rounded-xl p-2.5 mb-3" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+              <div className="rounded-xl p-2.5 mb-3" style={{ background: C.card, border: `1px solid ${C.line}` }}>
                 <textarea value={memNote} onChange={(e) => setMemNote(e.target.value)} rows={2} placeholder="e.g. Keep candidate emails under 80 words" className="w-full text-sm outline-none resize-none" />
                 <div className="flex items-center justify-between gap-2 mt-1">
                   {memory && memory.canTeam ? <label className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><input type="checkbox" checked={memTeam} onChange={(e) => setMemTeam(e.target.checked)} style={{ accentColor: C.em }} />For the whole team</label> : <span />}
@@ -2557,7 +2702,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                   {!list.length && <div className="text-xs px-1" style={{ color: C.ink3 }}>Nothing yet.</div>}
                   <div className="flex flex-col gap-1.5">
                     {list.map((m) => (
-                      <div key={m.id} className="rounded-xl px-3 py-2 flex items-start gap-2" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+                      <div key={m.id} className="rounded-xl px-3 py-2 flex items-start gap-2" style={{ background: C.card, border: `1px solid ${C.line}` }}>
                         <div className="flex-1 min-w-0"><div className="text-sm leading-snug">{m.text}</div><div className="text-[11px] mt-0.5" style={{ color: C.ink3 }}>{m.kind !== "note" ? m.kind + " · " : ""}{fdate(m.created_at)}</div></div>
                         {(label === "About working with you" || memory.canTeam) && <button onClick={() => forgetMemory(String(m.id))} aria-label="Forget" title="Forget this" className="p-1 shrink-0" style={{ color: C.ink3 }}><Trash2 size={14} /></button>}
                       </div>
@@ -2573,7 +2718,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                 <button onClick={() => { S.goProfile("notifications"); if (!desktop) setOpen(false); }} className="text-xs font-medium" style={{ color: C.em }}>Settings</button>
               </div>
               {!updates.length && (
-                <div className="rounded-xl p-4 text-sm text-center" style={{ background: "#fff", border: `1px dashed ${C.line}`, color: C.ink2 }}>
+                <div className="rounded-xl p-4 text-sm text-center" style={{ background: C.card, border: `1px dashed ${C.line}`, color: C.ink2 }}>
                   Nothing yet. I'll let you know here when something happens with your candidates, roles or tasks, when a search finishes, before interviews, and with a round-up each weekday evening.
                 </div>
               )}
@@ -2584,8 +2729,8 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                   const Icon = icon;
                   return (
                     <button key={u.id} onClick={() => pickUpdate(u)} className="w-full text-left rounded-xl px-3 py-2.5 flex items-start gap-2.5"
-                      style={{ background: fresh ? C.emTint : "#fff", border: `1px solid ${fresh ? C.em : C.line}` }}>
-                      <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: fresh ? "#fff" : C.canvas }}><Icon size={14} color={u.kind === "reminder" ? "#D9573B" : C.em} /></span>
+                      style={{ background: fresh ? C.emTint : C.card, border: `1px solid ${fresh ? C.em : C.line}` }}>
+                      <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: fresh ? C.card : C.canvas }}><Icon size={14} color={u.kind === "reminder" ? "#D9573B" : C.em} /></span>
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm font-medium leading-snug">{u.title}{fresh && <span className="ml-1.5 text-[10px] rounded-full px-1.5 py-0.5 align-middle" style={{ background: "#D9573B", color: "#fff" }}>New</span>}</span>
                         {u.body && <span className="block text-xs mt-0.5 leading-snug" style={{ color: C.ink2, whiteSpace: "pre-line", display: "-webkit-box", WebkitLineClamp: u.kind === "roundup" ? 6 : 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{u.body}</span>}
@@ -2598,15 +2743,15 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
             </div>
           ) : showList ? (
             <div className="flex-1 overflow-y-auto px-3 py-3" style={{ background: C.canvas }}>
-              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search conversations" className="w-full text-sm rounded-lg border px-3 py-2 mb-2 outline-none" style={{ borderColor: C.line, background: "#fff" }} />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search conversations" className="w-full text-sm rounded-lg border px-3 py-2 mb-2 outline-none" style={{ borderColor: C.line, background: C.card }} />
               <div className="flex gap-1.5 mb-2">
-                {[["all", "All"], ...(onJob ? [["role", "This role"]] : []), ["brief", "Morning briefs"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : "#fff", color: filter === k ? C.em : C.ink2 }}>{l}</button>)}
+                {[["all", "All"], ...(onJob ? [["role", "This role"]] : []), ["brief", "Morning briefs"]].map(([k, l]) => <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : C.card, color: filter === k ? C.em : C.ink2 }}>{l}</button>)}
               </div>
               {threads === null && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Loading <InlineDots /></div>}
               {threads && !shownThreads.length && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>{threads.length ? "No match." : "No saved conversations yet."}</div>}
               <div className="flex flex-col gap-1.5">
                 {shownThreads.map((t) => (
-                  <div key={t.id} className="rounded-xl px-3 py-2.5 flex items-start gap-2" style={{ background: t.id === threadId ? C.emTint : "#fff", border: `1px solid ${C.line}` }}>
+                  <div key={t.id} className="rounded-xl px-3 py-2.5 flex items-start gap-2" style={{ background: t.id === threadId ? C.emTint : C.card, border: `1px solid ${C.line}` }}>
                     <button onClick={() => openThread(t)} className="flex-1 min-w-0 text-left">
                       <div className="text-sm font-medium truncate">{t.kind === "brief" ? "☀️ " : t.mode === "brainstorm" ? "💡 " : ""}{t.title}{t.kind === "brief" && !t.seen_at && <span className="ml-1.5 text-[10px] rounded-full px-1.5 py-0.5 align-middle" style={{ background: "#D9573B", color: "#fff" }}>New</span>}</div>
                       <div className="text-[11px]" style={{ color: C.ink3 }}>{ago(t.updated_at)}{t.job_id && S.jobs.find((j) => j.id === t.job_id) ? " · " + S.jobs.find((j) => j.id === t.job_id).role : ""}</div>
@@ -2620,7 +2765,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
           ) : (
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-3" style={{ background: C.canvas }}>
             {msgs.length === 0 && mode === "work" && (
-              <div className="rounded-xl p-3 text-sm" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+              <div className="rounded-xl p-3 text-sm" style={{ background: C.card, border: `1px solid ${C.line}` }}>
                 <div className="font-medium mb-1">Hi {S.me.first || S.me.name.split(" ")[0]}, here's what's due</div>
                 {due === 0 && <div style={{ color: C.ink2 }}>Nothing due right now.</div>}
                 {myIvs.map((iv) => <div key={iv.id} style={{ color: C.ink2 }}>• {hmIn(iv.start, MY_TZ)} interview with {iv.candidateName}{iv.roleTitle ? " (" + iv.roleTitle + ")" : ""}</div>)}
@@ -2630,7 +2775,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                 {unread > 0 && <div style={{ color: C.ink2 }}>• {plural(unread, "unread message")}</div>}
               </div>
             )}
-            {msgs.length === 0 && <div className="flex flex-wrap gap-1.5">{chips.map((c) => <button key={c} onClick={() => send(c, c.startsWith("Close this role") ? { smart: true } : null)} className="text-xs rounded-full border px-3 py-1.5 text-left" style={{ borderColor: C.line, background: "#fff", color: C.ink2 }}>{c}</button>)}</div>}
+            {msgs.length === 0 && <div className="flex flex-wrap gap-1.5">{chips.map((c) => <button key={c} onClick={() => send(c, c.startsWith("Close this role") ? { smart: true } : null)} className="text-xs rounded-full border px-3 py-1.5 text-left" style={{ borderColor: C.line, background: C.card, color: C.ink2 }}>{c}</button>)}</div>}
             {msgs.map((m, mi) => (
               <div key={mi} className={"flex flex-col gap-2 " + (m.role === "user" ? "items-end" : "items-start")}>
                 {(m.attachments || []).filter((a) => a.kind !== "voice").length > 0 && <div className="flex flex-wrap gap-1.5 justify-end max-w-[92%]">{m.attachments.filter((a) => a.kind !== "voice").map((a, ai) => <AttachmentChip key={ai} a={a} />)}</div>}
@@ -2641,7 +2786,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                   </div>
                 ))}
                 {m.content && (
-                  <div className="rounded-2xl px-3.5 py-2.5 text-sm max-w-[92%] whitespace-pre-wrap" style={m.role === "user" ? { background: C.em, color: "#fff" } : { background: "#fff", border: `1px solid ${C.line}`, color: m.error ? C.dangerFg : C.ink }}>
+                  <div className="rounded-2xl px-3.5 py-2.5 text-sm max-w-[92%] whitespace-pre-wrap" style={m.role === "user" ? { background: C.em, color: "#fff" } : { background: C.card, border: `1px solid ${C.line}`, color: m.error ? C.dangerFg : C.ink }}>
                     {m.role === "assistant" ? boldText(m.content) : m.content}
                     {m.role === "assistant" && !m.error && m.content.length > 120 && <div className="mt-1.5"><button onClick={() => copy(m.content)} className="text-xs font-medium" style={{ color: C.em }}>Copy</button></div>}
                   </div>
@@ -2653,7 +2798,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                   </div>
                 )}
                 {(m.proposals || []).map((p, pi) => { const sm = proposalSummary(S, p), Icon = sm.icon; const isEmail = p.tool === "propose_email"; return (
-                  <div key={pi} className="rounded-xl p-3 w-full" style={{ background: "#fff", border: `1px solid ${p.state === "approved" ? C.em : p.state === "failed" ? C.dangerFg : C.line}` }}>
+                  <div key={pi} className="rounded-xl p-3 w-full" style={{ background: C.card, border: `1px solid ${p.state === "approved" ? C.em : p.state === "failed" ? C.dangerFg : C.line}` }}>
                     <div className="flex items-start gap-2"><Icon size={16} color={C.em} className="shrink-0 mt-0.5" /><div className="min-w-0 flex-1"><div className="text-sm font-medium">{sm.title}</div>{sm.detail && <div className={"text-xs mt-0.5 whitespace-pre-wrap " + (isEmail ? "max-h-60 overflow-y-auto" : "")} style={{ color: C.ink2 }}>{sm.detail}</div>}</div></div>
                     {isEmail && p.state !== "approved" && <label className="flex items-center justify-end gap-1.5 mt-2.5 text-xs cursor-pointer select-none" style={{ color: C.ink2 }} title="Use your agency's email design (logo, colours, footer) instead of a plain email"><input type="checkbox" checked={branded} onChange={(e) => pickBranded(e.target.checked)} style={{ accentColor: C.em }} />Branded design</label>}
                     {isEmail && <div className="flex flex-wrap gap-2 mt-2 justify-end"><Btn onClick={() => copy((p.input.subject ? "Subject: " + p.input.subject + "\n\n" : "") + (p.input.body || ""))}>Copy</Btn><a href={gmailComposeUrl(p.input.to, p.input.subject, p.input.body)} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-medium" style={{ border: `1px solid ${C.line}`, color: C.ink }}>Open in Gmail</a>{p.state !== "approved" && <Btn kind="primary" icon={Mail} disabled={p.state === "working"} onClick={() => toDrafts(mi, pi)}>Save to Gmail drafts</Btn>}</div>}
@@ -2673,7 +2818,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
           {!showList && !showUpdates && !showMemory && (
           <div className="p-3 shrink-0" style={{ borderTop: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-1.5 mb-2">
-              {[["work", "Work"], ["brainstorm", "Brainstorm"]].map(([k, l]) => <button key={k} onClick={() => setMode(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: mode === k ? C.em : C.line, background: mode === k ? C.emTint : "#fff", color: mode === k ? C.em : C.ink2 }}>{l}</button>)}
+              {[["work", "Work"], ["brainstorm", "Brainstorm"]].map(([k, l]) => <button key={k} onClick={() => setMode(k)} className="text-xs rounded-full px-3 py-1 border" style={{ borderColor: mode === k ? C.em : C.line, background: mode === k ? C.emTint : C.card, color: mode === k ? C.em : C.ink2 }}>{l}</button>)}
               {onJob && (threadJob === onJob.id
                 ? <button onClick={() => pinToRole(null)} className="text-[11px] ml-auto truncate" style={{ color: C.em }} title="This conversation is pinned to this role. Click to unpin.">📌 {onJob.role}</button>
                 : <button onClick={() => pinToRole(onJob.id)} className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }} title="Pin this conversation to the role so it shows under This role">Pin to {onJob.role}</button>)}
@@ -2682,7 +2827,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
             {files.length > 0 && <div className="flex flex-wrap gap-1.5 mb-2">{files.map((a) => <AttachmentChip key={a.id} a={a} onRemove={a.status === "reading" ? null : () => setFiles((x) => x.filter((b) => b.id !== a.id))} />)}</div>}
             {rec ? (
               <div className="flex items-center gap-2">
-                <button onClick={() => stopRec(false)} aria-label="Cancel the voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ border: `1px solid ${C.line}`, color: C.ink2, background: "#fff" }}><Trash2 size={16} /></button>
+                <button onClick={() => stopRec(false)} aria-label="Cancel the voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ border: `1px solid ${C.line}`, color: C.ink2, background: C.card }}><Trash2 size={16} /></button>
                 <div className="flex-1 min-w-0 flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm" style={{ background: C.dangerBg, color: C.dangerFg }} role="status" aria-live="polite">
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: C.dangerFg, animation: "harborPulse 1.2s ease-in-out infinite" }} />
                   Recording {mmss(rec.secs)}<span className="text-xs ml-auto" style={{ opacity: 0.8 }}>up to {mmss(ASSIST_MAX_VOICE_SECS)}</span>
@@ -2696,7 +2841,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                 <input type="file" multiple accept={ASSIST_ACCEPT} className="sr-only" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} aria-label="Attach files" />
               </label>
               <textarea id="assistant-input" rows={1} value={text} onChange={(e) => setText(e.target.value)} onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }} enterKeyHint={isTouchDevice() ? "enter" : "send"} onKeyDown={(e) => { if (enterSends(e)) { e.preventDefault(); send(); } }}
-                placeholder={mode === "brainstorm" ? "What do you want to think through?" : "Close a role, research a candidate, draft a client email…"} className="flex-1 min-w-0 rounded-xl border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: "#FAF8F3", maxHeight: 120 }} />
+                placeholder={mode === "brainstorm" ? "What do you want to think through?" : "Close a role, research a candidate, draft a client email…"} className="flex-1 min-w-0 rounded-xl border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: C.soft, maxHeight: 120 }} />
               {text.trim() || files.some((a) => a.status === "ready")
                 ? <button onClick={() => send()} disabled={busy || files.some((a) => a.status === "reading")} aria-label="Send" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy || files.some((a) => a.status === "reading") ? 0.5 : 1 }}><SendHorizontal size={17} /></button>
                 : <button onClick={startRec} disabled={busy} aria-label="Record a voice note" title="Record a voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy ? 0.5 : 1 }}><Mic size={17} /></button>}
@@ -2749,13 +2894,13 @@ function TodoPage({ toast, S }) {
   const canMove = (t) => t.status === "open" && (t.assignedTo === S.me.id || t.createdBy === S.me.id || staff);
   const reassign = (t, to) => { if (!to || to === t.assignedTo) return; S.reassignTask(t.id, to).then(() => toast("Reassigned to " + nameOf(to))).catch(() => {}); };
   const inp = "rounded-lg border px-3 py-2.5 text-sm outline-none";
-  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const inpS = { borderColor: C.line, background: C.soft };
   const Row = ({ t }) => {
     const late = t.status === "open" && t.dueOn && t.dueOn < today;
     return (
       <div className="flex items-start gap-3 py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
         <button onClick={() => setSt(t, t.status === "done" ? "open" : "done")} aria-label={t.status === "done" ? "Mark not done" : "Mark done"}
-          className="w-5 h-5 mt-0.5 rounded-md border flex items-center justify-center shrink-0" style={{ borderColor: t.status === "done" ? C.em : C.ink3, background: t.status === "done" ? C.em : "#fff" }}>
+          className="w-5 h-5 mt-0.5 rounded-md border flex items-center justify-center shrink-0" style={{ borderColor: t.status === "done" ? C.em : C.ink3, background: t.status === "done" ? C.em : C.card }}>
           {t.status === "done" && <Check size={13} color="#fff" />}
         </button>
         <div className="flex-1 min-w-0">
@@ -2768,7 +2913,7 @@ function TodoPage({ toast, S }) {
           </div>
         </div>
         {canMove(t) && <select value="" onChange={(e) => reassign(t, e.target.value)} aria-label={"Reassign " + t.title} title="Reassign to someone else"
-          className="text-xs rounded-lg border px-1.5 py-1 shrink-0 max-w-[120px]" style={{ borderColor: C.line, background: "#fff", color: C.ink2 }}>
+          className="text-xs rounded-lg border px-1.5 py-1 shrink-0 max-w-[120px]" style={{ borderColor: C.line, background: C.card, color: C.ink2 }}>
           <option value="">Reassign…</option>
           {people.filter((u) => u.id !== t.assignedTo).map((u) => <option key={u.id} value={u.id}>{u.id === S.me.id ? "Me" : u.name}</option>)}
         </select>}
@@ -3333,14 +3478,15 @@ function OverviewRecOps({ S }) {
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <GreetingHeader S={S} kicker={"OVERVIEW · " + st.month} sub="Here is how the agency is performing." />
         <div className="flex items-center gap-2.5 flex-wrap">
-          <div className="flex rounded-xl border p-1" style={{ borderColor: C.line, background: "#fff" }}>
+          <div className="flex rounded-xl border p-1" style={{ borderColor: C.line, background: C.card }}>
             {["Daily", "Weekly", "Monthly", "Yearly"].map((p) => (
-              <button key={p} onClick={() => setPeriod(p)} className="rounded-lg px-3 py-2 text-xs font-medium" style={period === p ? { background: C.ink, color: "#fff" } : { color: C.ink2 }}>{p}</button>
+              <button key={p} onClick={() => setPeriod(p)} className="rounded-lg px-3 py-2 text-xs font-medium" style={period === p ? { background: C.solid, color: "#fff" } : { color: C.ink2 }}>{p}</button>
             ))}
           </div>
           <Btn icon={Download} kind="dark" onClick={() => S.toast(downloadCSV("recruiter-performance.csv", S.team) ? "Exported recruiter-performance.csv" : "Nothing to export")}>Export</Btn>
         </div>
       </div>
+      <WelcomeBack S={S} />
       <KPIGrid cols={5}>
         <KPI dark label="Total lineup" value={totalLineup} foot={"active in pipeline · " + periodFoot} trend={{ ...trendOf(S.cands.filter((c) => c.status !== "Rejected").map((c) => c.createdAt), pTo - pFrom), vs: PERIOD_VS[period] }} />
         <KPI label="Active jobs" value={activeJobs} foot={"open roles · " + periodFoot} trend={{ ...trendOf(S.jobs.filter((j) => j.status !== "Draft").map((j) => j.createdAt), pTo - pFrom), vs: PERIOD_VS[period] }} />
@@ -3377,6 +3523,42 @@ function OverviewRecOps({ S }) {
   );
 }
 
+// "While you were away": what happened since the last visit (read once per session, then the
+// visit is recorded). Shown when the last visit was over 30 minutes ago and something happened.
+let WB_SINCE;
+function WelcomeBack({ S, mine }) {
+  const [gone, setGone] = useState(false);
+  if (WB_SINCE === undefined) {
+    const k = "pn.lastSeen." + S.me.id;
+    try { WB_SINCE = Number(localStorage.getItem(k)) || null; localStorage.setItem(k, String(Date.now())); } catch (e) { WB_SINCE = null; }
+  }
+  if (gone || !WB_SINCE || Date.now() - WB_SINCE < 30 * 60e3) return null;
+  const since = WB_SINCE;
+  const cands = mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands;
+  const tmr = ymdIn(Date.now() + 864e5, MY_TZ);
+  const items = [
+    { n: mine ? cands.filter((c) => c.createdAt > since).length : S.inbox.filter((x) => x.at > since).length, label: mine ? "new candidates" : "new applicants", go: () => S.go(mine ? "candidates" : "inbox") },
+    { n: cands.reduce((a, c) => a + (c.jobLinks || []).reduce((b, l) => b + (l.messages || []).filter((m) => m.sender === "candidate" && m.at > since).length, 0), 0), label: "candidate replies", go: () => S.go("messages") },
+    { n: (S.interviews || []).filter((iv) => iv.status === "scheduled" && ymdIn(iv.start, MY_TZ) === tmr && (!mine || iv.recruiterId === S.me.id)).length, label: "interviews tomorrow", go: () => S.go("interviews") },
+    { n: S.placements.filter((p) => p.createdAt > since && (!mine || p.recruiterId === S.me.id)).length, label: "placements", go: () => S.go("billing") },
+  ].filter((x) => x.n > 0);
+  if (!items.length) return null;
+  return (
+    <div className="relative rounded-2xl p-4 md:p-5 pn-fade" style={{ background: `linear-gradient(135deg, ${C.side}, #1B3A2D)`, color: C.onSide }}>
+      <button type="button" aria-label="Dismiss" onClick={() => setGone(true)} className="absolute right-3 top-2.5 text-lg" style={{ color: "rgba(243,239,231,.6)" }}>×</button>
+      <div className="text-lg md:text-xl mb-3 text-white" style={SERIF}>While you were away <span className="text-xs align-middle" style={{ color: "rgba(243,239,231,.55)", fontFamily: "inherit" }}>since {new Date(since).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" })}</span></div>
+      <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(items.length, 4)}, minmax(0, 1fr))` }}>
+        {items.map((x) => (
+          <button key={x.label} type="button" onClick={x.go} className="rounded-xl px-3 py-2.5 text-left transition-colors" style={{ background: "rgba(255,255,255,.07)" }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(200,241,105,.14)")} onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,255,255,.07)")}>
+            <div className="text-2xl" style={{ ...SERIF, color: C.lime }}>{x.n}</div><div className="text-xs" style={{ color: "rgba(243,239,231,.78)" }}>{x.label}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OverviewRecruiter({ S }) {
   const st = statsOf(S, S.me.id);
   return (
@@ -3385,6 +3567,7 @@ function OverviewRecruiter({ S }) {
         <GreetingHeader S={S} kicker={"MY OVERVIEW · " + st.month} sub="Here is how your candidates are doing." />
         <Btn icon={Download} kind="dark" onClick={() => S.toast(downloadCSV("recruiter-performance.csv", S.team) ? "Exported recruiter-performance.csv" : "Nothing to export")}>Export</Btn>
       </div>
+      <WelcomeBack S={S} mine />
       <KPIGrid>
         <KPI dark label="My placements" value={st.placed} foot="all time" trend={{ ...trendOf(S.placements.filter((p) => p.recruiterId === S.me.id).map((p) => p.createdAt), 30 * 864e5), vs: "last month" }} />
         <KPI label="My candidates" value={st.total} foot="on file" trend={{ ...trendOf(S.cands.filter((c) => c.recruiterId === S.me.id).map((c) => c.createdAt), 7 * 864e5), vs: "last week" }} />
@@ -3458,10 +3641,10 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title={scope === "recruiter" ? "Your candidate bench" : "All candidates"} sub={scope === "recruiter" ? "Every applicant you have sourced, and active file candidates ready to reuse." : `${data.length} candidates across every recruiter, client, and source.`} />
+        <SectionTitle size="text-3xl md:text-4xl" live={[{ n: data.filter((c) => Date.now() - c.createdAt < 7 * 864e5).length, label: "added this week", tone: "em" }, { n: data.filter((c) => c.status === "Interview").length, label: "in interview", tone: "info" }, { n: data.filter((c) => c.status === "Offer").length, label: "at offer", tone: "em" }]} title={scope === "recruiter" ? "Your candidate bench" : "All candidates"} sub={scope === "recruiter" ? "Every applicant you have sourced, and active file candidates ready to reuse." : `${data.length} candidates across every recruiter, client, and source.`} />
         <div className="flex gap-2.5">
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
-          <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
+          <Btn icon={UserPlus} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
       <Card>
@@ -3479,6 +3662,9 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
           rows={filtered}
           onRowClick={openCandidate}
           empty="No candidates match this filter."
+          swipe={(c) => [c.phone && { label: "Call", color: C.em, onClick: () => { window.location.href = "tel:" + c.phone.replace(/[^+\d]/g, ""); } },
+            c.emailAddr && { label: "Email", color: C.infoFg, onClick: () => { window.location.href = "mailto:" + c.emailAddr; } },
+            { label: "Open", color: C.side, onClick: () => openCandidate(c) }].filter(Boolean)}
           columns={[
             { key: "name", label: "CANDIDATE", render: (c) => (
               <div className="flex items-center gap-3">
@@ -3616,7 +3802,7 @@ const voiceMime = () => {
 const MAX_VOICE_SECS = 300;
 
 // Brand look: deep green for your own messages, white cards for theirs, on the canvas colour.
-const CHAT = { mine: C.side, mineMeta: "rgba(255,255,255,0.62)", theirs: "#FFFFFF", wall: C.canvas, read: C.lime, bad: "#FF9B85" };
+const CHAT = { mine: C.side, mineMeta: "rgba(255,255,255,0.62)", theirs: C.card, wall: C.canvas, read: C.lime, bad: "#FF9B85" };
 
 // What the ticks on one of your own messages mean (icon + plain-English label for the tooltip).
 function tickState(m) {
@@ -3955,7 +4141,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
   return (
     <div className={"flex flex-col min-h-0 " + className}
       style={{ background: CHAT.wall, backgroundImage: "radial-gradient(rgba(20,32,27,0.05) 1px, transparent 1px)", backgroundSize: "18px 18px", ...(style || {}) }}>
-      <div className="flex items-center gap-2 px-3 py-2.5 shrink-0" style={{ background: "#fff", borderBottom: `1px solid ${C.line}` }}>
+      <div className="flex items-center gap-2 px-3 py-2.5 shrink-0" style={{ background: C.card, borderBottom: `1px solid ${C.line}` }}>
         {onBack && <button onClick={onBack} aria-label="Back" className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink }}><ArrowLeft size={20} /></button>}
         {onProfile
           ? <button onClick={onProfile} title="Open full profile" className="flex items-center gap-3 min-w-0 flex-1 rounded-xl -my-1 py-1 pr-1">{headerMain}</button>
@@ -3964,7 +4150,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
           <div className="relative shrink-0">
             <button onClick={() => { setMenuOpen((o) => !o); setConfirmClear(false); }} aria-label="Chat options" className="w-9 h-9 rounded-full flex items-center justify-center" style={{ color: C.ink2 }}><MoreHorizontal size={20} /></button>
             {menuOpen && (
-              <div className="absolute right-0 top-10 z-20 w-64 rounded-xl p-1.5 shadow-lg" style={{ background: "#fff", border: `1px solid ${C.line}` }}>
+              <div className="absolute right-0 top-10 z-20 w-64 rounded-xl p-1.5 shadow-lg" style={{ background: C.card, border: `1px solid ${C.line}` }}>
                 {!confirmClear ? (
                   <button onClick={() => setConfirmClear(true)} className="w-full text-left text-sm rounded-lg px-3 py-2 flex items-center gap-2" style={{ color: C.dangerFg }}><Trash2 size={15} /> Clear chat</button>
                 ) : (
@@ -3987,7 +4173,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
         {msgs === null && !err && <div className="m-auto"><InlineDots color={C.ink3} /></div>}
         {err && msgs === null && <div className="m-auto text-sm text-center px-6" style={{ color: C.dangerFg }}>{err}</div>}
         {msgs !== null && all.length === 0 && (
-          <div className="m-auto text-sm text-center rounded-2xl px-4 py-3 max-w-xs" style={{ background: "#fff", color: C.ink2, border: `1px dashed ${C.line}` }}>{emptyText || "No messages yet. Say hello!"}</div>
+          <div className="m-auto text-sm text-center rounded-2xl px-4 py-3 max-w-xs" style={{ background: C.card, color: C.ink2, border: `1px dashed ${C.line}` }}>{emptyText || "No messages yet. Say hello!"}</div>
         )}
         {all.map((m, i) => {
           const day = chatDay(m.createdAt);
@@ -3999,9 +4185,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
           return (
             <React.Fragment key={m.id || i}>
               {showDay && (
-                <div className="flex items-center gap-3 my-3 text-[11px] font-medium uppercase tracking-wider" style={{ color: C.ink3 }}>
-                  <span className="flex-1 h-px" style={{ background: C.line }} />{day}<span className="flex-1 h-px" style={{ background: C.line }} />
-                </div>
+                <div className="flex justify-center my-3"><span className="rounded-full border px-3 py-0.5 text-[11px] font-medium" style={{ color: C.ink2, background: C.card, borderColor: C.line }}>{day}</span></div>
               )}
               <div className={"flex flex-col " + (lastOfGroup ? "mb-2" : "")} style={{ alignItems: isMine ? "flex-end" : "flex-start" }}>
                 <div className="max-w-[82%] md:max-w-[62%] px-3.5 pt-2 pb-1.5 text-[14.5px] leading-snug cursor-pointer select-text"
@@ -4032,7 +4216,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
                         <button key={em} onClick={() => (whos.includes(mine) ? react(m, em) : (setActionsFor(m.id), setConfirmDel(null)))}
                           title={whos.map(whoName).join(" and ") + (whos.includes(mine) ? " · tap to remove yours" : "")}
                           className="rounded-full px-1.5 h-6 text-[13px] leading-none flex items-center gap-0.5"
-                          style={{ background: "#fff", border: `1px solid ${whos.includes(mine) ? C.em : C.line}`, boxShadow: "0 1px 2px rgba(20,32,27,0.08)" }}>
+                          style={{ background: C.card, border: `1px solid ${whos.includes(mine) ? C.em : C.line}`, boxShadow: "0 1px 2px rgba(20,32,27,0.08)" }}>
                           {em}{whos.length > 1 && <span className="text-[11px]" style={{ color: C.ink2 }}>{whos.length}</span>}
                         </button>
                       ))}
@@ -4041,7 +4225,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
                 })()}
                 {actionsFor === m.id && !m.deleted && api.react && !m.pending && !m.failed && !String(m.id).startsWith("tmp") && confirmDel !== m.id && (
                   <div className="flex items-center gap-0.5 mt-1 rounded-full px-1 py-0.5" role="group" aria-label="React"
-                    style={{ background: "#fff", border: `1px solid ${C.line}`, boxShadow: "0 4px 14px rgba(20,32,27,0.12)" }}>
+                    style={{ background: C.card, border: `1px solid ${C.line}`, boxShadow: "0 4px 14px rgba(20,32,27,0.12)" }}>
                     {CHAT_REACTIONS.map((em) => (
                       <button key={em} onClick={() => react(m, em)} aria-label={"React with " + em} title={(m.reactions || {})[mine] === em ? "Remove reaction" : "React"}
                         className="w-8 h-8 rounded-full text-[18px] leading-none flex items-center justify-center"
@@ -4055,12 +4239,12 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
                       <>
                         <span className="mr-1" style={{ color: C.ink2 }}>Delete for everyone?</span>
                         <button onClick={() => deleteMsg(m)} className="rounded-full px-3 py-1 font-medium" style={{ background: C.dangerFg, color: "#fff" }}>Delete</button>
-                        <button onClick={() => setConfirmDel(null)} className="rounded-full px-3 py-1" style={{ background: "#fff", border: `1px solid ${C.line}` }}>Cancel</button>
+                        <button onClick={() => setConfirmDel(null)} className="rounded-full px-3 py-1" style={{ background: C.card, border: `1px solid ${C.line}` }}>Cancel</button>
                       </>
                     ) : (
                       <>
-                        <button onClick={() => copyMsg(m)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: "#fff", border: `1px solid ${C.line}` }}><Copy size={12} /> Copy</button>
-                        {isMine && !m.failed && !String(m.id).startsWith("tmp") && api.del && <button onClick={() => setConfirmDel(m.id)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.dangerFg }}><Trash2 size={12} /> Delete</button>}
+                        <button onClick={() => copyMsg(m)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: C.card, border: `1px solid ${C.line}` }}><Copy size={12} /> Copy</button>
+                        {isMine && !m.failed && !String(m.id).startsWith("tmp") && api.del && <button onClick={() => setConfirmDel(m.id)} className="rounded-full px-3 py-1 inline-flex items-center gap-1" style={{ background: C.card, border: `1px solid ${C.line}`, color: C.dangerFg }}><Trash2 size={12} /> Delete</button>}
                       </>
                     )}
                   </div>
@@ -4073,14 +4257,14 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
         })}
         {peerTyping && (
           <div className="flex items-center gap-2 text-xs mt-1" style={{ color: C.ink3 }}>
-            <span className="rounded-full px-3 py-2 inline-flex" style={{ background: "#fff", border: `1px solid ${C.line}` }}><InlineDots color={C.em} /></span>
+            <span className="rounded-full px-3 py-2 inline-flex" style={{ background: C.card, border: `1px solid ${C.line}` }}><InlineDots color={C.em} /></span>
             {(peerName || title || "They").split(" ")[0]} is typing
           </div>
         )}
       </div>
       {err && msgs !== null && <div className="text-xs px-4 py-1.5 shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
       {flash && <div className="text-xs px-4 py-1.5 shrink-0 text-center" style={{ background: C.side, color: "#fff" }}>{flash}</div>}
-      <div className="px-3 pt-2 pb-3 shrink-0" style={{ background: "#fff", borderTop: `1px solid ${C.line}` }}>
+      <div className="px-3 pt-2 pb-3 shrink-0" style={{ background: C.card, borderTop: `1px solid ${C.line}` }}>
         {attach && (
           <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2 text-sm" style={{ background: C.canvas }}>
             <Paperclip size={15} color={C.em} />
@@ -4092,7 +4276,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
         {emojiOpen && !rec && (
           <>
             <div className="mb-2 rounded-2xl p-2 grid gap-0.5" role="dialog" aria-label="Pick an emoji"
-              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(38px, 1fr))", maxHeight: 200, overflowY: "auto", background: "#fff", border: `1px solid ${C.line}`, boxShadow: "0 8px 24px rgba(20,32,27,0.14)" }}>
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(38px, 1fr))", maxHeight: 200, overflowY: "auto", background: C.card, border: `1px solid ${C.line}`, boxShadow: "0 8px 24px rgba(20,32,27,0.14)" }}>
               {CHAT_EMOJI.map((em) => (
                 <button key={em} onClick={() => addEmoji(em)} aria-label={em} className="h-9 rounded-lg text-[22px] leading-none flex items-center justify-center hover:bg-black/5">{em}</button>
               ))}
@@ -4103,7 +4287,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
           <div className="flex items-center gap-2">
             <button onClick={() => stopRec(true)} aria-label="Delete recording" title="Delete recording"
               className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: C.canvas, color: C.dangerFg }}><Trash2 size={18} /></button>
-            <div className="flex-1 flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 text-[15px]" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+            <div className="flex-1 flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 text-[15px]" style={{ borderColor: C.line, background: C.soft }}>
               <span className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse" style={{ background: "#D9573B" }} />
               <span className="font-medium tabular-nums" style={{ color: C.ink }}>{mmss(recSecs)}</span>
               <span className="text-sm truncate" style={{ color: C.ink2 }}>Recording… {recSecs > MAX_VOICE_SECS - 30 ? "(sends at 5:00)" : ""}</span>
@@ -4122,7 +4306,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
           <textarea ref={inputRef} value={text} rows={1} onChange={(e) => onType(e.target.value)} placeholder={attach ? "Add a caption (optional)" : "Write a message"}
             enterKeyHint={isTouchDevice() ? "enter" : "send"} onKeyDown={(e) => { if (e.key === "Escape" && emojiOpen) { setEmojiOpen(false); return; } if (enterSends(e)) { e.preventDefault(); send(); } }}
             onInput={(e) => { const el = e.target; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 120) + "px"; }}
-            className="flex-1 min-w-0 w-0 resize-none rounded-2xl border px-4 py-2.5 text-[15px] outline-none" style={{ borderColor: C.line, background: "#FAF8F3", color: C.ink, maxHeight: 120 }} />
+            className="flex-1 min-w-0 w-0 resize-none rounded-2xl border px-4 py-2.5 text-[15px] outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink, maxHeight: 120 }} />
           {canSend || !canRecord ? (
             <button onClick={() => send()} disabled={!canSend} aria-label="Send"
               className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ background: canSend ? C.em : C.line, color: "#fff" }}>
@@ -4187,7 +4371,7 @@ function ProfileHeader({ candidate, status }) {
   const idx = { "In review": 1, "With client": 2, Interview: 3, Offer: 4, Placed: 5, Hired: 5 }[status];
   const fit = Number(candidate.ai) || 0, R = 31, CIRC = 2 * Math.PI * R;
   return (
-    <div className="relative overflow-hidden rounded-2xl p-5 md:p-6" style={{ background: C.side, color: C.canvas }}>
+    <div className="relative overflow-hidden rounded-2xl p-5 md:p-6" style={{ background: C.side, color: C.onSide }}>
       <div className="absolute pointer-events-none" style={{ right: -70, top: -70, width: 230, height: 230, borderRadius: 999, background: "radial-gradient(circle, rgba(200,241,105,.14), transparent 70%)" }} />
       <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
         <div className="rounded-full shrink-0" style={{ padding: 3, background: "rgba(200,241,105,.45)", width: "fit-content" }}>
@@ -4386,8 +4570,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               onProfile={() => setPanel(null)} peerName={candidate.name}
               emptyText={"No messages yet. " + candidate.name.split(" ")[0] + " also gets an email for each message you send."}
               headerExtra={liveLinks.length > 1 ? (
-                <div className="px-3 py-2 shrink-0" style={{ background: "#fff", borderBottom: `1px solid ${C.line}` }}>
-                  <select value={msgLink.id} onChange={(e) => setMsgLinkId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#fff" }}>
+                <div className="px-3 py-2 shrink-0" style={{ background: C.card, borderBottom: `1px solid ${C.line}` }}>
+                  <select value={msgLink.id} onChange={(e) => setMsgLinkId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.card }}>
                     {liveLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
                   </select>
                 </div>
@@ -4398,18 +4582,18 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       <Modal open={!!editForm} onClose={() => setEditForm(null)} title="Edit candidate details">
         {editForm && (
           <div className="flex flex-col gap-3">
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Name</label><input value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label><input value={editForm.role} onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Location</label><input value={editForm.location} onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Name</label><input value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Role</label><input value={editForm.role} onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Location</label><input value={editForm.location} onChange={(e) => setEditForm((f) => ({ ...f, location: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label><input value={editForm.emailAddr} onChange={(e) => setEditForm((f) => ({ ...f, emailAddr: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label><input value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>LinkedIn</label><input value={editForm.linkedin} placeholder="linkedin.com/in/…" onChange={(e) => setEditForm((f) => ({ ...f, linkedin: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label><input value={editForm.emailAddr} onChange={(e) => setEditForm((f) => ({ ...f, emailAddr: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label><input value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>LinkedIn</label><input value={editForm.linkedin} placeholder="linkedin.com/in/…" onChange={(e) => setEditForm((f) => ({ ...f, linkedin: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             </div>
             <div className="grid grid-cols-3 gap-3">
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Experience</label><input value={editForm.experience} onChange={(e) => setEditForm((f) => ({ ...f, experience: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Notice</label><input value={editForm.notice} onChange={(e) => setEditForm((f) => ({ ...f, notice: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label><input value={editForm.pay} onChange={(e) => setEditForm((f) => ({ ...f, pay: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Experience</label><input value={editForm.experience} onChange={(e) => setEditForm((f) => ({ ...f, experience: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Notice</label><input value={editForm.notice} onChange={(e) => setEditForm((f) => ({ ...f, notice: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label><input value={editForm.pay} onChange={(e) => setEditForm((f) => ({ ...f, pay: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             </div>
             <Btn kind="primary" full onClick={saveEdit}>Save changes</Btn>
           </div>
@@ -4420,18 +4604,18 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
           {placementJobs.length > 0 && (
             <div>
               <label className="text-xs font-medium" style={{ color: C.ink2 }}>Role placed on</label>
-              <select value={placeJobId} onChange={(e) => { setPlaceJobId(e.target.value); const j = placementJobs.find((x) => x.id === e.target.value); const s = suggestBilling(j, candidate.pay); setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency); }} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+              <select value={placeJobId} onChange={(e) => { setPlaceJobId(e.target.value); const j = placementJobs.find((x) => x.id === e.target.value); const s = suggestBilling(j, candidate.pay); setFee(String(s.fee)); setFeeCur(s.feeCurrency); setIncentive(String(s.incentive)); setIncentiveCur(s.incentiveCurrency); }} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
                 {placementJobs.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
               </select>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={feeCur} onChange={setFeeCur} options={withValue(CURRENCY_OPTIONS, feeCur)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Client fee</label><input value={fee} onChange={(e) => setFee(e.target.value)} placeholder="e.g. 1500000" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={feeCur} onChange={setFeeCur} options={withValue(CURRENCY_OPTIONS, feeCur)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={incentiveCur} onChange={setIncentiveCur} options={withValue(CURRENCY_OPTIONS, incentiveCur)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={incentiveCur} onChange={setIncentiveCur} options={withValue(CURRENCY_OPTIONS, incentiveCur)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
           </div>
           <div className="text-xs" style={{ color: C.ink3 }}>Prefilled from this role's billing settings — edit as needed before confirming.</div>
           <Btn kind="primary" full onClick={markPlaced}>Confirm placement</Btn>
@@ -4447,7 +4631,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <div className="text-sm mb-3" style={{ color: C.ink2 }}>Pick the role. A role they're already on is marked as sent to the client; any other role is reviewed against its job description, then routed to {candidate.name.split(" ")[0]} to accept.</div>
               <div className="flex flex-col gap-2 mb-4">
                 {S.jobs.filter((j) => j.status !== "Closed" && (takesCandidates(j) || candidate.jobLinks.some((x) => x.jobId === j.id))).map((j) => { const l = candidate.jobLinks.find((x) => x.jobId === j.id); return (
-                  <button key={j.id} onClick={() => setFwd(j.id)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between gap-2" style={{ borderColor: fwd === j.id ? C.em : C.line, background: fwd === j.id ? C.emTint : "#fff" }}>
+                  <button key={j.id} onClick={() => setFwd(j.id)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between gap-2" style={{ borderColor: fwd === j.id ? C.em : C.line, background: fwd === j.id ? C.emTint : C.card }}>
                     <span>{j.role}, {j.client}</span>
                     {l && <span className="text-xs shrink-0" style={{ color: C.ink2 }}>{l.response === "pending" ? "routed, waiting" : l.response === "declined" ? "declined" : "on this role"}</span>}
                   </button>
@@ -4497,7 +4681,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <div className="relative flex-1 sm:flex-none">
                 <Btn kind="primary" className="w-full justify-center" onClick={() => setMenuOpen((m) => !m)}>Update status</Btn>
                 {menuOpen && (
-                  <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-56 py-1" style={{ background: "#fff", borderColor: C.line }}>
+                  <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-56 py-1" style={{ background: C.card, borderColor: C.line }}>
                     {["Hold", "Approve, forward to client", "Not a fit for this role", "Mark placed", ["With client", "Interview", "Offer"].includes(status) ? "Client reject" : "Reject"].map((o) => (
                       <button key={o} onClick={() => doStatus(o)} className="w-full text-left px-3.5 py-2.5 text-sm" style={{ color: o === "Reject" || o === "Client reject" ? C.dangerFg : C.ink }}>{o}</button>
                     ))}
@@ -4550,7 +4734,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                   <>
                     <Download size={15} color={C.em} className="shrink-0" />
                     <button type="button" onClick={() => S.openResume(candidate.cv)} className="text-sm font-medium" style={{ color: C.em }} title={candidate.cvName || "Resume"}>View resume</button>
-                    <button type="button" aria-label="Remove resume" title="Remove resume" onClick={() => setResumeDel(true)} className="w-6 h-6 rounded-full border flex items-center justify-center" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={11} strokeWidth={2.5} /></button>
+                    <button type="button" aria-label="Remove resume" title="Remove resume" onClick={() => setResumeDel(true)} className="w-6 h-6 rounded-full border flex items-center justify-center" style={{ borderColor: C.line, color: C.ink2, background: C.card }}><X size={11} strokeWidth={2.5} /></button>
                   </>
                 ) : (
                   <label className="inline-flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-lg border border-dashed cursor-pointer" style={{ borderColor: "#BFB9AB", color: C.ink }}>
@@ -4662,7 +4846,7 @@ function verdictWhy(ai) {
 // A section of the card that folds away to one line.
 function Fold({ title, count, pill, sub, open, onToggle, children }) {
   return (
-    <div className="rounded-xl" style={{ background: "#fff" }}>
+    <div className="rounded-xl" style={{ background: C.card }}>
       <button type="button" onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-2 px-3.5 py-3 text-left flex-wrap">
         <span className="text-sm font-semibold">{title}</span>
         {count && <span className="text-xs" style={{ color: C.ink3 }}>{count}</span>}
@@ -4709,7 +4893,7 @@ function CompanyScreeningCards({ candidate, S, toast }) {
               <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: C.canvas }}>{e.company[0]}</div>
               <div className="flex-1 min-w-0"><div className="font-medium text-sm">{e.company}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.role}</div></div>
               <div className="text-right shrink-0"><StatusPill status={e.status} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>{e.next}</div></div>
-              {S.role !== "recruiter" && e.id && <button type="button" title="Remove this submission" aria-label={"Remove the " + e.company + " submission"} onClick={() => S.deleteEndorsement(e.id).then(() => toast("Submission removed")).catch(() => {})} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={14} /></button>}
+              {S.role !== "recruiter" && e.id && <button type="button" title="Remove this submission" aria-label={"Remove the " + e.company + " submission"} onClick={() => S.deleteEndorsement(e.id).then(() => toast("Submission removed")).catch(() => {})} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: C.card }}><X size={14} /></button>}
             </div>
           ))}
         </div>
@@ -4735,7 +4919,7 @@ function ClientLinkBox({ link, job, candidate, S, toast }) {
       .finally(() => setBusy(false));
   };
   return (
-    <div className="rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ background: "#fff" }}>
+    <div className="rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ background: C.card }}>
       <div className="flex-1 text-sm">
         <div className="font-medium">Blind profile for {job.client}</div>
         <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>
@@ -4823,11 +5007,11 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const removeSaved = (i) => saveFollow("remove", f.questions.filter((_, k) => k !== i).map((x) => ({ q: x.q, a: x.a || "" })), () => "Question removed. It won't be suggested again");
   const discardAll = () => saveFollow("discard", [], () => "Follow-up questions removed. They won't be suggested again");
   const xBtn = (onClick, label) => (
-    <button type="button" aria-label={label} title={label} onClick={onClick} disabled={!!busy} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={12} strokeWidth={2.5} /></button>
+    <button type="button" aria-label={label} title={label} onClick={onClick} disabled={!!busy} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: C.card }}><X size={12} strokeWidth={2.5} /></button>
   );
   const appQs = job.screeningQuestions || [];
   const answered = appQs.filter((_, i) => String(link.screeningAnswers[i] || "").trim()).length;
-  const box = { background: "#fff" };
+  const box = { background: C.card };
   // Question sections start folded; the follow-up opens itself when it needs someone to act.
   const [showApp, setShowApp] = useState(false);
   const [showFollow, setShowFollow] = useState(null);
@@ -4842,9 +5026,9 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
     { key: "preferred", label: "NICE TO HAVE", note: "never a reason to reject", items: reqs.filter((r) => r.type !== "must") },
   ].filter((g) => g.items.length);
   return (
-    <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, background: "#F6F3EC" }}>
+    <div className="rounded-xl border overflow-hidden" style={{ borderColor: C.line, background: C.soft }}>
       <button type="button" onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
-        <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: "#fff" }}>{group.company[0]}</div>
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ background: C.card }}>{group.company[0]}</div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold truncate">{group.company}</div>
           <div className="text-xs truncate" style={{ color: C.ink2 }}>{group.items.map((x) => x.job.role).join(", ")} · {f && f.state === "sent" ? "Questions sent, waiting for " + first + "'s answers" : status}</div>
@@ -4857,14 +5041,14 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
         <div className="px-4 pb-4 flex flex-col gap-3.5">
           {group.items.length > 1 && <Tabs tabs={group.items.map((x, i) => ({ key: i, label: x.job.role }))} active={idx} setActive={setIdx} />}
           {link.reject && (
-            <div className="rounded-lg px-3 py-2.5 text-sm flex flex-col gap-1" style={{ background: C.dangerBg, color: "#8E3320" }}>
+            <div className="rounded-lg px-3 py-2.5 text-sm flex flex-col gap-1" style={{ background: C.dangerBg, color: C.dangerText }}>
               <div className="font-semibold">{link.reject.kind === "client" ? "Rejected by the client" : "Rejected"}: {REJECT_LABEL[link.reject.reason] || link.reject.reason}{link.reject.at ? " · " + fdate(link.reject.at) : ""}{link.reject.by ? " by " + link.reject.by : ""}</div>
-              {link.reject.feedback && <div style={{ color: C.ink }}><span style={{ color: "#8E3320" }}>Feedback (internal): </span>{link.reject.feedback}</div>}
+              {link.reject.feedback && <div style={{ color: C.ink }}><span style={{ color: C.dangerText }}>Feedback (internal): </span>{link.reject.feedback}</div>}
               {link.reject.message && <div style={{ color: C.ink2 }}>Told {first}: “{link.reject.message}”</div>}
             </div>
           )}
           {pending && (
-            <div className="rounded-lg px-3 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}>
+            <div className="rounded-lg px-3 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: C.warnText }}>
               <span className="flex-1">Routed to {job.role}. Waiting for {first} to accept on their candidate page; the full screening runs as soon as they do.{ai.stage ? " Below is the fit review against this job's description." : ""}</span>
               {staff && <Btn onClick={() => setWithdrawOpen(true)} disabled={!!busy} className="shrink-0">Withdraw</Btn>}
             </div>
@@ -4968,7 +5152,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
                       <div className="flex-1 min-w-0">
                         <div className="text-sm font-medium">{i + 1}. {x.q}</div>
                         <textarea value={x.a} onChange={(ev) => setAnswering(answering.map((y, k) => (k === i ? { ...y, a: ev.target.value } : y)))} rows={2} placeholder={first + "'s answer"}
-                          className="w-full mt-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }} aria-label={"Answer to question " + (i + 1)} />
+                          className="w-full mt-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: C.soft }} aria-label={"Answer to question " + (i + 1)} />
                       </div>
                       {xBtn(() => setAnswering(answering.filter((_, k) => k !== i)), "Remove question")}
                     </div>
@@ -4983,8 +5167,8 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
                 <>
                   {qList.map((q, i) => (
                     <div key={i} className="flex gap-2 items-start">
-                      <textarea value={q} onChange={(ev) => setQ(i, ev.target.value)} rows={2} className="flex-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }} aria-label={"Question " + (i + 1)} />
-                      <button type="button" aria-label="Remove question" onClick={() => setDrafts(qList.filter((_, k) => k !== i))} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: "#fff" }}><X size={12} strokeWidth={2.5} /></button>
+                      <textarea value={q} onChange={(ev) => setQ(i, ev.target.value)} rows={2} className="flex-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: C.soft }} aria-label={"Question " + (i + 1)} />
+                      <button type="button" aria-label="Remove question" onClick={() => setDrafts(qList.filter((_, k) => k !== i))} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: C.card }}><X size={12} strokeWidth={2.5} /></button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2 flex-wrap">
@@ -5080,8 +5264,8 @@ function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose,
       .catch(() => {}).finally(() => setBusy(""));
   };
   const ta = "w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none";
-  const taS = { borderColor: C.line, background: "#FAF8F3" };
-  const pill = (on, label, onClick) => <button key={label} type="button" aria-pressed={on} onClick={onClick} className="rounded-full px-3 py-1.5 text-sm" style={on ? { background: C.ink, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: "#fff" }}>{label}</button>;
+  const taS = { borderColor: C.line, background: C.soft };
+  const pill = (on, label, onClick) => <button key={label} type="button" aria-pressed={on} onClick={onClick} className="rounded-full px-3 py-1.5 text-sm" style={on ? { background: C.solid, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: C.card }}>{label}</button>;
   return (
     <Modal open onClose={onClose} title={(kind === "client" ? "Client reject · " : "Reject · ") + candidate.name} wide>
       <div className="flex flex-col gap-4">
@@ -5311,7 +5495,7 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
           <div className="flex flex-col gap-2">
             <div className="text-xs font-semibold" style={{ color: C.ink3 }}>QUESTIONS TO CONFIRM THE FIT · {chosen.length} selected</div>
             {allQs.map((x, i) => (
-              <label key={i} className="flex gap-2.5 items-start rounded-lg border px-3 py-2.5 cursor-pointer" style={{ borderColor: C.line, background: on[i] ? "#fff" : "#FAF8F3" }}>
+              <label key={i} className="flex gap-2.5 items-start rounded-lg border px-3 py-2.5 cursor-pointer" style={{ borderColor: C.line, background: on[i] ? C.card : C.soft }}>
                 <input type="checkbox" checked={!!on[i]} onChange={() => toggle(i)} className="mt-1" />
                 <div className="flex-1 text-sm">
                   <div className="flex items-start gap-2 flex-wrap">
@@ -5324,7 +5508,7 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
               </label>
             ))}
             <div className="flex gap-2 items-start">
-              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Add your own question" aria-label="Add your own question" className="flex-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} placeholder="Add your own question" aria-label="Add your own question" className="flex-1 text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: C.soft }} />
               <Btn onClick={addQ} disabled={!draft.trim()}>Add</Btn>
             </div>
           </div>
@@ -5409,7 +5593,7 @@ function MatchesCard({ candidate, S, toast }) {
       {others.length > 0 && (
         <div className="pt-2.5" style={{ borderTop: rows.length ? `1px solid ${C.line}` : "none" }}>
           <select value="" onChange={(e) => { const j = S.jobs.find((x) => x.id === e.target.value); if (j) setReviewJob(j); }} aria-label="Review fit for another open job"
-            className="w-full text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+            className="w-full text-sm rounded-lg border px-2.5 py-2" style={{ borderColor: C.line, background: C.soft }}>
             <option value="">Review fit for another open job…</option>
             {others.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
           </select>
@@ -5575,7 +5759,7 @@ const assignableStaff = (S) => (S.users || []).filter((u) => u.status === "Activ
 const STAFF_ROLE = { recruiter: "Recruiter", recops: "Rec Ops", admin: "Admin" };
 function StaffSelect({ S, value, onChange, placeholder, exclude }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: C.soft }}>
       <option value="">{placeholder}</option>
       {assignableStaff(S).filter((u) => u.id !== exclude).map((u) => <option key={u.id} value={u.id}>{u.name} · {STAFF_ROLE[u.roleKey] || u.role}</option>)}
     </select>
@@ -5720,8 +5904,9 @@ function InboxPage({ toast, S }) {
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <SectionTitle size="text-3xl md:text-4xl" title="Inbox"
-          sub={fresh.length ? `${fresh.length} new application${fresh.length > 1 ? "s" : ""} waiting for a recruiter.` : "No new applications. Share a job's apply link to get some."} />
-        <Btn icon={Send} onClick={() => setLinksOpen(true)}>Apply links</Btn>
+          sub={fresh.length ? `${fresh.length} new application${fresh.length > 1 ? "s" : ""} waiting for a recruiter.` : "No new applications. Share a job's apply link to get some."}
+          live={[{ n: S.inbox.filter((x) => Date.now() - x.at < 864e5).length, label: "today", tone: "em" }, { n: S.inbox.filter((x) => x.status === "new" && Date.now() - x.at > 2 * 864e5).length, label: "waiting over 2 days", tone: "warn" }, { n: S.inbox.filter((x) => Date.now() - x.at < 7 * 864e5).length, label: "this week" }]} />
+        <Btn icon={Share2} onClick={() => setLinksOpen(true)}>Apply links</Btn>
       </div>
       <Card>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -5791,13 +5976,14 @@ function MessagesPage({ toast, S }) {
   const fullHeightStyle = { height: "calc(100vh - 190px)", minHeight: 420 };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
-      {!openId && <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Conversations you've actually started, by role." />}
+      {!openId && <SectionTitle size="text-3xl md:text-4xl" title="Messages" sub="Conversations you've actually started, by role."
+        live={[{ n: allThreads.reduce((a, t) => a + (t.unread || 0), 0), label: "unread", tone: "em" }, { n: allThreads.filter((t) => t.last && t.last.sender === "candidate" && Date.now() - t.last.at > 864e5).length, label: "waiting on a reply for over a day", tone: "warn" }]} />}
       <div className="flex flex-col md:flex-row gap-5 md:gap-6">
         <Card className={(openId ? "hidden md:flex md:flex-col md:-mb-24 " : "") + "md:w-80 shrink-0 !p-0 overflow-hidden"} style={openId ? fullHeightStyle : {}}>
           <div className="p-3.5 flex flex-col gap-2.5 shrink-0" style={{ borderBottom: `1px solid ${C.line}` }}>
             <div className="flex items-center gap-2">
               <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
-              <button onClick={() => setComposeOpen(true)} title="New message" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.side, color: "#fff" }}><Plus size={16} /></button>
+              <button onClick={() => setComposeOpen(true)} title="New message" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.solid, color: "#fff" }}><Plus size={16} /></button>
             </div>
             <div><FilterPill label="Job" value={jobFilter} onChange={setJobFilter} searchable options={S.jobs.map((j) => ({ value: j.id, label: j.role + " · " + j.client, count: allThreads.filter((t) => t.hasMsgs && t.job && t.job.id === j.id).length }))} /></div>
           </div>
@@ -5924,13 +6110,13 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {job.status !== "Closed" && <Btn icon={Sparkles} onClick={() => askAssistant("Close this role: what's really blocking " + job.role + " at " + job.client + ", and what should we do this week to get a hire?", { jobId: job.id })} title="The assistant reviews this role and proposes what to do">Close with AI</Btn>}
-            <Btn icon={Upload} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job) || !onWorklist(S, job)} title={!takesCandidates(job) ? "This role isn't taking new candidates" : !onWorklist(S, job) ? "Engage first: the role goes on your worklist, then you can submit candidates" : ""}>Add candidate</Btn>
+            <Btn icon={UserPlus} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job) || !onWorklist(S, job)} title={!takesCandidates(job) ? "This role isn't taking new candidates" : !onWorklist(S, job) ? "Engage first: the role goes on your worklist, then you can submit candidates" : ""}>Add candidate</Btn>
             {!myOpenEngagement && <Btn kind="primary" onClick={engage} disabled={busy || job.status === "Closed"}>Engage</Btn>}
             {S.role !== "recruiter" && (
               <div className="relative">
                 <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
                 {menuOpen && (
-                  <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-48 py-1" style={{ background: "#fff", borderColor: C.line }}>
+                  <div className="absolute right-0 top-11 rounded-xl border shadow-lg z-10 w-48 py-1" style={{ background: C.card, borderColor: C.line }}>
                     {JOB_STATUSES.map((o) => (
                       <button key={o} onClick={() => { setStatus(o); setMenuOpen(false); }} disabled={o === job.status && o !== "On hold"} className="w-full text-left px-3.5 py-2.5 text-sm flex items-center justify-between" style={{ color: o === job.status && o !== "On hold" ? C.ink3 : C.ink }}>
                         <span>{o === "Open" && job.status !== "Open" && job.status !== "Draft" ? "Reopen" : o === "On hold" && job.status === "On hold" ? "Edit hold" : o === "On hold" ? "Put on hold" : o}</span>{o === job.status && <Check size={14} />}
@@ -5955,7 +6141,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           {engagedPeople.length > 0 && <span title={engagedPeople.join(", ")}><Pill tone="neutral">{engagedPeople.length} {engagedPeople.length === 1 ? "person" : "people"} engaged</Pill></span>}
         </div>
         {job.status === "On hold" && (
-          <div className="rounded-lg px-3 py-2.5 mb-4 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}>
+          <div className="rounded-lg px-3 py-2.5 mb-4 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: C.warnText }}>
             <span className="flex-1"><b>{holdText(job)}.</b> Recruiters can't add or route new candidates until it's reopened{job.holdUntil ? " (it reopens by itself on that date)" : ""}. Candidates already on it carry on as normal.{job.heldBy ? " Put on hold by " + job.heldBy + (job.heldAt ? " " + ago(job.heldAt) : "") + "." : ""}</span>
             {S.role !== "recruiter" && <Btn onClick={() => setStatus("Open")} className="shrink-0">Reopen</Btn>}
           </div>
@@ -6107,9 +6293,9 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           <div className="flex flex-col gap-3">
             <div className="text-sm" style={{ color: C.ink2 }}>While it's on hold, no one can add, route or resubmit new candidates to {job.role}, and its public page stops taking applications. Candidates already on it carry on: interviews, offers and status changes still work.</div>
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Why (optional, everyone on the team sees it)</label>
-              <input value={hold.reason} onChange={(e) => setHold({ ...hold, reason: e.target.value })} placeholder="e.g. Client reviewing the shortlist" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+              <input value={hold.reason} onChange={(e) => setHold({ ...hold, reason: e.target.value })} placeholder="e.g. Client reviewing the shortlist" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Reopen automatically on (optional)</label>
-              <input type="date" value={hold.until || ""} min={ymdToday()} onChange={(e) => setHold({ ...hold, until: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <input type="date" value={hold.until || ""} min={ymdToday()} onChange={(e) => setHold({ ...hold, until: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
               <div className="text-xs mt-1" style={{ color: C.ink3 }}>Leave empty to keep it on hold until someone reopens it.</div></div>
             <Btn kind="primary" full onClick={saveHold} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : job.status === "On hold" ? "Save" : "Put on hold"}</Btn>
           </div>
@@ -6118,7 +6304,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
       <Modal open={reasonOpen} onClose={() => setReasonOpen(false)} title="Disengage from this role">
         <div className="flex flex-col gap-3">
           <div className="text-sm" style={{ color: C.ink2 }}>A short reason helps admin see why recruiters step back from a role.</div>
-          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="e.g. Client paused the search, or reassigned to another role" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} placeholder="e.g. Client paused the search, or reassigned to another role" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           <Btn kind="primary" full onClick={confirmDisengage} disabled={busy}>{busy ? <>Disengaging <InlineDots color="#fff" /></> : "Disengage"}</Btn>
         </div>
       </Modal>
@@ -6135,6 +6321,48 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
 }
 
 /* Jobs + Post a job + Promote */
+// A job's health: stuck (nothing moved for 7+ days), slowing (no new candidate for 4+ days), else healthy.
+// Only open jobs get a health; others return { key: "" }.
+function jobHealth(j, S) {
+  if (j.status !== "Open") return { key: "" };
+  const links = S.cands.flatMap((c) => (c.jobLinks || []).filter((l) => l.jobId === j.id));
+  const lastAdd = Math.max(j.createdAt || 0, ...links.map((l) => l.createdAt || 0));
+  const lastMove = Math.max(lastAdd, ...links.map((l) => l.submittedAt || 0), ...S.cands.filter((c) => (c.jobLinks || []).some((l) => l.jobId === j.id)).map((c) => c.updatedAt || 0));
+  const days = (t) => Math.floor((Date.now() - t) / 864e5);
+  if (days(j.createdAt || Date.now()) >= 7 && days(lastMove) >= 7) return { key: "stuck", label: "Stuck", tone: "danger", why: "Nothing moved in " + days(lastMove) + " days" };
+  if (days(j.createdAt || Date.now()) >= 4 && days(lastAdd) >= 4) return { key: "slow", label: "Slowing", tone: "warn", why: "No new candidates in " + days(lastAdd) + " days" };
+  return { key: "ok", label: "Healthy", tone: "em", why: lastMove ? "Last activity " + (days(lastMove) ? days(lastMove) + " days ago" : "today") : "" };
+}
+// One job as a card: where its candidates are (a bar from added → submitted → interview → offer),
+// how long it's been open, who's on it, and its health (open jobs only).
+function JobCard({ j, S, mine, onOpen, onShare }) {
+  const links = S.cands.flatMap((c) => (c.jobLinks || []).filter((l) => l.jobId === j.id && l.response !== "declined"));
+  const live = links.filter((l) => !["Rejected", "Withdrawn"].includes(l.stage));
+  const n = { added: live.length, submitted: live.filter((l) => l.submittedAt || ["Submitted", "Interview", "Offer", "Placed"].includes(l.stage)).length,
+    interview: live.filter((l) => ["Interview", "Offer", "Placed"].includes(l.stage)).length, offer: live.filter((l) => ["Offer", "Placed"].includes(l.stage)).length };
+  const h = jobHealth(j, S);
+  const seg = (v, col) => (n.added ? <i key={col} className="block h-full" style={{ width: (v / n.added) * 100 + "%", background: col }} /> : null);
+  return (
+    <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift relative rounded-2xl border p-4 cursor-pointer flex flex-col" style={{ borderColor: C.line, background: C.card }}>
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0"><div className="font-medium truncate" title={j.role}>{j.role}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div></div>
+        {h.key ? <span title={h.why}><Pill tone={h.tone}>{h.label}</Pill></span> : <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>}
+      </div>
+      <div className="flex h-2 rounded-full overflow-hidden mt-4 mb-1.5" style={{ background: C.neutralBg }} aria-hidden="true">
+        {[seg(n.added - n.submitted, "#C9D8CF"), seg(n.submitted - n.interview, "#6FA88A"), seg(n.interview - n.offer, C.em), seg(n.offer, C.lime)]}
+      </div>
+      <div className="flex justify-between text-[11px]" style={{ color: C.ink3, fontVariantNumeric: "tabular-nums" }}><span>{n.added} added</span><span>{n.submitted} submitted</span><span>{n.interview} interview</span><span>{n.offer} offer</span></div>
+      <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+        <div className="text-xs min-w-0 truncate" style={{ color: C.ink2 }}>Open {j.days}d{h.why ? " · " + h.why.toLowerCase() : ""}</div>
+        <div className="flex items-center gap-2 shrink-0">
+          {j.recruiters.length > 0 && <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.slice(0, 3).map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={22} />)}</div>}
+          {mine && <span className="text-[11px] font-semibold" style={{ color: C.em }}>You</span>}
+          <button type="button" onClick={(e) => { e.stopPropagation(); onShare(); }} className="text-xs font-medium" style={{ color: C.em }}>Share</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const [q, setQ] = useState("");
   const gq = (S.query || "").toLowerCase();
@@ -6147,30 +6375,18 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="All roles" sub="Every role has its own unique link." />
+        <SectionTitle size="text-3xl md:text-4xl" title="All roles" sub="Every role has its own unique link."
+          live={[{ n: S.jobs.filter((j) => j.status === "Open").length, label: "open", tone: "em" }, { n: S.jobs.filter((j) => jobHealth(j, S).key === "stuck").length, label: "stuck", tone: "danger" }, { n: S.jobs.filter((j) => jobHealth(j, S).key === "slow").length, label: "slowing", tone: "warn" }]} />
         <Btn kind="primary" icon={Plus} onClick={() => setPage("postJob")}>Post a job</Btn>
       </div>
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
         <div className="mb-3 flex w-full sm:w-72"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
-        <DataTable
-          rows={filtered}
-          onRowClick={(j) => onOpenJob(j.id)}
-          columns={[
-            { key: "role", label: "ROLE", render: (j) => <div><div className="font-medium">{j.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{j.client}</div></div> },
-            { key: "recruiters", label: "ENGAGED", render: (j) => j.recruiters.length ? <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={26} />)}</div> : <span className="text-xs" style={{ color: C.ink3 }}>None yet</span> },
-            { key: "submitted", label: "SUBMITTED", render: (j) => j.submitted },
-            { key: "interview", label: "INTERVIEW", render: (j) => j.interview },
-            { key: "days", label: "DAYS", render: (j) => `${j.days}d` },
-            { key: "status", label: "STATUS", render: (j) => (
-              <div className="flex items-center gap-2">
-                <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>
-                {mine(j) && <Pill tone="em">You're engaged</Pill>}
-                <button onClick={(e) => { e.stopPropagation(); onPromote(j.id); }} className="text-xs" style={{ color: C.em }}>Share</button>
-              </div>
-            ) },
-          ]}
-        />
+        {filtered.length ? (
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
+            {filtered.map((j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
+          </div>
+        ) : <EmptyState title={q || gq ? "No roles match your search" : "No roles here yet"} text={q || gq ? "Try another search or tab." : "Post a job to start finding candidates."} action={q || gq ? null : "Post a job"} onAction={() => setPage("postJob")} />}
       </Card>
     </div>
   );
@@ -6253,7 +6469,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     setImportBusy(false);
   };
   const inp = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
-  const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
+  const inpStyle = { borderColor: C.line, background: C.soft };
   const publish = (status) => {
     if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
     const id = uid();
@@ -6302,7 +6518,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <Card className="md:col-span-2 flex flex-col gap-4">
           <div>
-            <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed py-5 cursor-pointer text-center" style={{ borderColor: "#D5D2C7", background: "#FAF8F3" }}>
+            <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed py-5 cursor-pointer text-center" style={{ borderColor: C.line2, background: C.soft }}>
               <Upload size={18} color={C.ink2} />
               <div className="text-sm font-medium">{importBusy ? <>Reading file <InlineDots /></> : "Upload a job brief (optional)"}</div>
               <div className="text-xs" style={{ color: C.ink3 }}>PDF, Word, text or photo — AI fills in the fields below for you to check</div>
@@ -6380,7 +6596,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
           <div>
             <div className="flex items-center justify-between gap-2">
               <label className="text-xs font-medium" style={{ color: C.ink2 }}>Job description</label>
-              <button type="button" onClick={runRedraft} disabled={aiBusy} className="inline-flex items-center gap-1 text-xs font-medium rounded-lg px-2.5 py-1.5 border" style={{ borderColor: C.em, color: C.em, background: "#fff", opacity: aiBusy ? 0.6 : 1 }}><Sparkles size={13} />{aiBusy ? <>Redrafting <InlineDots /></> : "AI redraft for SEO"}</button>
+              <button type="button" onClick={runRedraft} disabled={aiBusy} className="inline-flex items-center gap-1 text-xs font-medium rounded-lg px-2.5 py-1.5 border" style={{ borderColor: C.em, color: C.em, background: C.card, opacity: aiBusy ? 0.6 : 1 }}><Sparkles size={13} />{aiBusy ? <>Redrafting <InlineDots /></> : "AI redraft for SEO"}</button>
             </div>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Describe the role, responsibilities, and what success looks like..." className={inp} style={inpStyle} />
             {seo && !draftAi && <div className="text-xs mt-1.5" style={{ color: C.em }}>SEO version applied · {(seo.keywords || []).length} search keywords will be saved with this job.</div>}
@@ -6388,7 +6604,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
               <div className="mt-3 rounded-xl border p-4 flex flex-col gap-3" style={{ borderColor: C.em, background: "#F4FAF6" }}>
                 <div className="flex items-center justify-between gap-2"><div className="text-sm font-medium">AI redraft</div><Pill tone="em">Review before using</Pill></div>
                 <div><div className="text-xs" style={{ color: C.ink3 }}>Title</div><div className="text-sm font-medium">{draftAi.title}</div></div>
-                <div><div className="text-xs" style={{ color: C.ink3 }}>Description</div><div className="text-sm whitespace-pre-wrap overflow-y-auto mt-1 rounded-lg p-3" style={{ maxHeight: 320, background: "#fff", border: `1px solid ${C.line}`, color: C.ink2 }}>{draftAi.description}</div></div>
+                <div><div className="text-xs" style={{ color: C.ink3 }}>Description</div><div className="text-sm whitespace-pre-wrap overflow-y-auto mt-1 rounded-lg p-3" style={{ maxHeight: 320, background: C.card, border: `1px solid ${C.line}`, color: C.ink2 }}>{draftAi.description}</div></div>
                 {draftAi.meta_description && <div><div className="text-xs" style={{ color: C.ink3 }}>Search result snippet</div><div className="text-sm" style={{ color: C.ink2 }}>{draftAi.meta_description}</div></div>}
                 {(draftAi.keywords || []).length > 0 && <div className="flex flex-wrap gap-1.5">{draftAi.keywords.map((k) => <Pill key={k} tone="neutral">{k}</Pill>)}</div>}
                 <div className="flex flex-wrap gap-2"><Btn kind="primary" onClick={useRedraft}>Use this version</Btn><Btn onClick={runRedraft}>Try again</Btn><Btn onClick={() => setDraftAi(null)}>Discard</Btn></div>
@@ -6522,7 +6738,7 @@ const SHARE_CHANNELS = [
   { key: "whatsapp", name: "WhatsApp", tone: { bg: "#DDF3E4", fg: "#1B7A43" }, tag: "W", url: (u, t) => "https://wa.me/?text=" + encodeURIComponent(t + "\n\n" + u) },
   { key: "x", name: "X (Twitter)", tone: { bg: "#ECECEC", fg: "#111" }, tag: "X", url: (u, t) => "https://twitter.com/intent/tweet?text=" + encodeURIComponent(t.split("\n")[0]) + "&url=" + encodeURIComponent(u) },
   { key: "telegram", name: "Telegram", tone: { bg: "#E1F1FB", fg: "#1C7FB8" }, tag: "T", url: (u, t) => "https://t.me/share/url?url=" + encodeURIComponent(u) + "&text=" + encodeURIComponent(t) },
-  { key: "email", name: "Email", tone: { bg: "#F3EFE6", fg: "#6B4E1F" }, tag: "@", url: (u, t, title) => "mailto:?subject=" + encodeURIComponent("Job: " + title) + "&body=" + encodeURIComponent(t + "\n\n" + u) },
+  { key: "email", name: "Email", tone: { bg: C.soft, fg: "#6B4E1F" }, tag: "@", url: (u, t, title) => "mailto:?subject=" + encodeURIComponent("Job: " + title) + "&body=" + encodeURIComponent(t + "\n\n" + u) },
   { key: "instagram", name: "Instagram", tone: { bg: "#FBE7EF", fg: "#B5306B" }, tag: "IG", copyOnly: true, hint: "Copies the post and link. Paste it into your story (link sticker) or bio." },
 ];
 const SHARE_LABEL = Object.fromEntries(SHARE_CHANNELS.map((c) => [c.key, c.name]));
@@ -6561,7 +6777,7 @@ function PromoteModal({ open, onClose, jobTitle: jobRef, toast, S }) {
       {!job || !live ? (
         <div>
           <div className="text-sm mb-2" style={{ color: C.ink2 }}>{job && !live ? job.role + " isn't open, so it has no public page to share. Pick an open role:" : "Pick an open role to share:"}</div>
-          <select value={pick} onChange={(e) => setPick(e.target.value)} className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+          <select value={pick} onChange={(e) => setPick(e.target.value)} className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
             <option value="">Choose a role…</option>
             {openJobs.map((j) => <option key={j.id} value={j.id}>{j.role}</option>)}
           </select>
@@ -6572,7 +6788,7 @@ function PromoteModal({ open, onClose, jobTitle: jobRef, toast, S }) {
           <div className="text-sm font-medium">{job.role}</div>
           <div className="text-xs mb-3" style={{ color: C.ink2 }}>The client is never named. Each platform gets its own link, so you can see where views and applications come from.</div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Post (edit before sharing)</label>
-          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           <div className="flex flex-col gap-2 mb-3">
             {SHARE_CHANNELS.map((ch) => { const u = shareUrl(job, ch.key), st = statFor(ch.key); return (
               <div key={ch.key} className="flex items-center gap-3 rounded-xl border p-2.5" style={{ borderColor: C.line }}>
@@ -6695,8 +6911,8 @@ function clashesOf(list) {
   return out;
 }
 function ivTone(iv, clash) {
-  if (iv.status !== "scheduled" || iv.end < Date.now()) return { bg: "#EFEBE1", fg: "#3E4742", border: "transparent" };
-  const base = iv.confirmed ? { bg: C.emTint, fg: "#14503C" } : { bg: C.warnBg, fg: "#7A4B05" };
+  if (iv.status !== "scheduled" || iv.end < Date.now()) return { bg: C.neutralBg, fg: "#3E4742", border: "transparent" };
+  const base = iv.confirmed ? { bg: C.emTint, fg: C.emText } : { bg: C.warnBg, fg: C.warnText };
   return { ...base, border: clash ? C.dangerFg : "transparent" };
 }
 
@@ -6706,7 +6922,7 @@ function GoogleChip({ S }) {
   if (!st || st.error) return null;
   const ok = st.connected && !st.lastError;
   return (
-    <button onClick={() => S.goProfile && S.goProfile("calendar")} className="flex items-center gap-2 rounded-xl border px-3 py-2 text-xs md:text-sm" style={{ borderColor: C.line, background: "#fff", color: C.ink }}>
+    <button onClick={() => S.goProfile && S.goProfile("calendar")} className="flex items-center gap-2 rounded-xl border px-3 py-2 text-xs md:text-sm" style={{ borderColor: C.line, background: C.card, color: C.ink }}>
       <span className="w-2 h-2 rounded-full" style={{ background: ok ? C.em : st.connected ? C.dangerFg : "#B9B5AA" }} />
       {st.connected ? (st.lastError ? "Google Calendar needs attention" : "Google Calendar connected") : "Connect Google Calendar"}
     </button>
@@ -6714,6 +6930,9 @@ function GoogleChip({ S }) {
 }
 
 // Week grid: the viewer's own time zone; overlapping interviews sit side by side.
+// One colour per recruiter on the calendar (stable: by their id).
+const REC_COLORS = ["#1F6F54", "#3B4BB8", "#A5670A", "#B8432A", "#7A4FD6", "#0E7C86", "#B5306B"];
+const recColor = (id) => { let h = 0; for (const ch of String(id || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return REC_COLORS[h % REC_COLORS.length]; };
 function WeekGrid({ days, list, clash, onOpen }) {
   const HOUR = 52;
   const inDay = (d) => list.filter((iv) => ymdIn(iv.start, MY_TZ) === d.ymd);
@@ -6742,7 +6961,7 @@ function WeekGrid({ days, list, clash, onOpen }) {
           {days.map((d) => {
             const items = inDay(d); const { pos, n } = lay(items);
             return (
-              <div key={d.ymd} className="relative" style={{ borderLeft: `1px solid #EFEBE1`, background: d.ymd === todayYmd ? "#FBFAF6" : "transparent" }}>
+              <div key={d.ymd} className="relative" style={{ borderLeft: `1px solid #EFEBE1`, background: d.ymd === todayYmd ? C.soft : "transparent" }}>
                 {hours.map((h, i) => <div key={h} className="absolute left-0 right-0" style={{ top: i * HOUR, borderTop: i ? "1px dashed #F0ECE3" : "none" }} />)}
                 {d.ymd === todayYmd && nz.h >= from && nz.h < to && <div className="absolute left-0 right-0" style={{ top: ((nz.h - from) * 60 + nz.min) * HOUR / 60, height: 2, background: C.dangerFg, zIndex: 2 }} />}
                 {items.map((iv) => {
@@ -6750,7 +6969,7 @@ function WeekGrid({ days, list, clash, onOpen }) {
                   const t = ivTone(iv, clash.has(iv.id)); const w = 100 / n;
                   return (
                     <button key={iv.id} onClick={() => onOpen(iv)} title={iv.title} className="absolute rounded-lg px-1.5 py-1 text-left overflow-hidden"
-                      style={{ top, height: h, left: `calc(${pos[iv.id] * w}% + 2px)`, width: `calc(${w}% - 4px)`, background: t.bg, color: t.fg, border: `2px solid ${t.border}`, fontSize: 11, lineHeight: 1.25, zIndex: 1 }}>
+                      style={{ top, height: h, left: `calc(${pos[iv.id] * w}% + 2px)`, width: `calc(${w}% - 4px)`, background: t.bg, color: t.fg, border: `2px solid ${t.border}`, borderLeft: `5px solid ${recColor(iv.recruiterId)}`, fontSize: 11, lineHeight: 1.25, zIndex: 1 }}>
                       <div className="font-semibold truncate" style={{ color: C.ink }}>{iv.candidateName}</div>
                       <div className="truncate">{hmIn(iv.start, MY_TZ)} · {iv.round}</div>
                       {h > 50 && <div className="truncate">{iv.client}</div>}
@@ -6780,11 +6999,11 @@ function MonthGrid({ anchor, list, clash, onOpen }) {
         {cells.map((ymd, i) => {
           const items = ymd ? list.filter((iv) => ymdIn(iv.start, MY_TZ) === ymd).sort((x, y) => x.start - y.start) : [];
           return (
-            <div key={i} className="rounded-lg p-1.5 min-h-[92px]" style={{ background: ymd ? (ymd === todayYmd ? "#FBFAF6" : "#fff") : "transparent", border: ymd ? `1px solid ${C.line}` : "none" }}>
+            <div key={i} className="rounded-lg p-1.5 min-h-[92px]" style={{ background: ymd ? (ymd === todayYmd ? C.soft : C.card) : "transparent", border: ymd ? `1px solid ${C.line}` : "none" }}>
               {ymd && <div className="text-xs font-semibold mb-1" style={{ color: ymd === todayYmd ? C.em : C.ink }}>{Number(ymd.slice(8))}</div>}
               <div className="flex flex-col gap-1">
                 {items.slice(0, 3).map((iv) => { const t = ivTone(iv, clash.has(iv.id)); return (
-                  <button key={iv.id} onClick={() => onOpen(iv)} className="text-left rounded px-1.5 py-0.5 text-[11px] truncate" style={{ background: t.bg, color: C.ink, border: `1.5px solid ${t.border}` }}>{hmIn(iv.start, MY_TZ)} {iv.candidateName}</button>
+                  <button key={iv.id} onClick={() => onOpen(iv)} className="text-left rounded px-1.5 py-0.5 text-[11px] truncate" style={{ background: t.bg, color: C.ink, border: `1.5px solid ${t.border}`, borderLeft: `4px solid ${recColor(iv.recruiterId)}` }}>{hmIn(iv.start, MY_TZ)} {iv.candidateName}</button>
                 ); })}
                 {items.length > 3 && <div className="text-[11px]" style={{ color: C.ink2 }}>+{items.length - 3} more</div>}
               </div>
@@ -6798,7 +7017,7 @@ function MonthGrid({ anchor, list, clash, onOpen }) {
 
 function IvRow({ iv, onOpen, clash, showDate = true }) {
   return (
-    <button onClick={() => onOpen(iv)} className="w-full text-left rounded-xl border p-3 flex flex-col gap-0.5" style={{ borderColor: clash ? C.dangerFg : C.line, background: "#fff" }}>
+    <button onClick={() => onOpen(iv)} className="w-full text-left rounded-xl border p-3 flex flex-col gap-0.5" style={{ borderColor: clash ? C.dangerFg : C.line, background: C.card }}>
       <div className="flex items-center justify-between gap-2 text-sm">
         <span className="font-semibold">{showDate ? fmtDay(iv.start, MY_TZ) + " · " : ""}{hmIn(iv.start, MY_TZ)}–{hmIn(iv.end, MY_TZ)}</span>
         {needsOutcome(iv) ? <Pill tone="neutral">Needs outcome</Pill> : iv.status === "scheduled" ? <Pill tone={iv.confirmed ? "em" : "warn"}>{iv.confirmed ? "Confirmed" : "Not confirmed"}</Pill> : <Pill tone={iv.status === "no_show" ? "danger" : "neutral"}>{iv.decision ? IV_DECISION[iv.decision] : IV_STATUS[iv.status]}</Pill>}
@@ -6841,8 +7060,9 @@ function InterviewsPage({ S, toast }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Interviews" sub={"Every client interview across your candidates. Times are in your time zone (" + tzLabel(MY_TZ) + ")."} />
-        <div className="flex gap-2 flex-wrap items-center"><GoogleChip S={S} /><Btn kind="primary" icon={Plus} onClick={() => setSched({})}>Schedule interview</Btn></div>
+        <SectionTitle size="text-3xl md:text-4xl" title="Interviews" sub={"Every client interview across your candidates. Times are in your time zone (" + tzLabel(MY_TZ) + ")."}
+          live={[{ n: today.length, label: "today", tone: "em" }, { n: upcoming.filter((iv) => ymdIn(iv.start, MY_TZ) === ymdIn(Date.now() + 864e5, MY_TZ)).length, label: "tomorrow", tone: "info" }, { n: outcome.length, label: "waiting for an outcome", tone: "danger" }, { n: unconfirmed.length, label: "not confirmed yet", tone: "warn" }]} />
+        <div className="flex gap-2 flex-wrap items-center"><GoogleChip S={S} /><Btn kind="primary" icon={Calendar} onClick={() => setSched({})}>Schedule interview</Btn></div>
       </div>
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <Tabs tabs={[{ key: "week", label: "Week" }, { key: "month", label: "Month" }, { key: "list", label: "Upcoming list" }]} active={view} setActive={setView} />
@@ -6860,8 +7080,14 @@ function InterviewsPage({ S, toast }) {
       </div>
       <div className="flex flex-col xl:flex-row gap-5">
         <Card className="flex-1 min-w-0">
+          {(() => { const nx = upcoming.find((iv) => iv.start > Date.now()); if (!nx || nx.start - Date.now() > 36 * 3600e3) return null;
+            const mins = Math.round((nx.start - Date.now()) / 60000), when = mins < 60 ? mins + " min" : mins < 1440 ? Math.round(mins / 60) + (Math.round(mins / 60) === 1 ? " hour" : " hours") : "a day";
+            return <button type="button" onClick={() => setOpen(nx)} className="w-full flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 mb-3 text-sm text-left" style={{ background: C.emTint, color: C.em }}>
+              <Clock size={16} className="shrink-0" /><span className="min-w-0">Next up in <b style={{ color: C.ink }}>{when}</b>: {nx.candidateName}, {nx.round}{nx.roleTitle ? ", " + nx.roleTitle : ""}</span></button>; })()}
           {view === "week" && <WeekGrid days={days} list={list} clash={clash} onOpen={setOpen} />}
           {view === "month" && <MonthGrid anchor={anchor} list={list} clash={clash} onOpen={setOpen} />}
+          {view !== "list" && (() => { const rs = [...new Map(list.filter((iv) => iv.recruiterId).map((iv) => [iv.recruiterId, iv.recruiter])).entries()]; return rs.length > 1 ? (
+            <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: C.ink2 }}>{rs.map(([id, n]) => <span key={id} className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: recColor(id) }} />{n || "Recruiter"}</span>)}</div>) : null; })()}
           {view === "list" && (
             <div className="flex flex-col gap-2">
               {upcoming.length ? upcoming.map((iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />) : <div className="text-sm" style={{ color: C.ink2 }}>No upcoming interviews.</div>}
@@ -6880,10 +7106,10 @@ function InterviewsPage({ S, toast }) {
             <Card>
               <SectionTitle title="Needs attention" size="text-xl" />
               <div className="flex flex-col gap-2 mt-3 text-sm">
-                {clashList.slice(0, 4).map((iv) => <button key={"c" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>Clash: {iv.candidateName}, {fmtDay(iv.start, MY_TZ)} {hmIn(iv.start, MY_TZ)}</button>)}
+                {clashList.slice(0, 4).map((iv) => <button key={"c" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>Clash: {iv.candidateName}, {fmtDay(iv.start, MY_TZ)} {hmIn(iv.start, MY_TZ)}</button>)}
                 {outcome.slice(0, 5).map((iv) => <button key={"o" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.neutralBg, color: "#3E4742" }}>{iv.candidateName}'s {iv.round.toLowerCase()} needs an outcome</button>)}
-                {unconfirmed.slice(0, 4).map((iv) => <button key={"u" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.warnBg, color: "#7A4B05" }}>{iv.candidateName} hasn't confirmed {fmtDay(iv.start, MY_TZ)}</button>)}
-                {gErr.slice(0, 3).map((iv) => <button key={"g" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>Not in Google Calendar: {iv.candidateName}</button>)}
+                {unconfirmed.slice(0, 4).map((iv) => <button key={"u" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.warnBg, color: C.warnText }}>{iv.candidateName} hasn't confirmed {fmtDay(iv.start, MY_TZ)}</button>)}
+                {gErr.slice(0, 3).map((iv) => <button key={"g" + iv.id} onClick={() => setOpen(iv)} className="text-left rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>Not in Google Calendar: {iv.candidateName}</button>)}
               </div>
             </Card>
           )}
@@ -6950,7 +7176,7 @@ function ScheduleModal({ S, toast, onClose, edit, preset }) {
     setBusy(false);
   };
   const inp = "w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none";
-  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const inpS = { borderColor: C.line, background: C.soft };
   const lbl = "text-xs font-medium";
   const zoneRow = (label, tz) => tz ? <div><div className="text-[11px]" style={{ color: C.ink2 }}>{label}</div><div className="text-sm font-semibold">{start ? hmIn(start, tz) + " " + tzAbbr(start, tz) : "–"}</div></div> : null;
   return (
@@ -6993,9 +7219,9 @@ function ScheduleModal({ S, toast, onClose, edit, preset }) {
         <div>
           <div className={lbl} style={{ color: C.ink2 }}>Where</div>
           <div className="flex gap-1.5 flex-wrap mt-1.5">{Object.entries(WHERE).map(([k, l]) => (
-            <button key={k} type="button" aria-pressed={f.where === k} onClick={() => set("where", k)} className="rounded-full px-3.5 py-2 text-sm" style={f.where === k ? { background: C.ink, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: "#fff" }}>{k === "meet" ? "Google Meet (created for you)" : l}</button>
+            <button key={k} type="button" aria-pressed={f.where === k} onClick={() => set("where", k)} className="rounded-full px-3.5 py-2 text-sm" style={f.where === k ? { background: C.solid, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: C.card }}>{k === "meet" ? "Google Meet (created for you)" : l}</button>
           ))}</div>
-          {meetNeedsGoogle && <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.warnBg, color: "#7A4B05" }}>Connect Google Calendar on My profile to create Meet links automatically. Until then, pick "Client's video link" and paste one.</div>}
+          {meetNeedsGoogle && <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.warnBg, color: C.warnText }}>Connect Google Calendar on My profile to create Meet links automatically. Until then, pick "Client's video link" and paste one.</div>}
           {f.where !== "meet" && <input value={f.location} onChange={(e) => set("location", e.target.value)} placeholder={f.where === "link" ? "Paste the Zoom, Teams or Meet link" : f.where === "phone" ? "Who calls whom, and the number (optional)" : "Address"} className={inp} style={inpS} />}
         </div>
         <div><label className={lbl} style={{ color: C.ink2 }}>Client interviewers and notes (internal, never sent to the candidate)</label>
@@ -7006,7 +7232,7 @@ function ScheduleModal({ S, toast, onClose, edit, preset }) {
             {cand && !cand.emailAddr ? "No email on file, so the candidate can't be emailed" : "Email " + (cand ? cand.name.split(" ")[0] : "the candidate") + (edit ? " about any change" : " the invite") + ", with reminders 24 hours and 1 hour before"}</label>
           {!edit && link && <label className="flex items-center gap-2.5"><input type="checkbox" checked={moveStage} onChange={(e) => setMoveStage(e.target.checked)} />Move to the Interview stage for this role</label>}
         </div>
-        {clashes.map((c, i) => <div key={i} className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>Clash: {c}</div>)}
+        {clashes.map((c, i) => <div key={i} className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>Clash: {c}</div>)}
         <div className="flex justify-end gap-2">
           <Btn onClick={onClose}>Cancel</Btn>
           <Btn kind="primary" disabled={busy || !valid} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : edit ? "Save changes" : "Schedule interview"}</Btn>
@@ -7047,7 +7273,7 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
       WHERE[iv.locationType] + (iv.locationType === "meet" ? (iv.meetUrl ? ": " + iv.meetUrl : "") : iv.location ? ": " + iv.location : "")].filter(Boolean).join("\n");
     copyText(t, toast, "Details copied");
   };
-  const pill = (on, label, onClick, tone) => <button key={label} type="button" aria-pressed={on} onClick={onClick} className="rounded-full px-3.5 py-2 text-sm" style={on ? { background: tone || C.ink, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: "#fff" }}>{label}</button>;
+  const pill = (on, label, onClick, tone) => <button key={label} type="button" aria-pressed={on} onClick={onClick} className="rounded-full px-3.5 py-2 text-sm" style={on ? { background: tone || C.ink, color: "#fff" } : { border: "1px solid #D5D2C7", color: C.ink2, background: C.card }}>{label}</button>;
   const joinUrl = iv.locationType === "meet" ? iv.meetUrl : iv.locationType === "link" ? iv.location : null;
   return (
     <Modal open onClose={onClose} title={iv.round + " · " + iv.candidateName} wide>
@@ -7084,7 +7310,7 @@ function InterviewModal({ iv, S, toast, onClose, onReschedule, onBookNext }) {
               {decision === "client_reject" && <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Saving opens the reject form: record the client's reason and tell {first} why.</div>}
             </div>}
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Feedback</label>
-              <textarea rows={3} value={feedback} onChange={(e) => setFeedback(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+              <textarea rows={3} value={feedback} onChange={(e) => setFeedback(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             <div className="flex justify-end gap-2 flex-wrap">
               <Btn disabled={!!busy} onClick={() => saveOutcome(false)}>{busy === "save" ? <>Saving <InlineDots /></> : "Save"}</Btn>
               {(decision === "next_round" || status === "rescheduled" || status === "client_cancelled") && <Btn kind="primary" disabled={!!busy} onClick={() => saveOutcome(true)}>{status === "done" ? "Save and book " + nextRound(iv.round).toLowerCase() : "Save and book a new time"}</Btn>}
@@ -7120,7 +7346,7 @@ function CandidateInterviewsCard({ candidate, S, toast }) {
         <SectionTitle title="Interviews" sub={list.length ? up.length + " upcoming" : "None scheduled yet."} size="text-xl" />
         <Btn icon={Plus} className="shrink-0 text-xs px-3 py-1.5" onClick={() => setSched({ preset: { candidateId: candidate.id } })}>Schedule</Btn>
       </div>
-      {outcomeDue && <button onClick={() => setOpen(outcomeDue)} className="w-full text-left text-sm rounded-lg px-3 py-2 mt-3" style={{ background: C.warnBg, color: "#7A4B05" }}>How did the {outcomeDue.round.toLowerCase()} on {fmtDay(outcomeDue.start, MY_TZ)} go? Record the outcome.</button>}
+      {outcomeDue && <button onClick={() => setOpen(outcomeDue)} className="w-full text-left text-sm rounded-lg px-3 py-2 mt-3" style={{ background: C.warnBg, color: C.warnText }}>How did the {outcomeDue.round.toLowerCase()} on {fmtDay(outcomeDue.start, MY_TZ)} go? Record the outcome.</button>}
       <div className="flex flex-col gap-2 mt-3">{[...up, ...rest].slice(0, 8).map((iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />)}</div>
       {liveOpen && <InterviewModal iv={liveOpen} S={S} toast={toast} onClose={() => setOpen(null)} onReschedule={(iv) => { setOpen(null); setSched({ edit: iv }); }} onBookNext={(p) => { setOpen(null); setSched({ preset: p }); }} />}
       {sched && <ScheduleModal S={S} toast={toast} edit={sched.edit} preset={sched.preset} onClose={() => setSched(null)} />}
@@ -7143,7 +7369,7 @@ function GoogleCalendarTab({ S, toast }) {
     <Card>
       <SectionTitle title="Google Calendar" sub="Connect your own Google account. Interviews you schedule in ProNext appear in your calendar with a Meet link, and moving or cancelling them in Google updates ProNext." size="text-lg" />
       {st.error && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{st.error}</div>}
-      {!st.configured && !st.error && <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.warnBg, color: "#7A4B05" }}>Google sign-in isn't set up for ProNext yet. An admin needs to create the Google sign-in app and add its two keys (see supabase/INTERVIEWS_SETUP.md). Interviews still work without it; you just won't get Meet links or calendar sync.</div>}
+      {!st.configured && !st.error && <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.warnBg, color: C.warnText }}>Google sign-in isn't set up for ProNext yet. An admin needs to create the Google sign-in app and add its two keys (see supabase/INTERVIEWS_SETUP.md). Interviews still work without it; you just won't get Meet links or calendar sync.</div>}
       {st.configured && !st.connected && <Btn kind="primary" className="mt-4" disabled={!!busy} onClick={connect}>{busy === "connect" ? <>Opening Google <InlineDots color="#fff" /></> : "Connect Google Calendar"}</Btn>}
       {st.connected && (
         <div className="flex flex-col gap-3 mt-4">
@@ -7151,7 +7377,7 @@ function GoogleCalendarTab({ S, toast }) {
             <div><div className="text-sm font-medium">Connected as {st.email || "your Google account"}</div><div className="text-xs" style={{ color: C.ink2 }}>Calendar: ProNext interviews{st.lastSync ? " · last synced " + ago(st.lastSync) : ""}</div></div>
             <Btn disabled={!!busy} onClick={disconnect} className="shrink-0">Disconnect</Btn>
           </div>
-          {st.lastError && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: "#8E3320" }}>{st.lastError} <button className="underline" onClick={connect}>Reconnect</button></div>}
+          {st.lastError && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{st.lastError} <button className="underline" onClick={connect}>Reconnect</button></div>}
           <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={s.clashCheck !== false} onChange={(e) => saveSetting("clashCheck", e.target.checked)} />Warn me about clashes with my other Google events</label>
           <label className="flex items-center gap-2.5 text-sm"><input type="checkbox" checked={!!s.inviteCandidate} onChange={(e) => saveSetting("inviteCandidate", e.target.checked)} />Invite the candidate from Google too (they already get ProNext's email)</label>
         </div>
@@ -7229,7 +7455,7 @@ const SITE_NAME = { linkedin: "LinkedIn", github: "GitHub", stackoverflow: "Stac
 // The search engine an X-ray profile came through, and a colour for each source badge.
 const ENGINE_NAME = { tavily: "Tavily", serper: "Google (Serper)", gemini: "Gemini", brave: "Brave", github: "GitHub search" };
 const SOURCE_TONE = { tavily: { bg: "#E5E8FB", fg: "#3B4BB8" }, serper: { bg: "#FBEFD8", fg: "#A5670A" }, gemini: { bg: "#EEEBFB", fg: "#6B4FD6" }, brave: { bg: "#FBE7DF", fg: "#B4471E" },
-  github: { bg: "#E8EAED", fg: "#24292F" }, apollo: { bg: "#DDEFE6", fg: "#1F6F54" }, pdl: { bg: "#E3F1F6", fg: "#1D6A86" }, pool: { bg: "#F3EFE6", fg: "#6B6455" } };
+  github: { bg: "#E8EAED", fg: "#24292F" }, apollo: { bg: "#DDEFE6", fg: "#1F6F54" }, pdl: { bg: "#E3F1F6", fg: "#1D6A86" }, pool: { bg: C.soft, fg: "#6B6455" } };
 // Where one prospect was found: { key (for filtering), label, tone }. X-ray people show the site and
 // the engine ("LinkedIn via Tavily"); others their database, or the talent pool.
 function foundOn(p) {
@@ -7243,7 +7469,7 @@ function foundOn(p) {
   }
   return { key: p.source, label: FOUND_ON[p.source] || p.source || "Unknown", tone: SOURCE_TONE[p.source] || SOURCE_TONE.pool };
 }
-const CHECK_STYLE = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43" }, unconfirmed: { t: "?", bg: "#F3EFE6", fg: "#6B6455" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E" } };
+const CHECK_STYLE = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43" }, unconfirmed: { t: "?", bg: C.soft, fg: "#6B6455" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E" } };
 const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted", archived: "In talent pool" };
 const LEAD_TONE = { new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
 const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send", contacted: "Contacted", replied: "Replied", meeting: "Meeting booked", won: "Won", lost: "Lost", ignored: "Not a fit", unsubscribed: "Unsubscribed" };
@@ -7263,7 +7489,7 @@ function ProspectEmailPreview({ S, id, version }) {
   return (
     <div>
       <div className="text-xs mb-1" style={{ color: C.ink2 }}>As they'll see it · Subject: <span style={{ color: C.ink }}>{p.subject}</span></div>
-      <iframe title="Email preview" sandbox="allow-same-origin" srcDoc={safeEmailHtml(p.html)} className="w-full rounded-lg border" style={{ borderColor: C.line, height: 560, background: "#fff" }} />
+      <iframe title="Email preview" sandbox="allow-same-origin" srcDoc={safeEmailHtml(p.html)} className="w-full rounded-lg border" style={{ borderColor: C.line, height: 560, background: C.card }} />
     </div>
   );
 }
@@ -7276,7 +7502,7 @@ function SpendConfirm({ c, onClose, busy }) {
     <Modal open={!!c} onClose={onClose} title="Approve this spend?">
       {c && <div className="flex flex-col gap-4">
         <div className="text-sm">{c.title}</div>
-        <div className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.warnBg, color: "#7A4B05" }}>Cost: {c.costText}. Nothing is spent until you approve.</div>
+        <div className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.warnBg, color: C.warnText }}>Cost: {c.costText}. Nothing is spent until you approve.</div>
         <div className="flex gap-2 justify-end"><Btn onClick={onClose} disabled={busy}>Cancel</Btn><Btn kind="primary" disabled={busy} onClick={c.go}>{busy ? <>Running <InlineDots color="#fff" /></> : "Approve and run"}</Btn></div>
       </div>}
     </Modal>
@@ -7368,7 +7594,7 @@ function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
             <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.to, toast, "Address copied")}>Copy</button></div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <button className="text-xs underline ml-1" style={{ color: C.em }} onClick={() => copyText(mail.subject, toast, "Subject copied")}>Copy</button></div>
-            <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+            <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
             <div className="flex flex-wrap gap-2">
               <a href={gmail} target="_blank" rel="noreferrer"><Btn kind="primary">Open in Gmail</Btn></a>
               <a href={outlook} target="_blank" rel="noreferrer"><Btn>Open in Outlook</Btn></a>
@@ -7428,7 +7654,7 @@ function ApolloNote({ data }) {
           {auto && a.autoUndone && <div style={{ color: C.ink3 }}>They were moved back to Contacted, since nobody actually replied.</div>}
           {r && !auto && r.referred && r.referred.length > 0 && <div style={{ color: C.ink }}><span className="font-medium">Referred:</span> {r.referred.join(", ")}</div>}
           {r && show && (
-            <div className="rounded-md px-2.5 py-2 mt-0.5" style={{ background: "#fff", color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            <div className="rounded-md px-2.5 py-2 mt-0.5" style={{ background: C.card, color: C.ink, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
               {r.subject && <div className="font-medium mb-1">{r.subject}</div>}
               <div style={{ color: C.ink3 }} className="mb-1.5">From {r.fromName ? r.fromName + " · " : ""}{r.from}</div>
               {r.text}
@@ -7508,7 +7734,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             const why = d.overview && p.fit_reason && p.fit_reason.trim() !== d.overview.trim() ? p.fit_reason.trim() : "";
             const count = (st) => checklist.filter((c) => c.status === st).length;
             const metN = count("met"), notN = count("not met"), unN = checklist.length - metN - notN;
-            const MARK = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43", label: "Met" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E", label: "Not met" }, unconfirmed: { t: "?", bg: "#F3EFE6", fg: "#6B6455", label: "Not shown on their profile" } };
+            const MARK = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43", label: "Met" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E", label: "Not met" }, unconfirmed: { t: "?", bg: C.soft, fg: "#6B6455", label: "Not shown on their profile" } };
             const dot = (st, n) => n > 0 && <span key={st} className="inline-flex items-center gap-1"><span className="w-4 h-4 rounded-full inline-flex items-center justify-center text-[10px] font-bold" style={{ background: MARK[st].bg, color: MARK[st].fg }}>{MARK[st].t}</span>{n}</span>;
             const hasMore = checklist.length > 0 || gaps.length > 0 || why || summary.length > 160;
             return (
@@ -7539,7 +7765,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
                 {details && gaps.length > 0 && <div className="text-xs" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
                 <div className="flex items-center gap-2 flex-wrap">
                   {profile && (
-                    <a href={profile} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold" style={{ border: `1px solid ${C.line}`, color: C.em, background: "#fff" }}>
+                    <a href={profile} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold" style={{ border: `1px solid ${C.line}`, color: C.em, background: C.card }}>
                       <ExternalLink size={13} /> {/linkedin\.com/i.test(profile) ? "View LinkedIn profile" : "View " + (FOUND_ON[p.source] || "") + " profile"}
                     </a>
                   )}
@@ -7567,8 +7793,8 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             <div className="mt-2 flex flex-col gap-2">
               {S && p.body && <ProspectEmailPreview S={S} id={p.id} version={(p.subject || "") + "|" + (p.body || "")} />}
               {editable && <div className="text-xs font-medium mt-1" style={{ color: C.ink2 }}>Edit the wording</div>}
-              <input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={!editable} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-              <textarea value={body} onChange={(e) => setBody(e.target.value)} disabled={!editable} rows={9} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+              <input value={subject} onChange={(e) => setSubject(e.target.value)} disabled={!editable} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+              <textarea value={body} onChange={(e) => setBody(e.target.value)} disabled={!editable} rows={9} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
               <div className="text-xs" style={{ color: C.ink3 }}>{/\{\{APPLY_LINK\}\}/.test(body) ? <>From the role's outreach template. [First Name] and the line about their profile are already filled in; {"{{APPLY_LINK}}"} becomes the Apply now button (and the Refer someone line). The address, where we found their details, Unsubscribe and Delete my details are added at the bottom. Change the template for everyone on the role's Sourcing tab.</> : <>{"{{INTERESTED_LINK}}"} becomes a one-click "I'm interested" link. The sender details, unsubscribe link and (outside the US) the privacy notice are added at the bottom when it's sent.</>}</div>
               {editable && <div className="flex gap-2 justify-end">{dirty && <Btn onClick={() => { setSubject(p.subject || ""); setBody(p.body || ""); }}>Undo</Btn>}<Btn kind="primary" disabled={!dirty} onClick={() => onSave({ subject, body })}>Save email</Btn></div>}
             </div>
@@ -7618,8 +7844,8 @@ function OutreachTemplate({ job, S, toast, tpl, onSaved }) {
         <ChevronDown size={16} color={C.ink3} style={{ transform: open ? "rotate(180deg)" : "none" }} />
       </button>
       {open && <div className="px-3 pb-3 flex flex-col gap-2">
-        <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject, e.g. Gas Safe Plumber – £25-30K, Croydon (Hybrid)" className={inp} style={{ borderColor: C.line, background: "#FAF8F3" }} aria-label="Template subject" />
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} className={inp + " font-mono"} style={{ borderColor: C.line, background: "#FAF8F3", fontSize: 13 }} aria-label="Template body" />
+        <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject, e.g. Gas Safe Plumber – £25-30K, Croydon (Hybrid)" className={inp} style={{ borderColor: C.line, background: C.soft }} aria-label="Template subject" />
+        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={12} className={inp + " font-mono"} style={{ borderColor: C.line, background: C.soft, fontSize: 13 }} aria-label="Template body" />
         <div className="text-xs" style={{ color: C.ink3 }}>[First Name] and [specific skill/experience from their profile] are filled in for each person. {"{{APPLY_LINK}}"} becomes the job's tracked apply link (a pasted job link is turned into it). Lines starting "- " show as a list; **text** shows bold. The client is never named, so don't add it. The unsubscribe footer is added automatically.</div>
         <div className="flex gap-2 justify-end">{dirty && <Btn onClick={() => { setSubject((tpl && tpl.subject) || ""); setBody((tpl && tpl.body) || ""); }}>Undo</Btn>}<Btn kind="primary" disabled={!dirty || busy || !subject.trim() || !body.trim()} onClick={save}>{busy ? "Saving…" : "Save and redraft waiting emails"}</Btn></div>
       </div>}
@@ -7663,7 +7889,7 @@ function JobSourcingCard({ job, S, toast }) {
   const xrayRunning = !!(row && row.xray && (row.xray.state === "running" || row.xray.state === "queued") && !xrStale);
   React.useEffect(() => {
     if (!xrayRunning) return;
-    const t = setTimeout(load, 8000);
+    const t = setTimeout(load, 4000);
     return () => clearTimeout(t);
   }, [row]); // eslint-disable-line
   if (!row) return null;
@@ -7736,7 +7962,7 @@ function JobSourcingCard({ job, S, toast }) {
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
           <div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
-          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <>Searching public profiles <InlineDots /></> : xr.state === "queued" ? <>Queued: starts when another search finishes (two run at a time) <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "unknown error") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts when another search finishes (two run at a time) <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "unknown error") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
           {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
         </div>
       </div>
@@ -7775,7 +8001,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
   const matches = Array.isArray(l.matches) ? l.matches : [];
   const emailable = l.channel === "email" && ["new", "approved"].includes(l.status);
   const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
-  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const inpS = { borderColor: C.line, background: C.soft };
   const convert = () => S.sourcing("convert_lead", { leadId: l.id }).then(() => { toast("Draft job created. Find it under Jobs."); onChanged(); S.reload && S.reload(); }).catch((e) => S.error(e.message));
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
@@ -7852,7 +8078,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const setL = (k, v) => setF((x) => ({ ...x, leads: { ...x.leads, [k]: v } }));
   const inp = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
-  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const inpS = { borderColor: C.line, background: C.soft };
   const save = () => {
     setBusy(true);
     const regions = (f.regions || []).filter(Boolean);
@@ -8274,7 +8500,7 @@ function ChoiceRow({ options, value, onChange, multi }) {
     <div className="flex flex-wrap gap-2">
       {options.map((o) => { const [k, l] = Array.isArray(o) ? o : [o, o]; return (
         <button key={String(k)} type="button" onClick={() => flip(k)} aria-pressed={on(k)} className="rounded-full px-3.5 py-1.5 text-sm"
-          style={on(k) ? { background: C.em, color: "#fff", border: `1px solid ${C.em}` } : { background: "#fff", color: C.ink, border: `1px solid ${C.line}` }}>{l}</button>
+          style={on(k) ? { background: C.em, color: "#fff", border: `1px solid ${C.em}` } : { background: C.card, color: C.ink, border: `1px solid ${C.line}` }}>{l}</button>
       ); })}
     </div>
   );
@@ -8348,7 +8574,7 @@ function PreferencesDone({ p, name, preview, onClose }) {
         {preview ? "This is the screen candidates see when they finish. In the real page their answers are saved to their profile." : "Your profile is ready. We'll only recommend you for roles that fit what you told us, and we'll be in touch when one does."}
       </div>
       {recap.length > 0 && (
-        <div className="pn-rise w-full mt-7 rounded-2xl p-4 flex flex-col gap-3 text-left" style={{ background: "#fff", border: `1.5px solid ${C.line}`, animationDelay: ".5s" }}>
+        <div className="pn-rise w-full mt-7 rounded-2xl p-4 flex flex-col gap-3 text-left" style={{ background: C.card, border: `1.5px solid ${C.line}`, animationDelay: ".5s" }}>
           <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.ink3 }}>What we'll match you on</div>
           {recap.map(([Icon, main, sub], n) => (
             <div key={n} className="flex items-center gap-3">
@@ -8373,8 +8599,8 @@ function QuizOption({ selected, onClick, children, hint, multi }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={!!selected}
       className="w-full text-left rounded-2xl px-5 py-4 text-[15px] flex items-center gap-3 transition-colors"
-      style={{ background: selected ? C.emTint : "#fff", border: `1.5px solid ${selected ? C.em : C.line}`, color: C.ink }}>
-      {multi && <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ border: `1.5px solid ${selected ? C.em : "#C9C4B8"}`, background: selected ? C.em : "#fff" }}>{selected && <Check size={13} color="#fff" strokeWidth={3} />}</span>}
+      style={{ background: selected ? C.emTint : C.card, border: `1.5px solid ${selected ? C.em : C.line}`, color: C.ink }}>
+      {multi && <span className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ border: `1.5px solid ${selected ? C.em : "#C9C4B8"}`, background: selected ? C.em : C.card }}>{selected && <Check size={13} color="#fff" strokeWidth={3} />}</span>}
       <span className="flex-1 min-w-0">{children}{hint && <span className="block text-xs mt-0.5" style={{ color: C.ink2 }}>{hint}</span>}</span>
       {!multi && selected && <CheckCircle2 size={18} color={C.em} className="shrink-0" />}
     </button>
@@ -8461,11 +8687,11 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
             <input autoFocus inputMode="numeric" value={p.salary.min ? Number(p.salary.min).toLocaleString("en-US") : ""} onChange={(e) => set("salary", { ...p.salary, min: e.target.value.replace(/[^\d]/g, "") })} placeholder="From" className={quizInp} style={quizInpS} />
             <input inputMode="numeric" value={p.salary.max ? Number(p.salary.max).toLocaleString("en-US") : ""} onChange={(e) => set("salary", { ...p.salary, max: e.target.value.replace(/[^\d]/g, "") })} placeholder="To (optional)" className={quizInp} style={quizInpS} />
           </div>
-          <div className="grid grid-cols-3 gap-2">{PAY_PERIODS.map(([k, l]) => <button key={k} type="button" onClick={() => set("salary", { ...p.salary, period: k })} className="rounded-2xl py-3 text-sm font-medium" style={p.salary.period === k ? { background: C.ink, color: "#fff" } : { background: "#fff", color: C.ink, border: `1.5px solid ${C.line}` }}>{l}</button>)}</div>
+          <div className="grid grid-cols-3 gap-2">{PAY_PERIODS.map(([k, l]) => <button key={k} type="button" onClick={() => set("salary", { ...p.salary, period: k })} className="rounded-2xl py-3 text-sm font-medium" style={p.salary.period === k ? { background: C.solid, color: "#fff" } : { background: C.card, color: C.ink, border: `1.5px solid ${C.line}` }}>{l}</button>)}</div>
         </div>);
       case "location": return knownPlace && !changingLoc ? (
         <div className="flex flex-col gap-2.5">
-          <div className="rounded-2xl px-5 py-5 flex items-center gap-3" style={{ background: "#fff", border: `1.5px solid ${C.line}` }}><MapPin size={20} color={C.em} /><span className="text-lg font-semibold">{knownPlace}</span></div>
+          <div className="rounded-2xl px-5 py-5 flex items-center gap-3" style={{ background: C.card, border: `1.5px solid ${C.line}` }}><MapPin size={20} color={C.em} /><span className="text-lg font-semibold">{knownPlace}</span></div>
           <QuizOption selected={p.locationConfirmed} onClick={() => { if (PREF_CHECKS.location(p)) { setChangingLoc(true); return; } set("locationConfirmed", true); setTimeout(() => setI((n) => n + 1), 220); }}>Yes, that's right</QuizOption>
           <QuizOption onClick={() => setChangingLoc(true)}>No, I've moved</QuizOption>
         </div>
@@ -8482,7 +8708,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
             <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); draft.trim() ? addChip("preferredCities", draft) : next(); } }} placeholder={"A city in " + country} className={quizInp} style={quizInpS} />
             <button type="button" onClick={() => addChip("preferredCities", draft)} disabled={!draft.trim()} className="rounded-2xl px-5 text-sm font-semibold shrink-0" style={{ background: draft.trim() ? C.ink : C.line, color: "#fff" }}>Add</button>
           </div>
-          {cities.filter((c) => !p.preferredCities.includes(c)).length > 0 && <div className="flex flex-wrap gap-2">{cities.filter((c) => !p.preferredCities.includes(c)).map((c) => <button key={c} type="button" onClick={() => addChip("preferredCities", c)} className="rounded-full px-3.5 py-1.5 text-sm" style={{ background: "#fff", border: `1.5px solid ${C.line}` }}>+ {c}</button>)}</div>}
+          {cities.filter((c) => !p.preferredCities.includes(c)).length > 0 && <div className="flex flex-wrap gap-2">{cities.filter((c) => !p.preferredCities.includes(c)).map((c) => <button key={c} type="button" onClick={() => addChip("preferredCities", c)} className="rounded-full px-3.5 py-1.5 text-sm" style={{ background: C.card, border: `1.5px solid ${C.line}` }}>+ {c}</button>)}</div>}
         </div>);
       case "workSetup": return <div className="flex flex-col gap-2.5">{WORK_SETUPS.map(([k, l]) => <QuizOption multi key={k} selected={p.workSetup.includes(k)} hint={{ remote: "Work from home", hybrid: "Some days in the office", onsite: "In the office every day" }[k]} onClick={() => set("workSetup", p.workSetup.includes(k) ? p.workSetup.filter((x) => x !== k) : [...p.workSetup, k])}>{l}</QuizOption>)}</div>;
       case "citizen": return <div className="flex flex-col gap-2.5"><QuizOption selected={p.citizen === true} onClick={() => pick("citizen", true)}>Yes</QuizOption><QuizOption selected={p.citizen === false} onClick={() => pick("citizen", false)}>No, I'm on a visa or permit</QuizOption></div>;
@@ -8500,7 +8726,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
       case "languages": return (
         <div className="flex flex-col gap-2.5">
           {p.languages.map((l, n) => (
-            <div key={n} className="rounded-2xl p-3 flex flex-col gap-2" style={{ background: "#fff", border: `1.5px solid ${C.line}` }}>
+            <div key={n} className="rounded-2xl p-3 flex flex-col gap-2" style={{ background: C.card, border: `1.5px solid ${C.line}` }}>
               <div className="flex items-center gap-2">
                 <div className="flex-1"><PickList value={l.language} onChange={(v) => set("languages", p.languages.map((x, k) => (k === n ? { ...x, language: v } : x)))} options={withValue(LANGUAGE_OPTIONS.filter((o) => o.value === l.language || !p.languages.some((x) => x.language === o.value)), l.language)} placeholder="Choose a language" searchPlaceholder="Search languages" className="w-full rounded-xl border px-3.5 py-2.5 text-[15px] outline-none bg-white" style={{ borderColor: C.line }} /></div>
                 {p.languages.length > 1 && <button type="button" aria-label="Remove language" onClick={() => set("languages", p.languages.filter((_, k) => k !== n))} className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ color: C.ink2 }}><X size={16} /></button>}
@@ -8517,7 +8743,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 rounded-2xl border px-4 py-3 bg-white" style={quizInpS}><Search size={16} color={C.ink3} /><input value={indQ} onChange={(e) => setIndQ(e.target.value)} placeholder="Search industries" className="flex-1 bg-transparent outline-none text-[15px]" /></div>
             <div className="flex flex-wrap gap-2">
-              {shown.map((v) => { const on = p.industries.includes(v); return <button key={v} type="button" aria-pressed={on} onClick={() => set("industries", on ? p.industries.filter((x) => x !== v) : [...p.industries, v])} className="rounded-full px-3.5 py-2 text-sm" style={on ? { background: C.em, color: "#fff", border: `1.5px solid ${C.em}` } : { background: "#fff", color: C.ink, border: `1.5px solid ${C.line}` }}>{on && "✓ "}{v}</button>; })}
+              {shown.map((v) => { const on = p.industries.includes(v); return <button key={v} type="button" aria-pressed={on} onClick={() => set("industries", on ? p.industries.filter((x) => x !== v) : [...p.industries, v])} className="rounded-full px-3.5 py-2 text-sm" style={on ? { background: C.em, color: "#fff", border: `1.5px solid ${C.em}` } : { background: C.card, color: C.ink, border: `1.5px solid ${C.line}` }}>{on && "✓ "}{v}</button>; })}
               {!shown.length && <span className="text-sm" style={{ color: C.ink2 }}>No match. Try another word.</span>}
             </div>
           </div>);
@@ -8527,12 +8753,12 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: "#FBFAF7", ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
-      <div className="sticky top-0 z-10" style={{ background: "#FBFAF7" }}>
+    <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: C.soft, ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
+      <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
           <button type="button" onClick={done ? onClose : back} aria-label={i === 0 || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{i === 0 || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
           <BrandLogo height={24} />
-          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: "#fff", color: C.ink }}>{done ? steps.length : i + 1}/{steps.length}</span>
+          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{done ? steps.length : i + 1}/{steps.length}</span>
         </div>
         <div style={{ height: 3, background: "#ECE9E2" }}><div style={{ height: 3, width: pct + "%", background: C.em, transition: "width .3s ease" }} /></div>
       </div>
@@ -8575,7 +8801,7 @@ function PreferencesForm({ initial, known, onSave, onCancel, saveLabel = "Save p
   const errs = prefsErrors(p);
   const E = (...ks) => { const k = ks.find((x) => errs[x]); return shown && k ? <div className="text-xs mt-1.5" style={{ color: C.dangerFg }} data-err="1">{errs[k]}</div> : null; };
   const inp = "w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none";
-  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const inpS = { borderColor: C.line, background: C.soft };
   const addRole = () => { const r = roleDraft.trim(); if (r && p.roles.length < 5 && !p.roles.includes(r)) set("roles", [...p.roles, r]); setRoleDraft(""); };
   const addCity = () => { const c = cityDraft.trim(); if (c && !p.preferredCities.includes(c)) set("preferredCities", [...p.preferredCities, c]); setCityDraft(""); };
   const submit = async () => {
@@ -8829,7 +9055,7 @@ function OutreachLinkPage({ token, kind, action }) {
   }
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
-      <div className={"w-full rounded-2xl border p-6 " + (action === "job" && kind === "p" && !done ? "max-w-2xl md:p-8" : "max-w-sm")} style={{ background: "#fff", borderColor: C.line }}>
+      <div className={"w-full rounded-2xl border p-6 " + (action === "job" && kind === "p" && !done ? "max-w-2xl md:p-8" : "max-w-sm")} style={{ background: C.card, borderColor: C.line }}>
         <div className="mb-4"><BrandLogo height={30} /></div>
         {bodyEl}
       </div>
@@ -8886,7 +9112,7 @@ function ClientViewPage({ token }) {
   }
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
-      <div className="w-full max-w-sm rounded-2xl border p-6" style={{ background: "#fff", borderColor: C.line }}>
+      <div className="w-full max-w-sm rounded-2xl border p-6" style={{ background: C.card, borderColor: C.line }}>
         <div className="mb-4"><BrandLogo height={30} /></div>
         {bodyEl}
       </div>
@@ -8954,7 +9180,7 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
     setBusy(false);
   };
   const sel = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
-  const selStyle = { borderColor: C.line, background: "#FAF8F3" };
+  const selStyle = { borderColor: C.line, background: C.soft };
   return (
     <Modal open={open} onClose={onClose} title="New billing entry">
       <div className="flex flex-col gap-3">
@@ -8977,7 +9203,7 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>How it pays</label>
           <div className="grid grid-cols-2 gap-2 mt-1.5">
             {[["one_off", "Permanent", "One payout after the guarantee"], ["monthly", "Contract", "Paid monthly, per hour worked"]].map(([k, t, sub]) => (
-              <button key={k} type="button" onClick={() => { setPayType(k); if (k === "monthly" && !job && feeCur === "NGN") setFeeCur(((S.settings.revenueGoal || {}).currency) || "USD"); }} className="rounded-lg border px-3 py-2 text-left" style={{ borderColor: payType === k ? C.em : C.line, background: payType === k ? C.emTint : "#fff" }}>
+              <button key={k} type="button" onClick={() => { setPayType(k); if (k === "monthly" && !job && feeCur === "NGN") setFeeCur(((S.settings.revenueGoal || {}).currency) || "USD"); }} className="rounded-lg border px-3 py-2 text-left" style={{ borderColor: payType === k ? C.em : C.line, background: payType === k ? C.emTint : C.card }}>
                 <div className="text-sm font-medium" style={{ color: payType === k ? C.em : C.ink }}>{t}</div><div className="text-xs" style={{ color: C.ink3 }}>{sub}</div>
               </button>
             ))}
@@ -9121,7 +9347,7 @@ function CheckinsCard({ list, S, toast }) {
               </div>
               {openKey === x.key && (
                 <div className="flex gap-2 mt-2">
-                  <input id={"checkin-" + x.key} value={note} onChange={(e) => setNote(e.target.value)} placeholder="How are they getting on? (optional)" className="flex-1 min-w-0 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+                  <input id={"checkin-" + x.key} value={note} onChange={(e) => setNote(e.target.value)} placeholder="How are they getting on? (optional)" className="flex-1 min-w-0 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
                   <Btn kind="primary" disabled={busy} onClick={() => save(x)}>{busy ? "Saving…" : "Save"}</Btn>
                 </div>
               )}
@@ -9192,7 +9418,7 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
     S.saveRevenueGoal({ ...((S.settings && S.settings.revenueGoal) || {}), amount, currency: g.currency, by: g.by }).then(() => { setEditing(false); toast("Goal saved"); }).catch(() => {}).finally(() => setBusy(false));
   };
   const inp = "rounded-lg border px-3 py-2 text-sm outline-none";
-  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const inpS = { borderColor: C.line, background: C.soft };
   return (
     <Card>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
@@ -9347,7 +9573,7 @@ function BillingDetailModal({ p, role, onClose, toast, S }) {
     setBusy("");
   };
   const inp = "w-full mt-1 rounded-lg border px-2.5 py-2 text-sm outline-none";
-  const inpS = { borderColor: C.line, background: "#FAF8F3" };
+  const inpS = { borderColor: C.line, background: C.soft };
   const L = ({ children }) => <div className="text-xs" style={{ color: C.ink3 }}>{children}</div>;
   return (
     <Modal open onClose={onClose} title={p.name} wide>
@@ -9734,15 +9960,15 @@ function UsersPage({ toast, S }) {
       </Card>
       <Modal open={!!editUser} onClose={() => setEditUser(null)} title={editUser ? "Edit " + editUser.name : "Edit user"}>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
-        <input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label>
-        <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="optional" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="optional" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <Btn kind="primary" full onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Save changes"}</Btn>
       </Modal>
       <Modal open={!!pwUser} onClose={() => setPwUser(null)} title={pwUser ? "Set a password for " + pwUser.name : "Set password"}>
         <div className="text-sm mb-3" style={{ color: C.ink2 }}>This sets their password directly — no reset email is sent. Share it with them yourself.</div>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>New password (8+ characters)</label>
-        <input type="text" value={pwValue} onChange={(e) => setPwValue(e.target.value)} className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <input type="text" value={pwValue} onChange={(e) => setPwValue(e.target.value)} className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <Btn kind="primary" full onClick={savePassword} disabled={pwBusy}>{pwBusy ? "Setting…" : "Set password"}</Btn>
       </Modal>
       <ConfirmModal open={!!disUser} onClose={() => !disBusy && setDisUser(null)} busy={disBusy} confirmLabel="Disable" busyLabel="Disabling"
@@ -9759,13 +9985,13 @@ function UsersPage({ toast, S }) {
       />
       <Modal open={open} onClose={() => setOpen(false)} title="Create an account">
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
-        <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Work email</label>
-        <input value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <input value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <div className="text-xs font-medium mb-2" style={{ color: C.ink2 }}>Role</div>
         <div className="grid grid-cols-3 gap-2 mb-5">
           {ROLE_OPTIONS.map(([k, l]) => (
-            <button key={k} onClick={() => setRoleKey(k)} className="rounded-xl border p-3 text-sm text-left" style={{ borderColor: roleKey === k ? C.em : C.line, background: roleKey === k ? C.emTint : "#fff", color: roleKey === k ? C.em : C.ink }}>{l}</button>
+            <button key={k} onClick={() => setRoleKey(k)} className="rounded-xl border p-3 text-sm text-left" style={{ borderColor: roleKey === k ? C.em : C.line, background: roleKey === k ? C.emTint : C.card, color: roleKey === k ? C.em : C.ink }}>{l}</button>
           ))}
         </div>
         <Btn kind="primary" full onClick={invite}>{busy ? "Creating\u2026" : "Create account"}</Btn>
@@ -9776,7 +10002,7 @@ function UsersPage({ toast, S }) {
         <div className="flex flex-col gap-1.5 mb-5">
           {transferCandidates.length === 0 && <div className="text-sm" style={{ color: C.ink3 }}>No other active accounts to transfer to.</div>}
           {transferCandidates.map((u) => (
-            <button key={u.id} onClick={() => setTransferTarget(u.id)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between" style={{ borderColor: transferTarget === u.id ? C.em : C.line, background: transferTarget === u.id ? C.emTint : "#fff" }}>
+            <button key={u.id} onClick={() => setTransferTarget(u.id)} className="rounded-xl border p-3 text-sm text-left flex items-center justify-between" style={{ borderColor: transferTarget === u.id ? C.em : C.line, background: transferTarget === u.id ? C.emTint : C.card }}>
               <span><span className="font-medium">{u.name}</span><span className="text-xs ml-2" style={{ color: C.ink2 }}>{u.email}</span></span>
               <span className="text-xs" style={{ color: C.ink3 }}>{u.role}</span>
             </button>
@@ -9824,7 +10050,7 @@ function EmailPreviewModal({ row, onClose, S, load }) {
       {err && <div className="text-sm flex items-start gap-2 py-6" style={{ color: C.ink2 }}><Info size={16} className="shrink-0 mt-0.5" />{err}</div>}
       {!err && !p && <div className="text-sm py-10 text-center" style={{ color: C.ink3 }}>Loading the email <InlineDots /></div>}
       {p && <>
-        <iframe title="Email preview" sandbox="allow-same-origin" srcDoc={safeEmailHtml(p.html)} className="w-full rounded-xl border" style={{ borderColor: C.line, height: h, background: "#fff" }}
+        <iframe title="Email preview" sandbox="allow-same-origin" srcDoc={safeEmailHtml(p.html)} className="w-full rounded-xl border" style={{ borderColor: C.line, height: h, background: C.card }}
           onLoad={(e) => { try { const d = e.target.contentDocument; setH(Math.min(1400, Math.max(300, d.documentElement.scrollHeight + 8))); } catch (x) {} }} />
         <div className="text-xs mt-2" style={{ color: C.ink3 }}>This is exactly what the candidate received. Links are switched off in the preview, and viewing it doesn't count as an open.</div>
       </>}
@@ -9860,7 +10086,7 @@ function EmailTrackingPage({ S }) {
   const [src, setSrc] = useState(() => { try { return localStorage.getItem("harbor.emailSrc") || "brevo"; } catch (e) { return "brevo"; } });
   const pick = (k) => { setSrc(k); try { localStorage.setItem("harbor.emailSrc", k); } catch (e) {} };
   const sw = (
-    <div className="inline-flex rounded-xl border p-1 self-start" style={{ borderColor: C.line, background: "#fff" }} role="tablist" aria-label="Email source">
+    <div className="inline-flex rounded-xl border p-1 self-start" style={{ borderColor: C.line, background: C.card }} role="tablist" aria-label="Email source">
       {[["brevo", "Brevo", "App emails"], ["apollo", "Apollo", "Outreach sequences"]].map(([k, l, sub]) => (
         <button key={k} role="tab" aria-selected={src === k} onClick={() => pick(k)} className="rounded-lg px-4 py-1.5 text-sm font-medium text-left"
           style={{ background: src === k ? C.em : "transparent", color: src === k ? "#fff" : C.ink2 }}>
@@ -9924,7 +10150,7 @@ function BrevoTrackingView({ S, sw }) {
         <div className="flex flex-col md:flex-row gap-2.5 md:items-center mb-4">
           <div className="flex gap-1.5 flex-wrap">
             {EMAIL_FILTERS.map(([k, l]) => (
-              <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1.5 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : "#fff", color: filter === k ? C.em : C.ink2 }}>{l}</button>
+              <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1.5 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : C.card, color: filter === k ? C.em : C.ink2 }}>{l}</button>
             ))}
           </div>
           <div className="flex gap-2 md:ml-auto">
@@ -9932,7 +10158,7 @@ function BrevoTrackingView({ S, sw }) {
               <option value="">All types</option>
               {types.map((x) => <option key={x} value={x}>{x}</option>)}
             </select>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: C.soft }} />
           </div>
         </div>
         {!res && busy ? <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>Loading the email log <InlineDots /></div> : (
@@ -10117,7 +10343,7 @@ function ApolloTrackingView({ S, sw }) {
         <div className="flex flex-col md:flex-row gap-2.5 md:items-center mb-4">
           <div className="flex gap-1.5 flex-wrap">
             {APOLLO_FILTERS.map(([k, l]) => (
-              <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1.5 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : "#fff", color: filter === k ? C.em : C.ink2 }}>{l}</button>
+              <button key={k} onClick={() => setFilter(k)} className="text-xs rounded-full px-3 py-1.5 border" style={{ borderColor: filter === k ? C.em : C.line, background: filter === k ? C.emTint : C.card, color: filter === k ? C.em : C.ink2 }}>{l}</button>
             ))}
           </div>
           <div className="flex gap-2 md:ml-auto">
@@ -10128,7 +10354,7 @@ function ApolloTrackingView({ S, sw }) {
               <option value="">All steps</option>
               {allSteps.map((n) => <option key={n} value={String(n)}>Step {n} · {stepName(n)}</option>)}
             </select>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, role or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, email, role or subject" className="text-sm rounded-lg border px-3 py-1.5 outline-none w-full md:w-56" style={{ borderColor: C.line, background: C.soft }} />
           </div>
         </div>
         {!res && busy ? <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>Checking Apollo <InlineDots /></div> : (
@@ -10226,8 +10452,8 @@ function AgencyTab({ toast, S }) {
   };
   return (
     <Card className="flex flex-col gap-4 md:max-w-xl">
-      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Name in email footers (e.g. your full company name)</label><input value={company.legalName || ""} onChange={(e) => setCompany({ ...company, legalName: e.target.value })} placeholder={name} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Name in email footers (e.g. your full company name)</label><input value={company.legalName || ""} onChange={(e) => setCompany({ ...company, legalName: e.target.value })} placeholder={name} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
       <div>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Logo (shown at the top of every email; your agency name is used when there's no logo)</label>
         <div className="flex items-center gap-3 mt-1.5">
@@ -10236,30 +10462,30 @@ function AgencyTab({ toast, S }) {
           {company.logoUrl && <button type="button" className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setCompany({ ...company, logoUrl: "" })}>Remove</button>}
         </div>
       </div>
-      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default currency</label>
-          <PickList value={defaultCurrency} onChange={setDefaultCurrency} options={withValue(CURRENCY_OPTIONS, defaultCurrency)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <PickList value={defaultCurrency} onChange={setDefaultCurrency} options={withValue(CURRENCY_OPTIONS, defaultCurrency)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default hiring country</label>
-          <PickList value={defaultCountry} onChange={(v) => { setDefaultCountry(v); if (COUNTRY_CURRENCY[v]) setDefaultCurrency(COUNTRY_CURRENCY[v]); }} options={withValue(COUNTRY_OPTIONS, defaultCountry)} placeholder="Select a country…" searchPlaceholder="Search countries" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <PickList value={defaultCountry} onChange={(v) => { setDefaultCountry(v); if (COUNTRY_CURRENCY[v]) setDefaultCurrency(COUNTRY_CURRENCY[v]); }} options={withValue(COUNTRY_OPTIONS, defaultCountry)} placeholder="Select a country…" searchPlaceholder="Search countries" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         </div>
       </div>
       <div className="text-xs" style={{ color: C.ink3 }}>New jobs default to this currency and country unless changed when posting.</div>
       <button onClick={() => setAuto(!auto)} className="pt-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
         <div><div className="text-sm font-medium">AI screening questions</div><div className="text-xs" style={{ color: C.ink2 }}>Draft questions for every new candidate. You approve before they send.</div></div>
-        <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: auto ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${auto ? "ml-auto" : ""}`} /></div>
+        <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: auto ? C.em : C.line2 }}><div className={`w-5 h-5 rounded-full bg-white ${auto ? "ml-auto" : ""}`} /></div>
       </button>
       <div className="pt-3 flex flex-col gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
         <div><div className="text-sm font-medium">Invoice details</div><div className="text-xs" style={{ color: C.ink2 }}>Printed on invoices as "Bill from" and payment details. Anything left blank stays blank on the invoice.</div></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {COMPANY_FIELDS.map(([k, l]) => (
-            <div key={k} className={k === "address" ? "sm:col-span-2" : ""}><label className="text-xs font-medium" style={{ color: C.ink2 }}>{l}</label><input value={company[k] || ""} onChange={(e) => setCompany({ ...company, [k]: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+            <div key={k} className={k === "address" ? "sm:col-span-2" : ""}><label className="text-xs font-medium" style={{ color: C.ink2 }}>{l}</label><input value={company[k] || ""} onChange={(e) => setCompany({ ...company, [k]: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
           ))}
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Default payment terms (days)</label><input type="number" min="0" value={company.termsDays != null ? company.termsDays : 30} onChange={(e) => setCompany({ ...company, termsDays: e.target.value === "" ? null : Number(e.target.value) })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Invoice number prefix</label><input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>Numbers look like {invoicePrefix || "INV"}-{new Date().getFullYear()}-0001</div></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Default payment terms (days)</label><input type="number" min="0" value={company.termsDays != null ? company.termsDays : 30} onChange={(e) => setCompany({ ...company, termsDays: e.target.value === "" ? null : Number(e.target.value) })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Invoice number prefix</label><input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>Numbers look like {invoicePrefix || "INV"}-{new Date().getFullYear()}-0001</div></div>
         </div>
       </div>
       <Btn kind="primary" disabled={busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
@@ -10303,7 +10529,7 @@ function DataPrivacyTab({ toast, S }) {
         <SectionTitle title="Automatic sign-out" sub="Signs people out of ProNext after a period with no activity, so an unattended computer doesn't stay logged in. They get a 2-minute warning first, and need to sign in again afterwards." size="text-lg" />
         <div className="flex flex-col sm:flex-row sm:items-end gap-3 mt-4">
           <div className="sm:w-64"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sign out after no activity for</label>
-            <select value={idle} onChange={(e) => setIdle(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+            <select value={idle} onChange={(e) => setIdle(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
               {[[15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [120, "2 hours"], [240, "4 hours"], [480, "8 hours"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select></div>
           <Btn kind="primary" disabled={idleBusy || Number(idle) === (S.settings.idleMinutes || 30)} onClick={saveIdle}>{idleBusy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
@@ -10316,7 +10542,7 @@ function DataPrivacyTab({ toast, S }) {
       <Card>
         <SectionTitle title="Data retention" sub="Automatically clean up candidates on Active file who've sat untouched for a while." size="text-lg" />
         <div className="flex flex-col gap-3 mt-4 md:max-w-sm">
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete inactive Active-file candidates after (days)</label><input value={retention} onChange={(e) => setRetention(e.target.value)} placeholder="Never" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete inactive Active-file candidates after (days)</label><input value={retention} onChange={(e) => setRetention(e.target.value)} placeholder="Never" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
           <Btn kind="primary" disabled={busy} onClick={saveRetention}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
         </div>
         {days > 0 && (
@@ -10350,7 +10576,7 @@ function IntegrationsTab({ toast, S }) {
         {INTEGRATIONS_LIST.map((i) => (
           <button key={i.key} onClick={() => toggle(i.key)} className="py-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
             <div><div className="text-sm font-medium">{i.label}</div><div className="text-xs" style={{ color: C.ink2 }}>{i.sub}</div></div>
-            <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: enabled[i.key] ? C.em : "#D5D2C7" }}><div className={`w-5 h-5 rounded-full bg-white ${enabled[i.key] ? "ml-auto" : ""}`} /></div>
+            <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: enabled[i.key] ? C.em : C.line2 }}><div className={`w-5 h-5 rounded-full bg-white ${enabled[i.key] ? "ml-auto" : ""}`} /></div>
           </button>
         ))}
       </div>
@@ -10510,7 +10736,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
       <button onClick={() => setPage("candidates")} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Candidates</button>
       <SectionTitle size="text-3xl md:text-4xl" title="Add candidate" sub="Pick the job, then their resume and (if you're ready) the screening answers." />
       <Card className="md:max-w-xl flex flex-col gap-4">
-        {heldJob && <div className="rounded-lg px-3 py-2.5 text-sm" style={{ background: C.warnBg, color: "#7A4B05" }}>{heldJob.role} is {heldJob.status === "Closed" ? "closed" : holdText(heldJob).replace("On hold", "on hold")} and isn't taking new candidates. Pick another job below.</div>}
+        {heldJob && <div className="rounded-lg px-3 py-2.5 text-sm" style={{ background: C.warnBg, color: C.warnText }}>{heldJob.role} is {heldJob.status === "Closed" ? "closed" : holdText(heldJob).replace("On hold", "on hold")} and isn't taking new candidates. Pick another job below.</div>}
         <div>
           <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Job</div>
           <select className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: C.line, color: C.ink }} value={jobId} onChange={(e) => { setJobId(e.target.value); setAnswers([]); setFit(null); }}>
@@ -10568,7 +10794,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
         )}
         <div>
           <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Resume</div>
-          <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed py-6 cursor-pointer text-center" style={{ borderColor: "#D5D2C7", background: "#FAF8F3" }}>
+          <label className="flex flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed py-6 cursor-pointer text-center" style={{ borderColor: C.line2, background: C.soft }}>
             <Upload size={20} color={C.ink2} />
             <div className="text-sm font-medium">{fileName || (candId ? "Resume on file — choose to replace" : "Choose a file")}</div>
             <div className="text-xs" style={{ color: C.ink3 }}>PDF, Word, text or photo</div>
@@ -10640,10 +10866,10 @@ function ProgressSteps({ steps }) {
           <div key={i} className="flex gap-3">
             <div className="flex flex-col items-center" style={{ width: 18 }}>
               <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0"
-                style={{ background: s.state === "todo" ? "#fff" : color, border: `2px solid ${color}` }}>
+                style={{ background: s.state === "todo" ? C.card : color, border: `2px solid ${color}` }}>
                 {s.state === "done" && <Check size={11} color="#fff" strokeWidth={3} />}
                 {s.state === "ended" && <X size={11} color="#fff" strokeWidth={3} />}
-                {s.state === "current" && <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#fff" }} />}
+                {s.state === "current" && <span className="w-1.5 h-1.5 rounded-full" style={{ background: C.card }} />}
               </div>
               {!last && <div className="flex-1 w-0.5 my-0.5" style={{ background: s.state === "done" ? C.em : C.line, minHeight: 18 }} />}
             </div>
@@ -10727,7 +10953,7 @@ function PortalChat({ token, chats, startLink, onClose }) {
   }, []);
   return (
     <div className="fixed inset-0 z-50 flex justify-center" style={{ background: "rgba(20,32,27,0.45)" }}>
-      <div className="w-full md:max-w-2xl flex flex-col" style={{ height: "100dvh", background: "#fff" }}>
+      <div className="w-full md:max-w-2xl flex flex-col" style={{ height: "100dvh", background: C.card }}>
         {open ? (
           <ChatRoom key={chatKey(open)} linkId={open.linkId} room={open.staffId ? open.linkId + "-" + open.staffId : open.linkId} mine="candidate"
             api={candidateChatApi(token, open.linkId, open.staffId)} className="flex-1"
@@ -10798,7 +11024,7 @@ function JobDescriptionPanel({ r, detail, questions, onClose, onAnswer, onApply,
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center" role="dialog" aria-modal="true" aria-label={"Job description: " + r.role}>
       <div className="absolute inset-0" style={{ background: "rgba(18,36,29,.45)" }} onClick={onClose} />
-      <div className="relative w-full md:max-w-2xl flex flex-col rounded-t-3xl md:rounded-3xl overflow-hidden" style={{ background: "#fff", maxHeight: "92vh" }}>
+      <div className="relative w-full md:max-w-2xl flex flex-col rounded-t-3xl md:rounded-3xl overflow-hidden" style={{ background: C.card, maxHeight: "92vh" }}>
         <div className="flex items-start gap-3 px-5 md:px-7 pt-5 pb-4" style={{ borderBottom: `1px solid ${C.line}` }}>
           <div className="flex-1 min-w-0">
             <div className="text-xl md:text-2xl leading-tight" style={{ ...SERIF }}>{r.role}</div>
@@ -10885,7 +11111,7 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
     setBusy("");
   };
   const facts = roleFacts(detail, r);
-  const inputStyle = { borderColor: C.line, background: "#FAF8F3" };
+  const inputStyle = { borderColor: C.line, background: C.soft };
   return (
     <Card>
       <div className="text-xs font-semibold mb-2" style={{ color: C.warnFg }}>A NEW ROLE FOR YOU</div>
@@ -10893,7 +11119,7 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
       <div className="text-sm" style={{ color: C.ink2 }}>{r.company}</div>
       {facts.length > 0 && <div className="flex flex-wrap gap-1.5 mt-2.5">{facts.map((f) => <span key={f} className="text-xs font-medium rounded-full px-2.5 py-1" style={{ background: C.emTint, color: C.em }}>{f}</span>)}</div>}
       <div className="text-sm mt-3" style={{ color: C.ink2 }}>{recName || "Your recruiter"} thinks you'd be a strong fit and would like to put you forward. Nothing is shared with the employer until you apply.</div>
-      <button type="button" onClick={() => setPanel(true)} className="mt-3 w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ border: `1.5px solid ${C.em}`, color: C.em, background: "#fff" }}>
+      <button type="button" onClick={() => setPanel(true)} className="mt-3 w-full flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold" style={{ border: `1.5px solid ${C.em}`, color: C.em, background: C.card }}>
         <FileText size={16} /> View job description
       </button>
       <div ref={qRef} className="mt-5 pt-4" style={{ borderTop: `1px solid ${C.line}`, scrollMarginTop: 16 }}>
@@ -10953,7 +11179,7 @@ function CandidatePortal({ data, token, onChanged }) {
     setBusy("");
   };
   const setA = (linkId, i, v) => setAnswers((m) => { const arr = (m[linkId] || []).slice(); arr[i] = v; return { ...m, [linkId]: arr }; });
-  const inputStyle = { borderColor: C.line, background: "#FAF8F3" };
+  const inputStyle = { borderColor: C.line, background: C.soft };
 
   // Opening the page counts as delivery of messages waiting for them; the page refreshes
   // itself every 20 seconds so new messages and progress show up without a reload.
@@ -11195,7 +11421,7 @@ function ApplyPage({ slug }) {
   };
   const referAnother = () => { setForm({ name: "", email: "", phone: "", linkedin: "", website: "" }); setCv(null); setRef((r) => ({ ...r, note: "" })); setDone(null); formOpenedAt.current = Date.now(); setMode("refer"); };
   const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
-  const inpStyle = { borderColor: C.line, background: "#FAF8F3" };
+  const inpStyle = { borderColor: C.line, background: C.soft };
   const payText = job ? payLabel(job.pay) : "";
   const desc = job ? String(job.description || "") : "";
   const shell = (children) => (
@@ -11269,7 +11495,7 @@ function ApplyPage({ slug }) {
   const cvPicker = (label, hint) => (
     <div>
       <label className="text-sm font-medium">{label}</label>
-      <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="w-full mt-1.5 rounded-xl border-2 border-dashed px-4 py-4 text-sm flex items-center gap-3 text-left" style={{ borderColor: cv ? C.em : C.line, background: "#FAF8F3" }}>
+      <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="w-full mt-1.5 rounded-xl border-2 border-dashed px-4 py-4 text-sm flex items-center gap-3 text-left" style={{ borderColor: cv ? C.em : C.line, background: C.soft }}>
         <Upload size={18} color={cv ? C.em : C.ink3} />
         <span className="flex-1 min-w-0 truncate" style={{ color: cv ? C.ink : C.ink3 }}>{cv ? cv.name : hint}</span>
         {cv && <span className="text-xs shrink-0" style={{ color: C.em }}>Change</span>}
@@ -11434,13 +11660,13 @@ function JobsBoard() {
   const pick = (e, j) => { if (!desktop) return; e.preventDefault(); setSel(j.slug); if (detailRef.current) detailRef.current.scrollTop = 0; };
   const chip = (label, active, onClick) => (
     <button key={label} onClick={onClick} className="rounded-lg px-3 py-1.5 text-sm font-medium border"
-      style={active ? { background: C.emTint, color: C.em, borderColor: C.em } : { background: "#fff", color: C.ink, borderColor: C.line }}>{label}</button>
+      style={active ? { background: C.emTint, color: C.em, borderColor: C.em } : { background: C.card, color: C.ink, borderColor: C.line }}>{label}</button>
   );
   const metaChips = (j) => [payLabel(j.pay), j.employmentType, j.workSetup, j.commissionOnly ? "Commission only" : "", j.headcount > 1 ? j.headcount + " openings" : ""].filter(Boolean);
   const inputBox = "flex items-center gap-2 flex-1 min-w-0 px-3.5";
 
   return (
-    <div className="min-h-screen" style={{ background: "#FFFFFF" }}>
+    <div className="min-h-screen" style={{ background: C.card }}>
       <header className="border-b" style={{ borderColor: C.line }}>
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3">
           <a href={JOBS_URL()} aria-label="All jobs"><BrandLogo height={28} /></a>
@@ -11489,12 +11715,12 @@ function JobsBoard() {
                     const on = desktop && current && current.slug === j.slug;
                     return (
                       <a key={j.slug} href={jobUrl(j.slug)} onClick={(e) => pick(e, j)} className="block rounded-xl border p-4 md:p-5 transition-shadow hover:shadow-md"
-                        style={{ borderColor: on ? C.em : C.line, boxShadow: on ? `inset 4px 0 0 ${C.em}` : undefined, background: "#fff" }}>
+                        style={{ borderColor: on ? C.em : C.line, boxShadow: on ? `inset 4px 0 0 ${C.em}` : undefined, background: C.card }}>
                         <div className="text-[17px] font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{j.title}</div>
                         <div className="text-sm mt-1" style={{ color: C.ink2 }}>{agency}</div>
                         <div className="text-sm" style={{ color: C.ink2 }}>{jobPlace(j.location, j.country) || (norm(j.workSetup) === "remote" ? "Remote" : "")}</div>
                         <div className="flex flex-wrap gap-1.5 mt-2.5">
-                          {metaChips(j).map((m, k) => <span key={k} className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: k === 0 && j.pay ? C.emTint : "#F3F2F1", color: k === 0 && j.pay ? C.em : C.ink2 }}>{m}</span>)}
+                          {metaChips(j).map((m, k) => <span key={k} className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: k === 0 && j.pay ? C.emTint : C.soft, color: k === 0 && j.pay ? C.em : C.ink2 }}>{m}</span>)}
                         </div>
                         <div className="mt-3 text-sm flex flex-col gap-0.5" style={{ color: C.ink2 }}>
                           {cardSnippet(j).map((s, k) => <div key={k} className="flex gap-2 min-w-0"><span aria-hidden="true">•</span><span className="truncate">{s}</span></div>)}
@@ -11521,9 +11747,9 @@ function JobsBoard() {
                       <div>
                         <div className="text-lg font-semibold mb-3">Job details</div>
                         <div className="flex flex-col gap-3 text-sm">
-                          {payLabel(current.pay) && <div><div className="font-semibold mb-1.5">Pay</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: "#F3F2F1", color: C.ink2 }}>{payLabel(current.pay)}</span></div>}
-                          {current.employmentType && <div><div className="font-semibold mb-1.5">Job type</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: "#F3F2F1", color: C.ink2 }}>{current.employmentType}</span></div>}
-                          {current.workSetup && <div><div className="font-semibold mb-1.5">Work setting</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: "#F3F2F1", color: C.ink2 }}>{current.workSetup}</span></div>}
+                          {payLabel(current.pay) && <div><div className="font-semibold mb-1.5">Pay</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: C.soft, color: C.ink2 }}>{payLabel(current.pay)}</span></div>}
+                          {current.employmentType && <div><div className="font-semibold mb-1.5">Job type</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: C.soft, color: C.ink2 }}>{current.employmentType}</span></div>}
+                          {current.workSetup && <div><div className="font-semibold mb-1.5">Work setting</div><span className="rounded-md px-2 py-1 text-xs font-medium" style={{ background: C.soft, color: C.ink2 }}>{current.workSetup}</span></div>}
                         </div>
                       </div>
                       <div className="border-t pt-6" style={{ borderColor: C.line }}>
@@ -11576,7 +11802,7 @@ const AUTH_LOOSE = [
   ["calendar", "Interview booked", "Thu, 10:00 · 2nd round", { left: "44%", bottom: "3%" }, 3, "hidden md:block"],
   ["briefcase", "Role filled", "Qualified Electrician", { right: "5%", bottom: "7%" }, -5, ""],
 ];
-const AUTH_CARD = { background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, padding: "9px 12px", fontSize: 12, color: C.ink2, boxShadow: "0 10px 24px -18px rgba(18,36,29,.5)", lineHeight: 1.4 };
+const AUTH_CARD = { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "9px 12px", fontSize: 12, color: C.ink2, boxShadow: "0 10px 24px -18px rgba(18,36,29,.5)", lineHeight: 1.4 };
 function AuthScatter() {
   return (
     <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
@@ -11648,7 +11874,7 @@ function AuthShell({ onSubmit, children }) {
           .pnx-marker { top: calc(100% - 14px) !important; } .pnx-st { opacity: .92 !important; } .pnx-tick > div:first-child { opacity: 1; }
         }
       `}</style>
-      <aside className="hidden md:flex flex-col justify-between relative overflow-hidden px-12 lg:px-16 py-12" style={{ background: C.side, color: C.canvas }} aria-hidden="true">
+      <aside className="hidden md:flex flex-col justify-between relative overflow-hidden px-12 lg:px-16 py-12" style={{ background: C.side, color: C.onSide }} aria-hidden="true">
         <BrandMark size={40} />
         <div className="relative pl-10 my-12">
           <div className="absolute left-[6px] top-[7px] bottom-[24px] w-px" style={{ background: "rgba(243,239,231,.18)" }} />
@@ -11676,7 +11902,7 @@ function AuthShell({ onSubmit, children }) {
         <AuthScatter />
         <div className="relative w-full max-w-[400px]">
           <AuthTucked />
-          <form onSubmit={onSubmit} className="pnx-card relative w-full rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
+          <form onSubmit={onSubmit} className="pnx-card relative w-full rounded-2xl border p-7 md:p-9" style={{ background: C.card, borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
             {children}
           </form>
         </div>
@@ -11732,7 +11958,7 @@ function ForgotPassword({ onDone, initialEmail }) {
           <div className="text-sm font-medium mb-1">Forgot your password?</div>
           <div className="text-xs mb-4" style={{ color: C.ink2 }}>Enter your ProNext email and we'll send you a one-time code to reset it. Your admin is notified too, for visibility.</div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
           <Btn type="submit" kind="primary" full className="mt-1" onClick={requestCode}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send code"}</Btn>
         </>)}
@@ -11740,11 +11966,11 @@ function ForgotPassword({ onDone, initialEmail }) {
           <div className="text-sm font-medium mb-1">Check your email</div>
           <div className="text-xs mb-4" style={{ color: C.ink2 }}>{msg}</div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>6-digit code</label>
-          <input inputMode="numeric" value={otp} onChange={(e) => setOtp(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none tracking-[0.3em]" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input inputMode="numeric" value={otp} onChange={(e) => setOtp(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none tracking-[0.3em]" style={{ borderColor: C.line, background: C.soft }} />
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>New password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Confirm new password</label>
-          <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input type="password" value={password2} onChange={(e) => setPassword2(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
           <Btn type="submit" kind="primary" full className="mt-1" onClick={verifyCode}>{busy ? <>Resetting <InlineDots color="#fff" /></> : "Reset password"}</Btn>
           <button type="button" onClick={() => { setStep("request"); setErr(""); }} className="w-full text-xs mt-3 text-center" style={{ color: C.ink3 }}>Didn't get a code? Try again</button>
@@ -11795,9 +12021,9 @@ function AccountSetup({ token, onDone }) {
           <div className="text-lg mb-1" style={{ ...SERIF }}>{first ? "Welcome, " + first : "Welcome"}</div>
           <div className="text-xs mb-4" style={{ color: C.ink2 }}>Choose a password for <b style={{ color: C.ink }}>{info.email}</b>. You'll use it with this email to sign in.</div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>New password (8+ characters)</label>
-          <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Confirm password</label>
-          <input type="password" autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <input type="password" autoComplete="new-password" value={password2} onChange={(e) => setPassword2(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
           {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
           <Btn type="submit" kind="primary" full className="mt-2" onClick={submit}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Set password"}</Btn>
         </>)}
@@ -11838,14 +12064,14 @@ function SignIn({ onSignedIn, notice }) {
         </div>
         <h1 className="text-[28px] leading-tight mb-1" style={{ ...SERIF, color: C.ink }}>Sign in</h1>
         <p className="text-sm mb-6" style={{ color: C.ink2 }}>Use the email your agency admin set up for you.</p>
-        {notice && <div className="text-sm rounded-lg px-3 py-2.5 mb-4 flex items-start gap-2" style={{ background: C.warnBg, color: "#7A4B05" }}><Lock size={15} className="shrink-0 mt-0.5" />{notice}</div>}
+        {notice && <div className="text-sm rounded-lg px-3 py-2.5 mb-4 flex items-start gap-2" style={{ background: C.warnBg, color: C.warnText }}><Lock size={15} className="shrink-0 mt-0.5" />{notice}</div>}
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <div className="flex items-center justify-between">
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Password</label>
           <button type="button" onClick={() => setForgot(true)} className="text-xs" style={{ color: C.ink2, textDecoration: "underline" }}>Forgot password?</button>
         </div>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
         <Btn type="submit" kind="primary" full className="mt-3" onClick={submit}>{busy ? <>Signing in <InlineDots color="#fff" /></> : "Sign in"}</Btn>
         <div className="text-xs mt-5 pt-4 border-t" style={{ color: C.ink3, borderColor: C.line }}>No account yet? Your agency's admin creates them; there's no self sign-up.</div>
@@ -11963,11 +12189,11 @@ function PortalSkeleton() {
     <div className="min-h-screen" style={{ background: C.canvas }} aria-busy="true" aria-label="Loading">
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <SkelBar w={120} h={30} />
-        <div className="rounded-2xl p-5 flex items-center gap-5" style={{ background: "#fff", border: "1px solid " + C.line }}>
+        <div className="rounded-2xl p-5 flex items-center gap-5" style={{ background: C.card, border: "1px solid " + C.line }}>
           <SkelBar w={96} h={96} r={48} className="shrink-0" />
           <div className="flex-1 flex flex-col gap-3"><SkelBar w="60%" h={28} /><SkelBar w="40%" /><SkelBar w={170} h={40} r={12} /></div>
         </div>
-        {[0, 1].map((i) => <div key={i} className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: "#fff", border: "1px solid " + C.line }}><SkelBar w="50%" h={16} /><SkelBar w="80%" /><SkelBar w="30%" /></div>)}
+        {[0, 1].map((i) => <div key={i} className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: C.card, border: "1px solid " + C.line }}><SkelBar w="50%" h={16} /><SkelBar w="80%" /><SkelBar w="30%" /></div>)}
       </div>
       <SpinnerOverlay label="Loading…" />
     </div>
@@ -12017,6 +12243,7 @@ export default function App() {
   const [jobId, setJobId] = useState(() => new URLSearchParams(window.location.search).get("job") || null);
   const [addCandidateJobId, setAddCandidateJobId] = useState(null);
   const [billFor, setBillFor] = useState(null);
+  const [cmdOpen, setCmdOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [toastText, setToastText] = useState("");
   const [errorModalMsg, setErrorModalMsg] = useState("");
@@ -12087,7 +12314,7 @@ export default function App() {
   React.useEffect(() => { if (session) boot(session); else setStatus("signedout"); }, []); // eslint-disable-line
 
   React.useEffect(() => {
-    const f = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); const el = document.getElementById("harbor-search"); if (el) el.focus(); } };
+    const f = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setCmdOpen((v) => !v); } };
     window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f);
   }, []);
 
@@ -12684,7 +12911,7 @@ export default function App() {
       <TopProgressBar show={refreshing} />
       <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
       <div className="flex-1 min-w-0">
-        <TopBar query={query} setQuery={setQuery} S={S} />
+        <TopBar query={query} setQuery={setQuery} S={S} onCmd={() => setCmdOpen(true)} />
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
@@ -12694,6 +12921,7 @@ export default function App() {
         updates={updates} onUpdatesSeen={markUpdatesSeen} onRefreshUpdates={loadUpdates}
         goUpdate={(l) => { if (!l) return; if (l.page === "jobDetail" && l.jobId) S.openJob(l.jobId); else if (l.candidateId && l.page === "candidates") { setPageRaw("candidates"); setCandId(l.candidateId); } else if (l.page) setPage(l.page); }} />
       <style>{FILTER_CSS}</style>
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} S={S} role={role} setPage={setPage} />
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />

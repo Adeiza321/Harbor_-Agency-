@@ -177,6 +177,9 @@ export async function stepXrayQueue(admin: any, s: Settings) {
 export async function runXray(admin: any, jobId: string, s: Settings, guide: XrayGuide | null = null) {
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("Job not found");
+  // Live progress for the app's progress bar: { step: plan | search | review, done, total, found }.
+  const prog = (o: Record<string, unknown>) => setXray(admin, jobId, { state: "running", ...(guide ? { guide } : {}), progress: o }).catch(() => {});
+  await prog({ step: "plan" });
   // Searched where the job is (its own country), like every other outside search.
   const area = await searchArea(admin, job, jobCountryNames(job));
   const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8) as string[];
@@ -213,8 +216,10 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
   };
   const queries = [...p.linkedin.map((q) => ({ q, site: "linkedin" as SiteKey })), ...p.sites.map((x) => ({ q: x.query, site: x.site }))].slice(0, MAX_QUERIES);
   // LinkedIn first, then the technical sites; stop early once there are plenty.
-  for (const { q } of queries) {
+  await prog({ step: "search", done: 0, total: queries.length, found: 0 });
+  for (const [qi, { q }] of queries.entries()) {
     if (people.size >= want) break;
+    if (qi) await prog({ step: "search", done: qi, total: queries.length, found: people.size });
     const r = await searchWeb(admin, q, skip);
     errors.push(...r.errors);
     if (!r.engine) { if (skip.size >= 4) break; continue; }
@@ -246,6 +251,7 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
     for (const r of fitsToPercent(Array.isArray(out?.people) ? out.people : [])) { const who = b[Number(r.i)]; if (who) byKey.set(who.key, r); }
   };
   for (let i = 0; i < batches.length; i += 2) {
+    await prog({ step: "review", done: i, total: batches.length, found: list.length });
     const res = await Promise.allSettled(batches.slice(i, i + 2).map(review));
     for (const r of res) if (r.status === "rejected") errors.push(errMsg(r.reason).slice(0, 200));
   }
