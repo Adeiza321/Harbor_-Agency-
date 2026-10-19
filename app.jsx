@@ -576,9 +576,8 @@ function SubmissionsCard({ S, recruiterId, title = "Submissions and placements" 
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <SectionTitle title={title} sub={"By " + unit + " · " + RANGE_LABEL[range]} />
         <div className="flex items-center gap-2 flex-wrap">
-          <select value={range} onChange={(e) => setRange(e.target.value)} aria-label="Date range" className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={sel}>
-            {["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth", "thisYear", "lastYear", "custom"].map((k) => <option key={k} value={k}>{RANGE_LABEL[k].replace(" range", "")}</option>)}
-          </select>
+          <FilterPill label="Period" value={range} onChange={setRange} fixed align="right" searchable={false}
+            options={["today", "yesterday", "thisWeek", "lastWeek", "thisMonth", "lastMonth", "thisYear", "lastYear", "custom"].map((k) => ({ value: k, label: RANGE_LABEL[k].replace(" range", "") }))} />
           {range === "custom" && (<>
             <input type="date" value={cFrom} onChange={(e) => setCFrom(e.target.value)} aria-label="From" className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={sel} />
             <input type="date" value={cTo} onChange={(e) => setCTo(e.target.value)} aria-label="To" className="rounded-lg border px-2 py-1.5 text-xs outline-none" style={sel} />
@@ -766,12 +765,10 @@ function RecruiterPerformanceChart({ S }) {
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <SectionTitle title="Recruiter performance" sub={"Candidates lined up in " + label + " and what has happened to them since"} />
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex rounded-lg border p-0.5" style={{ borderColor: C.line, background: "#fff" }}>
-            {[["month", "Month"], ["year", "Year"]].map(([k, l]) => <button key={k} type="button" onClick={() => setMode(k)} className="rounded-md px-2.5 py-1 text-xs font-medium" style={mode === k ? { background: C.ink, color: "#fff" } : { color: C.ink2 }}>{l}</button>)}
-          </div>
+          <Tabs tabs={[{ key: "month", label: "Month" }, { key: "year", label: "Year" }]} active={mode} setActive={setMode} />
           {mode === "month"
-            ? <select value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month" className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={sel}>{months.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}</select>
-            : <select value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year" className="rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={sel}>{years.map((v) => <option key={v} value={v}>{v}</option>)}</select>}
+            ? <FilterPill label="Month" value={month} onChange={setMonth} fixed align="right" options={months.map((m) => ({ value: m.v, label: m.l }))} />
+            : <FilterPill label="Year" value={year} onChange={setYear} fixed align="right" options={years.map((v) => ({ value: v, label: v }))} />}
         </div>
       </div>
       <div className="mt-3 mb-2"><Legend items={series.map((x) => [x.name, x.color])} /></div>
@@ -962,23 +959,191 @@ function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", fu
 
 function SearchInput({ value, onChange, placeholder }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl border px-3 py-2.5 flex-1" style={{ borderColor: C.line, background: "#FAF8F3" }}>
-      <Search size={16} color={C.ink3} />
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="bg-transparent outline-none text-sm flex-1 min-w-0" style={{ color: C.ink }} />
+    <label className="pn-search flex items-center gap-2 rounded-full border px-3.5 flex-1 min-w-0" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+      <Search size={15} color={C.ink3} className="shrink-0" />
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="bg-transparent outline-none text-sm flex-1 min-w-0 py-2.5" style={{ color: C.ink }} />
+    </label>
+  );
+}
+
+/* ---------------------------------------------------------------- filters
+   One look for filters across the app (FILTER_CSS is added once by the App root):
+   - Tabs: a segmented track with a sliding marker; a trailing number in a label ("In review 5",
+     "New (3)") shows as a count.
+   - FilterPill: one filter. Dashed while it's on its "all" value; green with the chosen value once
+     set, with × to clear it. Opens a small panel with a search box (when there are many options)
+     and counts beside options.
+   - DatePill: quick ranges (last 7 / 30 / 90 days) or a custom from-to.
+   - ScorePill: a minimum score on a slider.
+   - ClearFilters: "Clear all", only shown while something is set. */
+const FILTER_CSS = `
+.pn-search:focus-within{border-color:${C.em}!important;box-shadow:0 0 0 3px ${C.emTint}}
+.pn-track{position:relative;display:inline-flex;max-width:100%;gap:2px;background:#F1EDE4;border-radius:12px;padding:4px;overflow-x:auto;scrollbar-width:none}
+.pn-track::-webkit-scrollbar{display:none}
+.pn-track-mark{position:absolute;top:4px;bottom:4px;left:0;background:#fff;border-radius:9px;box-shadow:0 1px 2px rgba(20,32,27,.08),0 2px 8px -4px rgba(20,32,27,.18);transition:transform .35s cubic-bezier(.3,.8,.3,1),width .35s cubic-bezier(.3,.8,.3,1)}
+.pn-track button{position:relative;z-index:1;flex:0 0 auto;border:0;background:none;font-size:13px;color:${C.ink2};padding:6px 12px;border-radius:9px;white-space:nowrap;display:flex;gap:6px;align-items:center;cursor:pointer}
+.pn-track button[aria-pressed="true"]{color:${C.ink};font-weight:600}
+.pn-track button:focus-visible{outline:2px solid ${C.em};outline-offset:-2px}
+.pn-track .pn-ct{font-size:11px;font-variant-numeric:tabular-nums;color:${C.ink3};font-weight:500}
+.pn-track button[aria-pressed="true"] .pn-ct{color:${C.em}}
+.pn-pill{display:inline-flex;align-items:center;gap:6px;border:1px dashed #CFC8B8;background:#fff;border-radius:999px;padding:6px 12px;font-size:13px;color:${C.ink2};cursor:pointer;white-space:nowrap;max-width:100%;transition:background .2s,border-color .2s,color .2s}
+.pn-pill:hover{border-color:${C.ink3};color:${C.ink}}
+.pn-pill:focus-visible{outline:2px solid ${C.em};outline-offset:2px}
+.pn-pill.on{border-style:solid;border-color:${C.em};background:${C.emTint};color:${C.em}}
+.pn-pill.on b{font-weight:600;color:${C.ink};overflow:hidden;text-overflow:ellipsis;max-width:180px}
+.pn-pill.set{border-style:solid;border-color:${C.line};color:${C.ink2}}
+.pn-pill.set b{font-weight:600;color:${C.ink}}
+.pn-pill .pn-plus{font-size:15px;line-height:1;color:${C.ink3}}
+.pn-pill .pn-x{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:12px;background:rgba(31,111,84,.14)}
+.pn-pop{position:absolute;top:calc(100% + 8px);left:0;z-index:40;width:270px;max-width:calc(100vw - 32px);background:#fff;border:1px solid ${C.line};border-radius:14px;box-shadow:0 18px 40px -16px rgba(18,36,29,.35);padding:8px;animation:pn-pop .18s cubic-bezier(.2,.8,.2,1)}
+.pn-pop.right{left:auto;right:0}
+@keyframes pn-pop{from{opacity:0;transform:translateY(-4px) scale(.98)}to{opacity:1;transform:none}}
+.pn-pop input[type=text],.pn-pop input[type=date]{width:100%;border:1px solid ${C.line};border-radius:9px;padding:7px 10px;font-size:13px;background:#FAF8F3;outline:none;color:${C.ink}}
+.pn-pop input:focus{border-color:${C.em}}
+.pn-opts{max-height:260px;overflow-y:auto;margin-top:6px}
+.pn-opt{display:flex;align-items:center;gap:10px;width:100%;border:0;background:none;font-size:13px;color:${C.ink};padding:8px 10px;border-radius:8px;cursor:pointer;text-align:left}
+.pn-opt:hover,.pn-opt:focus-visible{background:#F6F3EC;outline:none}
+.pn-opt .pn-box{width:16px;height:16px;border-radius:50%;border:1.5px solid #CFC8B8;display:grid;place-items:center;flex:none}
+.pn-opt[aria-checked="true"] .pn-box{background:${C.em};border-color:${C.em}}
+.pn-opt[aria-checked="true"] .pn-box::after{content:"";width:7px;height:4px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.pn-opt .pn-lbl{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pn-opt .pn-n{margin-left:auto;font-size:11px;color:${C.ink3};font-variant-numeric:tabular-nums}
+.pn-presets{display:flex;flex-wrap:wrap;gap:6px;padding:4px}
+.pn-presets button{border:1px solid ${C.line};background:#fff;border-radius:999px;padding:6px 11px;font-size:12px;cursor:pointer;color:${C.ink2}}
+.pn-presets button[aria-pressed="true"]{background:${C.ink};color:#fff;border-color:${C.ink}}
+.pn-clear{border:0;background:none;font-size:13px;color:${C.em};cursor:pointer;padding:6px 4px}
+@media (prefers-reduced-motion: reduce){.pn-track-mark,.pn-pop{transition:none;animation:none}}
+`;
+
+function Tabs({ tabs, active, setActive }) {
+  const ref = React.useRef(null);
+  const [mark, setMark] = useState(null);
+  const split = (label) => { const m = String(label).match(/^(.*?)\s*\(?(\d+)\)?$/); return m && m[1] ? [m[1], m[2]] : [label, null]; };
+  React.useLayoutEffect(() => {
+    const el = ref.current && ref.current.querySelector('[aria-pressed="true"]');
+    if (el) setMark({ w: el.offsetWidth, x: el.offsetLeft }); else setMark(null);
+  }, [active, tabs.map((t) => t.label).join("|")]); // eslint-disable-line
+  React.useEffect(() => {
+    const on = () => { const el = ref.current && ref.current.querySelector('[aria-pressed="true"]'); if (el) setMark({ w: el.offsetWidth, x: el.offsetLeft }); };
+    window.addEventListener("resize", on); return () => window.removeEventListener("resize", on);
+  }, []);
+  return (
+    <div ref={ref} className="pn-track" role="group">
+      {mark && <div className="pn-track-mark" style={{ width: mark.w, transform: `translateX(${mark.x}px)` }} />}
+      {tabs.map((t) => { const [l, n] = typeof t.label === "string" ? split(t.label) : [t.label, null]; return (
+        <button key={t.key} type="button" aria-pressed={active === t.key} onClick={() => setActive(t.key)}>{l}{n != null && <span className="pn-ct">{n}</span>}</button>
+      ); })}
     </div>
   );
 }
 
-function Tabs({ tabs, active, setActive }) {
+// Closes a filter's panel on a click outside it or Escape.
+function usePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    if (!open) return;
+    const click = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const key = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", click); document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("mousedown", click); document.removeEventListener("keydown", key); };
+  }, [open]);
+  return { open, setOpen, ref };
+}
+// fixed: a setting that always has a value (a period, a month): solid, no ×, with a chevron.
+function PillButton({ label, shown, on, open, onClick, onClear, fixed }) {
+  if (fixed) return (
+    <button type="button" className="pn-pill set" aria-expanded={open} onClick={onClick}>
+      {label}: <b>{shown}</b><ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .2s" }} />
+    </button>
+  );
   return (
-    <div className="flex gap-1.5 flex-wrap">
-      {tabs.map((t) => (
-        <button key={t.key} onClick={() => setActive(t.key)} className="rounded-full px-3 py-1.5 text-xs font-medium" style={active === t.key ? { background: C.ink, color: "#fff" } : { border: `1px solid #D5D2C7`, color: C.ink2 }}>
-          {t.label}
-        </button>
-      ))}
+    <button type="button" className={"pn-pill" + (on ? " on" : "")} aria-expanded={open} onClick={(e) => { if (e.target.closest(".pn-x")) { onClear(); return; } onClick(); }}>
+      {!on && <span className="pn-plus">+</span>}{label}{on && <>: <b>{shown}</b></>}
+      {on && <span className="pn-x" role="button" aria-label={"Clear " + label}>×</span>}
+    </button>
+  );
+}
+
+// options: [{ value, label, count? }] or plain strings. allValue: the "no filter" value ("All", "" or 0).
+function FilterPill({ label, value, onChange, options, allValue = "All", searchable, align, fixed }) {
+  const { open, setOpen, ref } = usePopover();
+  const [q, setQ] = useState("");
+  const opts = (options || []).map((o) => (typeof o === "object" ? o : { value: o, label: String(o) }));
+  const on = value !== allValue && value !== undefined && value !== null;
+  const cur = opts.find((o) => o.value === value);
+  const showSearch = searchable !== undefined ? searchable : opts.length > 7;
+  const list = q ? opts.filter((o) => String(o.label).toLowerCase().includes(q.toLowerCase())) : opts;
+  React.useEffect(() => { if (!open) setQ(""); }, [open]);
+  return (
+    <div className="relative" ref={ref}>
+      <PillButton label={label} shown={cur ? cur.label : String(value)} on={on} fixed={fixed} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange(allValue); setOpen(false); }} />
+      {open && (
+        <div className={"pn-pop" + (align === "right" ? " right" : "")}>
+          {showSearch && <input type="text" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={"Search " + label.toLowerCase()} aria-label={"Search " + label.toLowerCase()} />}
+          <div className="pn-opts" role="menu">
+            {list.map((o) => (
+              <button key={String(o.value)} type="button" role="menuitemradio" aria-checked={o.value === value} className="pn-opt" onClick={() => { onChange(o.value === value && !fixed ? allValue : o.value); setOpen(false); }}>
+                <span className="pn-box" /><span className="pn-lbl">{o.label}</span>{o.count != null && <span className="pn-n">{o.count}</span>}
+              </button>
+            ))}
+            {!list.length && <div className="text-xs px-2.5 py-3" style={{ color: C.ink3 }}>Nothing matches.</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// from / to are "YYYY-MM-DD" strings ("" = open-ended).
+const isoDay = (d) => { const x = new Date(d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
+function DatePill({ label = "Date added", from, to, onChange, align }) {
+  const { open, setOpen, ref } = usePopover();
+  const today = isoDay(Date.now());
+  const preset = (n) => isoDay(Date.now() - (n - 1) * 864e5);
+  const which = [7, 30, 90].find((n) => from === preset(n) && (!to || to === today));
+  const fmt = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "…";
+  const on = !!(from || to);
+  return (
+    <div className="relative" ref={ref}>
+      <PillButton label={label} shown={which ? "Last " + which + " days" : fmt(from) + " – " + fmt(to)} on={on} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange("", ""); setOpen(false); }} />
+      {open && (
+        <div className={"pn-pop" + (align === "right" ? " right" : "")}>
+          <div className="pn-presets">
+            {[7, 30, 90].map((n) => <button key={n} type="button" aria-pressed={which === n} onClick={() => { which === n ? onChange("", "") : onChange(preset(n), ""); setOpen(false); }}>Last {n} days</button>)}
+          </div>
+          <div className="flex items-center gap-1.5 px-1 pt-1.5 text-xs" style={{ color: C.ink3 }}>
+            <input type="date" value={from} onChange={(e) => onChange(e.target.value, to)} aria-label="From" />
+            <span>to</span>
+            <input type="date" value={to} onChange={(e) => onChange(from, e.target.value)} aria-label="To" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScorePill({ label, value, onChange, max = 95, step = 5, unit = "%" }) {
+  const { open, setOpen, ref } = usePopover();
+  const [v, setV] = useState(value);
+  React.useEffect(() => { setV(value); }, [value, open]);
+  return (
+    <div className="relative" ref={ref}>
+      <PillButton label={label} shown={value + unit + "+"} on={value > 0} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange(0); setOpen(false); }} />
+      {open && (
+        <div className="pn-pop" style={{ width: 240 }}>
+          <div className="px-2 pt-2 pb-1">
+            <input type="range" min={0} max={max} step={step} value={v} onChange={(e) => setV(Number(e.target.value))} onPointerUp={() => onChange(v)} onKeyUp={() => onChange(v)} aria-label={"Minimum " + label} className="w-full" style={{ accentColor: C.em }} />
+            <div className="flex justify-between text-xs mt-1" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}><span>Any</span><b style={{ color: C.ink }}>{v ? v + unit + " or more" : "Any score"}</b><span>{max}{unit}</span></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ClearFilters({ show, onClick, label = "Clear all" }) {
+  return show ? <button type="button" className="pn-clear" onClick={onClick}>{label}</button> : null;
 }
 
 function ProgressBar({ pct, w = 80, tone = C.em }) {
@@ -2547,9 +2712,7 @@ function PeriodSelect({ value, onChange, custom, setCustom, id }) {
   const inp = "rounded-lg border px-2 py-1.5 text-xs outline-none";
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} aria-label="Period" className={inp} style={{ borderColor: C.line, background: "#fff" }}>
-        {PERIODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-      </select>
+      <FilterPill label="Period" value={value} onChange={onChange} fixed searchable={false} options={PERIODS.map(([k, l]) => ({ value: k, label: l }))} />
       {value === "custom" && <>
         <input type="date" value={custom.from} onChange={(e) => setCustom({ ...custom, from: e.target.value })} aria-label="From" className={inp} style={{ borderColor: C.line }} />
         <span className="text-xs" style={{ color: C.ink3 }}>to</span>
@@ -3144,7 +3307,6 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   };
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
-  const [showF, setShowF] = useState(false);
   const [recF, setRecF] = useState("All");
   const [minAi, setMinAi] = useState(0);
   const [roleF, setRoleF] = useState("All");
@@ -3169,39 +3331,21 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" title={scope === "recruiter" ? "Your candidate bench" : "All candidates"} sub={scope === "recruiter" ? "Every applicant you have sourced, and active file candidates ready to reuse." : `${data.length} candidates across every recruiter, client, and source.`} />
         <div className="flex gap-2.5">
-          <Btn icon={Filter} onClick={() => setShowF((v) => !v)} className="flex-1 md:flex-none justify-center">Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}</Btn>
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates.csv", filtered.map(flat)) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
           <Btn icon={Upload} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
       <Card>
-        {showF && (
-          <div className="flex flex-wrap gap-3 mb-3 rounded-xl p-3" style={{ background: "#F6F3EC" }}>
-            <select value={recF} onChange={(e) => setRecF(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
-              <option value="All">All recruiters</option>
-              {S.team.map((r) => <option key={r.id} value={r.name}>{r.name}</option>)}
-            </select>
-            <select value={roleF} onChange={(e) => setRoleF(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
-              <option value="All">All roles</option>
-              {roles.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-            <select value={sourceF} onChange={(e) => setSourceF(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
-              <option value="All">All sources</option>
-              {sources.map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <select value={minAi} onChange={(e) => setMinAi(Number(e.target.value))} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line }}>
-              <option value={0}>Any AI score</option><option value={70}>AI 70%+</option><option value={80}>AI 80%+</option><option value={90}>AI 90%+</option>
-            </select>
-            <div className="flex items-center gap-1.5">
-              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, color: dateFrom ? C.ink : C.ink3 }} />
-              <span className="text-xs" style={{ color: C.ink3 }}>to</span>
-              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, color: dateTo ? C.ink : C.ink3 }} />
-            </div>
-            <button onClick={() => { setRecF("All"); setMinAi(0); setRoleF("All"); setSourceF("All"); setDateFrom(""); setDateTo(""); }} className="text-xs" style={{ color: C.em }}>Clear all</button>
-          </div>
-        )}
-        <div className="mb-3"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
+          <FilterPill label="Recruiter" value={recF} onChange={setRecF} options={S.team.map((r) => ({ value: r.name, label: r.name, count: data.filter((c) => c.recruiter === r.name).length }))} />
+          <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: data.filter((c) => c.role === r).length }))} />
+          <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: data.filter((c) => c.source === x).length }))} />
+          <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} />
+          <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
+          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF("All"); setMinAi(0); setRoleF("All"); setSourceF("All"); setDateFrom(""); setDateTo(""); setQ(""); }} />
+        </div>
         <DataTable
           rows={filtered}
           onRowClick={openCandidate}
@@ -5415,10 +5559,7 @@ function InboxPage({ toast, S }) {
       <Card>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <Tabs tabs={[{ key: "new", label: "New (" + fresh.length + ")" }, { key: "handled", label: "Handled (" + handled.length + ")" }]} active={tab} setActive={setTab} />
-          <select value={src} onChange={(e) => setSrc(e.target.value)} className="text-sm rounded-lg border px-2.5 py-2 bg-white self-start sm:self-auto" style={{ borderColor: C.line }} aria-label="Came in from">
-            <option value="">All sources</option>
-            {srcOpts.map(([k, l]) => <option key={k} value={k}>{l} ({srcCount(k)})</option>)}
-          </select>
+          <div className="self-start sm:self-auto"><FilterPill label="Came in from" value={src} onChange={setSrc} allValue="" align="right" options={srcOpts.map(([k, l]) => ({ value: k, label: l, count: srcCount(k) }))} /></div>
         </div>
         {!canAct && tab === "new" && fresh.length > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>Rec Ops or an Admin assigns new applications.</div>}
         <div className="mt-2">
@@ -5491,10 +5632,7 @@ function MessagesPage({ toast, S }) {
               <SearchInput value={search} onChange={setSearch} placeholder="Search conversations" />
               <button onClick={() => setComposeOpen(true)} title="New message" className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.side, color: "#fff" }}><Plus size={16} /></button>
             </div>
-            <select value={jobFilter} onChange={(e) => setJobFilter(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
-              <option value="">All jobs</option>
-              {S.jobs.map((j) => <option key={j.id} value={j.id}>{j.role} · {j.client}</option>)}
-            </select>
+            <div><FilterPill label="Job" value={jobFilter} onChange={setJobFilter} allValue="" searchable options={S.jobs.map((j) => ({ value: j.id, label: j.role + " · " + j.client }))} /></div>
           </div>
           <div className={"overflow-y-auto " + (openId ? "flex-1 min-h-0" : "max-h-[70vh] md:max-h-[28rem]")}>
             {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
@@ -6548,8 +6686,9 @@ function InterviewsPage({ S, toast }) {
           <button onClick={() => setAnchor(Date.now())} className="rounded-lg border bg-white px-3 py-1.5" style={{ borderColor: C.line }}>Today</button>
         </div>}
         <div className="flex gap-2 flex-wrap">
-          <label className="text-xs flex items-center gap-1.5" style={{ color: C.ink2 }}>Recruiter<select value={rec} onChange={(e) => setRec(e.target.value)} className={selSt} style={{ borderColor: C.line }}><option value="All">Everyone</option>{recs.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select></label>
-          <label className="text-xs flex items-center gap-1.5" style={{ color: C.ink2 }}>Client<select value={client} onChange={(e) => setClient(e.target.value)} className={selSt} style={{ borderColor: C.line }}><option value="All">All clients</option>{clients.map((c) => <option key={c}>{c}</option>)}</select></label>
+          <FilterPill label="Recruiter" value={rec} onChange={setRec} options={recs.map(([id, n]) => ({ value: id, label: n }))} />
+          <FilterPill label="Client" value={client} onChange={setClient} align="right" options={clients} />
+          <ClearFilters show={rec !== "All" || client !== "All"} onClick={() => { setRec("All"); setClient("All"); }} />
         </div>
       </div>
       <div className="flex flex-col xl:flex-row gap-5">
@@ -7656,7 +7795,6 @@ function CampaignsPage({ toast, S }) {
   const [busy, setBusy] = useState("");
   // Search and filters (kept while switching between the status tabs), and pages of up to 50.
   const [q, setQ] = useState("");
-  const [showFilters, setShowFilters] = useState(false);
   const [fl, setFl] = useState({ role: "", job: "", source: "", email: "", fit: 0, country: "", channel: "", reply: "" });
   const setF = (k, v) => setFl((x) => ({ ...x, [k]: v }));
   const [page, setPage] = useState(1);
@@ -7724,49 +7862,22 @@ function CampaignsPage({ toast, S }) {
   const opts = (vals) => [...new Set(vals.filter(Boolean))];
   const selCls = "text-sm rounded-lg border px-2.5 py-2 bg-white";
   const filterBar = (
-    <div className="mt-3 flex flex-col gap-2">
-      <div className="flex gap-2 items-center">
-        <div className="relative flex-1 min-w-0">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: C.ink3 }} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tab === "leads" ? "Search role, company, contact" : "Search name, title, company, email"} className="w-full rounded-lg border pl-9 pr-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-        </div>
-        <Btn icon={Filter} onClick={() => setShowFilters((v) => !v)}>Filters{nFilters ? " · " + nFilters : ""}</Btn>
-      </div>
-      {showFilters && (tab === "leads" ? (
-        <div className="flex flex-wrap gap-2 items-center">
-          {roleSelect((leads || []).map((l) => l.job_title))}
-          <select value={fl.country} onChange={(e) => setF("country", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Country">
-            <option value="">All countries</option>
-            {opts((leads || []).map((l) => l.country)).sort().map((c) => <option key={c} value={c}>{(COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c}</option>)}
-          </select>
-          <select value={fl.channel} onChange={(e) => setF("channel", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Contact by">
-            <option value="">Email or LinkedIn</option><option value="email">Email</option><option value="linkedin">LinkedIn</option><option value="none">No contact</option>
-          </select>
-          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, role: "", country: "", channel: "" }))}>Clear filters</button>}
-        </div>
-      ) : (
-        <div className="flex flex-wrap gap-2 items-center">
-          {roleSelect((prospects || []).map((p) => roleOf(p.job_id)))}
-          <select value={fl.job} onChange={(e) => setF("job", e.target.value)} className={selCls} style={{ borderColor: C.line, maxWidth: 280 }} aria-label="Job">
-            <option value="">All jobs</option>
-            {opts((prospects || []).map((p) => p.job_id)).map((id) => ({ id, label: jobLabel(id) || "Closed or removed job" })).sort((a, b) => a.label.localeCompare(b.label)).map((j) => <option key={j.id} value={j.id}>{j.label}</option>)}
-          </select>
-          <select value={fl.source} onChange={(e) => setF("source", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Found on">
-            <option value="">Found anywhere</option>
-            {Object.values(Object.fromEntries((prospects || []).map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-          </select>
-          <select value={fl.email} onChange={(e) => setF("email", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Email">
-            <option value="">With or without email</option><option value="with">Has an email</option><option value="without">No email yet</option>
-          </select>
-          <select value={fl.fit} onChange={(e) => setF("fit", Number(e.target.value))} className={selCls} style={{ borderColor: C.line }} aria-label="Fit">
-            <option value={0}>Any fit</option>{[50, 60, 70, 80].map((n) => <option key={n} value={n}>{n}% fit or more</option>)}
-          </select>
-          <select value={fl.reply} onChange={(e) => setF("reply", e.target.value)} className={selCls} style={{ borderColor: C.line }} aria-label="Replies">
-            <option value="">Any reply or none</option><option value="replied">Replied</option><option value="referred">Referred someone</option><option value="auto">Automatic replies</option>
-          </select>
-          {nFilters > 0 && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => setFl((x) => ({ ...x, role: "", job: "", source: "", email: "", fit: 0, reply: "" }))}>Clear filters</button>}
-        </div>
-      ))}
+    <div className="mt-3 flex flex-wrap gap-2 items-center">
+      <div className="flex-1 min-w-[220px]"><SearchInput value={q} onChange={setQ} placeholder={tab === "leads" ? "Search role, company, contact" : "Search name, title, company, email"} /></div>
+      {tab === "leads" ? (<>
+        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts((leads || []).map((l) => l.job_title))} />
+        <FilterPill label="Country" value={fl.country} onChange={(v) => setF("country", v)} allValue="" options={opts((leads || []).map((l) => l.country)).sort().map((c) => ({ value: c, label: (COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c }))} />
+        <FilterPill label="Contact by" value={fl.channel} onChange={(v) => setF("channel", v)} allValue="" options={[{ value: "email", label: "Email" }, { value: "linkedin", label: "LinkedIn" }, { value: "none", label: "No contact" }]} />
+        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: "", country: "", channel: "" }))} />
+      </>) : (<>
+        <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} allValue="" options={roleOpts((prospects || []).map((p) => roleOf(p.job_id)))} />
+        <FilterPill label="Job" value={fl.job} onChange={(v) => setF("job", v)} allValue="" options={opts((prospects || []).map((p) => p.job_id)).map((id) => ({ value: id, label: jobLabel(id) || "Closed or removed job", count: (prospects || []).filter((p) => p.job_id === id).length })).sort((a, b) => a.label.localeCompare(b.label))} />
+        <FilterPill label="Found on" value={fl.source} onChange={(v) => setF("source", v)} allValue="" options={Object.values(Object.fromEntries((prospects || []).map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => ({ value: f.key, label: f.label }))} />
+        <FilterPill label="Email" value={fl.email} onChange={(v) => setF("email", v)} allValue="" options={[{ value: "with", label: "Has an email" }, { value: "without", label: "No email yet" }]} />
+        <ScorePill label="Fit" value={fl.fit} onChange={(v) => setF("fit", v)} max={90} step={10} />
+        <FilterPill label="Replies" value={fl.reply} onChange={(v) => setF("reply", v)} allValue="" align="right" options={[{ value: "replied", label: "Replied" }, { value: "referred", label: "Referred someone" }, { value: "auto", label: "Automatic replies" }]} />
+        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: "", job: "", source: "", email: "", fit: 0, reply: "" }))} />
+      </>)}
     </div>
   );
   const pager = curList.length > 10 ? <Pager page={curPage} pages={pages} size={size} total={curList.length} onPage={(n) => setPage(Math.max(1, Math.min(pages, n)))} onSize={setSize} /> : null;
@@ -11302,51 +11413,77 @@ const AUTH_TUCKED = [
   ["cv", { right: -44, top: -54 }, 112, 15], ["calendar", { left: -58, top: "34%" }, 88, -13],
   ["offer", { left: -34, bottom: -46 }, 96, -19], ["search", { right: -52, bottom: 64 }, 82, 11],
 ];
-const authSvg = (k, size, rot, style, cls, opacity) => (
-  <svg key={k + JSON.stringify(style)} viewBox="0 0 64 64" width={size} height={size} className={"absolute " + (cls || "")}
-    style={{ ...style, transform: "rotate(" + rot + "deg)", opacity }}
+const authSvg = (k, size, rot, style, cls, opacity, i = 0) => (
+  <svg key={k + JSON.stringify(style)} viewBox="0 0 64 64" width={size} height={size} className={"absolute pnx-drift " + (cls || "")}
+    style={{ ...style, transform: "rotate(" + rot + "deg)", opacity, animationDelay: -(i * 1.7) + "s", animationDuration: 8 + (i % 3) * 1.5 + "s" }}
     fill="none" stroke={C.em} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{AUTH_ART[k]}</svg>
 );
 function AuthScatter() {
-  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_LOOSE.map(([k, pos, size, rot, op, cls]) => authSvg(k, size, rot, pos, cls, op))}</div>;
+  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_LOOSE.map(([k, pos, size, rot, op, cls], i) => authSvg(k, size, rot, pos, cls, op, i))}</div>;
 }
 function AuthTucked() {
-  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_TUCKED.map(([k, pos, size, rot]) => authSvg(k, size, rot, pos, "", 0.85))}</div>;
+  return <div className="absolute inset-0 pointer-events-none" aria-hidden="true">{AUTH_TUCKED.map(([k, pos, size, rot], i) => authSvg(k, size, rot, pos, "", 0.85, i + 3))}</div>;
 }
 function AuthShell({ onSubmit, children }) {
   return (
     <div className="min-h-screen md:grid" style={{ background: C.canvas, gridTemplateColumns: "minmax(0,5fr) minmax(0,6fr)" }}>
       <style>{`
-        @keyframes pnx-travel { from { top: 0; } to { top: calc(100% - 14px); } }
-        @keyframes pnx-arrive { from { opacity: .35; } to { opacity: 1; } }
-        .pnx-marker { animation: pnx-travel 1.8s cubic-bezier(.65,0,.25,1) .3s both; }
-        .pnx-hired { animation: pnx-arrive .5s ease-out 2s both; }
+        /* Left panel: a candidate walks down the pipeline on a loop; each stage lights as it passes, then "Hired" glows. */
+        @keyframes pnx-travel { 0% { top: 0; opacity: 1; } 72% { top: calc(100% - 14px); opacity: 1; } 92% { top: calc(100% - 14px); opacity: 1; } 100% { top: calc(100% - 14px); opacity: 0; } }
+        @keyframes pnx-lit { 0%, 3% { opacity: var(--o); } 9%, 86% { opacity: .92; } 100% { opacity: var(--o); } }
+        @keyframes pnx-hire { 0%, 3% { opacity: .3; transform: none; } 9% { opacity: 1; transform: scale(1.04); } 15%, 70% { opacity: 1; transform: none; } 100% { opacity: .3; } }
+        @keyframes pnx-tick { 0% { opacity: 0; transform: translateY(8px); } 4%, 29% { opacity: 1; transform: none; } 33%, 100% { opacity: 0; transform: translateY(-8px); } }
+        @keyframes pnx-drift { from { translate: 0 0; } to { translate: 6px -12px; } }
+        @keyframes pnx-card { from { opacity: 0; transform: translateY(18px) scale(.985); } to { opacity: 1; transform: none; } }
+        @keyframes pnx-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+        .pnx-marker { animation: pnx-travel 6s linear infinite; }
+        .pnx-st { animation: pnx-lit 6s infinite; transform-origin: left center; }
+        .pnx-st.pnx-hired { animation-name: pnx-hire; }
+        .pnx-tick > div { position: absolute; inset: 0; opacity: 0; animation: pnx-tick 12s infinite; }
+        .pnx-tick > div:nth-child(2) { animation-delay: 4s; } .pnx-tick > div:nth-child(3) { animation-delay: 8s; }
+        .pnx-drift { animation: pnx-drift 9s ease-in-out infinite alternate; }
+        .pnx-card { animation: pnx-card .7s cubic-bezier(.2,.7,.2,1) both; }
+        .pnx-card > * { animation: pnx-rise .6s cubic-bezier(.2,.7,.2,1) both; }
+        .pnx-card > *:nth-child(1) { animation-delay: .12s; } .pnx-card > *:nth-child(2) { animation-delay: .2s; } .pnx-card > *:nth-child(3) { animation-delay: .28s; }
+        .pnx-card > *:nth-child(4) { animation-delay: .36s; } .pnx-card > *:nth-child(5) { animation-delay: .44s; } .pnx-card > *:nth-child(n+6) { animation-delay: .52s; }
+        .pnx-auth button[type=submit] { transition: filter .2s, box-shadow .2s; }
+        .pnx-auth button[type=submit]:hover:not(:disabled) { filter: brightness(1.22); box-shadow: 0 8px 20px -10px rgba(31,111,84,.7); }
         .pnx-auth input:focus-visible { border-color: ${C.em} !important; box-shadow: 0 0 0 3px ${C.emTint}; }
         .pnx-auth button:focus-visible { outline: 2px solid ${C.em}; outline-offset: 2px; }
-        @media (prefers-reduced-motion: reduce) { .pnx-marker, .pnx-hired { animation: none; top: calc(100% - 14px); } }
+        @media (prefers-reduced-motion: reduce) {
+          .pnx-marker, .pnx-st, .pnx-drift, .pnx-card, .pnx-card > *, .pnx-tick > div { animation: none !important; }
+          .pnx-marker { top: calc(100% - 14px) !important; } .pnx-st { opacity: .92 !important; } .pnx-tick > div:first-child { opacity: 1; }
+        }
       `}</style>
       <aside className="hidden md:flex flex-col justify-between relative overflow-hidden px-12 lg:px-16 py-12" style={{ background: C.side, color: C.canvas }} aria-hidden="true">
         <BrandMark size={40} />
         <div className="relative pl-10 my-12">
           <div className="absolute left-[6px] top-[7px] bottom-[24px] w-px" style={{ background: "rgba(243,239,231,.18)" }} />
           <div className="absolute left-0 top-[7px] bottom-[24px] w-[13px]">
-            <div className="pnx-marker absolute left-0 w-[13px] h-[13px] rounded-full" style={{ background: C.lime, boxShadow: "0 0 0 5px rgba(200,241,105,.16)", top: "calc(100% - 14px)" }} />
+            <div className="pnx-marker absolute left-0 w-[13px] h-[13px] rounded-full" style={{ background: C.lime, boxShadow: "0 0 0 5px rgba(200,241,105,.16)", top: 0 }} />
           </div>
           {AUTH_PATH.map((t, i) => {
             const last = i === AUTH_PATH.length - 1;
             return (
-              <div key={t} className={last ? "pnx-hired" : ""} style={{ ...SERIF, fontSize: last ? "clamp(40px,4.4vw,56px)" : "clamp(22px,2.2vw,28px)", lineHeight: last ? 1 : 1.55,
-                marginTop: last ? 14 : 0, color: last ? C.lime : C.canvas, opacity: last ? 1 : 0.28 + i * 0.1 }}>{t}</div>
+              <div key={t} className={"pnx-st" + (last ? " pnx-hired" : "")} style={{ ...SERIF, fontSize: last ? "clamp(40px,4.4vw,56px)" : "clamp(22px,2.2vw,28px)", lineHeight: last ? 1 : 1.55,
+                marginTop: last ? 14 : 0, color: last ? C.lime : C.canvas, "--o": last ? 0.3 : 0.28, opacity: last ? 0.3 : 0.28, animationDelay: (last ? 4.1 : i * 0.75) + "s" }}>{t}</div>
             );
           })}
         </div>
-        <p className="text-sm max-w-[30ch]" style={{ color: "rgba(243,239,231,.62)" }}>Every candidate, from the first application to the day they start.</p>
+        <div>
+          <div className="pnx-tick relative h-[22px] overflow-hidden text-[13px]" style={{ color: "rgba(243,239,231,.7)" }}>
+            {["Applications land in your Inbox the moment they arrive", "AI screens every candidate against the role's must-haves", "Interviews, offers and placements in one place"].map((t) => (
+              <div key={t} className="flex items-center gap-2"><span style={{ color: C.lime }}>●</span>{t}</div>
+            ))}
+          </div>
+          <p className="text-sm max-w-[30ch] mt-2.5" style={{ color: "rgba(243,239,231,.62)" }}>Every candidate, from the first application to the day they start.</p>
+        </div>
       </aside>
       <main className="pnx-auth relative overflow-hidden min-h-screen md:min-h-0 flex items-center justify-center px-4 py-24 md:px-10">
         <AuthScatter />
         <div className="relative w-full max-w-[400px]">
           <AuthTucked />
-          <form onSubmit={onSubmit} className="relative w-full rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
+          <form onSubmit={onSubmit} className="pnx-card relative w-full rounded-2xl border p-7 md:p-9" style={{ background: "#fff", borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
             {children}
           </form>
         </div>
@@ -12363,6 +12500,7 @@ export default function App() {
       <AssistantPanel S={S} badges={badges} pageCtx={{ jobId: page === "jobDetail" ? jobId : null, candidateId: candidate ? candidate.id : null }}
         updates={updates} onUpdatesSeen={markUpdatesSeen} onRefreshUpdates={loadUpdates}
         goUpdate={(l) => { if (!l) return; if (l.page === "jobDetail" && l.jobId) S.openJob(l.jobId); else if (l.candidateId && l.page === "candidates") { setPageRaw("candidates"); setCandId(l.candidateId); } else if (l.page) setPage(l.page); }} />
+      <style>{FILTER_CSS}</style>
       <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
