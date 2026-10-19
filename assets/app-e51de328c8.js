@@ -123,8 +123,8 @@ td{padding:8px 0;border-bottom:1px solid #eee;vertical-align:top;font-size:12px}
         .pnx-card > * { animation: pnx-rise .6s cubic-bezier(.2,.7,.2,1) both; }
         .pnx-card > *:nth-child(1) { animation-delay: .12s; } .pnx-card > *:nth-child(2) { animation-delay: .2s; } .pnx-card > *:nth-child(3) { animation-delay: .28s; }
         .pnx-card > *:nth-child(4) { animation-delay: .36s; } .pnx-card > *:nth-child(5) { animation-delay: .44s; } .pnx-card > *:nth-child(n+6) { animation-delay: .52s; }
-        .pnx-auth button[type=submit] { transition: filter .2s, box-shadow .2s; }
-        .pnx-auth button[type=submit]:hover:not(:disabled) { filter: brightness(1.22); box-shadow: 0 8px 20px -10px rgba(31,111,84,.7); }
+        .pnx-auth button[type=submit] { transition: background-color .2s, color .2s, box-shadow .2s; }
+        .pnx-auth button[type=submit]:hover:not(:disabled) { background: ${o.lime} !important; color: ${o.side} !important; box-shadow: 0 8px 22px -10px rgba(200,241,105,.9); }
         .pnx-auth input:focus-visible { border-color: ${o.em} !important; box-shadow: 0 0 0 3px ${o.emTint}; }
         .pnx-auth button:focus-visible { outline: 2px solid ${o.em}; outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) {
