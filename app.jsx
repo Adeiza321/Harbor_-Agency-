@@ -1736,7 +1736,6 @@ const NAV_RECOPS = [
   { key: "interviews", label: "Interviews", icon: Calendar },
   { key: "campaigns", label: "Outreach", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
-  { key: "ads", label: "Share jobs", icon: Share2 },
 ];
 const NAV_ADMIN_EXTRA = [
   { key: "users", label: "Users & permissions", icon: Shield },
@@ -12285,7 +12284,6 @@ export default function App() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [toastText, setToastText] = useState("");
   const [errorModalMsg, setErrorModalMsg] = useState("");
-  const [promote, setPromote] = useState({ open: false, job: "" });
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [isPublic] = useState(isPublicRoute);
   const [setupToken, setSetupToken] = useState(() => new URLSearchParams(window.location.search).get("setup") || "");
@@ -12912,7 +12910,16 @@ export default function App() {
       return url;
     },
   };
-  const onPromote = (job) => setPromote({ open: true, job });
+  // Share = the device's normal share sheet with the job's apply link (copy the link where
+  // there's no share sheet, e.g. most desktop browsers).
+  const onPromote = (id) => {
+    const j = data.jobs.find((x) => x.id === id);
+    if (!j || !j.link) { toast(j && j.status === "Draft" ? "Publish the job first, then you can share its link." : "This job doesn't have a link yet."); return; }
+    if (j.status !== "Open") toast(j.role + " is " + String(j.status).toLowerCase() + ", so people can't apply right now.");
+    const copy = () => { try { navigator.clipboard.writeText(j.link).then(() => toast("Job link copied"), () => toast(j.link)); } catch (e) { toast(j.link); } };
+    if (navigator.share) navigator.share({ title: j.role, text: "We're hiring: " + j.role, url: j.link }).catch((e) => { if (e && e.name !== "AbortError") copy(); });
+    else copy();
+  };
   const pendingQ = countFollowups(data.cands, "draft");
   // Counts next to the menu items: unread messages, and retention check-ins due on your placements.
   const myTasksDue = (data.tasks || []).filter((t) => t.assignedTo === session.uid && t.status === "open" && t.dueOn && t.dueOn <= ymdToday()).length;
@@ -12938,7 +12945,7 @@ export default function App() {
   else if (page === "campaigns") content = <CampaignsPage toast={toast} S={S} />;
   else if (page === "interviews") content = <InterviewsPage toast={toast} S={S} />;
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
-  else if (page === "ads") content = <AdsPage role={role} toast={toast} onPromote={onPromote} S={S} />;
+  else if (page === "ads") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "users") content = role === "admin" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "audit") content = role === "admin" ? <RecruiterAuditPage S={S} toast={toast} /> : <OverviewRecOps S={S} />;
   else if (page === "emails") content = role === "admin" ? <EmailTrackingPage S={S} /> : <OverviewRecOps S={S} />;
@@ -12962,7 +12969,6 @@ export default function App() {
         goUpdate={(l) => { if (!l) return; if (l.page === "jobDetail" && l.jobId) S.openJob(l.jobId); else if (l.candidateId && l.page === "candidates") { setPageRaw("candidates"); setCandId(l.candidateId); } else if (l.page) setPage(l.page); }} />
       <style>{FILTER_CSS}</style>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} S={S} role={role} setPage={setPage} />
-      <PromoteModal open={promote.open} onClose={() => setPromote({ ...promote, open: false })} jobTitle={promote.job} toast={toast} S={S} />
       <Toast text={toastText} />
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
       <Modal open={idleLeft != null} onClose={() => { idleStore.touch(Date.now()); setIdleLeft(null); }} title="Are you still there?">
