@@ -274,7 +274,8 @@ async function activity(admin: any, body: any) {
       : a.source === "outreach" ? "replied to our outreach and applied for" : "applied for";
     const what = j ? `<b>${esc(roleOf(j))}</b>` : a.role_title ? `<b>${esc(a.role_title)}</b>` : "a role (no specific job)";
     const subject = "New application: " + a.name + (j?.role_title ? " · " + j.role_title : "");
-    const src = a.source && !["career_page", "outreach", "referral"].includes(a.source) ? p("Source: " + esc(a.source)) : "";
+    const SRC: Record<string, string> = { linkedin: "LinkedIn", facebook: "Facebook", whatsapp: "WhatsApp", x: "X (Twitter)", telegram: "Telegram", email: "a job shared by email", instagram: "Instagram", indeed: "Indeed", google_jobs: "Google for Jobs", manual: "added by hand" };
+    const src = a.source && !["career_page", "outreach", "referral"].includes(a.source) ? p("Came from: " + esc(SRC[a.source] || a.source)) : "";
     let sent = 0;
     // Admins and Rec Ops: it's waiting in the Inbox to be assigned.
     for (const u of await team()) {

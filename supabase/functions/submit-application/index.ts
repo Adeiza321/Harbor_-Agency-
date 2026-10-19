@@ -31,7 +31,8 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
-const SOURCES = ["career_page", "outreach", "linkedin", "indeed", "google_jobs", "facebook", "referral", "manual"];
+// Shared-post platforms (the job's Share window adds ?utm_source=<platform>) count as their own source.
+const SOURCES = ["career_page", "outreach", "linkedin", "indeed", "google_jobs", "facebook", "whatsapp", "x", "telegram", "email", "instagram", "referral", "manual"];
 const CV_TYPES: Record<string, string> = {
   pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 };

@@ -56,7 +56,7 @@ function payText(p) {
   return range + (PER[p.period] ? " " + PER[p.period] : "");
 }
 const EMP = { "full-time": "FULL_TIME", "full time": "FULL_TIME", "part-time": "PART_TIME", "part time": "PART_TIME", contract: "CONTRACTOR", contractor: "CONTRACTOR", temporary: "TEMPORARY", temp: "TEMPORARY", internship: "INTERN", intern: "INTERN", "per diem": "PER_DIEM", volunteer: "VOLUNTEER" };
-const COUNTRY = { "united states": "US", usa: "US", "united kingdom": "GB", uk: "GB", nigeria: "NG", canada: "CA", malaysia: "MY", ireland: "IE", germany: "DE", france: "FR", netherlands: "NL", spain: "ES", "united arab emirates": "AE", "south africa": "ZA", kenya: "KE", ghana: "GH", india: "IN", australia: "AU", singapore: "SG" };
+const COUNTRY = { "united states": "US", "united state": "US", "united states of america": "US", us: "US", "u.s.": "US", usa: "US", "united kingdom": "GB", "great britain": "GB", england: "GB", "united kingdom": "GB", uk: "GB", nigeria: "NG", canada: "CA", malaysia: "MY", ireland: "IE", germany: "DE", france: "FR", netherlands: "NL", spain: "ES", "united arab emirates": "AE", "south africa": "ZA", kenya: "KE", ghana: "GH", india: "IN", australia: "AU", singapore: "SG" };
 // Every other country by its English name (Node's built-in country names), so Google gets the right
 // two-letter code wherever the job is. The short list above wins for common spellings like "UK".
 { const dn = new Intl.DisplayNames("en", { type: "region" }); const A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; const OLD = new Set("AN BU CS DD DY FQ HV JT MI NH NQ NT PC PU PZ RH SU TP VD WK YD YU ZR".split(" "));
@@ -79,7 +79,9 @@ const US_STATES = "Alabama Alaska Arizona Arkansas California Colorado Connectic
 const isState = (s) => /^[A-Z]{2}$/.test(s) || US_STATES.some((x) => x.toLowerCase() === s.toLowerCase());
 // "Battleground, WA 98604" -> { locality, region, postalCode }
 function parseLocation(loc) {
-  const parts = String(loc || "").split(",").map((x) => x.trim()).filter(Boolean);
+  // A country written into the location ("Kalispell, MT United States") is dropped: it goes in addressCountry.
+  const COUNTRY_TAIL = /\s*,?\s*\b(united states( of america)?|united state|usa|u\.s\.|united kingdom|uk|saudi arabia|malaysia|philippines|nigeria)\s*$/i;
+  const parts = String(loc || "").replace(COUNTRY_TAIL, "").split(",").map((x) => x.trim()).filter(Boolean);
   const out = {};
   if (!parts.length) return out;
   let last = parts[parts.length - 1];

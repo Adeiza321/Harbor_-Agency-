@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard, Users, Inbox as InboxIcon, Briefcase, TrendingUp, Send,
   CreditCard, Megaphone, Search, Bell, ChevronDown, ChevronRight, ChevronLeft,
-  Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare,
+  Plus, Download, Filter, Upload, Check, CheckCheck, X, Lock, Copy, MessageSquare, Share2,
   Sparkles, AlertTriangle, Mail, MapPin, Clock, Settings, Shield,
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
@@ -1380,7 +1380,7 @@ const NAV_RECOPS = [
   { key: "interviews", label: "Interviews", icon: Calendar },
   { key: "campaigns", label: "Outreach", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
-  { key: "ads", label: "Ads", icon: Megaphone },
+  { key: "ads", label: "Share jobs", icon: Share2 },
 ];
 const NAV_ADMIN_EXTRA = [
   { key: "users", label: "Users & permissions", icon: Shield },
@@ -5228,7 +5228,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
 /* Inbox: applications from the public apply page (/?apply=<job link>) and outreach "interested"
    clicks. New ones wait here until Rec Ops or an Admin assigns them to a recruiter (which creates
    the candidate, puts them on the job and starts the AI screening) or dismisses them. */
-const SOURCE_LABEL = { career_page: "Apply page", outreach: "Outreach email", linkedin: "LinkedIn", indeed: "Indeed", google_jobs: "Google for Jobs", facebook: "Facebook", referral: "Referral", manual: "Added by hand" };
+const SOURCE_LABEL = { career_page: "Apply page", outreach: "Outreach email", linkedin: "LinkedIn", indeed: "Indeed", google_jobs: "Google for Jobs", facebook: "Facebook", whatsapp: "WhatsApp", x: "X (Twitter)", telegram: "Telegram", email: "Shared by email", instagram: "Instagram", referral: "Referral", manual: "Added by hand" };
 const applyUrl = (slug) => window.location.origin + "/jobs/" + slug + "/";
 
 function ApplyLinks({ S, toast }) {
@@ -5637,7 +5637,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             )}
             <RowMenu label="More job actions" busy={busy} items={[
               { label: "Copy link", icon: Copy, onClick: copyLink },
-              { label: "Promote", icon: Megaphone, onClick: () => onPromote(job.role) },
+              { label: "Share job", icon: Share2, onClick: () => onPromote(job.id) },
               { label: "Edit job", icon: Pencil, onClick: onEdit, hidden: S.role === "recruiter" },
               { label: "Disengage", icon: UserMinus, danger: true, onClick: () => setReasonOpen(true), hidden: !myOpenEngagement },
               { label: "Delete job", icon: Trash2, danger: true, onClick: () => setDelOpen(true), hidden: S.role !== "admin" },
@@ -5861,7 +5861,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
               <div className="flex items-center gap-2">
                 <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>
                 {mine(j) && <Pill tone="em">You're engaged</Pill>}
-                <button onClick={(e) => { e.stopPropagation(); onPromote(j.role); }} className="text-xs" style={{ color: C.em }}>Promote</button>
+                <button onClick={(e) => { e.stopPropagation(); onPromote(j.id); }} className="text-xs" style={{ color: C.em }}>Share</button>
               </div>
             ) },
           ]}
@@ -6194,7 +6194,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
             </div>
             <div className="flex flex-wrap gap-2 justify-center w-full">
               <Btn onClick={reset}>Post another job</Btn>
-              {done.status !== "Draft" && <Btn onClick={() => onPromote(done.title)}>Promote this job</Btn>}
+              {done.status !== "Draft" && <Btn icon={Share2} onClick={() => onPromote(done.id)}>Share this job</Btn>}
               <Btn kind="primary" onClick={() => onOpenJob(done.id)}>View job</Btn>
             </div>
           </div>
@@ -6204,81 +6204,92 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   );
 }
 
-const AD_CHANNELS = [
-  { key: "GJ", name: "Google for Jobs", free: true, desc: "Free listing in Google job search results." },
-  { key: "LI", name: "LinkedIn", free: false, desc: "Reach active and passive job seekers." },
-  { key: "FB", name: "Facebook", free: false, desc: "Broad reach, strong for local roles." },
-  { key: "GA", name: "Google Ads", free: false, desc: "Search ads for people actively looking." },
+
+/* Share a job on social platforms. Each platform gets its own tracked link
+   (/jobs/<slug>/?utm_source=<platform>), so job views and applications from it are counted under
+   that platform (job views: record_job_view; applications: the apply page sends it as the source).
+   The post is written from the job's own details (client already anonymised in the description)
+   and can be edited before sharing. Google for Jobs needs no button: every open job has a public
+   page with JobPosting data and is in the sitemap. */
+const SHARE_CHANNELS = [
+  { key: "linkedin", name: "LinkedIn", tone: { bg: "#E5E8FB", fg: "#3B4BB8" }, tag: "in", url: (u, t) => "https://www.linkedin.com/feed/?shareActive=true&text=" + encodeURIComponent(t + "\n\n" + u) },
+  { key: "facebook", name: "Facebook", tone: { bg: "#E7EEFB", fg: "#1D5BBF" }, tag: "f", url: (u) => "https://www.facebook.com/sharer/sharer.php?u=" + encodeURIComponent(u) },
+  { key: "whatsapp", name: "WhatsApp", tone: { bg: "#DDF3E4", fg: "#1B7A43" }, tag: "W", url: (u, t) => "https://wa.me/?text=" + encodeURIComponent(t + "\n\n" + u) },
+  { key: "x", name: "X (Twitter)", tone: { bg: "#ECECEC", fg: "#111" }, tag: "X", url: (u, t) => "https://twitter.com/intent/tweet?text=" + encodeURIComponent(t.split("\n")[0]) + "&url=" + encodeURIComponent(u) },
+  { key: "telegram", name: "Telegram", tone: { bg: "#E1F1FB", fg: "#1C7FB8" }, tag: "T", url: (u, t) => "https://t.me/share/url?url=" + encodeURIComponent(u) + "&text=" + encodeURIComponent(t) },
+  { key: "email", name: "Email", tone: { bg: "#F3EFE6", fg: "#6B4E1F" }, tag: "@", url: (u, t, title) => "mailto:?subject=" + encodeURIComponent("Job: " + title) + "&body=" + encodeURIComponent(t + "\n\n" + u) },
+  { key: "instagram", name: "Instagram", tone: { bg: "#FBE7EF", fg: "#B5306B" }, tag: "IG", copyOnly: true, hint: "Copies the post and link. Paste it into your story (link sticker) or bio." },
 ];
+const SHARE_LABEL = Object.fromEntries(SHARE_CHANNELS.map((c) => [c.key, c.name]));
+const shareUrl = (job, key) => window.location.origin + "/jobs/" + job.slug + "/?utm_source=" + key;
+function sharePost(job) {
+  const place = jobPlace(job.location, job.country);
+  const facts = [place, job.workSetup, job.employmentType].filter(Boolean);
+  const pay = fmtPay(job);
+  const first = String(job.description || "").split(/\n\s*\n/)[0].replace(/\s+/g, " ").trim();
+  const intro = first.length > 220 ? first.slice(0, 217).replace(/\s+\S*$/, "") + "…" : first;
+  return ["We're hiring: " + job.role, facts.length ? "📍 " + facts.join(" · ") : "", pay ? "💰 " + pay : "", "", intro, "", "Apply in about two minutes, or share it with someone who'd be great:"]
+    .filter((x, i, a) => x || (a[i - 1] && i < a.length - 1)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
 
-function PromoteModal({ open, onClose, jobTitle, toast, S }) {
-  const integrations = S.settings.integrations || {};
-  const CHANNEL_INTEGRATION = { GJ: "googleJobs", LI: "linkedin" }; // FB/GA have no integration toggle yet
-  const channelAvailable = (k) => !CHANNEL_INTEGRATION[k] || integrations[CHANNEL_INTEGRATION[k]];
-  const [channels, setChannels] = useState({ GJ: channelAvailable("GJ"), LI: channelAvailable("LI"), FB: false, GA: false });
-  const [budget, setBudget] = useState("300,000");
-  const [payer, setPayer] = useState("agency");
-  const [copy, setCopy] = useState(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through ProNext today.`);
-
+function PromoteModal({ open, onClose, jobTitle: jobRef, toast, S }) {
+  const openJobs = S.jobs.filter((j) => j.status === "Open" && j.slug);
+  const [pick, setPick] = useState("");
+  const job = S.jobs.find((j) => j.id === (pick || jobRef)) || S.jobs.find((j) => j.role === jobRef) || null;
+  const [text, setText] = useState("");
+  const [stats, setStats] = useState(null);
+  React.useEffect(() => { if (!open) { setPick(""); return; } }, [open]);
   React.useEffect(() => {
-    setCopy(`We're hiring: ${jobTitle}. Competitive pay, remote-friendly, fast interview process. Apply through ProNext today.`);
-  }, [jobTitle, open]);
-
-  const toggle = (k) => { if (!channelAvailable(k)) { toast(AD_CHANNELS.find((c) => c.key === k).name + " isn't connected — turn it on in Agency settings → Integrations."); return; } setChannels((c) => ({ ...c, [k]: !c[k] })); };
-  const paidSelected = channels.LI || channels.FB || channels.GA;
-
-  const submit = () => {
-    const keys = Object.keys(channels).filter((k) => channels[k]);
-    if (!keys.length) { toast("Pick at least one channel"); return; }
-    const amt = Number(String(budget).replace(/,/g, ""));
-    if (paidSelected && (!amt || amt <= 0)) { toast("Enter a budget"); return; }
-    const j = S.jobs.find((x) => x.role === jobTitle);
-    const live = !paidSelected || payer === "mine";
-    /* DEMO: in production this calls the LinkedIn, Facebook and Google ad APIs from your backend */
-    S.setAds((l) => [{ id: uid(), payerType: payer === "mine" || !paidSelected ? "recruiter" : "agency", job: jobTitle, client: j ? j.client : "New role", channels: keys, payer: payer === "agency" ? "Agency" : S.me.first + " (" + S.me.label.toLowerCase() + ")", budget: paidSelected ? "₦" + amt.toLocaleString("en-NG") : "₦0", spent: "₦0", apps: 0, status: live ? "Live" : "Pending approval" }, ...l]);
-    onClose(); toast(live ? "Campaign is live" : "Sent to Rec Ops for approval");
-  };
+    if (!open || !job) return;
+    setText(sharePost(job)); setStats(null);
+    let on = true;
+    S.sb("/rest/v1/rpc/job_share_stats", { method: "POST", body: { p_job: job.id } }).then((r) => on && setStats(Array.isArray(r) ? r : [])).catch(() => on && setStats([]));
+    return () => { on = false; };
+  }, [open, job && job.id]); // eslint-disable-line
+  const copy = (t, msg) => { try { navigator.clipboard.writeText(t); toast(msg); } catch (e) { toast("Copy failed. Select the text and copy it."); } };
+  const statFor = (k) => (stats || []).find((x) => x.source === k) || {};
+  const native = typeof navigator !== "undefined" && !!navigator.share;
+  const live = job && job.status === "Open" && job.slug;
 
   return (
-    <Modal open={open} onClose={onClose} title="Promote this job">
-      <div className="text-sm mb-4" style={{ color: C.ink2 }}>{jobTitle}</div>
-      <div className="text-xs font-semibold mb-2" style={{ color: C.ink3 }}>CHANNELS</div>
-      <div className="flex flex-col gap-2 mb-4">
-        {AD_CHANNELS.map((ch) => { const available = channelAvailable(ch.key); return (
-          <button key={ch.key} onClick={() => toggle(ch.key)} className="flex items-center gap-3 rounded-xl border p-3 text-left" style={{ borderColor: channels[ch.key] ? C.em : C.line, background: channels[ch.key] ? C.emTint : "#fff", opacity: available ? 1 : 0.55 }}>
-            <div className="w-9 h-9 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ fontSize: 11, background: CHANNEL_TONE[ch.key].bg, color: CHANNEL_TONE[ch.key].fg }}>{ch.key}</div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium flex items-center gap-2">{ch.name}{ch.free && <Pill tone="em">Free</Pill>}</div>
-              <div className="text-xs" style={{ color: C.ink2 }}>{available ? ch.desc : "Not connected — turn on in Agency settings"}</div>
-            </div>
-            <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0" style={{ background: channels[ch.key] ? C.em : "#fff", border: channels[ch.key] ? "none" : `1.5px solid #D5D2C7` }}>
-              {channels[ch.key] && <Check size={13} color="#fff" strokeWidth={3} />}
-            </div>
-          </button>
-        ); })}
-      </div>
-      {paidSelected && (
-        <div className="mb-4">
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Budget (₦)</label>
-          <input value={budget} onChange={(e) => setBudget(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+    <Modal open={open} onClose={onClose} title="Share this job">
+      {!job || !live ? (
+        <div>
+          <div className="text-sm mb-2" style={{ color: C.ink2 }}>{job && !live ? job.role + " isn't open, so it has no public page to share. Pick an open role:" : "Pick an open role to share:"}</div>
+          <select value={pick} onChange={(e) => setPick(e.target.value)} className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }}>
+            <option value="">Choose a role…</option>
+            {openJobs.map((j) => <option key={j.id} value={j.id}>{j.role}</option>)}
+          </select>
+          {!openJobs.length && <div className="text-xs mt-2" style={{ color: C.ink3 }}>No open roles yet.</div>}
         </div>
-      )}
-      {paidSelected && (
-        <div className="mb-4">
-          <div className="text-xs font-semibold mb-2" style={{ color: C.ink3 }}>WHO PAYS</div>
-          <div className="grid grid-cols-2 gap-2">
-            {[["agency", "Agency budget"], ["mine", "My budget"]].map(([v, l]) => (
-              <button key={v} onClick={() => setPayer(v)} className="rounded-xl border p-3 text-sm font-medium text-left" style={{ borderColor: payer === v ? C.em : C.line, background: payer === v ? C.emTint : "#fff", color: payer === v ? C.em : C.ink }}>{l}</button>
-            ))}
+      ) : (
+        <div>
+          <div className="text-sm font-medium">{job.role}</div>
+          <div className="text-xs mb-3" style={{ color: C.ink2 }}>The client is never named. Each platform gets its own link, so you can see where views and applications come from.</div>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Post (edit before sharing)</label>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={7} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
+          <div className="flex flex-col gap-2 mb-3">
+            {SHARE_CHANNELS.map((ch) => { const u = shareUrl(job, ch.key), st = statFor(ch.key); return (
+              <div key={ch.key} className="flex items-center gap-3 rounded-xl border p-2.5" style={{ borderColor: C.line }}>
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center font-semibold shrink-0" style={{ fontSize: 11, background: ch.tone.bg, color: ch.tone.fg }}>{ch.tag}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{ch.name}</div>
+                  <div className="text-xs" style={{ color: C.ink3 }}>{stats === null ? "…" : (Number(st.views) || 0) + " views · " + (Number(st.applications) || 0) + " applied"}</div>
+                </div>
+                <button onClick={() => copy(text + "\n\n" + u, ch.copyOnly ? "Copied. " + ch.hint : "Post and " + ch.name + " link copied")} title="Copy the post with this platform's link" className="p-2 rounded-lg" style={{ color: C.ink2 }}><Copy size={15} /></button>
+                {!ch.copyOnly && <a href={ch.url(u, text, job.role)} target="_blank" rel="noopener noreferrer" className="text-xs font-semibold rounded-lg px-3 py-2" style={{ background: C.em, color: "#fff" }}>Share</a>}
+              </div>
+            ); })}
           </div>
-          {payer === "agency" && <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>Agency-funded campaigns need Rec Ops approval before they launch.</div>}
+          <div className="flex gap-2 flex-wrap mb-3">
+            <Btn icon={Copy} onClick={() => copy(shareUrl(job, "link"), "Link copied")}>Copy link only</Btn>
+            {native && <Btn icon={Share2} onClick={() => navigator.share({ title: job.role, text, url: shareUrl(job, "share") }).catch(() => {})}>More apps…</Btn>}
+          </div>
+          <div className="rounded-lg px-3 py-2.5 text-xs" style={{ background: C.emTint, color: C.ink2 }}>
+            <b>Google for Jobs:</b> free and automatic. Every open role has its own public page that Google can list, so there's nothing to press here. Facebook and LinkedIn may take the text from the job page instead of the post above; paste the post if it doesn't appear.
+          </div>
         </div>
       )}
-      <div className="mb-5">
-        <label className="text-xs font-medium flex items-center gap-1.5" style={{ color: C.ink2 }}><Sparkles size={13} /> AI-drafted ad copy</label>
-        <textarea value={copy} onChange={(e) => setCopy(e.target.value)} rows={3} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: "#FAF8F3" }} />
-      </div>
-      <Btn kind="primary" full onClick={submit}>{!paidSelected ? "List on Google for Jobs" : payer === "agency" ? "Send for approval" : "Launch campaign"}</Btn>
     </Modal>
   );
 }
@@ -9286,50 +9297,37 @@ function BillingPage({ role, toast, S }) {
   );
 }
 
+/* Share jobs: every open role with its public page, views and applications, and a Share button
+   (the share window, PromoteModal). Replaces the old demo "Ad campaigns" list, which never ran ads. */
 function AdsPage({ role, toast, onPromote, S }) {
-  const ads = S.ads;
-  const setAdStatus = (id, st, msg) => { S.setAds((l) => l.map((a) => (a.id === id ? { ...a, status: st } : a))); toast(msg); };
-  const [delTarget, setDelTarget] = useState(null);
-  const [delBusy, setDelBusy] = useState(false);
-  const confirmDelete = () => {
-    setDelBusy(true);
-    S.deleteAd(delTarget.id).then(() => { toast("Ad campaign deleted"); setDelTarget(null); }).catch(() => {}).finally(() => setDelBusy(false));
-  };
+  const jobs = S.jobs.filter((j) => j.status === "Open" && j.slug);
+  const vs = (j) => (S.jobViews && S.jobViews[j.id]) || {};
+  const copy = (j) => { try { navigator.clipboard.writeText(shareUrl(j, "link")); toast("Link copied for " + j.role); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Ad campaigns" sub="Promote roles across job boards and social channels." />
-        <Btn kind="primary" icon={Megaphone} onClick={() => onPromote("New role")}>Promote a job</Btn>
+        <SectionTitle size="text-3xl md:text-4xl" title="Share jobs" sub="Post open roles on LinkedIn, Facebook, WhatsApp, X, Telegram, Instagram or by email. Each platform gets its own link, so you can see what brings applicants." />
+        <Btn kind="primary" icon={Share2} onClick={() => onPromote("")}>Share a job</Btn>
       </div>
       <Card>
         <DataTable
           keyField="id"
-          rows={ads}
+          rows={jobs}
           columns={[
-            { key: "job", label: "ROLE", render: (a) => <div><div className="font-medium">{a.job}</div><div className="text-xs" style={{ color: C.ink2 }}>{a.client}</div></div> },
-            { key: "channels", label: "CHANNELS", render: (a) => <div className="flex gap-1">{a.channels.map((k) => <span key={k} title={CHANNEL_NAME[k]} className="rounded-md px-1.5 py-0.5 font-semibold" style={{ fontSize: 11, background: CHANNEL_TONE[k].bg, color: CHANNEL_TONE[k].fg }}>{k}</span>)}</div> },
-            { key: "payer", label: "PAID BY", render: (a) => <span className="text-xs">{a.payer}</span> },
-            { key: "spend", label: "SPENT", render: (a) => <span className="text-xs">{a.spent} of {a.budget}</span> },
-            { key: "apps", label: "APPLICANTS", render: (a) => a.apps },
-            { key: "status", label: "STATUS", render: (a) => (
-              <div className="flex items-center gap-2">
-                <StatusPill status={a.status} />
-                {a.status === "Pending approval" && role !== "recruiter" && <button onClick={() => setAdStatus(a.id, "Live", "Campaign approved")} className="text-xs" style={{ color: C.em }}>Approve</button>}
-                {a.status === "Live" && role !== "recruiter" && <button onClick={() => setAdStatus(a.id, "Ended", "Campaign ended")} className="text-xs" style={{ color: C.dangerFg }}>End</button>}
+            { key: "job", label: "ROLE", render: (j) => <div><div className="font-medium">{j.role}</div><div className="text-xs" style={{ color: C.ink2 }}>{jobPlace(j.location, j.country)}</div></div> },
+            { key: "views", label: "VIEWS (7 DAYS)", render: (j) => <span className="text-xs">{Number(vs(j).views) || 0} ({Number(vs(j).views_7d) || 0})</span> },
+            { key: "apps", label: "APPLIED", render: (j) => <span className="text-xs">{Number(vs(j).applications) || 0}</span> },
+            { key: "act", label: "", render: (j) => (
+              <div className="flex items-center gap-3 justify-end">
+                <button onClick={() => copy(j)} className="text-xs" style={{ color: C.ink2 }}>Copy link</button>
+                <button onClick={() => onPromote(j.id)} className="text-xs font-semibold" style={{ color: C.em }}>Share</button>
               </div>
             ) },
-            { key: "act", label: "", render: (a) => role === "admin" ? <button title="Delete ad campaign" onClick={() => setDelTarget(a)} className="p-1" style={{ color: C.ink3 }}><X size={15} /></button> : null },
           ]}
         />
+        {!jobs.length && <div className="text-sm p-4" style={{ color: C.ink3 }}>No open roles to share yet.</div>}
       </Card>
-      <ConfirmModal
-        open={!!delTarget}
-        onClose={() => setDelTarget(null)}
-        title="Delete this ad campaign?"
-        body={delTarget ? "This permanently removes the ad campaign for \"" + delTarget.job + "\". This can't be undone." : ""}
-        onConfirm={confirmDelete}
-        busy={delBusy}
-      />
+      <div className="text-xs" style={{ color: C.ink3 }}>Google for Jobs is free and automatic: every open role has a public page Google can list.</div>
     </div>
   );
 }
@@ -10852,7 +10850,10 @@ function CandidatePortal({ data, token, onChanged }) {
    opens when they click one (phone and computer alike). */
 function ApplyPage({ slug }) {
   const params = React.useMemo(() => new URLSearchParams(window.location.search), []);
-  const source = params.get("src") === "outreach" ? "outreach" : "career_page";
+  // Where they came from: an outreach email, a shared post (?utm_source=linkedin etc.), or the apply page.
+  const SHARED = ["linkedin", "facebook", "whatsapp", "x", "telegram", "email", "instagram", "indeed", "google_jobs"];
+  const utm = String(params.get("utm_source") || "").toLowerCase();
+  const source = params.get("src") === "outreach" ? "outreach" : SHARED.includes(utm) ? utm : "career_page";
   const [mode, setMode] = useState(() => params.get("refer") ? "refer" : params.get("go") === "apply" ? "apply" : "view");
   const [job, setJob] = useState(null);       // null = loading, false = not found
   const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
