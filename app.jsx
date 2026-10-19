@@ -675,6 +675,8 @@ function Celebration({ S }) {
 
 /* A "needs attention" list where each row opens the people behind it: one person goes
    straight to their profile, several expand into a clickable list. */
+const URGENCY = { danger: "Urgent", warn: "Soon", info: "FYI", em: "FYI" };
+const URGENCY_ORDER = { danger: 0, warn: 1, info: 2, em: 2, neutral: 3 };
 function AttentionList({ title, items, S, extra }) {
   const [open, setOpen] = useState(null);
   // Only show rows that actually have something in them — an item with 0 people is nothing to
@@ -688,7 +690,7 @@ function AttentionList({ title, items, S, extra }) {
         <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Nothing needs attention right now.</div>
       ) : (
       <div className="mt-3 flex flex-col">
-        {rows.map((r, i) => {
+        {rows.slice().sort((a, b) => (URGENCY_ORDER[a.tone] ?? 3) - (URGENCY_ORDER[b.tone] ?? 3)).map((r, i) => {
           const people = r.people || [];
           const click = () => {
             if (people.length === 1 && people[0].onOpen) return people[0].onOpen();
@@ -697,10 +699,12 @@ function AttentionList({ title, items, S, extra }) {
             if (r.go) S.go(r.go);
           };
           return (
-            <div key={i} style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
-              <button type="button" onClick={click} aria-expanded={people.length > 1 ? open === i : undefined} className="w-full flex items-center gap-3 py-3 text-left">
+            <div key={i} className="pn-att relative rounded-xl mb-2 overflow-hidden" style={{ background: "#FBF9F4" }}>
+              <span className="absolute left-0 top-0 bottom-0" style={{ width: 4, background: TONE[r.tone].fg }} />
+              <button type="button" onClick={click} aria-expanded={people.length > 1 ? open === i : undefined} className="w-full flex items-center gap-3 py-3 pl-4 pr-3 text-left">
                 <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: TONE[r.tone].bg }}><r.icon size={17} color={TONE[r.tone].fg} /></div>
                 <div className="flex-1 min-w-0"><div className="text-sm font-medium">{r.t}</div><div className="text-xs" style={{ color: C.ink2 }}>{r.s}</div></div>
+                {URGENCY[r.tone] && <span className="text-[10px] font-bold tracking-wider uppercase rounded-full px-2 py-0.5 shrink-0" style={{ background: TONE[r.tone].bg, color: TONE[r.tone].fg }}>{URGENCY[r.tone]}</span>}
                 {people.length > 1 ? <ChevronDown size={16} color={C.ink3} className="shrink-0" style={{ transform: open === i ? "rotate(180deg)" : "none" }} /> : <ChevronRight size={16} color={C.ink3} className="shrink-0" />}
               </button>
               {open === i && people.length > 1 && (
@@ -896,7 +900,24 @@ function Pill({ children, tone = "neutral" }) {
   );
 }
 function StatusPill({ status }) {
-  return <Pill tone={STATUS_TONE[status] || "neutral"}>{status}</Pill>;
+  if (status === "Placed" || status === "Hired") return <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: C.side, color: C.lime }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: C.lime }} />{status}</span>;
+  const t = TONE[STATUS_TONE[status] || "neutral"] || TONE.neutral;
+  return <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: t.bg, color: t.fg }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: t.fg }} />{status}</span>;
+}
+// AI fit as a small ring: green 85+, amber 70+, red below; a dash when not scored.
+function ScoreRing({ value, size = 38 }) {
+  const v = Number(value) || 0;
+  if (!v) return <span className="text-xs" style={{ color: C.ink3 }}>–</span>;
+  const r = size / 2 - 3.5, c = 2 * Math.PI * r, col = v >= 85 ? C.em : v >= 70 ? C.warnFg : C.dangerFg;
+  return (
+    <span className="relative inline-grid place-items-center shrink-0" style={{ width: size, height: size }} title={"AI fit " + v + "%"}>
+      <svg width={size} height={size} className="absolute inset-0" style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#EFEBE1" strokeWidth="3.5" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(c * v) / 100} ${c}`} />
+      </svg>
+      <span className="text-[11px] font-semibold" style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
+    </span>
+  );
 }
 function Avatar({ init, tone = "neutral", size = 36, src }) {
   const t = TONE[tone] || TONE.neutral;
@@ -907,9 +928,34 @@ function Avatar({ init, tone = "neutral", size = 36, src }) {
     </div>
   );
 }
-function KPI({ label, value, delta, foot, dark = false }) {
+// trend: { series: [counts, oldest first], change: this period minus the one before, vs: "last week" }
+function Sparkline({ series, color, fill, h = 32 }) {
+  const n = series.length; if (n < 2) return null;
+  const max = Math.max(1, ...series), W = 120;
+  const pts = series.map((v, i) => [Math.round((i / (n - 1)) * W), Math.round(h - 3 - (v / max) * (h - 8))]);
+  const d = "M" + pts.map((p) => p.join(" ")).join(" L");
+  const last = pts[n - 1];
   return (
-    <Card dark={dark}>
+    <svg viewBox={`0 0 ${W} ${h}`} preserveAspectRatio="none" className="w-full block mt-1" style={{ height: h }} aria-hidden="true">
+      {fill && <path d={d + ` V${h} H0Z`} fill={fill} />}
+      <path d={d} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={last[0]} cy={last[1]} r="3" fill={color} />
+    </svg>
+  );
+}
+const trendOf = (times, spanMs, buckets = 8) => {
+  const now = Date.now();
+  const series = Array.from({ length: buckets }, (_, i) => { const end = now - (buckets - 1 - i) * spanMs, start = end - spanMs; return times.filter((t) => t > start && t <= end).length; });
+  return { series, change: series[buckets - 1] - series[buckets - 2] };
+};
+function KPI({ label, value, delta, foot, dark = false, trend }) {
+  const ch = trend ? trend.change : null;
+  const chip = ch == null ? null : ch > 0 ? { t: "+" + ch, bg: dark ? "rgba(200,241,105,.16)" : C.emTint, fg: dark ? C.lime : C.em }
+    : ch < 0 ? { t: "−" + Math.abs(ch), bg: dark ? "rgba(251,228,221,.14)" : C.dangerBg, fg: dark ? "#F3B6A6" : C.dangerFg }
+    : { t: "same", bg: dark ? "rgba(255,255,255,.1)" : C.neutralBg, fg: dark ? "#A9BBB1" : C.ink2 };
+  const line = !trend ? null : dark ? [C.lime, "rgba(200,241,105,.12)"] : ch < 0 ? [C.dangerFg, null] : ch > 0 ? [C.em, "rgba(31,111,84,.08)"] : [C.ink3, null];
+  return (
+    <Card dark={dark} className="pn-lift">
       <div className="flex items-center justify-between mb-2 gap-2">
         <span className="text-xs md:text-sm" style={{ color: dark ? "#A9BBB1" : C.ink2 }}>{label}</span>
         {delta && (
@@ -918,8 +964,12 @@ function KPI({ label, value, delta, foot, dark = false }) {
           </span>
         )}
       </div>
-      <div className="text-2xl md:text-4xl mb-1 break-words" style={{ ...SERIF, color: dark ? C.lime : C.ink }}>{value}</div>
-      <div className="text-xs" style={{ color: dark ? "#8FA69A" : C.ink3 }}>{foot}</div>
+      <div className="flex items-end justify-between gap-2 mb-1">
+        <div className="text-2xl md:text-4xl break-words" style={{ ...SERIF, color: dark ? C.lime : C.ink }}>{value}</div>
+        {chip && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0 mb-1" style={{ background: chip.bg, color: chip.fg, fontVariantNumeric: "tabular-nums" }} title={"Compared with " + trend.vs}>{chip.t}{chip.t !== "same" ? " vs " + trend.vs : ""}</span>}
+      </div>
+      {trend && <Sparkline series={trend.series} color={line[0]} fill={line[1]} />}
+      <div className="text-xs mt-1" style={{ color: dark ? "#8FA69A" : C.ink3 }}>{foot}</div>
     </Card>
   );
 }
@@ -1012,7 +1062,26 @@ const FILTER_CSS = `
 .pn-presets button{border:1px solid ${C.line};background:#fff;border-radius:999px;padding:6px 11px;font-size:12px;cursor:pointer;color:${C.ink2}}
 .pn-presets button[aria-pressed="true"]{background:${C.ink};color:#fff;border-color:${C.ink}}
 .pn-clear{border:0;background:none;font-size:13px;color:${C.em};cursor:pointer;padding:6px 4px}
-@media (prefers-reduced-motion: reduce){.pn-track-mark,.pn-pop{transition:none;animation:none}}
+.pn-lift{transition:transform .2s,box-shadow .2s}
+.pn-lift:hover{transform:translateY(-2px);box-shadow:0 12px 26px -18px rgba(18,36,29,.45)!important}
+.pn-row{transition:background .15s}
+.pn-row:hover{background:#FAF7F1}
+.pn-att{transition:background .15s}
+.pn-att:hover{background:#F6F2E9!important}
+.pn-nav{transition:background .2s,color .2s}
+.pn-nav:hover{background:rgba(255,255,255,.06);color:#fff!important}
+.pn-page{animation:pn-page .35s cubic-bezier(.2,.7,.2,1)}
+@keyframes pn-page{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.pn-fade{animation:pn-page .35s ease both}
+.pn-toast{animation:pn-toast .35s cubic-bezier(.2,.8,.2,1)}
+@keyframes pn-toast{from{opacity:0;translate:24px 0}to{opacity:1;translate:0 0}}
+.pn-ring-arc{animation:pn-arc 1.1s cubic-bezier(.3,.8,.3,1)}
+@keyframes pn-arc{from{stroke-dasharray:0 200}}
+.pn-now{animation:pn-pulse 1.8s ease-in-out infinite}
+@keyframes pn-pulse{50%{box-shadow:0 0 0 9px rgba(200,241,105,.06)}}
+.pn-sk{border-radius:8px;background:linear-gradient(90deg,#EFEBE1 0%,#F7F4EE 40%,#EFEBE1 80%);background-size:200% 100%;animation:pn-shimmer 1.4s linear infinite}
+@keyframes pn-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}
+@media (prefers-reduced-motion: reduce){.pn-track-mark,.pn-pop,.pn-lift,.pn-page,.pn-fade,.pn-toast,.pn-sk,.pn-ring-arc,.pn-now{transition:none!important;animation:none!important}}
 `;
 
 function Tabs({ tabs, active, setActive }) {
@@ -1309,7 +1378,7 @@ function Toast({ text }) {
   const desktop = useDesktop();
   if (!text) return null;
   return (
-    <div className="fixed rounded-xl px-4 py-3 text-sm shadow-lg flex items-center gap-2" style={{ zIndex: 60, background: C.side, color: "#fff", bottom: desktop ? 24 : 80, ...(desktop ? { right: 24 } : { left: "50%", transform: "translateX(-50%)" }) }}>
+    <div key={text} className="pn-toast fixed rounded-xl px-4 py-3 text-sm shadow-lg flex items-center gap-2" style={{ zIndex: 60, background: C.side, color: "#fff", bottom: desktop ? 24 : 80, ...(desktop ? { right: 24 } : { left: "50%", transform: "translateX(-50%)" }) }}>
       <CheckCircle2 size={16} color={C.lime} /> {text}
     </div>
   );
@@ -1529,7 +1598,7 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={row[keyField] ?? i} onClick={() => onRowClick && onRowClick(row)} style={{ borderTop: `1px solid ${C.line}`, cursor: onRowClick ? "pointer" : "default" }}>
+            <tr key={row[keyField] ?? i} onClick={() => onRowClick && onRowClick(row)} className={onRowClick ? "pn-row" : ""} style={{ borderTop: `1px solid ${C.line}`, cursor: onRowClick ? "pointer" : "default" }}>
               {columns.map((c) => <td key={c.key} className="py-3 pr-3 align-top">{c.render(row)}</td>)}
             </tr>
           ))}
@@ -1537,7 +1606,7 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
       </table>
       <div className="flex flex-col gap-2.5" style={{ display: desktop ? "none" : "flex" }}>
         {rows.map((row, i) => (
-          <div key={row[keyField] ?? i} onClick={() => onRowClick && onRowClick(row)} className="rounded-xl border p-3.5" style={{ borderColor: C.line, cursor: onRowClick ? "pointer" : "default" }}>
+          <div key={row[keyField] ?? i} onClick={() => onRowClick && onRowClick(row)} className={"rounded-xl border p-3.5" + (onRowClick ? " pn-row" : "")} style={{ borderColor: C.line, cursor: onRowClick ? "pointer" : "default" }}>
             <div className="mb-2">{primary.render(row)}</div>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5">
               {rest.map((c) => (
@@ -1550,8 +1619,38 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
           </div>
         ))}
       </div>
-      {allRows.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{empty}</div>}
+      {allRows.length === 0 && (typeof empty === "string" ? <EmptyState title={empty} /> : empty)}
       {allRows.length > 10 && <Pager page={cur} pages={pages} size={size} total={allRows.length} onPage={(n) => setPage(Math.max(1, Math.min(pages, n)))} onSize={(n) => { setSize(n); setPage(1); }} />}
+    </div>
+  );
+}
+
+// Grey outlines of rows while a list loads (shimmering), instead of "Loading…".
+function SkeletonRows({ n = 3 }) {
+  return (
+    <div aria-label="Loading" role="status">
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} className="flex items-center gap-3 py-3" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+          <div className="pn-sk shrink-0" style={{ width: 36, height: 36, borderRadius: 999 }} />
+          <div className="flex-1 min-w-0"><div className="pn-sk" style={{ height: 12, width: "62%", marginBottom: 7 }} /><div className="pn-sk" style={{ height: 10, width: "38%" }} /></div>
+          <div className="pn-sk shrink-0 hidden sm:block" style={{ height: 22, width: 80, borderRadius: 999 }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+// An empty list: a small drawing in the login page's style, what's missing, and (optionally) the next step.
+function EmptyState({ title, text, action, onAction, art = "list" }) {
+  return (
+    <div className="text-center py-8 px-4 pn-fade">
+      <svg viewBox="0 0 120 90" width="120" height="90" fill="none" stroke={C.em} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mx-auto" aria-hidden="true">
+        {art === "chat" ? <><path d="M18 20a8 8 0 0 1 8-8h50a8 8 0 0 1 8 8v28a8 8 0 0 1-8 8H48l-16 13V56h-6a8 8 0 0 1-8-8z" fill="#fff" /><circle cx="38" cy="34" r="3" fill={C.em} stroke="none" /><circle cx="51" cy="34" r="3" fill={C.em} stroke="none" /><circle cx="64" cy="34" r="3" fill={C.em} stroke="none" /><circle cx="92" cy="64" r="11" fill={C.lime} /><path d="M87 64l3.5 3.5 6-6" /></>
+          : art === "calendar" ? <><rect x="22" y="16" width="64" height="58" rx="7" fill="#fff" /><path d="M22 32h64M38 10v12M70 10v12" /><rect x="34" y="42" width="10" height="9" rx="2" fill={C.emTint} /><rect x="50" y="42" width="10" height="9" rx="2" /><rect x="66" y="42" width="10" height="9" rx="2" /><circle cx="92" cy="66" r="11" fill={C.lime} /><path d="M92 60v6l4 3" /></>
+          : <><rect x="22" y="12" width="56" height="68" rx="6" fill="#fff" /><circle cx="38" cy="30" r="7" fill={C.emTint} /><path d="M50 26h18M50 33h12M32 48h36M32 56h36M32 64h24" /><circle cx="88" cy="58" r="14" fill="#fff" /><path d="M98 68l10 10" strokeWidth="3" /><path d="M83 58h10" /></>}
+      </svg>
+      <div className="text-lg mt-2" style={{ ...SERIF, color: C.ink }}>{title}</div>
+      {text && <div className="text-sm mt-1 mx-auto" style={{ color: C.ink2, maxWidth: 360 }}>{text}</div>}
+      {action && <div className="mt-3"><Btn kind="primary" onClick={onAction}>{action}</Btn></div>}
     </div>
   );
 }
@@ -1844,19 +1943,20 @@ function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
           <button
             key={it.key}
             onClick={() => { setPage(it.key); onNavigate && onNavigate(); }}
-            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-left"
+            className={"relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-left" + (dark ? " pn-nav" : "")}
             style={
               dark
-                ? { background: active ? "rgba(255,255,255,0.1)" : "transparent", color: active ? "#fff" : "#A9BBB1", fontWeight: active ? 500 : 400 }
+                ? { background: active ? "rgba(200,241,105,0.1)" : undefined, color: active ? "#fff" : "#A9BBB1", fontWeight: active ? 500 : 400 }
                 : { background: active ? C.emTint : "transparent", color: active ? C.em : C.ink2, fontWeight: active ? 500 : 400 }
             }
           >
+            {dark && active && <span className="absolute rounded-r" style={{ left: -12, top: 8, bottom: 8, width: 3, background: C.lime }} />}
             <span className="relative shrink-0">
               <Icon size={18} />
-              {!it.label && badges[it.key] > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />}
+              {!it.label && badges[it.key] > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full" style={{ background: dark ? C.lime : "#D9573B" }} />}
             </span>
             {it.label && <span className="flex-1">{it.label}</span>}
-            {it.label && badges[it.key] > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold flex items-center justify-center shrink-0" style={{ background: "#D9573B", color: "#fff" }} aria-label={badges[it.key] + " unread"}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}
+            {it.label && badges[it.key] > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0" style={dark ? { background: C.lime, color: C.side } : { background: "#D9573B", color: "#fff" }} aria-label={badges[it.key] + " unread"}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}
           </button>
         );
       })}
@@ -1879,7 +1979,12 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
       </div>
       {!collapsed && <div className="px-4 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>WORKSPACE</div>}
       {/* The menu scrolls on short screens so the sign-out and profile below always stay in view. */}
-      <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>{collapsed ? <NavList items={items.map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <NavList items={[...items, ...extra]} page={page} setPage={setPage} dark badges={badges} />}</div>
+      <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
+        {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <>
+          <NavList items={items} page={page} setPage={setPage} dark badges={badges} />
+          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>ADMIN</div><NavList items={extra} page={page} setPage={setPage} dark badges={badges} /></>}
+        </>}
+      </div>
       {!collapsed && (
         <div className="px-3 pb-3 pt-3 shrink-0">
           <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: "#A9BBB1", border: "1px solid rgba(255,255,255,0.12)" }}>Sign out</button>
@@ -3197,6 +3302,7 @@ function RecruiterAuditPage({ S, toast }) {
   );
 }
 
+const PERIOD_VS = { Daily: "yesterday", Weekly: "last week", Monthly: "last month", Yearly: "last year" };
 function OverviewRecOps({ S }) {
   const [period, setPeriod] = useState("Monthly");
   const st = statsOf(S);
@@ -3236,9 +3342,9 @@ function OverviewRecOps({ S }) {
         </div>
       </div>
       <KPIGrid cols={5}>
-        <KPI dark label="Total lineup" value={totalLineup} foot={"active in pipeline · " + periodFoot} />
-        <KPI label="Active jobs" value={activeJobs} foot={"open roles · " + periodFoot} />
-        <KPI label="Hires" value={hires} foot={periodFoot} />
+        <KPI dark label="Total lineup" value={totalLineup} foot={"active in pipeline · " + periodFoot} trend={{ ...trendOf(S.cands.filter((c) => c.status !== "Rejected").map((c) => c.createdAt), pTo - pFrom), vs: PERIOD_VS[period] }} />
+        <KPI label="Active jobs" value={activeJobs} foot={"open roles · " + periodFoot} trend={{ ...trendOf(S.jobs.filter((j) => j.status !== "Draft").map((j) => j.createdAt), pTo - pFrom), vs: PERIOD_VS[period] }} />
+        <KPI label="Hires" value={hires} foot={periodFoot} trend={{ ...trendOf(S.placements.map((p) => p.createdAt), pTo - pFrom), vs: PERIOD_VS[period] }} />
         <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
@@ -3280,8 +3386,8 @@ function OverviewRecruiter({ S }) {
         <Btn icon={Download} kind="dark" onClick={() => S.toast(downloadCSV("recruiter-performance.csv", S.team) ? "Exported recruiter-performance.csv" : "Nothing to export")}>Export</Btn>
       </div>
       <KPIGrid>
-        <KPI dark label="My placements" value={st.placed} foot="all time" />
-        <KPI label="My candidates" value={st.total} foot="on file" />
+        <KPI dark label="My placements" value={st.placed} foot="all time" trend={{ ...trendOf(S.placements.filter((p) => p.recruiterId === S.me.id).map((p) => p.createdAt), 30 * 864e5), vs: "last month" }} />
+        <KPI label="My candidates" value={st.total} foot="on file" trend={{ ...trendOf(S.cands.filter((c) => c.recruiterId === S.me.id).map((c) => c.createdAt), 7 * 864e5), vs: "last week" }} />
         <KPI label="My interviews" value={st.interviews} foot="in interview now" />
         <KPI label="My earnings" value={sumByCurrency(S.placements.filter((p) => p.recruiterId === S.me.id && ["Ready", "Invoiced", "Paid"].includes(p.status) && p.incentiveNum), "incentiveNum", "incentiveCurrency")} foot="your incentive, after guarantee" />
       </KPIGrid>
@@ -3376,13 +3482,13 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
           columns={[
             { key: "name", label: "CANDIDATE", render: (c) => (
               <div className="flex items-center gap-3">
-                <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone={PEOPLE_TONE[c.recruiterInit] || "em"} />
+                <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone={PEOPLE_TONE[c.recruiterInit] || "em"} src={c.photoUrl || undefined} />
                 <div><div className="font-medium">{c.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{c.role}</div></div>
               </div>
             ) },
             { key: "recruiter", label: "RECRUITER", render: (c) => c.recruiter ? <div className="flex items-center gap-2"><Avatar init={c.recruiterInit} tone={PEOPLE_TONE[c.recruiterInit]} size={24} /><span className="text-xs">{c.recruiter}</span></div> : <Pill tone="danger">Unassigned</Pill> },
             { key: "status", label: "STATUS", render: (c) => <StatusPill status={c.status} /> },
-            { key: "ai", label: "AI", render: (c) => <Pill tone={scoreTone(c.ai)}>{c.ai ? c.ai + "%" : "-"}</Pill> },
+            { key: "ai", label: "AI FIT", render: (c) => <ScoreRing value={c.ai} /> },
             { key: "email", label: "EMAIL", render: (c) => <Pill tone={c.email === "Verified" ? "em" : "warn"}>{c.email}</Pill> },
             { key: "activity", label: "ACTIVITY", render: (c) => <span className="text-xs" style={{ color: C.ink2 }}>{c.activity}</span> },
           ]}
@@ -4074,6 +4180,53 @@ const staffChatApi = (S, linkId) => ({
 
 /* Candidate detail */
 
+// The top of a candidate's page: who they are, their AI fit as a ring, and where they are in the
+// pipeline (the current stage pulses). Rejected / active-file candidates show the line without a current stage.
+const PROFILE_STAGES = ["Applied", "In review", "With client", "Interview", "Offer", "Placed"];
+function ProfileHeader({ candidate, status }) {
+  const idx = { "In review": 1, "With client": 2, Interview: 3, Offer: 4, Placed: 5, Hired: 5 }[status];
+  const fit = Number(candidate.ai) || 0, R = 31, CIRC = 2 * Math.PI * R;
+  return (
+    <div className="relative overflow-hidden rounded-2xl p-5 md:p-6" style={{ background: C.side, color: C.canvas }}>
+      <div className="absolute pointer-events-none" style={{ right: -70, top: -70, width: 230, height: 230, borderRadius: 999, background: "radial-gradient(circle, rgba(200,241,105,.14), transparent 70%)" }} />
+      <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
+        <div className="rounded-full shrink-0" style={{ padding: 3, background: "rgba(200,241,105,.45)", width: "fit-content" }}>
+          <Avatar init={initialsOf(candidate.name)} tone="em" size={64} src={candidate.photoUrl || undefined} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-2xl md:text-3xl text-white" style={{ ...SERIF }}>{candidate.name}</div>
+          {candidate.currentTitle && <div className="text-sm font-medium mt-0.5" style={{ color: "rgba(243,239,231,.9)" }}>{candidate.currentTitle}{candidate.currentCompany ? " at " + candidate.currentCompany : ""}</div>}
+          <div className="text-sm font-medium mt-0.5" style={{ color: C.lime }}>{candidate.currentTitle ? "Added for " : ""}{candidate.role || "Role not set"}</div>
+          <div className="text-sm flex items-center gap-1 mt-0.5" style={{ color: "rgba(243,239,231,.62)" }}><MapPin size={13} className="shrink-0" />{candidate.location || "Location not set"}</div>
+        </div>
+        {fit > 0 && (
+          <div className="relative grid place-items-center shrink-0 text-center" style={{ width: 78, height: 78 }} title={"AI fit " + fit + "%"}>
+            <svg width="78" height="78" className="absolute inset-0" style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
+              <circle cx="39" cy="39" r={R} fill="none" stroke="rgba(243,239,231,.14)" strokeWidth="6" />
+              <circle className="pn-ring-arc" cx="39" cy="39" r={R} fill="none" stroke={C.lime} strokeWidth="6" strokeLinecap="round" style={{ "--d": (CIRC * fit) / 100, strokeDasharray: `${(CIRC * fit) / 100} ${CIRC}` }} />
+            </svg>
+            <div><div className="text-2xl leading-none" style={{ ...SERIF, color: C.lime }}>{fit}%</div><div className="text-[10px] tracking-wider" style={{ color: "rgba(243,239,231,.6)" }}>AI FIT</div></div>
+          </div>
+        )}
+      </div>
+      <div className="relative grid mt-5" style={{ gridTemplateColumns: `repeat(${PROFILE_STAGES.length}, minmax(0,1fr))` }}>
+        {PROFILE_STAGES.map((st, i) => {
+          const done = idx != null && i < idx, now = idx === i || (idx == null && i === 0 && false);
+          const reached = idx != null && i <= idx;
+          return (
+            <div key={st} className="relative pt-5 text-[11px] sm:text-xs min-w-0" style={{ color: now ? "#fff" : reached ? "rgba(243,239,231,.85)" : "rgba(243,239,231,.42)", fontWeight: now ? 600 : 400 }}>
+              {i < PROFILE_STAGES.length - 1 && <span className="absolute" style={{ top: 5, left: 6, right: -6, height: 2, background: done ? C.lime : "rgba(243,239,231,.14)" }} />}
+              <span className={"absolute rounded-full" + (now ? " pn-now" : "")} style={{ top: 0, left: 0, width: 12, height: 12, background: reached ? C.lime : C.side, border: `2px solid ${reached ? C.lime : "rgba(243,239,231,.3)"}`, boxShadow: now ? "0 0 0 5px rgba(200,241,105,.2)" : "none" }} />
+              <span className="block truncate pr-1">{st}</span>
+            </div>
+          );
+        })}
+      </div>
+      {idx == null && status && <div className="relative text-xs mt-3" style={{ color: "rgba(243,239,231,.6)" }}>Currently: {status}</div>}
+    </div>
+  );
+}
+
 function CandidateDetail({ candidate, onBack, toast, S }) {
   const [tab, setTab] = useState("companies");
   const status = candidate.status;
@@ -4325,18 +4478,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       {rejectKind && <RejectModal candidate={candidate} kind={rejectKind} S={S} toast={toast} onClose={() => setRejectKind(null)} onDone={afterReject} />}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
+          <ProfileHeader candidate={candidate} status={status} />
           <Card>
-            <div className="flex flex-col sm:flex-row sm:items-center gap-4 mb-4">
-              <Avatar init={candidate.name.split(" ").map((x) => x[0]).join("")} tone="em" size={64} src={candidate.photoUrl || undefined} />
-              <div className="flex-1 min-w-0">
-                <div className="text-2xl md:text-3xl" style={{ ...SERIF }}>{candidate.name}</div>
-                {candidate.currentTitle
-                  ? <div className="text-sm font-medium mt-0.5" style={{ color: C.ink }}>{candidate.currentTitle}{candidate.currentCompany ? " at " + candidate.currentCompany : ""}</div>
-                  : null}
-                <div className="text-sm font-medium mt-0.5" style={{ color: C.em }}>{candidate.currentTitle ? "Added for " : ""}{candidate.role || "Role not set"}</div>
-                <div className="text-sm flex items-center gap-1 mt-0.5" style={{ color: C.ink2 }}><MapPin size={13} className="shrink-0" />{candidate.location || "Location not set"}</div>
-              </div>
-            </div>
             {candidate.ai_locked && (
               <div className="rounded-lg p-2.5 mb-3 flex items-center gap-2 text-xs flex-wrap" style={{ background: C.warnBg, color: C.warnFg }}>
                 <Lock size={13} className="shrink-0" />
@@ -5587,7 +5730,7 @@ function InboxPage({ toast, S }) {
         </div>
         {!canAct && tab === "new" && fresh.length > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>Rec Ops or an Admin assigns new applications.</div>}
         <div className="mt-2">
-          {list.length === 0 && <div className="text-sm py-8 text-center" style={{ color: C.ink3 }}>{src.length ? "Nothing here for this source." : tab === "new" ? "Nothing new. Applications from the apply page arrive here." : "Nothing handled yet."}</div>}
+          {list.length === 0 && <EmptyState title={src.length ? "Nothing here for this source" : tab === "new" ? "No new applications" : "Nothing handled yet"} text={src.length ? "Try another source or clear the filter." : tab === "new" ? "Share a job's link and new applicants land here automatically." : ""} action={tab === "new" && !src.length ? "Share a job" : null} onAction={() => S.go("ads")} />}
           {list.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />)}
         </div>
       </Card>
@@ -5659,7 +5802,7 @@ function MessagesPage({ toast, S }) {
             <div><FilterPill label="Job" value={jobFilter} onChange={setJobFilter} searchable options={S.jobs.map((j) => ({ value: j.id, label: j.role + " · " + j.client, count: allThreads.filter((t) => t.hasMsgs && t.job && t.job.id === j.id).length }))} /></div>
           </div>
           <div className={"overflow-y-auto " + (openId ? "flex-1 min-h-0" : "max-h-[70vh] md:max-h-[28rem]")}>
-            {threads.length === 0 && <div className="text-sm text-center py-8 px-4" style={{ color: C.ink3 }}>{search || jobFilter.length ? "No matching conversations." : "No conversations yet. Tap + to message a candidate."}</div>}
+            {threads.length === 0 && <EmptyState art="chat" title={search || jobFilter.length ? "No matching conversations" : "No conversations yet"} text={search || jobFilter.length ? "Try another search or job." : "Tap + to message a candidate."} />}
             {threads.map((t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
                 style={{ borderBottom: `1px solid ${C.line}`, background: openId === t.link.id ? C.canvas : "transparent" }}>
@@ -6994,7 +7137,7 @@ function GoogleCalendarTab({ S, toast }) {
   const connect = () => { setBusy("connect"); S.ivQuiet("google_connect", { returnTo: window.location.origin + window.location.pathname + "?page=myProfile&tab=calendar" }).then((r) => { window.location.href = r.url; }).catch((e) => { S.error(e.message); setBusy(""); }); };
   const disconnect = () => { setBusy("off"); S.ivQuiet("google_disconnect", {}).then(() => { toast("Google Calendar disconnected"); load(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
   const saveSetting = (k, v) => { const settings = { ...(st.settings || {}), [k]: v }; setSt({ ...st, settings }); S.ivQuiet("google_settings", { settings }).then(() => toast("Saved")).catch((e) => S.error(e.message)); };
-  if (!st) return <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>;
+  if (!st) return <Card><SkeletonRows n={3} /></Card>;
   const s = st.settings || {};
   return (
     <Card>
@@ -7157,7 +7300,7 @@ function ApprovalsPanel({ S, toast, onChanged }) {
   const load = () => S.sourcing("list_requests", {}).then(setData).catch((e) => setData({ error: e.message }));
   React.useEffect(() => { load(); }, []); // eslint-disable-line
   const act = (id, action) => { setBusy(id + action); S.sourcing(action, { id }).then((r) => toast(r.message || (action === "approve_request" ? "Approved" : "Declined"))).catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); onChanged && onChanged(); }); };
-  if (!data) return <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>;
+  if (!data) return <Card><SkeletonRows n={3} /></Card>;
   if (data.error) return <Card><div className="text-sm" style={{ color: C.dangerFg }}>{data.error}</div></Card>;
   const pending = data.requests.filter((r) => r.status === "pending"), done = data.requests.filter((r) => r.status !== "pending");
   const who = (id) => (S.users.find((u) => u.id === id) || {}).name || "";
@@ -7934,10 +8077,11 @@ function CampaignsPage({ toast, S }) {
           {tab !== "pool" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>}
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
-            {prospects == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : pList.length ? pageOf(pList).map((p) => (
+            {prospects == null ? <SkeletonRows n={4} /> : pList.length ? pageOf(pList).map((p) => (
               <ProspectCard key={p.id} p={p} jobLabel={jobLabel(p.job_id)} canEdit selected={!!sel[p.id]} onSelect={(v) => setSel((m) => ({ ...m, [p.id]: v }))}
                 onSave={(b) => patchP(p.id, b, "Email saved")} onStatus={(st, extra) => patchP(p.id, { status: st, ...(extra || {}) }, PROSPECT_LABEL[st] || "Updated")} S={S} toast={toast} onChanged={load} />
-            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No one matches your search or filters." : pfx === "found" ? "No one waiting for approval." : pfx === "pool" ? "No one yet. When a role closes, the people found for it move here and come back when a new role fits them." : "Nothing here yet."}</div>}
+            )) : <EmptyState title={ql || nFilters ? "No one matches your search or filters" : pfx === "found" ? "No one waiting for approval" : pfx === "pool" ? "Your talent pool is empty" : "Nothing here yet"}
+              text={ql || nFilters ? "Try removing a filter or searching for something else." : pfx === "found" ? "New people found for your open jobs appear here for you to approve." : pfx === "pool" ? "When a role closes, the people found for it move here and come back when a new role fits them." : ""} />}
           </div>
           {pager}
         </Card>
@@ -7956,9 +8100,9 @@ function CampaignsPage({ toast, S }) {
           <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in the places you chose for new clients for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
-            {leads == null ? <div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div> : lList.length ? pageOf(lList).map((l) => (
+            {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
               <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
-            )) : <div className="text-sm" style={{ color: C.ink2 }}>{ql || nFilters ? "No leads match your search or filters." : "Nothing here yet."}</div>}
+            )) : <EmptyState title={ql || nFilters ? "No leads match your search or filters" : "No client leads here yet"} text={ql || nFilters ? "Try removing a filter or searching for something else." : "Hiring managers whose new job posts fit your candidates appear here."} />}
           </div>
           {pager}
         </Card>
@@ -7966,7 +8110,7 @@ function CampaignsPage({ toast, S }) {
 
       {tab === "approvals" && <ApprovalsPanel S={S} toast={toast} onChanged={load} />}
       <SpendConfirm c={confirm} busy={confirmBusy} onClose={() => setConfirm(null)} />
-      {tab === "setup" && (status ? (status.error ? <Card><div className="text-sm" style={{ color: C.dangerFg }}>Couldn't load outreach status. Try again in a moment.</div></Card> : <OutreachSetup key={JSON.stringify(status.settings)} S={S} toast={toast} status={status} onSaved={load} />) : <Card><div className="text-sm" style={{ color: C.ink2 }}>Loading<InlineDots /></div></Card>)}
+      {tab === "setup" && (status ? (status.error ? <Card><div className="text-sm" style={{ color: C.dangerFg }}>Couldn't load outreach status. Try again in a moment.</div></Card> : <OutreachSetup key={JSON.stringify(status.settings)} S={S} toast={toast} status={status} onSaved={load} />) : <Card><SkeletonRows n={3} /></Card>)}
     </div>
   );
 }
@@ -12541,7 +12685,7 @@ export default function App() {
       <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} />
-        <div className="px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
+        <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
       <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={badges} />
