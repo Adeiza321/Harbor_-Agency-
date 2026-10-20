@@ -1108,6 +1108,11 @@ const FILTER_CSS = `
 .pn-lift:hover{transform:translateY(-2px);box-shadow:0 12px 26px -18px rgba(18,36,29,.45)!important}
 .pn-row{transition:background .15s}
 .pn-row:hover{background:${C.hover}}
+@keyframes pn-voice-ring{0%{transform:scale(.85);opacity:.35}70%{transform:scale(1.15);opacity:0}100%{opacity:0}}
+@keyframes pn-voice-bar{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
+@keyframes pn-voice-think{0%,100%{transform:scale(.92)}50%{transform:scale(1.04)}}
+.pn-voice-ring{animation:pn-voice-ring 1.6s ease-out infinite}.pn-voice-bar{transform-origin:bottom;animation:pn-voice-bar .9s ease-in-out infinite}.pn-voice-think{animation:pn-voice-think 1.2s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.pn-voice-ring,.pn-voice-bar,.pn-voice-think{animation:none}}
 .pn-ib{transition:background .15s,transform .15s}.pn-ib:hover:not(:disabled){background:${C.hover}!important}.pn-ib:active:not(:disabled){transform:scale(.94)}
 .pn-att{transition:background .15s}
 .pn-att:hover{background:${C.hover}!important}
@@ -2451,6 +2456,44 @@ function AttachmentChip({ a, onRemove, light }) {
     </div>
   );
 }
+// Voice conversation with the assistant: the browser turns speech into text (Chrome, Edge, Safari)
+// and reads the replies aloud. Where speech recognition isn't available (e.g. Firefox) it records
+// and the assistant transcribes it instead.
+const SpeechRec = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition || null) : null;
+const VOICE_LANG = typeof navigator !== "undefined" && /^en/i.test(navigator.language || "") ? navigator.language : "en-GB";
+const VOICE_PREF = "pn.voiceMuted";
+function speakable(t) {
+  return String(t || "").replace(/```[\s\S]*?```/g, " ").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/https?:\/\/\S+/g, "the link")
+    .replace(/[*_`#>|]/g, "").replace(/^\s*[-•]\s+/gm, "").replace(/\n{2,}/g, ". ").replace(/\s+/g, " ").trim().slice(0, 1400);
+}
+function speakAloud(text) {
+  return new Promise((done) => {
+    const synth = typeof window !== "undefined" && window.speechSynthesis;
+    const t = speakable(text);
+    if (!synth || !t) return done();
+    try {
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(t);
+      u.lang = VOICE_LANG; u.rate = 1.03;
+      const v = synth.getVoices().find((x) => x.lang === VOICE_LANG && /natural|google|samantha|daniel/i.test(x.name)) || synth.getVoices().find((x) => x.lang && x.lang.startsWith("en"));
+      if (v) u.voice = v;
+      u.onend = done; u.onerror = done;
+      synth.speak(u);
+    } catch (e) { done(); }
+  });
+}
+function VoiceOrb({ phase }) {
+  const col = phase === "speaking" ? C.lime : phase === "listening" ? C.em : C.ink3;
+  return (
+    <div className="relative grid place-items-center" style={{ width: 84, height: 84 }} aria-hidden="true">
+      <span className={"absolute inset-0 rounded-full" + (phase === "listening" || phase === "speaking" ? " pn-voice-ring" : "")} style={{ background: col, opacity: 0.18 }} />
+      <span className={"absolute rounded-full" + (phase === "thinking" ? " pn-voice-think" : "")} style={{ inset: 12, background: col, opacity: phase === "idle" ? 0.35 : 0.9 }} />
+      <span className="relative flex items-end gap-[3px] h-6">
+        {[0, 1, 2, 3, 4].map((i) => <i key={i} className={phase === "speaking" || phase === "listening" ? "pn-voice-bar" : ""} style={{ display: "block", width: 4, height: phase === "idle" || phase === "thinking" ? 6 : 18, borderRadius: 3, background: phase === "speaking" ? C.side : "#fff", animationDelay: i * 0.12 + "s" }} />)}
+      </span>
+    </div>
+  );
+}
 function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRefreshUpdates, goUpdate }) {
   const desktop = useDesktop();
   const [open, setOpen] = useState(false);
@@ -2505,7 +2548,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
       setRec(null);
       if (!sendIt) return;
       const secs = Math.round((Date.now() - r.started) / 1000);
-      if (secs < 1) { S.toast("Hold on a little longer to record"); return; }
+      if (secs < 1) { if (voiceRef.current) setV({ phase: "idle", heard: "" }); else S.toast("Hold on a little longer to record"); return; }
       const id = Math.random().toString(36).slice(2);
       setFiles((x) => [...x, { id, name: "Voice note", kind: "voice", status: "reading", secs }]);
       try {
@@ -2514,7 +2557,9 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
         const voice = { id, name: "Voice note", kind: "voice", status: "ready", text: out.text, truncated: !!out.truncated, secs: w.secs };
         const others = filesRef.current.filter((a) => a.id !== id && a.status === "ready");
         setFiles((x) => x.filter((a) => a.id !== id && a.status !== "ready"));
-        send(null, { attachments: [...others, voice] });
+        if (voiceRef.current) setV({ phase: "thinking", heard: out.text || "" });
+        const reply = await send(null, { attachments: [...others, voice] });
+        if (voiceRef.current) { await replyAloud(reply); if (voiceRef.current) setV({ phase: "idle", heard: "" }); }
       } catch (e) { setFiles((x) => x.filter((a) => a.id !== id)); S.error("Voice note: " + (e.message || "couldn't be transcribed")); }
     };
     clearInterval(r.timer);
@@ -2581,8 +2626,8 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
     const ask = (qText || text).trim();
     const fromFiles = opts && opts.attachments ? opts.attachments : !opts || !opts.fresh ? files.filter((a) => a.status === "ready") : [];
     const atts = fromFiles.map((a) => ({ name: a.name, kind: a.kind, text: a.text, truncated: !!a.truncated, secs: a.secs || null }));
-    if ((!ask && !atts.length) || busy) return;
-    if (!(opts && opts.attachments) && files.some((a) => a.status === "reading")) { S.toast("Wait for the file to finish reading"); return; }
+    if ((!ask && !atts.length) || busy) return null;
+    if (!(opts && opts.attachments) && files.some((a) => a.status === "reading")) { S.toast("Wait for the file to finish reading"); return null; }
     setText(""); { const el = document.getElementById("assistant-input"); if (el) el.style.height = "auto"; }
     if (!(opts && opts.attachments)) setFiles((x) => x.filter((a) => a.status !== "ready"));
     const base = opts && opts.fresh ? [] : msgsRef.current;
@@ -2595,9 +2640,73 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
       const r = await S.sb("/functions/v1/assistant", { method: "POST", body: { messages: history, mode: (opts && opts.mode) || mode, page, tz: MY_TZ, smart: !!(opts && opts.smart), threadId: (opts && opts.fresh) ? null : threadId }, timeout: 150000 });
       list = [...next, { role: "assistant", content: r.text || "", proposals: (r.proposals || []).map((p) => ({ ...p, state: p.tool === "propose_email" ? "draft" : "waiting" })) }];
     } catch (e) { list = [...next, { role: "assistant", content: e.message || "Something went wrong. Try again.", error: true }]; }
-    setMsgs(list); setBusy(false); playAssistChime(S.me);
+    setMsgs(list); setBusy(false); if (!voiceRef.current) playAssistChime(S.me);
     save(list, base.length ? null : ask || (atts[0] && (atts[0].kind === "voice" ? atts[0].text : atts[0].name)) || "New conversation");
+    return list[list.length - 1];
   };
+  // ---- Voice conversation: listen -> send -> read the reply aloud -> listen again, until ended.
+  const [voice, setVoice] = useState(null); // null | { phase: listening | thinking | speaking | idle, heard, muted }
+  const voiceRef = React.useRef(null); voiceRef.current = voice;
+  const recogRef = React.useRef(null);
+  const setV = (patch) => setVoice((v) => { const n = v ? { ...v, ...patch } : v; voiceRef.current = n; return n; });
+  const replyAloud = async (reply) => {
+    const v = voiceRef.current; if (!v) return;
+    if (reply && reply.content && !v.muted) {
+      setV({ phase: "speaking" });
+      const n = (reply.proposals || []).length;
+      await speakAloud(reply.content + (n ? (n === 1 ? " I've suggested one action. Approve it on screen." : ` I've suggested ${n} actions. Approve them on screen.`) : ""));
+    }
+  };
+  const voiceTurn = async (said) => {
+    setV({ phase: "thinking", heard: said });
+    const reply = await send(said);
+    await replyAloud(reply);
+    if (voiceRef.current) { setV({ phase: "listening", heard: "" }); listen(); }
+  };
+  const listen = () => {
+    const v = voiceRef.current; if (!v) return;
+    if (!SpeechRec) { setV({ phase: "listening", heard: "" }); startRec(); return; }
+    let finalText = "";
+    const r = new SpeechRec();
+    r.lang = VOICE_LANG; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+    r.onresult = (e) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) { const t = e.results[i][0].transcript; if (e.results[i].isFinal) finalText += t; else interim += t; }
+      setV({ heard: (finalText + " " + interim).trim() });
+    };
+    r.onerror = (e) => {
+      if (e.error === "not-allowed" || e.error === "service-not-allowed") { S.error("ProNext needs permission to use the microphone. Allow it in your browser's address bar, then try again."); endVoice(); }
+    };
+    r.onend = () => {
+      recogRef.current = null;
+      const cur = voiceRef.current; if (!cur || cur.phase !== "listening") return;
+      const said = finalText.trim();
+      if (said) voiceTurn(said);
+      else setV({ phase: "idle", heard: "" }); // heard nothing: wait for a tap
+    };
+    recogRef.current = r;
+    try { r.start(); } catch (e) { /* already listening */ }
+  };
+  const startVoice = () => {
+    if (busy) return;
+    let muted = false; try { muted = localStorage.getItem(VOICE_PREF) === "1"; } catch (e) { /* fine */ }
+    // Unlock speech on iOS/Safari: it only speaks after a tap has spoken once.
+    try { window.speechSynthesis && window.speechSynthesis.speak(new SpeechSynthesisUtterance("")); } catch (e) { /* fine */ }
+    const v = { phase: "listening", heard: "", muted }; voiceRef.current = v; setVoice(v);
+    listen();
+  };
+  const endVoice = () => {
+    voiceRef.current = null; setVoice(null);
+    try { recogRef.current && recogRef.current.abort(); } catch (e) { /* fine */ }
+    recogRef.current = null;
+    try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { /* fine */ }
+    if (recRef.current) stopRec(false);
+  };
+  const doneTalking = () => { if (recogRef.current) { try { recogRef.current.stop(); } catch (e) { /* fine */ } } else if (recRef.current) stopRec(true); };
+  const stopSpeaking = () => { try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (e) { /* fine */ } };
+  const toggleMute = () => { const m = !(voiceRef.current && voiceRef.current.muted); try { localStorage.setItem(VOICE_PREF, m ? "1" : "0"); } catch (e) { /* fine */ } if (m) stopSpeaking(); setV({ muted: m }); };
+  useEffect(() => { if (!open && voiceRef.current) endVoice(); }, [open]); // eslint-disable-line
+  useEffect(() => () => endVoice(), []); // eslint-disable-line
   // "Close this role with AI" and other buttons elsewhere start a fresh conversation here.
   useEffect(() => {
     const f = (e) => { const d = (e && e.detail) || {}; setOpen(true); setShowList(false); setThreadId(null); setThreadJob(d.jobId || null); setMsgs([]); setMode(d.mode || "work"); setTimeout(() => send(d.text, { fresh: true, jobId: d.jobId, mode: d.mode || "work", smart: true }), 50); };
@@ -2850,7 +2959,21 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
               {!onJob && threadJob && S.jobs.find((j) => j.id === threadJob) && <span className="text-[11px] ml-auto truncate" style={{ color: C.ink3 }}>📌 {S.jobs.find((j) => j.id === threadJob).role}</span>}
             </div>
             {files.length > 0 && <div className="flex flex-wrap gap-1.5 mb-2">{files.map((a) => <AttachmentChip key={a.id} a={a} onRemove={a.status === "reading" ? null : () => setFiles((x) => x.filter((b) => b.id !== a.id))} />)}</div>}
-            {rec ? (
+            {voice ? (
+              <div className="rounded-2xl p-4 flex flex-col items-center gap-3 text-center" style={{ background: C.soft, border: `1px solid ${C.line}` }} role="region" aria-label="Voice conversation">
+                <button type="button" onClick={voice.phase === "idle" ? listen : voice.phase === "speaking" ? stopSpeaking : voice.phase === "listening" ? doneTalking : undefined} className="rounded-full" aria-label={voice.phase === "idle" ? "Tap to talk" : voice.phase === "speaking" ? "Stop speaking" : "Done talking"}>
+                  <VoiceOrb phase={voice.phase} />
+                </button>
+                <div className="text-sm font-semibold" style={{ color: C.ink }} aria-live="polite">
+                  {voice.phase === "listening" ? (rec ? "Recording… tap the circle when you're done" : "Listening…") : voice.phase === "thinking" ? "Thinking…" : voice.phase === "speaking" ? "Speaking… tap to interrupt" : "Tap the circle to talk"}
+                </div>
+                {voice.heard && <div className="text-sm italic max-w-full break-words" style={{ color: C.ink2 }}>“{voice.heard}”</div>}
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={toggleMute} className="text-xs rounded-full px-3 py-1.5 border" style={{ borderColor: C.line, color: C.ink2, background: C.card }}>{voice.muted ? "Read replies aloud" : "Mute replies"}</button>
+                  <button type="button" onClick={endVoice} className="text-xs rounded-full px-3 py-1.5 font-medium" style={{ background: C.solid, color: "#fff" }}>End voice</button>
+                </div>
+              </div>
+            ) : rec ? (
               <div className="flex items-center gap-2">
                 <button onClick={() => stopRec(false)} aria-label="Cancel the voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ border: `1px solid ${C.line}`, color: C.ink2, background: C.card }}><Trash2 size={16} /></button>
                 <div className="flex-1 min-w-0 flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm" style={{ background: C.dangerBg, color: C.dangerFg }} role="status" aria-live="polite">
@@ -2869,7 +2992,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
                 placeholder={mode === "brainstorm" ? "What do you want to think through?" : "Close a role, research a candidate, draft a client email…"} className="flex-1 min-w-0 rounded-xl border px-3 py-2.5 text-sm outline-none resize-none" style={{ borderColor: C.line, background: C.soft, maxHeight: 120 }} />
               {text.trim() || files.some((a) => a.status === "ready")
                 ? <button onClick={() => send()} disabled={busy || files.some((a) => a.status === "reading")} aria-label="Send" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy || files.some((a) => a.status === "reading") ? 0.5 : 1 }}><SendHorizontal size={17} /></button>
-                : <button onClick={startRec} disabled={busy} aria-label="Record a voice note" title="Record a voice note" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy ? 0.5 : 1 }}><Mic size={17} /></button>}
+                : <button onClick={startVoice} disabled={busy} aria-label="Talk to the assistant" title="Talk to the assistant" className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 self-end" style={{ background: C.em, color: "#fff", opacity: busy ? 0.5 : 1 }}><Mic size={17} /></button>}
             </div>
             )}
           </div>

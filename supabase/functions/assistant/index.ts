@@ -1,6 +1,7 @@
 import { MEMORY_TOOLS, learnFromTurn, loadMemories, memoryPrompt, runMemoryTool } from "./memory.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { readAttachment } from "./attach.ts";
+import { buildDigest } from "./digest.ts";
 
 // The ProNext assistant: helps close roles. Signed-in staff only.
 //   - It LOOKS THINGS UP itself (candidates, jobs, pipelines, interviews, client feedback, AI
@@ -668,7 +669,8 @@ const ROUNDUP_ASK = "Give me my end-of-day round-up. In a few short lines: what 
 // get it, saved as a conversation (kind 'brief' / 'roundup'). The round-up also lands in the
 // person's assistant updates (badge, sound, and an email if they don't open ProNext), and is
 // skipped for anyone who turned it off (assistRoundup) or turned assistant updates off.
-async function briefNext(admin: any, key: string, max: number, kind: "brief" | "roundup" = "brief") {
+// Built from the data by digest.ts (no AI, no cost); the text and reminder cards are saved the same way as before.
+async function briefNext(admin: any, max: number, kind: "brief" | "roundup" = "brief") {
   const tz = "Africa/Lagos";
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const startUtc = new Date(Date.now() - (kind === "brief" ? 20 : 12) * 3600e3).toISOString();
@@ -681,8 +683,8 @@ async function briefNext(admin: any, key: string, max: number, kind: "brief" | "
   const out: any[] = [];
   for (const p of todo.slice(0, max)) {
     const me = { id: p.id, full_name: p.full_name, role: p.role, status: p.status, scoped: p.role === "recruiter" };
-    const r = await runAgent({ admin, db: admin, me, key, mode: "work", messages: [{ role: "user", content: ask }], page: {}, tz, forceModel: SMART });
-    if (r.error) { out.push({ id: p.id, error: r.error }); if (r.status === 402) break; continue; }
+    let r: { text: string; proposals: any[] };
+    try { r = await buildDigest(admin, me, kind, tz); } catch (e) { out.push({ id: p.id, error: String((e as Error)?.message || e) }); continue; }
     const label = new Intl.DateTimeFormat("en-GB", { timeZone: tz, day: "numeric", month: "short" }).format(new Date());
     const { data: th } = await admin.from("assistant_threads").insert({ user_id: p.id, kind, mode: "work", title: (kind === "brief" ? "Morning brief · " : "End-of-day round-up · ") + label,
       messages: [{ role: "user", content: ask }, { role: "assistant", content: r.text, proposals: r.proposals.map((x: any) => ({ ...x, state: x.tool === "propose_email" ? "draft" : "waiting" })) }] }).select("id").single();
@@ -705,7 +707,6 @@ Deno.serve(async (req: Request) => {
     const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const body = await req.json().catch(() => ({}));
     const key = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!key) return json({ error: "The assistant isn't connected (ANTHROPIC_API_KEY)" }, 400);
     let me: any, db: any;
     const opsKey = req.headers.get("x-harbor-ops") || "";
     if (opsKey) {
@@ -713,14 +714,22 @@ Deno.serve(async (req: Request) => {
       // person (read-only; proposals are returned, never carried out).
       const { data: tok } = await admin.from("ops_tokens").select("token").eq("token", opsKey).gt("expires_at", new Date().toISOString()).maybeSingle();
       if (!tok || opsKey.length < 32) return json({ error: "Invalid ops token" }, 403);
-      if (body.action === "brief_next") return json(await briefNext(admin, key, Math.min(Number(body.max) || 2, 4)));
-      if (body.action === "roundup_next") return json(await briefNext(admin, key, Math.min(Number(body.max) || 2, 4), "roundup"));
+      if (body.action === "brief_next") return json(await briefNext(admin, Math.min(Number(body.max) || 5, 10)));
+      if (body.action === "roundup_next") return json(await briefNext(admin, Math.min(Number(body.max) || 5, 10), "roundup"));
+      // Read-only preview of one person's brief / round-up (nothing saved or sent).
+      if (body.action === "digest_preview" && body.profile) {
+        const { data: p } = await admin.from("profiles").select("id,full_name,role").eq("id", body.profile).single();
+        if (!p) return json({ error: "No such profile" }, 404);
+        return json(await buildDigest(admin, { ...p, scoped: p.role === "recruiter" }, body.kind === "roundup" ? "roundup" : "brief", "Africa/Lagos"));
+      }
+      if (!key) return json({ error: "The assistant isn't connected (ANTHROPIC_API_KEY)" }, 400);
       if (!body.selftest_profile) return json({ error: "Unknown ops action" }, 400);
       ({ data: me } = await admin.from("profiles").select("id,full_name,role,status").eq("id", body.selftest_profile).single());
       if (!me) return json({ error: "No such profile" }, 404);
       me.scoped = me.role === "recruiter";
       db = admin;
     } else {
+      if (!key) return json({ error: "The assistant isn't connected (ANTHROPIC_API_KEY)" }, 400);
       const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
       const { data: caller } = await admin.auth.getUser(jwt);
       if (!caller?.user) return json({ error: "Not signed in" }, 401);
