@@ -100,7 +100,7 @@ begin
   select name, recruiter_id into c from candidates where id = cid;
   t := c.name || ' confirmed interest in ' || coalesce(l.job_title, 'a matched role');
   insert into candidate_timeline (candidate_id, title, done) values (cid, 'Confirmed their details for a matched role: ' || coalesce(l.job_title, ''), true);
-  perform push_update(c.recruiter_id, 'lead', t, 'They checked their details on file. The role is ready to pitch to the employer in Outreach > Client leads.', jsonb_build_object('page', 'campaigns'), 'offer:' || o.id, false, null);
+  perform push_update(c.recruiter_id, 'event', t, 'They checked their details on file. The role is ready to pitch to the employer in Outreach > Client leads.', jsonb_build_object('page', 'campaigns'), 'offer:' || o.id, false, null);
   return jsonb_build_object('ok', true);
 end $$;
 

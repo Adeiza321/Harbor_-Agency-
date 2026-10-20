@@ -8,7 +8,7 @@ import {
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
   KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
-  Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon,
+  Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon, Pin, FolderPlus,
 } from "lucide-react";
 
 /* Design tokens */
@@ -301,6 +301,7 @@ function mapAll(d) {
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
+    note: c.profile_note || "", noteBy: c.profile_note_by ? pname(c.profile_note_by) : "", noteAt: c.profile_note_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: answersFor(l), ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       blindPages: l.blind_pages || 0, blindAt: l.blind_at || null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
@@ -4544,6 +4545,40 @@ function VerifiedTick({ size = 20 }) {
     </span>
   );
 }
+// A note pinned to the top of the profile: everyone on the team who opens it sees it first.
+// (The Discussion tab is the running conversation; this is the one thing nobody should miss.)
+function ProfileNote({ candidate, S, toast }) {
+  const [edit, setEdit] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const save = (text) => { setBusy(true); S.setProfileNote(candidate.id, text).then(() => { setEdit(null); toast(text.trim() ? "Note pinned to the profile" : "Note removed"); }).catch(() => {}).finally(() => setBusy(false)); };
+  if (edit != null) return (
+    <div className="rounded-2xl p-3.5 flex flex-col gap-2" style={{ background: C.warnBg, border: `1px solid ${C.line}` }}>
+      <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: C.warnText }}><Pin size={13} /> Pinned note · everyone on the team sees it when they open this profile</div>
+      <textarea autoFocus rows={3} value={edit} onChange={(e) => setEdit(e.target.value)} maxLength={2000} placeholder="e.g. Only open to remote roles. Call after 4pm. Prefers WhatsApp." className="w-full rounded-lg border px-3 py-2 text-sm outline-none resize-y" style={{ borderColor: C.line, background: C.card, color: C.ink }} />
+      <div className="flex gap-2 justify-end">
+        <Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn>
+        <Btn kind="primary" onClick={() => save(edit)} disabled={busy || (!edit.trim() && !candidate.note)}>{busy ? "Saving…" : "Pin note"}</Btn>
+      </div>
+    </div>
+  );
+  if (!candidate.note) return (
+    <button onClick={() => setEdit("")} className="rounded-2xl px-3.5 py-2.5 text-sm flex items-center gap-2 text-left" style={{ border: `1px dashed ${C.line}`, color: C.ink2 }}><Pin size={14} /> Add a pinned note everyone on the team sees</button>
+  );
+  return (
+    <div className="rounded-2xl p-3.5 flex gap-3" style={{ background: C.warnBg }}>
+      <Pin size={16} className="shrink-0 mt-0.5" style={{ color: C.warnText }} />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm whitespace-pre-wrap break-words" style={{ color: C.ink }}>{candidate.note}</div>
+        <div className="text-xs mt-1" style={{ color: C.warnText }}>{[candidate.noteBy, candidate.noteAt ? fdate(candidate.noteAt) : null].filter(Boolean).join(" · ")}</div>
+      </div>
+      <div className="flex items-start gap-1 shrink-0">
+        <IconBtn icon={Pencil} label="Edit the pinned note" size="sm" onClick={() => setEdit(candidate.note)} />
+        <IconBtn icon={X} label="Remove the pinned note" size="sm" disabled={busy} onClick={() => save("")} />
+      </div>
+    </div>
+  );
+}
+
 function ProfileHeader({ candidate, status, path, verified }) {
   const idx = { "In review": 1, "With client": 2, Interview: 3, Offer: 4, Placed: 5, Hired: 5 }[status];
   const fit = Number(candidate.ai) || 0, R = 31, CIRC = 2 * Math.PI * R;
@@ -4869,6 +4904,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
           <ProfileHeader candidate={candidate} status={status} path={endedPath(candidate, status, S)} verified={verified} />
+          <ProfileNote candidate={candidate} S={S} toast={toast} />
           <Card>
             {candidate.ai_locked && (
               <div className="rounded-lg p-2.5 mb-3 flex items-center gap-2 text-xs flex-wrap" style={{ background: C.warnBg, color: C.warnFg }}>
@@ -4897,6 +4933,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               )}
               <RowMenu label={"More actions for " + candidate.name} items={[
                 { label: "Edit details", icon: Pencil, onClick: openEdit },
+                { label: "Add to Active file", icon: FolderPlus, onClick: () => S.addToActiveFile(candidate.id).then(() => toast(candidate.name.split(" ")[0] + " is on the Active file")).catch(() => {}),
+                  hidden: status === "Active file" || (S.role === "recruiter" && candidate.recruiterId !== S.me.id) },
                 { label: "Forward to client", icon: Forward, onClick: () => setPanel("fwd"), hidden: S.role === "recruiter" },
                 { label: "Delete candidate", icon: Trash2, danger: true, onClick: () => setDelOpen(true), hidden: S.role !== "admin" },
               ]} />
@@ -8334,7 +8372,7 @@ function JobSourcingCard({ job, S, toast }) {
 // Candidate first: each candidate who fits a lead is asked (the role without the employer's name)
 // before the employer is pitched. Shows where each one is, and their blind resume once confirmed.
 const OFFER_STATE = { suggested: ["Not asked yet", "neutral"], sent: ["Asked, waiting for a reply", "warn"], interested: ["Interested, checking their details", "info"],
-  confirmed: ["Confirmed", "em"], declined: ["Said no", "neutral"], skipped: ["Skipped", "neutral"] };
+  confirmed: ["Confirmed", "em"], processing: ["Being processed", "em"], declined: ["Said no", "neutral"], skipped: ["Skipped", "neutral"] };
 function LeadOffers({ l, offers, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [blindFor, setBlindFor] = useState(null);
@@ -8373,7 +8411,9 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
                 <span className="self-center" style={{ color: o.blind_pages ? C.em : C.warnFg }}>{o.blind_pages ? "Blind resume ready" : "No blind resume yet"}</span>
                 <Btn onClick={() => setBlindFor(o)} className="!py-1.5 !px-3 text-xs">{o.blind_pages ? "Redo blind resume" : "Make blind resume"}</Btn>
                 {o.blind_pages > 0 && <IconBtn icon={Copy} label={"Copy the blind resume link for " + l.company} size="sm" onClick={() => copyText(window.location.origin + "/?t=" + o.client_token, toast, "Blind resume link copied")} />}
+                {S.role !== "recruiter" && <Btn kind="primary" disabled={!!busy} title={"Routes " + c.name.split(" ")[0] + " to this role like a reroute: a draft job for " + l.company + " is created, their other live roles are marked Rejected, and they're emailed to accept it"} onClick={() => { setBusy("proc" + o.id); S.processOffer(o.id).then(() => { toast(c.name.split(" ")[0] + " routed to " + l.job_title + ". A draft job for " + l.company + " is under Jobs."); onChanged(); }).catch(() => {}).finally(() => setBusy("")); }} className="!py-1.5 !px-3 text-xs">{busy === "proc" + o.id ? "Routing…" : l.company + " wants to proceed"}</Btn>}
               </>}
+              {o.status === "processing" && c && <button onClick={() => S.openCandidate(c.id)} className="font-medium" style={{ color: C.em }}>Routed to {l.job_title}. Open profile</button>}
             </div>
           </div>
         );
@@ -11677,6 +11717,37 @@ function PortalOffer({ token, offer }) {
     </Card>
   );
 }
+// "Keep me in mind for other roles": the candidate adds themselves to the Active file. We match
+// them to new roles and always ask first, without sharing anything with an employer.
+function PortalActiveFile({ token, onChanged }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState("");
+  const [err, setErr] = useState("");
+  useEffect(() => { sbFetch("/rest/v1/rpc/candidate_active_file", { method: "POST", body: { p_token: token } }).then((d) => setSt(d || null)).catch(() => {}); }, [token]);
+  if (!st && !done) return null;
+  if (done) return <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{done}</div>;
+  if (st.inActiveFile && st.pitchConsent) return null;
+  const join = () => {
+    setBusy(true); setErr("");
+    sbFetch("/rest/v1/rpc/candidate_join_active_file", { method: "POST", body: { p_token: token } })
+      .then((r) => { setDone(r && r.live ? "Done. We'll keep you in mind for other roles too, once your current one is settled or alongside it." : "You're on our Active file. When a role fits you, we'll tell you about it first and only share your details if you say yes."); if (onChanged) onChanged(); })
+      .catch((e) => setErr(e.message || "Something went wrong. Please try again.")).finally(() => setBusy(false));
+  };
+  return (
+    <Card>
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-base font-semibold">Open to other roles?</div>
+          <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{st.live ? "You're on a role with us right now. " : ""}{st.inActiveFile ? "You're on our Active file. Say yes and we'll match you to new roles that fit." : "Add yourself to our Active file and we'll match you to new roles that fit."} We always ask you first, and never share your details without your yes.</div>
+          {err && <div className="text-xs mt-1.5" style={{ color: C.dangerFg }}>{err}</div>}
+        </div>
+        <Btn kind="primary" disabled={busy} onClick={join} className="justify-center shrink-0">{busy ? "Saving…" : st.inActiveFile ? "Yes, match me to roles" : "Add me to the Active file"}</Btn>
+      </div>
+    </Card>
+  );
+}
+
 function CandidatePortal({ data, token, onChanged }) {
   const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], applications: [], ...(data || {}) };
   const [answers, setAnswers] = useState({});
@@ -11756,6 +11827,7 @@ function CandidatePortal({ data, token, onChanged }) {
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
 
         {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} name={c.name} />}
+        {token && <PortalActiveFile token={token} onChanged={onChanged} />}
 
         {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
 
@@ -13273,6 +13345,30 @@ export default function App() {
       return row;
     },
     /* Routing: the role shows on the candidate's page; their company card appears once they accept. */
+    // A note pinned to the top of the profile, for everyone on the team who opens it.
+    setProfileNote: async (candidateId, note) => {
+      try { await sbFetch("/rest/v1/rpc/set_profile_note", { method: "POST", token: session.token, body: { p_candidate: candidateId, p_note: note } }); }
+      catch (e) { showError(e.message); throw e; }
+      reload();
+    },
+    addToActiveFile: async (candidateId) => {
+      let r;
+      try { r = await sbFetch("/rest/v1/rpc/add_to_active_file", { method: "POST", token: session.token, body: { p_candidate: candidateId } }); }
+      catch (e) { showError(e.message); throw e; }
+      reload();
+      return r || {};
+    },
+    // The employer agreed to a candidate from a client lead: processed like a reroute (a Draft job
+    // for the client, the candidate routed to it, other live roles marked Rejected as rerouted),
+    // and they get the same "A new role for you" email to accept it, now with the employer named.
+    processOffer: async (offerId) => {
+      let r;
+      try { r = await sbFetch("/rest/v1/rpc/lead_offer_process", { method: "POST", token: session.token, body: { p_offer: offerId } }); }
+      catch (e) { showError(e.message); throw e; }
+      if (r && r.linkId) await msgCall("invite", { linkId: r.linkId }).catch(() => {});
+      reload();
+      return r || {};
+    },
     routeToJob: async (candidateId, jobId) => {
       let rows;
       try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending" } }); }
