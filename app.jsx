@@ -315,7 +315,7 @@ function playChime() {
 }
 // The assistant's sound, unless you turned it off (My profile > Notifications).
 const playAssistChime = (me) => { if (((me && me.notificationPrefs) || {}).assistSound !== false) playChime(); };
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "" });
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "", tourDoneAt: p.tour_done_at || null });
 
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
@@ -2143,6 +2143,12 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
       <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }, { key: "calendar", label: "Calendar" }]} active={tab} setActive={setTab} />
       {tab === "account" && <AppearanceCard />}
+      {tab === "account" && (
+        <div className="rounded-2xl border p-5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ background: C.card, borderColor: C.line }}>
+          <div className="flex-1"><div className="font-medium" style={{ color: C.ink }}>Tour of ProNext</div><div className="text-sm mt-0.5" style={{ color: C.ink2 }}>A one-minute walk around the features you use.</div></div>
+          <Btn onClick={() => window.dispatchEvent(new Event("pn:tour"))}>Take the tour</Btn>
+        </div>
+      )}
       {tab === "account" && <MyWins S={S} />}
       {tab === "account" && <AccountTab S={S} toast={toast} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
@@ -2162,6 +2168,7 @@ function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
         return (
           <button
             key={it.key}
+            data-tour={"nav-" + it.key}
             onClick={() => { setPage(it.key); onNavigate && onNavigate(); }}
             className={"relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-left" + (dark ? " pn-nav" : "")}
             style={
@@ -2232,13 +2239,13 @@ function MobileBottomNav({ role, page, setPage, onMore, badges = {} }) {
         const active = page === it.key;
         const Icon = it.icon;
         return (
-          <button key={it.key} onClick={() => setPage(it.key)} className="flex-1 flex flex-col items-center justify-center gap-1 py-2 mx-0.5 my-1 rounded-xl transition-colors" style={{ background: active ? C.emTint : "transparent" }} aria-current={active ? "page" : undefined}>
+          <button key={it.key} data-tour={"nav-" + it.key} onClick={() => setPage(it.key)} className="flex-1 flex flex-col items-center justify-center gap-1 py-2 mx-0.5 my-1 rounded-xl transition-colors" style={{ background: active ? C.emTint : "transparent" }} aria-current={active ? "page" : undefined}>
             <span className="relative"><Icon size={21} color={active ? C.em : C.ink3} />{badges[it.key] > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}</span>
             <span className="leading-none" style={{ fontSize: 10, color: active ? C.em : C.ink3, fontWeight: active ? 600 : 400 }}>{it.label}</span>
           </button>
         );
       })}
-      <button onClick={onMore} className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5">
+      <button data-tour="nav-more" onClick={onMore} className="flex-1 flex flex-col items-center justify-center gap-1 py-2.5">
         {/* Pages not on the bottom bar (Messages, for one) put their count on More. */}
         {(() => { const n = Object.keys(badges).filter((k) => !items.some((it) => it.key === k)).reduce((a, k) => a + (badges[k] || 0), 0);
           return <span className="relative"><MoreHorizontal size={20} color={C.ink3} />{n > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{n > 99 ? "99+" : n}</span>}</span>; })()}
@@ -2273,6 +2280,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
             <Avatar init={me.init} src={me.avatarUrl} tone="em" size={32} />
             <div className="min-w-0"><div className="text-sm font-medium truncate">{me.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{me.label}</div></div>
           </button>
+          <button onClick={() => { onClose(); setTimeout(() => window.dispatchEvent(new Event("pn:tour")), 250); }} className="w-full text-left text-sm rounded-xl px-3 py-2.5" style={{ color: C.ink }}>Take the tour</button>
           <button onClick={() => { onSignOut(); onClose(); }} className="w-full text-left text-sm rounded-xl px-3 py-2.5" style={{ color: C.dangerFg }}>Sign out</button>
         </div>
       </div>
@@ -2337,16 +2345,16 @@ function TopBar({ query, setQuery, S, onCmd }) {
   return (
     <div className="flex items-center gap-3 px-4 md:px-8 py-4 md:py-5">
       <div className="shrink-0" style={{ display: desktop ? "none" : "block" }}><BrandMark size={32} /></div>
-      <div className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5 flex-1 max-w-xl" style={{ borderColor: C.line, background: C.card }}>
+      <div data-tour="search" className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5 flex-1 max-w-xl" style={{ borderColor: C.line, background: C.card }}>
         <Search size={17} color={C.ink3} />
         <input id="harbor-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="bg-transparent outline-none text-sm flex-1 min-w-0" />
         <button type="button" onClick={onCmd} title="Jump to any candidate, job or page" className="rounded px-1.5 py-0.5" style={{ display: desktop ? "inline" : "none", fontSize: 11, background: C.canvas, color: C.ink2 }}>{/Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘ K" : "Ctrl K"}</button>
       </div>
-      <button aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"} onClick={() => setTheme(DARK ? "light" : "dark")} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center shrink-0" style={{ borderColor: C.line, background: C.card }}>
+      <button data-tour="theme" aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"} onClick={() => setTheme(DARK ? "light" : "dark")} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center shrink-0" style={{ borderColor: C.line, background: C.card }}>
         {DARK ? <Sun size={18} color={C.lime} /> : <Moon size={18} color={C.ink} />}
       </button>
       <div className="relative shrink-0">
-        <button aria-label="Notifications" onClick={() => setNotifOpen((v) => !v)} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative" style={{ borderColor: C.line, background: C.card }}>
+        <button data-tour="notifications" aria-label="Notifications" onClick={() => setNotifOpen((v) => !v)} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative" style={{ borderColor: C.line, background: C.card }}>
           <Bell size={18} color={C.ink} />
           {unread > 0 && <span className="absolute top-2.5 right-2.5 w-2 h-2 rounded-full" style={{ background: "#D9573B" }} />}
         </button>
@@ -2954,7 +2962,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
   return (
     <>
       {!(open && !desktop) && (
-        <button onClick={() => setOpen((v) => !v)} aria-label={open ? "Close assistant" : "Open assistant"} className="fixed rounded-full flex items-center justify-center shadow-lg"
+        <button data-tour="assistant" onClick={() => setOpen((v) => !v)} aria-label={open ? "Close assistant" : "Open assistant"} className="fixed rounded-full flex items-center justify-center shadow-lg"
           style={{ right: desktop ? 24 : 16, bottom: desktop ? 24 : 76, width: 52, height: 52, background: C.side, color: C.lime, zIndex: 46 }}>
           {open ? <X size={20} /> : <Sparkles size={20} />}
           {!open && due > 0 && <span className="absolute -top-1 -right-1 min-w-5 h-5 px-1 rounded-full text-[11px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{due}</span>}
@@ -4698,6 +4706,108 @@ function VerifiedTick({ size = 20 }) {
     </span>
   );
 }
+/* In-app tour: a short walk around the features for each role, shown once to everyone (new and
+   existing team members) until they finish or skip it (profiles.tour_done_at). Each step lights
+   up the thing it's about (a menu item, the search, the assistant); on a phone, menu items that
+   aren't on the bottom bar point at More. Replay from My profile or the phone's More menu. */
+function tourSteps(role, first) {
+  const staff = role !== "recruiter";
+  const t = (key, title, body) => ({ key, title, body });
+  return [
+    t(null, "Welcome to ProNext" + (first ? ", " + first : ""), staff
+      ? "A quick look around: where candidates, applications, jobs and the team's work live. It takes about a minute."
+      : "A quick look around: where your candidates, jobs and messages live. It takes about a minute."),
+    t("nav-overview", "Overview", staff ? "The agency at a glance: lineup, hires, billing, and what changed while you were away." : "Your day at a glance: your lineup, interviews coming up, and what changed while you were away."),
+    t("nav-candidates", staff ? "Candidates" : "My candidates", staff
+      ? "Every candidate in the agency. Open a profile to move them along, forward them to a client, route them to another role or add a note for the team."
+      : "Everyone you're working with. Open a profile to update their status, add notes, message them and see how they screened."),
+    t("nav-inbox", "Inbox", staff
+      ? "New applications wait here for you to assign to a recruiter. Apply links gives you your own links to share."
+      : "People who applied through your own links land here, already as your candidates. Your links are there too."),
+    t("nav-messages", "Messages", "Chat with candidates. They get your messages by email and on their candidate page."),
+    t("nav-todo", "To-do", staff ? "Your tasks, and tasks you give the team." : "Your tasks, including ones Rec Ops gives you."),
+    t("nav-jobs", "Jobs", staff
+      ? "Post jobs, change their status, share them and see each role's pipeline. Roles from client leads have their own tab."
+      : "Open roles. Press Engage to add one to your worklist, then submit candidates. A job's link you copy is yours: anyone who applies through it becomes your candidate."),
+    t("nav-interviews", "Interviews", "Schedule interviews, send invites and keep track of what's coming up."),
+    ...(staff ? [t("nav-campaigns", "Outreach", "Candidates found outside ProNext, the talent pool, and client leads: candidates are asked first with the employer hidden, then the employer gets a blind resume.")] : []),
+    t("nav-billing", "Billing", staff ? "Placements, invoices and what each hire cost." : "Your placements and what you've earned."),
+    ...(role === "admin" ? [
+      t("nav-users", "Users & permissions", "Add team members and choose what each person can do."),
+      t("nav-settings", "Agency settings", "Your branding, emails, sourcing and data settings."),
+    ] : []),
+    t("search", "Search", "Find any candidate or job fast." + (window.innerWidth >= 768 ? " Press Ctrl K (⌘K on a Mac) to jump anywhere." : "")),
+    t("notifications", "Notifications", "Replies, stage changes, reminders and anything that needs you."),
+    t("assistant", "Your assistant", "Ask about your candidates and roles, or have it draft a message. It suggests; you approve."),
+    t("theme", "Light or dark", "Switch the look any time. It follows your device until you choose."),
+    t(null, "You're all set", "That's the tour. You can take it again any time from My profile."),
+  ];
+}
+function tourTarget(key) {
+  if (!key) return null;
+  const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight; };
+  const find = (k) => [...document.querySelectorAll('[data-tour="' + k + '"]')].find(vis) || null;
+  const el = find(key);
+  if (el) return { el, via: null };
+  if (key.startsWith("nav-")) { const more = find("nav-more"); if (more) return { el: more, via: "more" }; }
+  return null;
+}
+function ProductTour({ role, first, onClose }) {
+  const steps = React.useMemo(() => tourSteps(role, first), [role, first]);
+  const [i, setI] = useState(0);
+  const [box, setBox] = useState(null); // { top, left, width, height, via }
+  const step = steps[i];
+  const last = i === steps.length - 1;
+  useEffect(() => {
+    const place = () => {
+      const t = tourTarget(step.key);
+      if (!t) { setBox(null); return; }
+      const r = t.el.getBoundingClientRect();
+      setBox({ top: r.top, left: r.left, width: r.width, height: r.height, via: t.via });
+    };
+    place();
+    const t1 = setTimeout(place, 120);
+    window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
+    return () => { clearTimeout(t1); window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [i]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const k = (e) => { if (e.key === "Escape") onClose(false); else if (e.key === "ArrowRight") setI((n) => Math.min(steps.length - 1, n + 1)); else if (e.key === "ArrowLeft") setI((n) => Math.max(0, n - 1)); };
+    window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const vw = window.innerWidth, vh = window.innerHeight, pad = 6, cardW = Math.min(340, vw - 32);
+  let card = { left: (vw - cardW) / 2, top: Math.max(16, vh / 2 - 130) };
+  if (box) {
+    const below = box.top + box.height + pad + 14, roomBelow = vh - below;
+    const left = Math.min(Math.max(16, box.left + box.width / 2 - cardW / 2), vw - cardW - 16);
+    if (box.left + box.width + cardW + 40 < vw && box.width < 300 && box.height < 80 && box.left < vw / 3) card = { left: box.left + box.width + 18, top: Math.min(Math.max(16, box.top - 20), vh - 260) };
+    else card = roomBelow > 230 ? { left, top: below } : { left, top: Math.max(16, box.top - pad - 14 - 220) };
+  }
+  const body = step.body + (box && box.via === "more" ? " On a phone, you'll find it under More." : "");
+  return (
+    <div className="fixed inset-0" style={{ zIndex: 80 }} role="dialog" aria-modal="true" aria-label={"Tour: " + step.title}>
+      {box
+        ? <div className="absolute rounded-xl pointer-events-none" style={{ top: box.top - pad, left: box.left - pad, width: box.width + pad * 2, height: box.height + pad * 2, boxShadow: "0 0 0 9999px rgba(9,19,15,.62)", border: `2px solid ${C.lime}`, transition: "all .28s cubic-bezier(.2,.7,.2,1)" }} />
+        : <div className="absolute inset-0" style={{ background: "rgba(9,19,15,.62)" }} />}
+      <div key={i} className="absolute rounded-2xl border p-5 pnx-tour" style={{ ...card, width: cardW, background: C.card, borderColor: C.line, boxShadow: "0 24px 60px -20px rgba(0,0,0,.55)" }}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold tracking-wider" style={{ color: C.em }}>{i === 0 ? "TOUR" : i + " OF " + (steps.length - 1)}</span>
+          {!last && <button onClick={() => onClose(false)} className="text-xs" style={{ color: C.ink3 }}>Skip tour</button>}
+        </div>
+        <div className="text-xl mt-1.5" style={{ ...SERIF, color: C.ink }}>{step.title}</div>
+        <div className="text-sm mt-1.5 leading-relaxed" style={{ color: C.ink2 }}>{body}</div>
+        <div className="flex items-center gap-1 mt-4">
+          {steps.map((_, k) => <span key={k} className="h-1.5 rounded-full" style={{ width: k === i ? 16 : 6, background: k <= i ? C.em : C.line, transition: "width .2s" }} />)}
+        </div>
+        <div className="flex items-center gap-2 mt-4 justify-end">
+          {i > 0 && <Btn onClick={() => setI(i - 1)}>Back</Btn>}
+          <Btn kind="primary" onClick={() => (last ? onClose(true) : setI(i + 1))}>{i === 0 ? "Show me around" : last ? "Done" : "Next"}</Btn>
+        </div>
+      </div>
+      <style>{`@keyframes pnx-tour-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } } .pnx-tour { animation: pnx-tour-in .25s ease-out both; } @media (prefers-reduced-motion: reduce) { .pnx-tour { animation: none; } }`}</style>
+    </div>
+  );
+}
+
 // Asked before rerouting someone who is still live on other roles.
 function RerouteAsk({ ask, onDone }) {
   const first = ask.name.split(" ")[0];
@@ -13540,6 +13650,7 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
   const [rerouteAsk, setRerouteAsk] = useState(null); // { name, roles, label, resolve }
+  const [tourOpen, setTourOpen] = useState(false);
   const [errMsg, setErrMsg] = useState("");
   const [page, setPageRaw] = useState(() => new URLSearchParams(window.location.search).get("page") || "overview");
   const [query, setQueryRaw] = useState("");
@@ -13638,6 +13749,15 @@ export default function App() {
     const f = (e) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setCmdOpen((v) => !v); } };
     window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f);
   }, []);
+  // The tour, once for everyone (new and existing team members) until they finish or skip it;
+  // "Take the tour" (My profile, phone's More menu) opens it again.
+  React.useEffect(() => {
+    if (status !== "ready" || !me || me.tourDoneAt) return;
+    try { if (localStorage.getItem("pn.tourDone." + me.id)) return; } catch (e) { /* fine */ }
+    const t = setTimeout(() => setTourOpen(true), 1200);
+    return () => clearTimeout(t);
+  }, [status, me && me.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => { const f = () => setTourOpen(true); window.addEventListener("pn:tour", f); return () => window.removeEventListener("pn:tour", f); }, []);
 
   // Keep the URL's ?page= in sync with in-app navigation, so the browser back/forward
   // buttons move between ProNext's own pages instead of leaving the app, and refreshing
@@ -14341,6 +14461,11 @@ export default function App() {
         {data.aiDownSince && role === "admin" && <AiPausedBanner since={data.aiDownSince} admin />}
         {role === "recruiter" && page !== "myProfile" && <TwoFactorNudge S={S} />}
         {rerouteAsk && <RerouteAsk ask={rerouteAsk} onDone={(v) => { rerouteAsk.resolve(v); setRerouteAsk(null); }} />}
+        {tourOpen && <ProductTour role={role} first={myMe.first} onClose={() => {
+          setTourOpen(false);
+          try { localStorage.setItem("pn.tourDone." + myMe.id, "1"); } catch (e) { /* fine */ }
+          if (!me.tourDoneAt) { const at = new Date().toISOString(); setMe((m) => (m ? { ...m, tourDoneAt: at } : m)); sbFetch("/rest/v1/profiles?id=eq." + myMe.id, { method: "PATCH", token: session.token, body: { tour_done_at: at } }).catch(() => {}); }
+        }} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
