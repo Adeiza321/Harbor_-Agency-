@@ -10,7 +10,7 @@ import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./ap
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
-import { cleanGuide, startXray, stepXrayQueue } from "./xray.ts";
+import { cleanGuide, runXrayStep, startXray, stepXrayQueue } from "./xray.ts";
 import { searchEngines, searchUsage, checkEngines } from "./search.ts";
 import { autoFindEmails, draftEmails, findEmails, skipTooFar } from "./emails.ts";
 import { matchPool } from "./pool.ts";
@@ -197,8 +197,16 @@ async function handle(req: Request): Promise<Response> {
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
       }
-      // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, clear cut-off ones.
+      // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, pick up stalled ones.
       if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
+      // One step of an X-ray run, in its own call (so its own time limit). Answers straight away;
+      // the step works in the background and hands over to the next one when it needs to.
+      if (body.action === "xray_step" && body.jobId) {
+        const work = runXrayStep(admin, String(body.jobId), s);
+        // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
+        if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
+        return json({ ok: true });
+      }
       // Summary + must-have checklist for people found outside X-ray (Apollo, PDL) who don't have one yet.
       if (body.action === "musts_backfill") return json({ ok: true, ...(await backfillMustHaves(admin, body.jobId ? String(body.jobId) : undefined, Math.min(Number(body.max) || 60, 120))) });
       if (body.action === "search_area" && body.jobId) {

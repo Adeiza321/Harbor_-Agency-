@@ -46,35 +46,45 @@ export function cleanGuide(g: any): XrayGuide | null {
   return Object.keys(out).length ? out : null;
 }
 
-// Starts a run in the background (the caller gets an answer straight away). A run already going
-// for this job is left alone unless it has been stuck for over 6 minutes. At most two searches run
-// at once: many at the same time hit the AI and search engines' rate limits, slow down and get cut
-// off by the server's time limit, so further ones wait as "queued" and the scheduled run starts them.
-export const XRAY_MAX_PARALLEL = 2;
+// Starts a run (the caller gets an answer straight away). There's no limit on how many run at
+// once: each run works in short steps, each in its own call of this function (xray_step), saving
+// where it got to on jobs.xray.cp and handing over to the next step before the server's time limit.
+// So a long review never gets cut off, and many jobs can search at the same time.
 export const XRAY_STALE_MS = 8 * 60e3;
-export async function startXray(admin: any, jobId: string, s: Settings, by: string | null = null, guide: XrayGuide | null = null, fromQueue = false) {
+const STEP_BUDGET_MS = 80e3;     // stop and hand over after this long in one step
+const REVIEW_BATCH = 8;          // results per AI review call
+const MAX_RESUMES = 4;           // a step that died (stale) is picked up again at most this often
+export async function startXray(admin: any, jobId: string, s: Settings, by: string | null = null, guide: XrayGuide | null = null, _fromQueue = false) {
   const { data: job } = await admin.from("jobs").select("id,xray").eq("id", jobId).maybeSingle();
   if (!job) return { ok: false, message: "Job not found" };
   const e = searchEngines();
   if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No free search engine is connected yet. Add a TAVILY_API_KEY, SERPER_API_KEY, BRAVE_API_KEY or GEMINI_API_KEY secret in Supabase." };
   const x = job.xray || {};
-  if (x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < 6 * 60e3) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
-  if (!fromQueue) {
-    const { data: others } = await admin.from("jobs").select("id,xray").eq("xray->>state", "running").neq("id", jobId);
-    const busy = (others || []).filter((j: any) => Date.now() - new Date(j.xray?.at || 0).getTime() < XRAY_STALE_MS).length;
-    if (busy >= XRAY_MAX_PARALLEL) {
-      await setXray(admin, jobId, { state: "queued", by, ...(guide ? { guide } : {}) });
-      return { ok: true, queued: true, message: `X-ray search queued: ${busy} other searches are running. It starts automatically within about 10 minutes.` };
-    }
-  }
-  await setXray(admin, jobId, { state: "running", by, ...(guide ? { guide } : {}) });
-  const work = runXray(admin, jobId, s, guide).catch(async (err) => {
-    console.error("xray", jobId, errMsg(err));
-    await setXray(admin, jobId, { state: "error", error: errMsg(err).slice(0, 300), ...(guide ? { guide } : {}) });
+  if (x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < XRAY_STALE_MS) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
+  await setXray(admin, jobId, { state: "running", by, ...(guide ? { guide } : {}), progress: { step: "plan" } });
+  try { await kickXray(admin, jobId); }
+  catch (err) { await setXray(admin, jobId, { state: "error", by, error: errMsg(err).slice(0, 300), ...(guide ? { guide } : {}) }); return { ok: false, message: errMsg(err) }; }
+  void s;
+  return { ok: true, started: true, message: "X-ray search started" + (guide ? " with your direction" : "") + ". Results appear under this job in a few minutes." };
+}
+
+// A valid ops token, so a step can call the next one (and the search can be started by a person).
+async function opsToken(admin: any) {
+  const { data } = await admin.from("ops_tokens").select("token").gt("expires_at", new Date(Date.now() + 15 * 60e3).toISOString())
+    .order("expires_at", { ascending: false }).limit(1).maybeSingle();
+  return String(data?.token || "");
+}
+// Asks this function (a fresh call, with its own time limit) to run the job's next X-ray step.
+export async function kickXray(admin: any, jobId: string) {
+  const tok = await opsToken(admin);
+  if (!tok) throw new Error("The search couldn't continue (no ops token)");
+  const anon = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const res = await fetch(Deno.env.get("SUPABASE_URL") + "/functions/v1/sourcing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer " + anon, apikey: anon, "x-harbor-ops": tok },
+    body: JSON.stringify({ action: "xray_step", jobId }),
   });
-  // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
-  if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
-  return { ok: true, started: true, message: "X-ray search started" + (guide ? " with your direction" : "") + ". Results appear under this job in a minute or two." };
+  if (!res.ok) throw new Error("The search couldn't continue (" + res.status + ")");
 }
 
 // On-site / hybrid searches: whole countries or regions in quotes are dropped from a query; when no
@@ -151,37 +161,57 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
 
 type Person = Hit & { key: string; site: SiteKey; query: string };
 
-// Scheduled: searches cut off by the server (still "running" long after starting) are marked as
-// stopped, and queued searches are started, up to two running at a time.
+// Scheduled (every 2 minutes): queued searches (from before steps existed) are started, and a
+// run whose step died (no progress for 8 minutes) carries on from its last saved point, a few times
+// at most, before it's marked as stopped.
 export async function stepXrayQueue(admin: any, s: Settings) {
   const { data: rows } = await admin.from("jobs").select("id,status,xray").in("xray->>state", ["running", "queued"]);
   const now = Date.now();
-  let stopped = 0, started = 0;
-  const running = [] as string[];
+  let stopped = 0, started = 0, resumed = 0;
   for (const j of rows || []) {
-    if (j.xray?.state !== "running") continue;
-    if (now - new Date(j.xray?.at || 0).getTime() > XRAY_STALE_MS) {
-      await setXray(admin, j.id, { ...(j.xray || {}), state: "error", error: "It was cut off before finishing (the server's time limit). Run it again." });
-      stopped++;
-    } else running.push(j.id);
+    const x = j.xray || {};
+    if (x.state === "queued" && j.status !== "Closed") { await startXray(admin, j.id, s, x.by || null, x.guide || null, true); started++; continue; }
+    if (x.state !== "running" || now - new Date(x.at || 0).getTime() <= XRAY_STALE_MS) continue;
+    const tries = Number(x.resumes || 0);
+    if (tries < MAX_RESUMES) {
+      await setXray(admin, j.id, { ...x, resumes: tries + 1 });
+      try { await kickXray(admin, j.id); resumed++; continue; } catch (_) { /* falls through to stopped */ }
+    }
+    await setXray(admin, j.id, { ...x, state: "error", cp: undefined, error: "It stopped before finishing. Run it again." });
+    stopped++;
   }
-  const queued = (rows || []).filter((j: any) => j.xray?.state === "queued" && j.status !== "Closed")
-    .sort((a: any, b: any) => String(a.xray?.at).localeCompare(String(b.xray?.at)));
-  for (const j of queued.slice(0, Math.max(0, XRAY_MAX_PARALLEL - running.length))) {
-    await startXray(admin, j.id, s, j.xray?.by || null, j.xray?.guide || null, true);
-    started++;
-  }
-  return { stopped, started, waiting: Math.max(0, queued.length - started) };
+  return { stopped, started, resumed };
 }
 
-export async function runXray(admin: any, jobId: string, s: Settings, guide: XrayGuide | null = null) {
+// One step of a run (called by xray_step). Errors end the run with the reason shown on the job.
+export async function runXrayStep(admin: any, jobId: string, s: Settings) {
+  try { await xrayStep(admin, jobId, s); }
+  catch (err) {
+    console.error("xray", jobId, errMsg(err));
+    const { data: j } = await admin.from("jobs").select("xray").eq("id", jobId).maybeSingle();
+    const x = j?.xray || {};
+    await setXray(admin, jobId, { state: "error", error: errMsg(err).slice(0, 300), ...(x.by ? { by: x.by } : {}), ...(x.guide ? { guide: x.guide } : {}) });
+  }
+}
+
+// Plan and search (first step), then review the results in batches, saving after each so the next
+// step carries on, then keep the best and save them as prospects.
+async function xrayStep(admin: any, jobId: string, s: Settings) {
+  const t0 = Date.now();
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("Job not found");
+  const x0 = job.xray || {};
+  if (x0.state !== "running") return;
+  const guide: XrayGuide | null = x0.guide || null, by = x0.by || null, resumes = x0.resumes || 0;
+  let cp: any = x0.cp || null;
+  const save = (extra: Record<string, unknown>) => setXray(admin, jobId, { state: "running", by, resumes, ...(guide ? { guide } : {}), ...(cp ? { cp } : {}), ...extra });
   // Live progress for the app's progress bar: { step: plan | search | review, done, total, found }.
-  const prog = (o: Record<string, unknown>) => setXray(admin, jobId, { state: "running", ...(guide ? { guide } : {}), progress: o }).catch(() => {});
-  await prog({ step: "plan" });
+  const prog = (o: Record<string, unknown>) => save({ progress: o }).catch(() => {});
   // Searched where the job is (its own country), like every other outside search.
   const area = await searchArea(admin, job, jobCountryNames(job));
+  const perJob = s.xrayPerJob;
+  if (!cp) {
+  await prog({ step: "plan" });
   const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8) as string[];
   const { data: ls } = await admin.from("screening_lessons").select("lesson,kind").eq("job_id", jobId).eq("active", true).in("kind", ["client_reject", "internal_reject"]).limit(6);
   const p = await plan(job, area, (ls || []).map((l: any) => l.lesson), titles, guide);
@@ -195,7 +225,6 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
   if (!p.linkedin.length && !p.sites.length && !p.github) throw new Error("The AI couldn't write searches for this job");
 
   // 2. Search, until there are enough new people to choose from.
-  const perJob = s.xrayPerJob;
   const want = Math.min(perJob * 2, 90);
   const { data: existing } = await admin.from("prospects").select("external_id").eq("job_id", jobId);
   const seen = new Set((existing || []).map((x: any) => String(x.external_id || "")));
@@ -240,17 +269,34 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
     return { ok: true, found: 0, message: why };
   }
 
-  // 4. Review what each result shows, in batches (two at a time).
-  const list = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
-  const head = reviewHead(job, area, p.checklist);
-  const byKey = new Map<string, any>();
+  // Saved for the review steps: who was found, and what the plan and searches were.
+  const found = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
+  cp = { stage: "review", technical: p.technical, checklist: p.checklist, queries: queries.map((x) => x.q), used, searched,
+    errors: [...new Set(errors)].slice(0, 10), list: found, reviewed: [], next: 0 };
+  await prog({ step: "review", done: 0, total: Math.ceil(found.length / REVIEW_BATCH), found: found.length });
+  }
+
+  // 4. Review what each result shows, in batches (two at a time), saving after each pair. Close to
+  //    the time limit, the next step takes over from where this one stopped.
+  const list: Person[] = cp.list || [];
+  const searched: number = cp.searched || 0, used: Record<string, number> = cp.used || {};
+  const errors: string[] = [...(cp.errors || [])];
+  const head = reviewHead(job, area, cp.checklist || []);
+  const byKey = new Map<string, any>(cp.reviewed || []);
   const batches: Person[][] = [];
-  for (let i = 0; i < list.length; i += 10) batches.push(list.slice(i, i + 10));
+  for (let i = 0; i < list.length; i += REVIEW_BATCH) batches.push(list.slice(i, i + REVIEW_BATCH));
   const review = async (b: Person[]) => {
-    const out = await askAI(REVIEW_SYSTEM, head + b.map((x, i) => `${i} | ${SITES[x.site].label} | ${x.title || "(no title)"} | ${x.snippet || "(no snippet)"} | ${x.url}`).join("\n"), 12000);
+    const out = await askAI(REVIEW_SYSTEM, head + b.map((x, i) => `${i} | ${SITES[x.site].label} | ${x.title || "(no title)"} | ${x.snippet || "(no snippet)"} | ${x.url}`).join("\n"), 8000);
     for (const r of fitsToPercent(Array.isArray(out?.people) ? out.people : [])) { const who = b[Number(r.i)]; if (who) byKey.set(who.key, r); }
   };
-  for (let i = 0; i < batches.length; i += 2) {
+  for (let i = cp.next || 0; i < batches.length; i += 2) {
+    if (i > (cp.next || 0) && Date.now() - t0 > STEP_BUDGET_MS) {
+      cp = { ...cp, reviewed: [...byKey.entries()], next: i, errors: [...new Set(errors)].slice(0, 10) };
+      await save({ progress: { step: "review", done: i, total: batches.length, found: list.length } });
+      await kickXray(admin, jobId);
+      return;
+    }
+    cp = { ...cp, reviewed: [...byKey.entries()], next: i };
     await prog({ step: "review", done: i, total: batches.length, found: list.length });
     const res = await Promise.allSettled(batches.slice(i, i + 2).map(review));
     for (const r of res) if (r.status === "rejected") errors.push(errMsg(r.reason).slice(0, 200));
@@ -307,8 +353,8 @@ export async function runXray(admin: any, jobId: string, s: Settings, guide: Xra
   for (const r of rows) { const k = r.source + ":" + String((r.data as any)?.engine || ""); byEngine[k] = (byEngine[k] || 0) + 1; }
   const usage = await searchUsage(admin).catch(() => ({}));
   await setXray(admin, jobId, {
-    state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, byEngine, ghEmails, technical: p.technical, checklist: p.checklist,
-    queries: queries.map((x) => x.q), usage, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
+    state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, byEngine, ghEmails, technical: !!cp.technical, checklist: cp.checklist || [],
+    queries: cp.queries || [], usage, by, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
   });
   return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches${tooFar ? `; ${tooFar} left out for being too far from the office` : ""}).` };
 }
