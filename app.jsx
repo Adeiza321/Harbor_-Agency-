@@ -1792,17 +1792,17 @@ const NAV_ADMIN_EXTRA = [
 const NAV_RECRUITER = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "candidates", label: "My candidates", icon: Users },
+  { key: "inbox", label: "Inbox", icon: InboxIcon },
   { key: "messages", label: "Messages", icon: MessageSquare },
   { key: "todo", label: "To-do", icon: ListTodo },
   { key: "jobs", label: "Jobs", icon: Briefcase },
   { key: "interviews", label: "Interviews", icon: Calendar },
-  { key: "campaigns", label: "Outreach", icon: Send },
   { key: "billing", label: "Billing", icon: CreditCard },
 ];
 const byKey = (list, key) => list.find((x) => x.key === key);
 const MOBILE_TABS = {
   recops: [byKey(NAV_RECOPS, "overview"), byKey(NAV_RECOPS, "candidates"), byKey(NAV_RECOPS, "inbox"), byKey(NAV_RECOPS, "jobs")],
-  recruiter: [byKey(NAV_RECRUITER, "overview"), byKey(NAV_RECRUITER, "candidates"), byKey(NAV_RECRUITER, "jobs"), byKey(NAV_RECRUITER, "campaigns")],
+  recruiter: [byKey(NAV_RECRUITER, "overview"), byKey(NAV_RECRUITER, "candidates"), byKey(NAV_RECRUITER, "inbox"), byKey(NAV_RECRUITER, "jobs")],
   admin: [byKey(NAV_RECOPS, "overview"), byKey(NAV_RECOPS, "candidates"), byKey(NAV_RECOPS, "inbox"), byKey(NAV_RECOPS, "jobs")],
 };
 const ROLE_LABEL = { recops: "Rec Ops manager", recruiter: "Recruiter", admin: "Admin, owner" };
@@ -2390,7 +2390,9 @@ async function runProposal(S, p) {
   if (p.tool === "propose_route") {
     const job = S.jobs.find((j) => j.id === i.job_id);
     if (!job) throw new Error("I couldn't find that role.");
-    const r = await S.aiScreen("route_with_questions", { candidateId: i.candidate_id, jobId: i.job_id, questions: i.questions || [] });
+    const choice = await S.askReroute(i.candidate_id, i.job_id, job.role);
+    if (!choice) throw new Error("Not routed: you cancelled.");
+    const r = await S.aiScreen("route_with_questions", { candidateId: i.candidate_id, jobId: i.job_id, questions: i.questions || [], keepOthers: choice === "keep" });
     if (r && r.linkId) S.inviteToMessage(r.linkId);
     return "Put forward for " + job.role + (r.questionsState === "draft" ? ". The questions wait for Rec Ops approval." : ".");
   }
@@ -3055,7 +3057,8 @@ function TodoPage({ toast, S }) {
   };
   const setSt = (t, st) => S.setTaskStatus(t.id, st).then(() => toast(st === "done" ? "Done" : st === "dismissed" ? "Dismissed" : "Back on your list")).catch(() => {});
   // Reassign: the person it's for, whoever created it, or Admin / Rec Ops can hand it to anyone active.
-  const canMove = (t) => t.status === "open" && (t.assignedTo === S.me.id || t.createdBy === S.me.id || staff);
+  // Only Rec Ops and Admins hand tasks to other people.
+  const canMove = (t) => t.status === "open" && staff;
   const reassign = (t, to) => { if (!to || to === t.assignedTo) return; S.reassignTask(t.id, to).then(() => toast("Reassigned to " + nameOf(to))).catch(() => {}); };
   const inp = "rounded-lg border px-3 py-2.5 text-sm outline-none";
   const inpS = { borderColor: C.line, background: C.soft };
@@ -4559,6 +4562,27 @@ function VerifiedTick({ size = 20 }) {
     </span>
   );
 }
+// Asked before rerouting someone who is still live on other roles.
+function RerouteAsk({ ask, onDone }) {
+  const first = ask.name.split(" ")[0];
+  return (
+    <Modal open onClose={() => onDone(null)} title={"Move " + first + " to " + ask.label + "?"}>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>{first} is still live on {ask.roles.length === 1 ? "another role" : ask.roles.length + " other roles"}:</div>
+        <div className="flex flex-col gap-1.5">
+          {ask.roles.map((r, i) => <div key={i} className="text-sm rounded-lg px-3 py-2" style={{ background: C.canvas }}>{r}</div>)}
+        </div>
+        <div className="text-sm" style={{ color: C.ink2 }}>Moving them marks {ask.roles.length === 1 ? "that role" : "those roles"} Rejected ("routed to another role"). Their screening there is kept, and they get no rejection email. Or keep them on {ask.roles.length === 1 ? "it" : "them"} as well.</div>
+        <div className="flex flex-col sm:flex-row gap-2 sm:justify-end pt-1">
+          <Btn onClick={() => onDone(null)}>Cancel</Btn>
+          <Btn onClick={() => onDone("keep")}>Keep {ask.roles.length === 1 ? "the other role" : "the other roles"} too</Btn>
+          <Btn kind="primary" onClick={() => onDone("move")}>Move them, reject the others</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // While the AI is paused (the Claude account ran out of credit, or its key stopped working), the
 // dashboard says so once, at the top. Nothing else stops: candidates are still added, submitted,
 // routed, moved through stages, rejected and messaged; only screening, fit checks and AI drafts
@@ -5809,9 +5833,11 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
     setPicked([...on, true]); setDraft("");
   };
   const route = async () => {
+    const choice = await S.askReroute(candidate.id, job.id, job.role);
+    if (!choice) return;
     setBusy("route"); setErr("");
     try {
-      const r = await S.aiScreen("route_with_questions", { candidateId: candidate.id, jobId: job.id, questions: chosen, review });
+      const r = await S.aiScreen("route_with_questions", { candidateId: candidate.id, jobId: job.id, questions: chosen, review, keepOthers: choice === "keep" });
       // Same as the quick Route button: the candidate gets the "new role for you" email.
       if (r && r.linkId) S.inviteToMessage(r.linkId);
       toast("Routed to " + job.client + ". " + first + " will see it" + (chosen.length ? " with " + chosen.length + " question" + (chosen.length > 1 ? "s" : "") : "") + " on their candidate page.");
@@ -6081,9 +6107,9 @@ function CandidateJobsCard({ candidate, S, toast }) {
               <option value="">Add to a job…</option>
               {available.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
             </select>
-            <Btn kind="primary" onClick={() => { if (!pick) { toast("Pick a job first"); return; } S.linkJob(candidate.id, pick, candidate.ai || null, pendingAnswers).then(() => { setPick(""); setPendingAnswers([]); toast(liveLinks.length ? "Moved to the new role. Earlier role marked Rejected" : "Added to job"); }).catch(() => {}); }}>Add</Btn>
+            <Btn kind="primary" onClick={async () => { if (!pick) { toast("Pick a job first"); return; } const choice = await S.askReroute(candidate.id, pick); if (!choice) return; S.linkJob(candidate.id, pick, candidate.ai || null, pendingAnswers, choice === "keep").then(() => { setPick(""); setPendingAnswers([]); toast(choice === "move" && liveLinks.length ? "Moved to the new role. Earlier role marked Rejected" : "Added to job"); }).catch(() => {}); }}>Add</Btn>
           </div>
-          {pick && liveLinks.length > 0 && <div className="text-xs mt-2" style={{ color: C.warnFg }}>Adding this role moves {candidate.name.split(" ")[0]} off {liveLinks.map((l) => (S.jobs.find((x) => x.id === l.jobId) || {}).role).filter(Boolean).join(", ") || "their current role"}, which will be marked Rejected.</div>}
+          {pick && liveLinks.length > 0 && <div className="text-xs mt-2" style={{ color: C.warnFg }}>{candidate.name.split(" ")[0]} is live on {liveLinks.map((l) => (S.jobs.find((x) => x.id === l.jobId) || {}).role).filter(Boolean).join(", ") || "another role"}. You'll be asked whether to move them off it or keep them on both.</div>}
           {pickedQs.length > 0 && (
             <div className="mt-2 space-y-2">
               <div className="text-xs font-medium" style={{ color: C.ink2 }}>This job has screening questions — fill in the candidate's answers now if you have them:</div>
@@ -6221,7 +6247,7 @@ function InboxRow({ x, S, toast, canAct }) {
               <Btn kind="primary" onClick={assign} disabled={!!busy || !rec} className={small}>{busy === "assign" ? <InlineDots color="#fff" /> : "Assign"}</Btn>
             </>
           )}
-          {x.status === "assigned" && !moving && <Pill tone="em">Assigned{x.assignedName ? " to " + x.assignedName.split(" ")[0] : ""}</Pill>}
+          {x.status === "assigned" && !moving && <Pill tone="em">{canAct ? "Assigned" + (x.assignedName ? " to " + x.assignedName.split(" ")[0] : "") : "Your candidate"}</Pill>}
           {x.status === "assigned" && canAct && moving && (
             <>
               <StaffSelect S={S} value={rec} onChange={setRec} placeholder="Reassign to…" exclude={x.assignedId} />
@@ -6232,7 +6258,7 @@ function InboxRow({ x, S, toast, canAct }) {
           {x.status === "dismissed" && <Pill tone="neutral">Dismissed{x.handledBy ? " by " + x.handledBy.split(" ")[0] : ""}</Pill>}
           <RowMenu label={"Actions for " + x.name} busy={!!busy && busy !== "assign" && busy !== "reassign"} items={[
             { label: open ? "Hide details" : "View details", icon: Info, onClick: () => setOpen((v) => !v) },
-            { label: "Open CV", icon: Download, onClick: openCv, hidden: !x.hasCv },
+            { label: "Open CV", icon: Download, onClick: openCv, hidden: !x.hasCv || !canAct },
             { label: "Open candidate", icon: ExternalLink, onClick: () => S.openCandidate(x.candidateId), hidden: !(x.status === "assigned" && x.candidateId) },
             { label: x.followups ? "Follow up again" : "Send follow-up", icon: MailPlus, onClick: followup, hidden: !(waiting && canAct), disabled: !canFollowUp,
               title: x.followups >= 2 ? "Two follow-ups already sent" : !canFollowUp ? "You can follow up a day after the last email" : "" },
@@ -6285,6 +6311,27 @@ function InboxPage({ toast, S }) {
   const [tab, setTab] = useState("new");
   const [linksOpen, setLinksOpen] = useState(false);
   const canAct = S.me.roleKey === "admin" || S.me.roleKey === "recops";
+  // Recruiters: only the people who applied through their own links (they're already theirs).
+  if (!canAct) {
+    const mine = S.inbox.slice().sort((a, b) => b.at - a.at);
+    return (
+      <div className="flex flex-col gap-5 md:gap-6">
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <SectionTitle size="text-3xl md:text-4xl" title="Inbox" sub="People who applied through your own links. They're your candidates already."
+            live={[{ n: mine.filter((x) => Date.now() - x.at < 864e5).length, label: "today", tone: "em" }, { n: mine.filter((x) => Date.now() - x.at < 7 * 864e5).length, label: "this week" }]} />
+          <Btn icon={Share2} onClick={() => setLinksOpen(true)}>Your links</Btn>
+        </div>
+        <Card>
+          {mine.length === 0
+            ? <EmptyState title="Nobody through your links yet" text="Copy your link from a job (or Your links here) and share it. Anyone who applies through it becomes your candidate and shows here." />
+            : mine.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={false} />)}
+        </Card>
+        <Modal open={linksOpen} onClose={() => setLinksOpen(false)} title="Your links">
+          <ApplyLinks S={S} toast={toast} />
+        </Modal>
+      </div>
+    );
+  }
   // Filter by how it came in: referrals (any), anything from outreach (applied or referred from an
   // outreach email), or one source.
   const [src, setSrc] = useState([]);
@@ -6489,8 +6536,10 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
     const text = (job.screeningQuestions || []).map((q, i) => (i + 1) + ". " + q).join("\n");
     try { navigator.clipboard.writeText(text); toast("Screening questions copied"); } catch (e) { toast("Copy failed. Select and copy manually."); }
   };
-  const reroute = (c) => {
-    S.routeToJob(c.id, job.id).then(() => toast("Routed. " + c.name.split(" ")[0] + " will see it on their candidate page to accept.")).catch(() => {});
+  const reroute = async (c) => {
+    const choice = await S.askReroute(c.id, job.id, job.role);
+    if (!choice) return;
+    S.routeToJob(c.id, job.id, choice === "keep").then(() => toast("Routed. " + c.name.split(" ")[0] + " will see it on their candidate page to accept.")).catch(() => {});
   };
   const confirmDelete = () => {
     setDelBusy(true);
@@ -6808,7 +6857,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" title="All roles" sub="Every role has its own unique link."
           live={[{ n: main.filter((j) => j.status === "Open").length, label: "open", tone: "em" }, { n: main.filter((j) => jobHealth(j, S).key === "stuck").length, label: "stuck", tone: "danger" }, { n: main.filter((j) => jobHealth(j, S).key === "slow").length, label: "slowing", tone: "warn" }]} />
-        <Btn kind="primary" icon={Plus} onClick={() => setPage("postJob")}>Post a job</Btn>
+        {S.role !== "recruiter" && <Btn kind="primary" icon={Plus} onClick={() => setPage("postJob")}>Post a job</Btn>}
       </div>
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
@@ -6831,7 +6880,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
             {filtered.map((j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
           </div>
         )
-        ) : <EmptyState title={q || gq ? "No roles match your search" : tab === "Leads" ? "No client lead roles yet" : "No roles here yet"} text={q || gq ? "Try another search or tab." : "Post a job to start finding candidates."} action={q || gq ? null : "Post a job"} onAction={() => setPage("postJob")} />}
+        ) : <EmptyState title={q || gq ? "No roles match your search" : tab === "Leads" ? "No client lead roles yet" : "No roles here yet"} text={q || gq ? "Try another search or tab." : S.role === "recruiter" ? "Rec Ops posts new roles. They show up here." : "Post a job to start finding candidates."} action={q || gq || S.role === "recruiter" ? null : "Post a job"} onAction={() => setPage("postJob")} />}
       </Card>
     </div>
   );
@@ -8480,7 +8529,7 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
                 <span className="self-center" style={{ color: o.blind_pages ? C.em : C.warnFg }}>{o.blind_pages ? "Blind resume ready" : "No blind resume yet"}</span>
                 <Btn onClick={() => setBlindFor(o)} className="!py-1.5 !px-3 text-xs">{o.blind_pages ? "Redo blind resume" : "Make blind resume"}</Btn>
                 {o.blind_pages > 0 && <IconBtn icon={Copy} label={"Copy the blind resume link for " + l.company} size="sm" onClick={() => copyText(window.location.origin + "/?t=" + o.client_token, toast, "Blind resume link copied")} />}
-                {S.role !== "recruiter" && <Btn kind="primary" disabled={!!busy} title={"Puts " + c.name.split(" ")[0] + " on this role with " + l.company + " like a reroute: their other live roles are marked Rejected. The role is kept under Jobs > Client leads. Their email doesn't name the employer."} onClick={() => { setBusy("proc" + o.id); S.processOffer(o.id).then((r) => { toast(c.name.split(" ")[0] + " is on " + l.job_title + " with " + l.company + "." + (r.emailed ? " They've been told, without the employer's name." : r.emailError ? " Not emailed: " + r.emailError + "." : "")); onChanged(); }).catch(() => {}).finally(() => setBusy("")); }} className="!py-1.5 !px-3 text-xs">{busy === "proc" + o.id ? "Routing…" : l.company + " wants to proceed"}</Btn>}
+                {S.role !== "recruiter" && <Btn kind="primary" disabled={!!busy} title={"Puts " + c.name.split(" ")[0] + " on this role with " + l.company + " like a reroute (you're asked first if they're live on other roles). The role is kept under Jobs > Client leads. Their email doesn't name the employer."} onClick={async () => { const choice = await S.askReroute(c.id, null, l.job_title + " (" + l.company + ")"); if (!choice) return; setBusy("proc" + o.id); S.processOffer(o.id, choice === "keep").then((r) => { toast(c.name.split(" ")[0] + " is on " + l.job_title + " with " + l.company + "." + (r.emailed ? " They've been told, without the employer's name." : r.emailError ? " Not emailed: " + r.emailError + "." : "")); onChanged(); }).catch(() => {}).finally(() => setBusy("")); }} className="!py-1.5 !px-3 text-xs">{busy === "proc" + o.id ? "Routing…" : l.company + " wants to proceed"}</Btn>}
               </>}
               {o.status === "processing" && c && <button onClick={() => S.openCandidate(c.id)} className="font-medium" style={{ color: C.em }}>On the role with {l.company}. Open profile</button>}
             </div>
@@ -12560,12 +12609,31 @@ const AUTH_ART = {
 const AUTH_LOOSE = [
   ["profile", "New application", "Plumber · Croydon", { left: "5%", top: "7%" }, -6, "hidden sm:block"],
   ["chat", "New message", "\u201cHappy to chat tomorrow\u201d", { right: "6%", top: "3%" }, 4, "hidden xl:block"],
-  ["briefcase", "Role filled", "Qualified Electrician", { right: "5%", bottom: "7%" }, -5, ""],
+  ["briefcase", "Role filled", "Qualified Electrician", { right: "5%", bottom: "7%" }, -5, "hidden sm:block"],
 ];
+// On a phone: five smaller cards around the sign-in card (above, beside and below it), bobbing
+// gently in place instead of wandering across the screen.
+const AUTH_MOBILE = [
+  ["profile", "New application", "Plumber · Croydon", { left: "3%", top: "2%" }, -5],
+  ["calendar", "Interview booked", "Tue · 10:00", { right: "3%", top: "7.5%" }, 5],
+  ["chat", "New message", "\u201cHappy to chat\u201d", { right: "6%", bottom: "11%" }, 4],
+  ["offer", "Offer accepted", "Staff Accountant", { left: "4%", bottom: "5.5%" }, -4],
+  ["briefcase", "Role filled", "Electrician", { right: "3%", bottom: "1%" }, -5],
+];
+
 const AUTH_CARD = { background: C.card, border: `1px solid ${C.line}`, borderRadius: 12, padding: "9px 12px", fontSize: 12, color: C.ink2, boxShadow: "0 10px 24px -18px rgba(18,36,29,.5)", lineHeight: 1.4 };
+const AUTH_CARD_SM = { ...AUTH_CARD, borderRadius: 11, padding: "7px 10px", fontSize: 11 };
 function AuthScatter() {
   return (
     <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+      {AUTH_MOBILE.map(([k, title, line, pos, rot], i) => (
+        <div key={"m" + title} className="absolute sm:hidden pnx-bob" style={{ ...pos, rotate: rot + "deg", opacity: 0.94, animationDelay: -(i * 1.7) + "s", animationDuration: 7 + (i % 3) + "s" }}>
+          <div className="flex items-center gap-2" style={AUTH_CARD_SM}>
+            <svg viewBox="0 0 64 64" width={20} height={20} fill="none" stroke={C.em} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">{AUTH_ART[k]}</svg>
+            <div className="whitespace-nowrap"><div style={{ color: C.ink, fontSize: 12, fontWeight: 600 }}>{title}</div>{line}</div>
+          </div>
+        </div>
+      ))}
       {AUTH_LOOSE.map(([k, title, line, pos, rot, cls], i) => (
         <div key={title} className={"absolute pnx-drift " + cls} style={{ ...pos, rotate: rot + "deg", opacity: 0.92, animationName: "pnx-wander-" + "abd"[i % 3], animationDelay: -(i * 3) + "s", animationDuration: 20 + i * 3 + "s" }}>
           <div className="flex items-center gap-2.5" style={AUTH_CARD}>
@@ -12619,6 +12687,8 @@ function AuthShell({ onSubmit, children }) {
         .pnx-tick > div { position: absolute; inset: 0; opacity: 0; animation: pnx-tick 12s infinite; }
         .pnx-tick > div:nth-child(2) { animation-delay: 4s; } .pnx-tick > div:nth-child(3) { animation-delay: 8s; }
         .pnx-drift { animation: pnx-wander-a 22s ease-in-out infinite; }
+        @keyframes pnx-bob { 0%, 100% { translate: 0 0; } 50% { translate: 0 -9px; } }
+        .pnx-bob { animation: pnx-bob 8s ease-in-out infinite; }
         /* The two cards beside the form drift up and down without sliding under it. */
         @keyframes pnx-peek-l { 0% { translate: 0 0; } 35% { translate: -6px -18px; } 70% { translate: 0 18px; } 100% { translate: 0 0; } }
         @keyframes pnx-peek-r { 0% { translate: 0 0; } 35% { translate: 0 -18px; } 70% { translate: -4px 16px; } 100% { translate: 0 0; } }
@@ -12632,7 +12702,7 @@ function AuthShell({ onSubmit, children }) {
         .pnx-auth input:focus-visible { border-color: ${C.em} !important; box-shadow: 0 0 0 3px ${C.emTint}; }
         .pnx-auth button:focus-visible { outline: 2px solid ${C.em}; outline-offset: 2px; }
         @media (prefers-reduced-motion: reduce) {
-          .pnx-marker, .pnx-st, .pnx-drift, .pnx-peek-l, .pnx-peek-r, .pnx-card, .pnx-card > *, .pnx-tick > div { animation: none !important; }
+          .pnx-marker, .pnx-st, .pnx-drift, .pnx-bob, .pnx-peek-l, .pnx-peek-r, .pnx-card, .pnx-card > *, .pnx-tick > div { animation: none !important; }
           .pnx-marker { top: calc(100% - 14px) !important; } .pnx-st { opacity: .92 !important; } .pnx-tick > div:first-child { opacity: 1; }
         }
       `}</style>
@@ -12998,6 +13068,7 @@ export default function App() {
   const [status, setStatus] = useState(session ? "loading" : "signedout"); // loading | signedout | pending | ready | error
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
+  const [rerouteAsk, setRerouteAsk] = useState(null); // { name, roles, label, resolve }
   const [errMsg, setErrMsg] = useState("");
   const [page, setPageRaw] = useState(() => new URLSearchParams(window.location.search).get("page") || "overview");
   const [query, setQueryRaw] = useState("");
@@ -13306,9 +13377,19 @@ export default function App() {
       .catch((e) => { showError(e.message); reload(); throw e; });
   };
 
+  // Before a candidate goes on a new role while still live on others, ask: move them (the other
+  // roles are marked Rejected, "Routed to ...") or keep them on those roles too. Resolves to
+  // "move", "keep", or null (cancelled). No other live roles: resolves "move" without asking.
+  const askReroute = (candidateId, jobId, label) => new Promise((resolve) => {
+    const c = (data.cands || []).find((x) => x.id === candidateId);
+    const live = c ? c.jobLinks.filter((l) => l.jobId !== jobId && l.response !== "declined" && !["Rejected", "Withdrawn", "Placed"].includes(l.stage)) : [];
+    if (!live.length) { resolve("move"); return; }
+    const roles = live.map((l) => { const j = data.jobs.find((x) => x.id === l.jobId); return j ? j.role + (j.client ? ", " + j.client : "") + " (" + l.stage + ")" : "Another role (" + l.stage + ")"; });
+    setRerouteAsk({ name: c.name, roles, label: label || ((data.jobs.find((x) => x.id === jobId) || {}).role || "the new role"), resolve });
+  });
   const S = {
     role, me: myMe, query, toast, error: showError, go: setPage,
-    cands: data.cands, updateCand,
+    cands: data.cands, updateCand, askReroute,
     deleteCandidate: (id) => { const c = data.cands.find((x) => x.id === id); return call("/rest/v1/candidates?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "candidate", id, c ? c.name : "")); },
     setCands: (fn) => { const list = typeof fn === "function" ? fn(data.cands) : fn; const added = list.filter((c) => !data.cands.some((x) => x.id === c.id));
       setData((d) => ({ ...d, cands: list })); added.forEach((c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, source: c.source || null } })); },
@@ -13505,13 +13586,14 @@ export default function App() {
        recruiter right when they attach the candidate to a job that has screening_questions. */
     /* Submitting a candidate to a job opens their company card; the first AI screening
        (resume + application answers + anything they've answered for other jobs) starts right away. */
-    linkJob: async (candidateId, jobId, fit, screeningAnswers) => {
+    linkJob: async (candidateId, jobId, fit, screeningAnswers, keep) => {
       let rows;
-      try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [] } }); }
+      try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, fit: fit || null, stage: "In review", screening_answers: screeningAnswers || [], keep_other_roles: !!keep } }); }
       catch (e) { showError(e.message); throw e; }
       const row = rows && rows[0];
-      // Moving them onto a new role ends their other live roles (marked Rejected, "Routed to …").
-      if (row) await sbFetch("/rest/v1/rpc/reject_other_roles", { method: "POST", token: session.token, body: { p_link: row.id } }).catch(() => {});
+      // Moving them onto a new role ends their other live roles (marked Rejected, "Routed to …"),
+      // unless the person chose to keep them there too.
+      if (row && !keep) await sbFetch("/rest/v1/rpc/reject_other_roles", { method: "POST", token: session.token, body: { p_link: row.id } }).catch(() => {});
       reload();
       // Screening starts on the server the moment the row exists (no button to press).
       if (row) msgCall("invite", { linkId: row.id }).catch(() => {});
@@ -13529,18 +13611,18 @@ export default function App() {
     // public and not shown to recruiters), with the employer, and their other live roles are
     // marked Rejected as rerouted. Their email still doesn't name the employer; their candidate
     // page shows who it is.
-    processOffer: async (offerId) => {
+    processOffer: async (offerId, keep) => {
       let r;
-      try { r = await sbFetch("/rest/v1/rpc/lead_offer_process", { method: "POST", token: session.token, body: { p_offer: offerId } }); }
+      try { r = await sbFetch("/rest/v1/rpc/lead_offer_process_ask", { method: "POST", token: session.token, body: { p_offer: offerId, p_keep_others: !!keep } }); }
       catch (e) { showError(e.message); throw e; }
       let mail = null;
       if (r && r.fresh) mail = await srcCall("offer_moving", { offerId }).catch(() => null);
       reload();
       return { ...(r || {}), emailed: !!(mail && mail.sent), emailError: mail && !mail.sent ? mail.error : "" };
     },
-    routeToJob: async (candidateId, jobId) => {
+    routeToJob: async (candidateId, jobId, keep) => {
       let rows;
-      try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending" } }); }
+      try { rows = await sbFetch("/rest/v1/candidate_jobs?on_conflict=candidate_id,job_id", { method: "POST", token: session.token, prefer: "resolution=ignore-duplicates,return=representation", body: { candidate_id: candidateId, job_id: jobId, stage: "Sourced", candidate_response: "pending", keep_other_roles: !!keep } }); }
       catch (e) { showError(e.message); throw e; }
       reload();
       const row = rows && rows[0];
@@ -13716,7 +13798,9 @@ export default function App() {
   else if (page === "messages") content = <MessagesPage toast={toast} S={S} />;
   else if (page === "todo") content = <TodoPage toast={toast} S={S} />;
   else if (page === "jobs") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
+  else if (page === "postJob" && role === "recruiter") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "postJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
+  else if (page === "editJob" && role === "recruiter") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
   else if (page === "editJob") content = <PostJobForm setPage={setPage} toast={toast} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} editJob={data.jobs.find((j) => j.id === jobId)} />;
   else if (page === "jobDetail") content = <JobDetail job={data.jobs.find((j) => j.id === jobId)} S={S} toast={toast} onBack={() => setPage("jobs")} onPromote={onPromote} onEdit={() => setPage("editJob")} onDeleted={() => setPage("jobs")} onAddCandidate={() => { setAddCandidateJobId(jobId); setPage("uploadCandidates"); }} />;
   else if (page === "campaigns") content = <CampaignsPage toast={toast} S={S} />;
@@ -13737,6 +13821,7 @@ export default function App() {
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} onCmd={() => setCmdOpen(true)} />
         {data.aiDownSince && <AiPausedBanner since={data.aiDownSince} admin={role === "admin"} />}
+        {rerouteAsk && <RerouteAsk ask={rerouteAsk} onDone={(v) => { rerouteAsk.resolve(v); setRerouteAsk(null); }} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />

@@ -596,7 +596,7 @@ async function handle(req: Request): Promise<Response> {
         : { state: "draft", manual: true, questions: qs.map((q: string) => ({ q })) };
       const { data: link, error } = await admin.from("candidate_jobs").insert({
         candidate_id: cand.id, job_id: body.jobId, stage: "Sourced", candidate_response: "pending",
-        fit: r && r.fit != null ? clampScore(r.fit) : null, ai,
+        fit: r && r.fit != null ? clampScore(r.fit) : null, ai, keep_other_roles: body.keepOthers === true,
       }).select("id").single();
       if (error) return json({ error: error.message }, 500);
       const { data: j } = await admin.from("jobs").select("role_title,client").eq("id", body.jobId).maybeSingle();
