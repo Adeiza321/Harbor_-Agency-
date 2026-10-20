@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { loadBrand, sendBrevo } from "./brand.ts";
 import { newReferralToken, referralEmail } from "./referral.ts";
+import { assignApplication } from "../inbox/assign.ts";
 
 // Public, unauthenticated endpoint: the front door for every inbound source (the public apply
 // page at /?apply=<job link_slug>, a paste-in from Indeed/LinkedIn, a manual entry tool, a webhook
@@ -22,6 +23,11 @@ import { newReferralToken, referralEmail } from "./referral.ts";
 // via=outreach) is tagged with the prospect who referred (by pt, or for older emails without one,
 // by the referrer's email): referrer.via = {kind:"outreach", prospect_id, prospect_name}, and the
 // prospect's card lists who they referred (prospects.data.referrals).
+// A link shared by a recruiter carries their code (?r=<profiles.ref_code>, sent here as `ref`):
+// the application goes straight to that person as their candidate (assigned, not left in the
+// Inbox). With no job (someone sending their CV to join the Active file) the candidate is filed
+// on the Active file. Referrals still wait in the Inbox for "I'm interested", tagged with whose
+// link it was.
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -81,6 +87,13 @@ Deno.serve(async (req: Request) => {
     const linkSlug = body.link_slug ? String(body.link_slug).trim() : null;
     const linkedinRaw = String(body.linkedin || "").trim();
     const linkedin = /linkedin\.com\//i.test(linkedinRaw) ? linkedinRaw.slice(0, 300) : null;
+    // Whose link they came through.
+    const refCode = String(body.ref || "").trim();
+    let viaRec: { id: string; full_name: string | null } | null = null;
+    if (/^[a-z0-9]{6,16}$/i.test(refCode)) {
+      const { data: p } = await admin.from("profiles").select("id,full_name,status,role").eq("ref_code", refCode.toLowerCase()).maybeSingle();
+      if (p && p.status === "Active" && ["recruiter", "recops", "admin"].includes(p.role)) viaRec = { id: p.id, full_name: p.full_name };
+    }
 
     // Referrals: someone recommending a friend from the apply page. The friend is the applicant;
     // who referred them is kept with the application ({name, email, note}).
@@ -158,6 +171,7 @@ Deno.serve(async (req: Request) => {
     // someone who was referred and now applies themselves fills in the referral's row (their
     // CV, phone, answers), keeping who referred them.
     let data: { id: string; referral_token?: string | null } | null = null;
+    let existingRow = false;
     if (resolvedJobId) {
       const { data: existing } = await admin.from("applications").select("id,source,status,resume_path").eq("job_id", resolvedJobId).ilike("email", emailPattern).limit(1);
       const ex = existing && existing[0];
@@ -166,7 +180,7 @@ Deno.serve(async (req: Request) => {
         await admin.from("applications").update({ name, phone: phone || undefined, linkedin: linkedin || undefined, ...(answers.length ? { answers } : {}) }).eq("id", ex.id);
         // Applying themselves is the clearest "I'm interested".
         await admin.from("applications").update({ interest_at: new Date().toISOString() }).eq("id", ex.id).is("interest_at", null);
-        data = { id: ex.id };
+        data = { id: ex.id }; existingRow = true;
       }
     }
 
@@ -182,6 +196,7 @@ Deno.serve(async (req: Request) => {
         answers,
         referrer,
         referral_token: referrer ? newReferralToken() : null,
+        via_recruiter: viaRec?.id || null,
         ip_hash: ipHash,
         status: "new",
       }).select("id,referral_token").single();
@@ -195,6 +210,18 @@ Deno.serve(async (req: Request) => {
       const { error: upErr } = await admin.storage.from("resumes").upload(path, cv.bytes, { contentType: cv.type, upsert: false });
       if (upErr) console.error("cv upload", appId, upErr.message);
       else await admin.from("applications").update({ resume_path: path, resume_name: cv.name }).eq("id", appId);
+    }
+
+    // Through a recruiter's own link: theirs straight away (referrals wait for "I'm interested").
+    if (viaRec && !referrer && !existingRow) {
+      try {
+        const { data: fresh } = await admin.from("applications").select("*").eq("id", appId).single();
+        if (fresh && fresh.status === "new") {
+          const r = await assignApplication(admin, fresh, viaRec, { id: viaRec.id, name: viaRec.full_name || "their recruiter", viaLink: true });
+          await admin.rpc("push_update", { p_user: viaRec.id, p_kind: "event", p_title: name + (resolvedJobId ? " applied for " + resolvedRoleTitle : " joined the Active file") + " through your link",
+            p_body: resolvedJobId ? "They're your candidate now, on the role, and the AI screening has started." : "They're your candidate now, on the Active file.", p_link: { page: "candidates", candidateId: r.candidateId }, p_dedupe: "applink:" + appId, p_covered: false, p_actor: null });
+        }
+      } catch (e) { console.error("auto-assign", appId, String((e as Error)?.message || e)); }
     }
 
     // Outreach "Refer someone": the prospect's card shows who they referred.

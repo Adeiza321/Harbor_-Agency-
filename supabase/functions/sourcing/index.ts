@@ -4,7 +4,7 @@ import { aiCharge } from "./ai.ts";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
-import { fetchLeads, pitchLead, processLead, sendOffers } from "./leads.ts";
+import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers } from "./leads.ts";
 import { composeProspect, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
@@ -465,6 +465,8 @@ async function handle(req: Request): Promise<Response> {
       await admin.from("lead_offers").update({ status: "skipped" }).in("id", ids).eq("status", "suggested");
       return json({ ok: true });
     }
+    // The employer agreed and the candidate is on the role: let them know (employer still unnamed).
+    if (action === "offer_moving" && body.offerId) return json({ ok: true, ...(await sendOfferMoving(admin, String(body.offerId))) });
     // A lead's pitch right away (after a candidate confirmed), instead of waiting for the next run.
     if (action === "pitch_lead" && body.leadId) {
       const { data: l } = await admin.from("leads").select("*").eq("id", body.leadId).single();

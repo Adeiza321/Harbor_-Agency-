@@ -170,3 +170,27 @@ export async function sendOffers(admin: any, ids: string[], sentBy: string | nul
   }
   return out;
 }
+
+// The employer said yes too (after the candidate did): tell the candidate, still without naming
+// the employer. Who it is shows on their candidate page, where the role now appears; their
+// recruiter is copied.
+export async function sendOfferMoving(admin: any, offerId: string) {
+  const { data: o } = await admin.from("lead_offers").select("id,status,lead_id,candidate_id").eq("id", offerId).maybeSingle();
+  if (!o || o.status !== "processing") return { sent: false, error: "This candidate isn't being processed for the role" };
+  const { data: c } = await admin.from("candidates").select("id,name,email,email_opt_out,portal_token,recruiter_id").eq("id", o.candidate_id).single();
+  if (!c?.email || c.email_opt_out || !c.portal_token) return { sent: false, error: "No email for them, or they unsubscribed" };
+  const b = await loadBrand(admin);
+  const { data: role } = await admin.rpc("offer_role_anon", { p_lead: o.lead_id });
+  const { data: rec } = c.recruiter_id ? await admin.from("profiles").select("full_name,email").eq("id", c.recruiter_id).maybeSingle() : { data: null };
+  const first = String(c.name || "").split(" ")[0] || "there";
+  const recruiter = String(rec?.full_name || "").split(" ")[0] || "Your recruiter";
+  const subject = `Good news about the ${role?.title || "role"} you said yes to`;
+  const html = emailShell(b, subject, `
+    <div style="font-size:20px;margin-bottom:8px;">Hi ${esc(first)},</div>
+    <div style="font-size:15px;line-height:1.6;">Good news: the employer for the <b>${esc(role?.title || "role")}</b> you said yes to wants to move forward with you.</div>
+    <div style="font-size:15px;line-height:1.6;margin-top:12px;">${esc(recruiter)} will be in touch about the next steps. The full details are on your candidate page.</div>
+    ${button(b, `${portalBase()}/?c=${encodeURIComponent(c.portal_token)}`, "See the details")}`);
+  const ok = await sendBrevo(b, { email: c.email, name: c.name }, subject, html, undefined, { cc: rec?.email ? [{ email: rec.email, name: rec.full_name }] : [] });
+  if (ok) await admin.from("candidate_timeline").insert({ candidate_id: c.id, title: "Told the employer wants to move forward: " + (role?.title || ""), done: true });
+  return { sent: ok, error: ok ? "" : "The email couldn't be sent (check the email settings)" };
+}

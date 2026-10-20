@@ -142,7 +142,21 @@ const resumeMime = (name, fallback) => RESUME_TYPES[((name.match(/\.([A-Za-z0-9]
 // Job status is the role's own state (Open, On hold, Closed). Engaging is per person and separate.
 const JOB_STATUSES = ["Open", "On hold", "Closed"];
 // On hold and Closed roles take no new candidates (the database enforces it too).
-const takesCandidates = (j) => !!j && j.status !== "Closed" && j.status !== "On hold";
+const takesCandidates = (j) => !!j && j.status !== "Closed" && j.status !== "On hold" && !j.leadRole;
+// Links tied to a recruiter: a job link (or the Active file link) copied or shared by a team member
+// carries ?r=<their code>, and whoever applies through it becomes that person's candidate (no
+// Inbox step). On the public pages the code is kept for the visit, so going from the jobs board
+// to a job keeps it.
+const withQ = (url, k, v) => (!v ? url : url + (url.includes("?") ? "&" : "?") + k + "=" + encodeURIComponent(v));
+let MY_REF = ""; // the signed-in team member's code (set when the dashboard loads)
+const myLink = (url) => (url ? withQ(url, "r", MY_REF) : url);
+const PUB_REF = () => {
+  try {
+    const r = new URLSearchParams(window.location.search).get("r");
+    if (r && /^[a-z0-9]{6,16}$/i.test(r)) { sessionStorage.setItem("pn.ref", r.toLowerCase()); return r.toLowerCase(); }
+    return sessionStorage.getItem("pn.ref") || "";
+  } catch (e) { return ""; }
+};
 // Recruiters put candidates forward only for roles on their worklist (engaged); Admin and Rec Ops for any role.
 const onWorklist = (S, j) => !!j && (S.role !== "recruiter" || (j.engagedIds || []).includes(S.me.id));
 const holdText = (j) => "On hold" + (j.holdUntil ? " until " + fdate(j.holdUntil + "T12:00:00") : "") + (j.holdReason ? ": " + j.holdReason : "");
@@ -264,7 +278,7 @@ function playChime() {
 }
 // The assistant's sound, unless you turned it off (My profile > Notifications).
 const playAssistChime = (me) => { if (((me && me.notificationPrefs) || {}).assistSound !== false) playChime(); };
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null });
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "" });
 
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
@@ -330,12 +344,12 @@ function mapAll(d) {
       engagedIds: (j.job_recruiters || []).map((r) => r.recruiter_id), engagedNames: (j.job_recruiters || []).map((r) => pname(r.recruiter_id)),
       holdReason: j.hold_reason || "", holdUntil: j.hold_until || null, heldAt: j.held_at ? new Date(j.held_at).getTime() : null, heldBy: j.held_by ? pname(j.held_by) : "",
       submitted: new Set([...en.map((e) => e.candidate_id), ...submittedLinks.map((l) => l.candidate_id)]).size,
-      interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
+      interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, leadRole: !!j.lead_role, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), at: new Date(a.created_at).getTime(),
     status: a.status || (a.candidate_id || a.assigned_to ? "assigned" : "new"), jobId: a.job_id, candidateId: a.candidate_id, linkedin: a.linkedin || "", hasCv: !!a.resume_path, cvName: a.resume_name || "",
     answers: Array.isArray(a.answers) ? a.answers : [], note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null,
     interestAt: a.interest_at ? new Date(a.interest_at).getTime() : null, followups: a.followups || 0, lastFollowupAt: a.last_followup_at ? new Date(a.last_followup_at).getTime() : null, handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
-    handledBy: a.handled_by ? pname(a.handled_by) : "", assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, assignedName: a.assigned_to ? pname(a.assigned_to) : "" }));
+    handledBy: a.handled_by ? pname(a.handled_by) : "", viaName: a.via_recruiter ? pname(a.via_recruiter) : "", assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, assignedName: a.assigned_to ? pname(a.assigned_to) : "" }));
   const today = new Date();
   const placements = d.placements.map((p) => ({ id: p.id, name: p.candidate_name, role: p.role_desc, candidateId: p.candidate_id, jobId: p.job_id, recruiterId: p.recruiter_id, recruiter: initialsOf(pname(p.recruiter_id)), fee: money(p.fee, p.fee_currency), feeNum: Number(p.fee), feeCurrency: p.fee_currency || "NGN", incentive: p.recruiter_incentive != null ? money(p.recruiter_incentive, p.recruiter_incentive_currency || p.fee_currency) : null, incentiveNum: p.recruiter_incentive != null ? Number(p.recruiter_incentive) : null, guarantee: p.guarantee_ends ? (new Date(p.guarantee_ends) > today ? "Ends " : "Cleared ") + fdate(p.guarantee_ends) : "-", status: p.status, createdAt: p.created_at ? new Date(p.created_at).getTime() : Date.now(),
     startDate: p.start_date || null, guaranteeDays: p.guarantee_days != null ? p.guarantee_days : null, guaranteeEnds: p.guarantee_ends || null,
@@ -4545,49 +4559,61 @@ function VerifiedTick({ size = 20 }) {
     </span>
   );
 }
-// A note pinned to the top of the profile: everyone on the team who opens it sees it first.
-// (The Discussion tab is the running conversation; this is the one thing nobody should miss.)
-function ProfileNote({ candidate, S, toast }) {
-  const [edit, setEdit] = useState(null);
+// A note on the profile, shown like a social "note": a small bubble above the photo in the header,
+// for everyone on the team who opens the profile. Tap it to read it all, edit or remove it; with
+// no note, the little + on the photo adds one. (Discussion is the running conversation.)
+const NOTE_MAX = 280;
+function useProfileNote(candidate, S, toast) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const save = (text) => { setBusy(true); S.setProfileNote(candidate.id, text).then(() => { setEdit(null); toast(text.trim() ? "Note pinned to the profile" : "Note removed"); }).catch(() => {}).finally(() => setBusy(false)); };
-  if (edit != null) return (
-    <div className="rounded-2xl p-3.5 flex flex-col gap-2" style={{ background: C.warnBg, border: `1px solid ${C.line}` }}>
-      <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: C.warnText }}><Pin size={13} /> Pinned note · everyone on the team sees it when they open this profile</div>
-      <textarea autoFocus rows={3} value={edit} onChange={(e) => setEdit(e.target.value)} maxLength={2000} placeholder="e.g. Only open to remote roles. Call after 4pm. Prefers WhatsApp." className="w-full rounded-lg border px-3 py-2 text-sm outline-none resize-y" style={{ borderColor: C.line, background: C.card, color: C.ink }} />
-      <div className="flex gap-2 justify-end">
-        <Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn>
-        <Btn kind="primary" onClick={() => save(edit)} disabled={busy || (!edit.trim() && !candidate.note)}>{busy ? "Saving…" : "Pin note"}</Btn>
+  const show = () => { setText(candidate.note || ""); setOpen(true); };
+  const save = (t) => { setBusy(true); S.setProfileNote(candidate.id, t).then(() => { setOpen(false); toast(t.trim() ? "Note saved" : "Note removed"); }).catch(() => {}).finally(() => setBusy(false)); };
+  const first = (candidate.noteBy || "").split(" ")[0];
+  const bubble = candidate.note ? (
+    <button type="button" onClick={show} title="Note for the team. Tap to read, edit or remove" className="pn-note relative text-left rounded-[18px] px-3.5 py-2 mb-4 max-w-[min(300px,100%)] block"
+      style={{ background: "rgba(243,239,231,.10)", border: "1px solid rgba(200,241,105,.30)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", color: "#F3EFE7", boxShadow: "0 8px 24px -12px rgba(0,0,0,.5)" }}>
+      <span className="block text-[13px] leading-snug" style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{candidate.note}</span>
+      <span className="block text-[10px] mt-0.5 tracking-wide" style={{ color: "rgba(243,239,231,.55)" }}>{[first, candidate.noteAt ? ago(candidate.noteAt) : ""].filter(Boolean).join(" · ")}</span>
+      <span aria-hidden="true" className="absolute rounded-full" style={{ left: 22, bottom: -8, width: 11, height: 11, background: "rgba(243,239,231,.10)", border: "1px solid rgba(200,241,105,.30)" }} />
+      <span aria-hidden="true" className="absolute rounded-full" style={{ left: 17, bottom: -15, width: 5, height: 5, background: "rgba(243,239,231,.16)" }} />
+    </button>
+  ) : null;
+  const badge = !candidate.note ? (
+    <button type="button" onClick={show} aria-label="Add a note for the team" title="Add a note for the team" className="absolute grid place-items-center rounded-full"
+      style={{ right: -2, bottom: -2, width: 24, height: 24, background: C.lime, color: "#12241D", border: `2px solid ${C.side}` }}><Plus size={13} strokeWidth={3} /></button>
+  ) : null;
+  const modal = (
+    <Modal open={open} onClose={() => setOpen(false)} title={candidate.note ? "Note for the team" : "Add a note"}>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>Shows above {candidate.name.split(" ")[0]}'s photo for everyone on the team who opens this profile.</div>
+        <div className="relative">
+          <textarea autoFocus rows={4} value={text} onChange={(e) => setText(e.target.value.slice(0, NOTE_MAX))} placeholder="e.g. Remote only now. Prefers WhatsApp, after 4pm." className="w-full rounded-xl border px-3.5 py-3 text-[15px] outline-none resize-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} />
+          <span className="absolute right-3 bottom-2.5 text-[11px]" style={{ color: text.length > NOTE_MAX - 30 ? C.warnFg : C.ink3 }}>{text.length}/{NOTE_MAX}</span>
+        </div>
+        {candidate.note && <div className="text-xs" style={{ color: C.ink3 }}>{[candidate.noteBy, candidate.noteAt ? fdate(candidate.noteAt) : ""].filter(Boolean).join(" · ")}</div>}
+        <div className="flex gap-2 justify-end flex-wrap">
+          {candidate.note && <Btn kind="danger" onClick={() => save("")} disabled={busy} className="mr-auto">Remove</Btn>}
+          <Btn onClick={() => setOpen(false)} disabled={busy}>Cancel</Btn>
+          <Btn kind="primary" onClick={() => save(text)} disabled={busy || !text.trim() || text === candidate.note}>{busy ? "Saving…" : "Save note"}</Btn>
+        </div>
       </div>
-    </div>
+    </Modal>
   );
-  if (!candidate.note) return (
-    <button onClick={() => setEdit("")} className="rounded-2xl px-3.5 py-2.5 text-sm flex items-center gap-2 text-left" style={{ border: `1px dashed ${C.line}`, color: C.ink2 }}><Pin size={14} /> Add a pinned note everyone on the team sees</button>
-  );
-  return (
-    <div className="rounded-2xl p-3.5 flex gap-3" style={{ background: C.warnBg }}>
-      <Pin size={16} className="shrink-0 mt-0.5" style={{ color: C.warnText }} />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm whitespace-pre-wrap break-words" style={{ color: C.ink }}>{candidate.note}</div>
-        <div className="text-xs mt-1" style={{ color: C.warnText }}>{[candidate.noteBy, candidate.noteAt ? fdate(candidate.noteAt) : null].filter(Boolean).join(" · ")}</div>
-      </div>
-      <div className="flex items-start gap-1 shrink-0">
-        <IconBtn icon={Pencil} label="Edit the pinned note" size="sm" onClick={() => setEdit(candidate.note)} />
-        <IconBtn icon={X} label="Remove the pinned note" size="sm" disabled={busy} onClick={() => save("")} />
-      </div>
-    </div>
-  );
+  return { bubble, badge, modal };
 }
 
-function ProfileHeader({ candidate, status, path, verified }) {
+function ProfileHeader({ candidate, status, path, verified, note }) {
   const idx = { "In review": 1, "With client": 2, Interview: 3, Offer: 4, Placed: 5, Hired: 5 }[status];
   const fit = Number(candidate.ai) || 0, R = 31, CIRC = 2 * Math.PI * R;
   return (
     <div className="relative overflow-hidden rounded-2xl p-5 md:p-6" style={{ background: C.side, color: C.onSide }}>
       <div className="absolute pointer-events-none" style={{ right: -70, top: -70, width: 230, height: 230, borderRadius: 999, background: "radial-gradient(circle, rgba(200,241,105,.14), transparent 70%)" }} />
+      {note && note.bubble}
       <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
-        <div className="rounded-full shrink-0" style={{ padding: 3, background: "rgba(200,241,105,.45)", width: "fit-content" }}>
+        <div className="relative rounded-full shrink-0" style={{ padding: 3, background: "rgba(200,241,105,.45)", width: "fit-content" }}>
           <Avatar init={initialsOf(candidate.name)} tone="em" size={64} src={candidate.photoUrl || undefined} />
+          {note && note.badge}
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-2xl md:text-3xl text-white flex items-center gap-2 min-w-0" style={{ ...SERIF }}><span className="truncate">{candidate.name}</span>{verified && <VerifiedTick size={22} />}</div>
@@ -4733,6 +4759,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     catch (e) { S.error(e.message); }
     setUnlockBusy(false);
   };
+  const note = useProfileNote(candidate, S, toast);
   const [editForm, setEditForm] = useState(null);
   const openEdit = () => setEditForm({ linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
   const saveEdit = () => {
@@ -4903,8 +4930,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       {rejectKind && <RejectModal candidate={candidate} kind={rejectKind} S={S} toast={toast} onClose={() => setRejectKind(null)} onDone={afterReject} />}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
-          <ProfileHeader candidate={candidate} status={status} path={endedPath(candidate, status, S)} verified={verified} />
-          <ProfileNote candidate={candidate} S={S} toast={toast} />
+          <ProfileHeader candidate={candidate} status={status} path={endedPath(candidate, status, S)} verified={verified} note={note} />
+          {note.modal}
           <Card>
             {candidate.ai_locked && (
               <div className="rounded-lg p-2.5 mb-3 flex items-center gap-2 text-xs flex-wrap" style={{ background: C.warnBg, color: C.warnFg }}>
@@ -4933,8 +4960,6 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               )}
               <RowMenu label={"More actions for " + candidate.name} items={[
                 { label: "Edit details", icon: Pencil, onClick: openEdit },
-                { label: "Add to Active file", icon: FolderPlus, onClick: () => S.addToActiveFile(candidate.id).then(() => toast(candidate.name.split(" ")[0] + " is on the Active file")).catch(() => {}),
-                  hidden: status === "Active file" || (S.role === "recruiter" && candidate.recruiterId !== S.me.id) },
                 { label: "Forward to client", icon: Forward, onClick: () => setPanel("fwd"), hidden: S.role === "recruiter" },
                 { label: "Delete candidate", icon: Trash2, danger: true, onClick: () => setDelOpen(true), hidden: S.role !== "admin" },
               ]} />
@@ -6067,25 +6092,33 @@ const SOURCE_LABEL = { career_page: "Apply page", outreach: "Outreach email", li
 const applyUrl = (slug) => window.location.origin + "/jobs/" + slug + "/";
 
 function ApplyLinks({ S, toast }) {
-  const jobs = S.jobs.filter((j) => j.status === "Open" && j.slug);
-  const copy = (j) => { try { navigator.clipboard.writeText(applyUrl(j.slug)); toast("Apply link copied for " + j.role); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const jobs = S.jobs.filter((j) => j.status === "Open" && j.slug && !j.leadRole);
+  const copy = (j) => { try { navigator.clipboard.writeText(myLink(applyUrl(j.slug))); toast("Your apply link copied for " + j.role); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const copyUrl = (u, msg) => { try { navigator.clipboard.writeText(myLink(u)); toast(msg); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   if (!jobs.length) return <div className="text-sm" style={{ color: C.ink3 }}>No open jobs yet. Open a job to get its apply link.</div>;
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-sm mb-1" style={{ color: C.ink2 }}>Share these on LinkedIn, job boards or social posts. Everyone who applies lands in this Inbox with their CV.</div>
+      <div className="text-sm mb-1" style={{ color: C.ink2 }}>These are your own links. Share them on LinkedIn, job boards or social posts: anyone who applies through them becomes your candidate straight away, with their CV. Applications from the plain job pages land in this Inbox.</div>
       <div className="rounded-xl px-3 py-2.5 flex items-center gap-3" style={{ background: C.emTint }}>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">All jobs page</div>
           <div className="text-xs truncate" style={{ color: C.ink2 }}>{JOBS_URL()}</div>
         </div>
         <a href={JOBS_URL()} target="_blank" rel="noreferrer" className="text-xs underline shrink-0" style={{ color: C.em }}>Open</a>
-        <Btn icon={Copy} title="Copy link" onClick={() => { try { navigator.clipboard.writeText(JOBS_URL()); toast("Jobs page link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} className="shrink-0 !px-0 !py-0 w-8 h-8 !rounded-lg" />
+        <Btn icon={Copy} title="Copy link" onClick={() => copyUrl(JOBS_URL(), "Your jobs page link copied")} className="shrink-0 !px-0 !py-0 w-8 h-8 !rounded-lg" />
+      </div>
+      <div className="rounded-xl px-3 py-2.5 flex items-center gap-3" style={{ background: C.canvas }}>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">Active file (no job)</div>
+          <div className="text-xs" style={{ color: C.ink2 }}>For people not applying to a specific role: they send their CV and join the Active file as your candidate.</div>
+        </div>
+        <IconBtn icon={Copy} label="Copy your Active file link" size="sm" onClick={() => copyUrl(ACTIVE_FILE_URL(), "Your Active file link copied")} />
       </div>
       {jobs.map((j) => (
         <div key={j.id} className="rounded-xl border px-3 py-2.5 flex items-center gap-3" style={{ borderColor: C.line }}>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium truncate">{j.role} <span style={{ color: C.ink3, fontWeight: 400 }}>· {j.client}</span></div>
-            <div className="text-xs truncate" style={{ color: C.ink3 }}>{applyUrl(j.slug)}</div>
+            <div className="text-xs truncate" style={{ color: C.ink3 }}>{myLink(applyUrl(j.slug))}</div>
           </div>
           <IconBtn icon={Copy} label="Copy link" size="sm" onClick={() => copy(j)} />
         </div>
@@ -6148,9 +6181,9 @@ function InboxRow({ x, S, toast, canAct }) {
           <Avatar init={initialsOf(x.name)} tone="em" size={38} />
           <div className="min-w-0">
             <div className="font-medium flex items-center gap-1.5">{x.name}<ChevronDown size={14} color={C.ink3} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} /></div>
-            <div className="text-xs" style={{ color: C.ink2 }}>{job ? job.role + " · " + job.client : x.role}</div>
+            <div className="text-xs" style={{ color: C.ink2 }}>{job ? job.role + " · " + job.client : x.jobId ? x.role : <><b style={{ color: C.em }}>Active file</b>{x.role ? " · looking for " + x.role : ""}</>}</div>
             <div className="text-xs mt-1 flex flex-wrap gap-x-3 gap-y-1" style={{ color: C.ink3 }}>
-              <span>{SOURCE_LABEL[x.source] || x.source}{viaOutreach ? " from an outreach email" : ""}</span><span>{x.when}</span>
+              <span>{SOURCE_LABEL[x.source] || x.source}{viaOutreach ? " from an outreach email" : ""}{x.viaName ? " · " + x.viaName.split(" ")[0] + "'s link" : ""}</span><span>{x.when}</span>
               {x.email && <span>{x.email}</span>}
             </div>
             {x.referrer && <div className="text-xs mt-1.5 rounded-lg px-2.5 py-1.5" style={{ background: C.emTint, color: C.ink2 }}>Referred by <b style={{ color: C.ink }}>{x.referrer.name}</b>{x.referrer.email ? " (" + x.referrer.email + ")" : ""}{viaOutreach ? (x.referrer.via.prospect_name ? ", who we reached out to as " + x.referrer.via.prospect_name : ", from one of our outreach emails") : ""}</div>}
@@ -6410,7 +6443,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   const engagedPeople = (job.engagedNames || []).filter(Boolean);
   const vs = (S.jobViews && S.jobViews[job.id]) || {};
   const views = { total: Number(vs.views) || 0, week: Number(vs.views_7d) || 0, apps: Number(vs.applications) || 0, referrals: Number(vs.referrals) || 0 };
-  const copyLink = () => { try { navigator.clipboard.writeText(job.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const copyLink = () => { try { navigator.clipboard.writeText(myLink(job.link)); toast("Your link copied. Anyone who applies through it becomes your candidate."); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const fits = benchFitsFor(job, S);
   const lastBench = Math.max(0, ...S.cands.flatMap((c) => (c.matches || []).filter((m) => m.job_id === job.id && m.reviewedAt).map((m) => new Date(m.reviewedAt).getTime())));
   const checkBench = () => {
@@ -6529,7 +6562,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         {job.link && (
           <div>
             <div className="text-xs mb-1.5" style={{ color: C.ink3 }}>Apply link (applications land in the Inbox)</div>
-            <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Send size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate flex-1">{job.link}</span><Copy size={15} color={C.ink2} className="cursor-pointer shrink-0" onClick={copyLink} /></div>
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Send size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate flex-1">{myLink(job.link)}</span><Copy size={15} color={C.ink2} className="cursor-pointer shrink-0" onClick={copyLink} /></div>
           </div>
         )}
       </Card>
@@ -6732,18 +6765,23 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.jobsView") || "list"; } catch (e) { return "list"; } });
   const setView = (v) => { setViewRaw(v); try { localStorage.setItem("pn.jobsView", v); } catch (e) {} };
   const mine = (j) => (j.engagedIds || []).includes(S.me.id);
+  // Roles from client leads (an employer agreed to a candidate we pitched) live in their own tab,
+  // for Rec Ops and Admins only: not public, not on recruiters' lists.
+  const main = S.jobs.filter((j) => !j.leadRole), leadJobs = S.jobs.filter((j) => j.leadRole);
   const inTab = (j, t) => t === "All" || (t === "Mine" ? mine(j) : j.status === t);
-  const filtered = S.jobs.filter((j) => inTab(j, tab) && hit(j, q.toLowerCase()) && hit(j, gq));
-  const tabs = ["All", "Open", "On hold", "Closed", "Mine"].map((t) => ({ key: t, label: (t === "Mine" ? "I'm engaged" : t) + " " + S.jobs.filter((j) => inTab(j, t)).length }));
+  const filtered = (tab === "Leads" ? leadJobs : main.filter((j) => inTab(j, tab))).filter((j) => hit(j, q.toLowerCase()) && hit(j, gq));
+  const tabs = [...["All", "Open", "On hold", "Closed", "Mine"].map((t) => ({ key: t, label: (t === "Mine" ? "I'm engaged" : t) + " " + main.filter((j) => inTab(j, t)).length })),
+    ...(S.role !== "recruiter" ? [{ key: "Leads", label: "Client leads " + leadJobs.length }] : [])];
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <SectionTitle size="text-3xl md:text-4xl" title="All roles" sub="Every role has its own unique link."
-          live={[{ n: S.jobs.filter((j) => j.status === "Open").length, label: "open", tone: "em" }, { n: S.jobs.filter((j) => jobHealth(j, S).key === "stuck").length, label: "stuck", tone: "danger" }, { n: S.jobs.filter((j) => jobHealth(j, S).key === "slow").length, label: "slowing", tone: "warn" }]} />
+          live={[{ n: main.filter((j) => j.status === "Open").length, label: "open", tone: "em" }, { n: main.filter((j) => jobHealth(j, S).key === "stuck").length, label: "stuck", tone: "danger" }, { n: main.filter((j) => jobHealth(j, S).key === "slow").length, label: "slowing", tone: "warn" }]} />
         <Btn kind="primary" icon={Plus} onClick={() => setPage("postJob")}>Post a job</Btn>
       </div>
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
+        {tab === "Leads" && <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>Roles from client leads: an employer agreed to a candidate we pitched to them. Only Rec Ops and Admins see these. They're not on the jobs board and recruiters don't see them.</div>}
         <div className="mb-3 flex items-center gap-3">
           <div className="flex flex-1 min-w-0 sm:flex-none sm:w-72"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
           <div className="ml-auto flex rounded-xl p-1 shrink-0" style={{ background: C.neutralBg }} role="group" aria-label="Layout">
@@ -6762,7 +6800,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
             {filtered.map((j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
           </div>
         )
-        ) : <EmptyState title={q || gq ? "No roles match your search" : "No roles here yet"} text={q || gq ? "Try another search or tab." : "Post a job to start finding candidates."} action={q || gq ? null : "Post a job"} onAction={() => setPage("postJob")} />}
+        ) : <EmptyState title={q || gq ? "No roles match your search" : tab === "Leads" ? "No client lead roles yet" : "No roles here yet"} text={q || gq ? "Try another search or tab." : "Post a job to start finding candidates."} action={q || gq ? null : "Post a job"} onAction={() => setPage("postJob")} />}
       </Card>
     </div>
   );
@@ -6862,7 +6900,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     toast(status === "Draft" ? "Saved as draft" : "Job published");
   };
   const reset = () => { setDone(null); setTitle(""); setClient(""); setWorkSetup(""); setEmploymentType(""); setHeadcount("1"); setSalaryPeriod("Yearly"); setCommissionOnly(false); setMinPay(""); setMaxPay(""); setDescription(""); setSeo(null); setDraftAi(null); setBillingAmount(""); setBillingFrequency("One-off"); setBillingMonths(""); setIncentiveAmount(""); setIncentiveFrequency("One-off"); setIncentiveMonths(""); setQuestions([""]); };
-  const copyLink = () => { try { navigator.clipboard.writeText(done.link); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const copyLink = () => { try { navigator.clipboard.writeText(myLink(done.link)); toast("Your link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const saveEdit = () => {
     if (!title.trim() || !client.trim()) { toast("Add a job title and client"); return; }
     setBusy(true);
@@ -7118,7 +7156,7 @@ const SHARE_CHANNELS = [
   { key: "instagram", name: "Instagram", tone: { bg: "#FBE7EF", fg: "#B5306B" }, tag: "IG", copyOnly: true, hint: "Copies the post and link. Paste it into your story (link sticker) or bio." },
 ];
 const SHARE_LABEL = Object.fromEntries(SHARE_CHANNELS.map((c) => [c.key, c.name]));
-const shareUrl = (job, key) => window.location.origin + "/jobs/" + job.slug + "/?utm_source=" + key;
+const shareUrl = (job, key) => myLink(window.location.origin + "/jobs/" + job.slug + "/?utm_source=" + key);
 function sharePost(job) {
   const place = jobPlace(job.location, job.country);
   const facts = [place, job.workSetup, job.employmentType].filter(Boolean);
@@ -8372,7 +8410,7 @@ function JobSourcingCard({ job, S, toast }) {
 // Candidate first: each candidate who fits a lead is asked (the role without the employer's name)
 // before the employer is pitched. Shows where each one is, and their blind resume once confirmed.
 const OFFER_STATE = { suggested: ["Not asked yet", "neutral"], sent: ["Asked, waiting for a reply", "warn"], interested: ["Interested, checking their details", "info"],
-  confirmed: ["Confirmed", "em"], processing: ["Being processed", "em"], declined: ["Said no", "neutral"], skipped: ["Skipped", "neutral"] };
+  confirmed: ["Confirmed", "em"], processing: ["With the employer", "em"], declined: ["Said no", "neutral"], skipped: ["Skipped", "neutral"] };
 function LeadOffers({ l, offers, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [blindFor, setBlindFor] = useState(null);
@@ -8411,9 +8449,9 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
                 <span className="self-center" style={{ color: o.blind_pages ? C.em : C.warnFg }}>{o.blind_pages ? "Blind resume ready" : "No blind resume yet"}</span>
                 <Btn onClick={() => setBlindFor(o)} className="!py-1.5 !px-3 text-xs">{o.blind_pages ? "Redo blind resume" : "Make blind resume"}</Btn>
                 {o.blind_pages > 0 && <IconBtn icon={Copy} label={"Copy the blind resume link for " + l.company} size="sm" onClick={() => copyText(window.location.origin + "/?t=" + o.client_token, toast, "Blind resume link copied")} />}
-                {S.role !== "recruiter" && <Btn kind="primary" disabled={!!busy} title={"Routes " + c.name.split(" ")[0] + " to this role like a reroute: a draft job for " + l.company + " is created, their other live roles are marked Rejected, and they're emailed to accept it"} onClick={() => { setBusy("proc" + o.id); S.processOffer(o.id).then(() => { toast(c.name.split(" ")[0] + " routed to " + l.job_title + ". A draft job for " + l.company + " is under Jobs."); onChanged(); }).catch(() => {}).finally(() => setBusy("")); }} className="!py-1.5 !px-3 text-xs">{busy === "proc" + o.id ? "Routing…" : l.company + " wants to proceed"}</Btn>}
+                {S.role !== "recruiter" && <Btn kind="primary" disabled={!!busy} title={"Puts " + c.name.split(" ")[0] + " on this role with " + l.company + " like a reroute: their other live roles are marked Rejected. The role is kept under Jobs > Client leads. Their email doesn't name the employer."} onClick={() => { setBusy("proc" + o.id); S.processOffer(o.id).then((r) => { toast(c.name.split(" ")[0] + " is on " + l.job_title + " with " + l.company + "." + (r.emailed ? " They've been told, without the employer's name." : r.emailError ? " Not emailed: " + r.emailError + "." : "")); onChanged(); }).catch(() => {}).finally(() => setBusy("")); }} className="!py-1.5 !px-3 text-xs">{busy === "proc" + o.id ? "Routing…" : l.company + " wants to proceed"}</Btn>}
               </>}
-              {o.status === "processing" && c && <button onClick={() => S.openCandidate(c.id)} className="font-medium" style={{ color: C.em }}>Routed to {l.job_title}. Open profile</button>}
+              {o.status === "processing" && c && <button onClick={() => S.openCandidate(c.id)} className="font-medium" style={{ color: C.em }}>On the role with {l.company}. Open profile</button>}
             </div>
           </div>
         );
@@ -11134,6 +11172,11 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   // Coming from a specific job's page pre-selects it here; opened from the Candidates
   // page directly (initialJobId null), the recruiter picks the job themselves below.
   const [jobId, setJobId] = useState(initialJobId && openJobs.some((j) => j.id === initialJobId) ? initialJobId : "");
+  // Where they go: onto a job, or straight onto the Active file (no job: on the bench, checked
+  // for roles before we look outside).
+  const [dest, setDest] = useState("job");
+  const toFile = dest === "file";
+  const [wanted, setWanted] = useState("");
   const heldJob = initialJobId ? S.jobs.find((j) => j.id === initialJobId && !takesCandidates(j)) : null;
   const job = jobId ? S.jobs.find((j) => j.id === jobId) : null;
   const qs = (job && job.screeningQuestions) || [];
@@ -11159,7 +11202,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
     setDup((d) => ({ ...d, state: "checking" }));
     const t = setTimeout(() => {
       S.checkCandidateEmail(em, name.trim(), jobId)
-        .then((r) => { if (live) setDup({ state: r && r.match ? "taken" : "ok", match: r && r.match, elsewhere: ((r && r.elsewhere) || []).filter((x) => x.jobs && x.jobs.length), similar: (r && r.similar) || [] }); })
+        .then((r) => { if (live) setDup({ state: r && r.match ? "taken" : "ok", match: r && r.match, elsewhere: ((r && r.elsewhere) || []).filter((x) => x.jobs && x.jobs.length), all: (r && r.elsewhere) || [], similar: (r && r.similar) || [] }); })
         .catch(() => { if (live) setDup({ state: "error" }); });
     }, 450);
     return () => { live = false; clearTimeout(t); };
@@ -11171,6 +11214,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
     if (!emailOk) { toast("That email doesn't look right"); return true; }
     if (dup.state === "checking") { toast("Still checking the email. Try again in a second."); return true; }
     if (dup.state === "taken") { toast(dup.match.mine ? "You've already submitted this candidate to this job" : "This candidate is already on this job, submitted by " + dup.match.recruiter); return true; }
+    if (toFile && (dup.all || []).length) { toast("They're already in ProNext. Open their profile instead."); return true; }
     return false;
   };
 
@@ -11181,7 +11225,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   const ensureDraft = async () => {
     if (candId) return candId;
     if (!name.trim()) { toast("Enter the candidate's name"); return null; }
-    const c = newCandidate({ name: name.trim(), role: job ? job.role : "Unspecified", recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
+    const c = newCandidate({ name: name.trim(), role: toFile ? (wanted.trim() || "Unspecified") : job ? job.role : "Unspecified", ...(toFile ? { status: "Active file" } : {}), recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
     await S.insertCandidateAwait(c);
     setCandId(c.id);
     return c.id;
@@ -11202,7 +11246,25 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
     setChecking(false);
   };
 
+  // Straight onto the Active file: no job, no screening questions. Their resume is read for the
+  // profile (skills, experience) so they show up when we check the bench for a role.
+  const submitToFile = async () => {
+    if (emailBlock()) return;
+    if (!file && !candId) { toast("Upload a resume first"); return; }
+    setSubmitting(true);
+    try {
+      const id = await ensureDraft();
+      if (!id) { setSubmitting(false); return; }
+      if (file) { await S.uploadResume(id, file); setFile(null); }
+      await S.finishToActiveFile(id);
+      toast(name.trim().split(" ")[0] + " is on the Active file");
+      setPage("candidates");
+    } catch (e) { S.error(e.message || "Could not add candidate"); }
+    setSubmitting(false);
+  };
+
   const submit = async () => {
+    if (toFile) return submitToFile();
     if (!jobId) { toast("Pick a job first"); return; }
     if (emailBlock()) return;
     if (!file && !candId) { toast("Upload a resume first"); return; }
@@ -11219,25 +11281,37 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
     setSubmitting(false);
   };
 
-  const startOver = () => { setJobId(""); setAnswers([]); setName(""); setEmailAddr(""); setPhone(""); setFileName(""); setFile(null); setCandId(null); setFit(null); setDup({ state: "idle" }); };
+  const startOver = () => { setWanted(""); setJobId(""); setAnswers([]); setName(""); setEmailAddr(""); setPhone(""); setFileName(""); setFile(null); setCandId(null); setFit(null); setDup({ state: "idle" }); };
 
   const FIT_TONE = { "Perfect fit": "em", "Good fit": "em", "Possible fit": "warn", "Possible reject": "danger", "Not a fit": "danger" };
 
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <button onClick={() => setPage("candidates")} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Candidates</button>
-      <SectionTitle size="text-3xl md:text-4xl" title="Add candidate" sub="Pick the job, then their resume and (if you're ready) the screening answers." />
+      <SectionTitle size="text-3xl md:text-4xl" title="Add candidate" sub={toFile ? "Add them to the Active file with their resume. No job needed: they're on the bench we check before looking outside." : "Pick the job, then their resume and (if you're ready) the screening answers."} />
       <Card className="md:max-w-xl flex flex-col gap-4">
-        {heldJob && <div className="rounded-lg px-3 py-2.5 text-sm" style={{ background: C.warnBg, color: C.warnText }}>{heldJob.role} is {heldJob.status === "Closed" ? "closed" : holdText(heldJob).replace("On hold", "on hold")} and isn't taking new candidates. Pick another job below.</div>}
-        <div>
+        <div className="grid grid-cols-2 gap-1 rounded-xl p-1" style={{ background: C.neutralBg }} role="group" aria-label="Add them to">
+          {[["job", "To a job", Briefcase], ["file", "To the Active file", Users]].map(([k, l, I]) => (
+            <button key={k} type="button" aria-pressed={dest === k} disabled={!!candId} onClick={() => { setDest(k); setFit(null); }} className="flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-medium"
+              style={dest === k ? { background: C.card, color: C.ink, boxShadow: "0 1px 2px rgba(20,32,27,.1)" } : { color: C.ink2 }}><I size={15} />{l}</button>
+          ))}
+        </div>
+        {toFile && (
+          <div>
+            <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Role they're looking for</div>
+            <input className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: C.line, color: C.ink }} value={wanted} onChange={(e) => setWanted(e.target.value)} disabled={!!candId} placeholder="e.g. Customer Success Manager" />
+          </div>
+        )}
+        {!toFile && heldJob && <div className="rounded-lg px-3 py-2.5 text-sm" style={{ background: C.warnBg, color: C.warnText }}>{heldJob.role} is {heldJob.status === "Closed" ? "closed" : holdText(heldJob).replace("On hold", "on hold")} and isn't taking new candidates. Pick another job below.</div>}
+        {!toFile && <div>
           <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Job</div>
           <select className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: C.line, color: C.ink }} value={jobId} onChange={(e) => { setJobId(e.target.value); setAnswers([]); setFit(null); }}>
             <option value="">Choose a job…</option>
             {openJobs.map((j) => <option key={j.id} value={j.id}>{j.role} – {j.client}</option>)}
           </select>
           {offList > 0 && <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>{openJobs.length ? "Only roles on your worklist are listed." : "No roles on your worklist yet."} Open a role under Jobs and press Engage to add it, then you can submit candidates for it.</div>}
-        </div>
-        {job && qs.length > 0 && (
+        </div>}
+        {!toFile && job && qs.length > 0 && (
           <div className="rounded-xl p-3" style={{ background: C.canvas }}>
             <div className="text-xs font-medium mb-2" style={{ color: C.ink2 }}>Screening questions for {job.role}</div>
             <div className="space-y-2.5">
@@ -11259,7 +11333,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
             <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Email</div>
             <input type="email" className="w-full text-sm rounded-lg border px-3 py-2 bg-white" style={{ borderColor: dup.state === "taken" ? C.dangerFg : C.line, color: C.ink }} value={emailAddr} onChange={(e) => setEmailAddr(e.target.value)} disabled={!!candId} placeholder="name@example.com" aria-describedby="email-check" />
             <div id="email-check" className="text-xs mt-1 min-h-[16px]" style={{ color: dup.state === "ok" ? TONE.em.fg : C.ink3 }} aria-live="polite">
-              {candId ? "" : !emailAddr.trim() ? "Checked so the same person isn't submitted to one job twice." : !emailOk ? "Enter a full email address." : dup.state === "checking" ? "Checking…" : dup.state === "ok" ? (job ? "✓ Not on this job yet" : "✓ Pick a job to finish the check") : dup.state === "error" ? "Couldn't check the email right now. It's checked again when you submit." : ""}
+              {candId ? "" : !emailAddr.trim() ? (toFile ? "Checked so the same person isn't added twice." : "Checked so the same person isn't submitted to one job twice.") : !emailOk ? "Enter a full email address." : dup.state === "checking" ? "Checking…" : dup.state === "ok" ? (toFile ? ((dup.all || []).length ? "" : "✓ Not in ProNext yet") : job ? "✓ Not on this job yet" : "✓ Pick a job to finish the check") : dup.state === "error" ? "Couldn't check the email right now. It's checked again when you submit." : ""}
             </div>
           </div>
         </div>
@@ -11272,7 +11346,13 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
             {dup.match.candidateId && <Btn onClick={() => S.openCandidate(dup.match.candidateId)} className="shrink-0 text-xs px-3 py-1.5">Open their profile</Btn>}
           </div>
         )}
-        {!candId && dup.state === "ok" && (dup.elsewhere || []).length > 0 && (
+        {toFile && !candId && dup.state === "ok" && (dup.all || []).length > 0 && (
+          <div className="rounded-xl p-3 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ background: TONE.warn.bg }} role="alert">
+            <span><span className="font-semibold" style={{ color: TONE.warn.fg }}>Already in ProNext. </span><span style={{ color: C.ink }}>{dup.all.map((x) => x.name + " (" + (x.mine ? "yours" : x.recruiter) + ")").join("; ")}. Use their existing profile.</span></span>
+            {dup.all[0].candidateId && <Btn onClick={() => S.openCandidate(dup.all[0].candidateId)} className="shrink-0 text-xs px-3 py-1.5">Open their profile</Btn>}
+          </div>
+        )}
+        {!toFile && !candId && dup.state === "ok" && (dup.elsewhere || []).length > 0 && (
           <div className="rounded-xl p-3 text-sm" style={{ background: TONE.info.bg }}>
             <span className="font-semibold" style={{ color: TONE.info.fg }}>Already in ProNext for other jobs. </span>
             <span style={{ color: C.ink }}>{dup.elsewhere.map((x) => x.name + " (" + (x.mine ? "yours" : x.recruiter) + "): " + x.jobs.join(", ")).join("; ")}. {job ? "You can still submit them for this job." : ""}</span>
@@ -11301,8 +11381,8 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
           </div>
         )}
         <div className="flex gap-2.5 flex-wrap">
-          <Btn onClick={checkFit} disabled={checking || submitting}>{checking ? <>Checking <InlineDots /></> : "Check fit (resume only)"}</Btn>
-          <Btn kind="primary" onClick={submit} disabled={checking || submitting}>{submitting ? <>Adding <InlineDots color="#fff" /></> : "Submit candidate"}</Btn>
+          {!toFile && <Btn onClick={checkFit} disabled={checking || submitting}>{checking ? <>Checking <InlineDots /></> : "Check fit (resume only)"}</Btn>}
+          <Btn kind="primary" onClick={submit} disabled={checking || submitting}>{submitting ? <>Adding <InlineDots color="#fff" /></> : toFile ? "Add to the Active file" : "Submit candidate"}</Btn>
           {(candId || jobId) && <button onClick={startOver} className="text-xs px-2" style={{ color: C.ink3 }}>Start over</button>}
         </div>
       </Card>
@@ -11717,37 +11797,6 @@ function PortalOffer({ token, offer }) {
     </Card>
   );
 }
-// "Keep me in mind for other roles": the candidate adds themselves to the Active file. We match
-// them to new roles and always ask first, without sharing anything with an employer.
-function PortalActiveFile({ token, onChanged }) {
-  const [st, setSt] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState("");
-  const [err, setErr] = useState("");
-  useEffect(() => { sbFetch("/rest/v1/rpc/candidate_active_file", { method: "POST", body: { p_token: token } }).then((d) => setSt(d || null)).catch(() => {}); }, [token]);
-  if (!st && !done) return null;
-  if (done) return <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{done}</div>;
-  if (st.inActiveFile && st.pitchConsent) return null;
-  const join = () => {
-    setBusy(true); setErr("");
-    sbFetch("/rest/v1/rpc/candidate_join_active_file", { method: "POST", body: { p_token: token } })
-      .then((r) => { setDone(r && r.live ? "Done. We'll keep you in mind for other roles too, once your current one is settled or alongside it." : "You're on our Active file. When a role fits you, we'll tell you about it first and only share your details if you say yes."); if (onChanged) onChanged(); })
-      .catch((e) => setErr(e.message || "Something went wrong. Please try again.")).finally(() => setBusy(false));
-  };
-  return (
-    <Card>
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-        <div className="flex-1 min-w-0">
-          <div className="text-base font-semibold">Open to other roles?</div>
-          <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{st.live ? "You're on a role with us right now. " : ""}{st.inActiveFile ? "You're on our Active file. Say yes and we'll match you to new roles that fit." : "Add yourself to our Active file and we'll match you to new roles that fit."} We always ask you first, and never share your details without your yes.</div>
-          {err && <div className="text-xs mt-1.5" style={{ color: C.dangerFg }}>{err}</div>}
-        </div>
-        <Btn kind="primary" disabled={busy} onClick={join} className="justify-center shrink-0">{busy ? "Saving…" : st.inActiveFile ? "Yes, match me to roles" : "Add me to the Active file"}</Btn>
-      </div>
-    </Card>
-  );
-}
-
 function CandidatePortal({ data, token, onChanged }) {
   const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], applications: [], ...(data || {}) };
   const [answers, setAnswers] = useState({});
@@ -11827,7 +11876,6 @@ function CandidatePortal({ data, token, onChanged }) {
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
 
         {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} name={c.name} />}
-        {token && <PortalActiveFile token={token} onChanged={onChanged} />}
 
         {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
 
@@ -12000,7 +12048,7 @@ function ApplyPage({ slug }) {
     }
     setBusy(true); setErr("");
     try {
-      const payload = { ft: Date.now() - formOpenedAt.current, link_slug: slug, source: referring ? "referral" : source, pt: source === "outreach" ? params.get("pt") || "" : "", via: source === "outreach" ? "outreach" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
+      const payload = { ft: Date.now() - formOpenedAt.current, link_slug: slug, ref: PUB_REF(), source: referring ? "referral" : source, pt: source === "outreach" ? params.get("pt") || "" : "", via: source === "outreach" ? "outreach" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
         answers: referring ? [] : answers, ...(cv ? { cv: { name: cv.name, data: cv.data } } : {}),
         ...(referring ? { referrer: { name: ref.name.trim(), email: ref.email.trim(), note: ref.note.trim() } } : {}) };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -12163,13 +12211,99 @@ function ApplyPage({ slug }) {
   return shell(jobCard);
 }
 
+/* "Send us your CV" (/jobs/?join=1): for people who aren't applying to a specific job. They
+   join the Active file, the bench we check for every new role before looking outside. Lands in
+   the Inbox (marked Active file), or straight with the recruiter whose link they came through. */
+function JoinPage() {
+  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", role: "", website: "" });
+  const [cv, setCv] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState(false);
+  const opened = React.useRef(Date.now());
+  const fileRef = React.useRef(null);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const pickCv = (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    if (!/\.(pdf|docx?)$/i.test(f.name)) { setErr("Upload your CV as a PDF or Word document."); return; }
+    if (f.size > 8 * 1024 * 1024) { setErr("Your CV can be up to 8 MB."); return; }
+    const r = new FileReader();
+    r.onload = () => { setCv({ name: f.name, data: String(r.result).split(",")[1] }); setErr(""); };
+    r.onerror = () => setErr("That file couldn't be read. Try another one.");
+    r.readAsDataURL(f);
+  };
+  const okEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim());
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim() || !okEmail || !form.role.trim() || !cv) { setErr(!cv ? "Please attach your CV." : "Please fill in your name, a valid email and the kind of role you're looking for."); return; }
+    setBusy(true); setErr("");
+    try {
+      const payload = { ft: Date.now() - opened.current, source: "career_page", role_title: form.role.trim(), ref: PUB_REF(), name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, cv: { name: cv.name, data: cv.data } };
+      const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Something went wrong. Please try again.");
+      setDone(true); window.scrollTo(0, 0);
+    } catch (x) { setErr(x.message); }
+    setBusy(false);
+  };
+  const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
+  const inpStyle = { borderColor: C.line, background: C.soft };
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <a href={withQ(JOBS_URL(), "r", PUB_REF())} aria-label="All jobs"><BrandLogo height={30} /></a>
+          <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="text-sm font-medium" style={{ color: C.em }}>All jobs</a>
+        </div>
+        {done ? (
+          <Card>
+            <div className="w-12 h-12 rounded-full grid place-items-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} /></div>
+            <div className="text-2xl" style={SERIF}>Thanks, you're on our list</div>
+            <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>We'll check you for every new role that fits. When one does, a recruiter will get in touch. We never share your details with an employer without asking you first.</div>
+            <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="inline-block mt-5"><Btn kind="primary">See open jobs</Btn></a>
+          </Card>
+        ) : (
+          <Card>
+            <div className="text-2xl md:text-3xl leading-tight" style={SERIF}>Send us your CV</div>
+            <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>Not seeing the right role? Join our Active file. We look here first whenever a new role comes in, and we'll reach out when one fits you.</div>
+            <form onSubmit={submit} className="flex flex-col gap-3.5 mt-5">
+              <div><label className="text-sm font-medium">Full name *</label><input value={form.name} onChange={set("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
+              <div className="grid sm:grid-cols-2 gap-3.5">
+                <div><label className="text-sm font-medium">Email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
+                <div><label className="text-sm font-medium">Phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" className={inp} style={inpStyle} /></div>
+              </div>
+              <div><label className="text-sm font-medium">What kind of role are you looking for? *</label><input value={form.role} onChange={set("role")} placeholder="e.g. Customer Success Manager" className={inp} style={inpStyle} /></div>
+              <div><label className="text-sm font-medium">LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
+              <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
+              <div>
+                <label className="text-sm font-medium">CV *</label>
+                <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="w-full mt-1.5 rounded-xl border-2 border-dashed px-4 py-4 text-sm flex items-center gap-3 text-left" style={{ borderColor: cv ? C.em : C.line, background: C.soft }}>
+                  <Upload size={18} color={cv ? C.em : C.ink3} />
+                  <span className="flex-1 min-w-0 truncate" style={{ color: cv ? C.ink : C.ink3 }}>{cv ? cv.name : "Upload a PDF or Word file (up to 8 MB)"}</span>
+                  {cv && <span className="text-xs shrink-0" style={{ color: C.em }}>Change</span>}
+                </button>
+                <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={pickCv} />
+              </div>
+              {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+              <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send my CV"}</Btn>
+            </form>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* Public jobs board at /jobs/ (also /?jobs and /?careers), laid out like Indeed: a "what" and
    "where" search, the list of roles on the left and the selected role in full on the right
    (on a phone, tapping a role opens its own page). Each job's page is /jobs/<code>/; the hourly
    page build (scripts/build-job-pages.mjs) writes those as real pages with Google for Jobs data. */
 const SITE_ROOT = () => window.location.origin + "/";
 const JOBS_URL = () => SITE_ROOT() + "jobs/";
-const jobUrl = (slug, extra) => SITE_ROOT() + "jobs/" + encodeURIComponent(slug) + "/" + (extra ? "?" + extra : "");
+// "Send us your CV" for people not applying to a specific job: they join the Active file.
+const ACTIVE_FILE_URL = () => JOBS_URL() + "?join=1";
+const jobUrl = (slug, extra) => withQ(SITE_ROOT() + "jobs/" + encodeURIComponent(slug) + "/" + (extra ? "?" + extra : ""), "r", PUB_REF());
 const PAY_PER = { Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" };
 function payLabel(pay) {
   if (!pay) return "";
@@ -12294,6 +12428,11 @@ function JobsBoard() {
               {applied.what || applied.where ? <><b style={{ color: C.ink }}>{applied.what || "Jobs"}</b>{applied.where ? " in " + applied.where : ""} · </> : null}{shown.length} {shown.length === 1 ? "job" : "jobs"}
             </div>
 
+            <a href={withQ(ACTIVE_FILE_URL(), "r", PUB_REF())} className="flex items-center gap-3 rounded-xl px-4 py-3 mb-4 border" style={{ borderColor: C.line, background: C.emTint }}>
+              <Upload size={18} color={C.em} className="shrink-0" />
+              <span className="flex-1 min-w-0 text-sm" style={{ color: C.ink }}><b>Not seeing the right role?</b> <span style={{ color: C.ink2 }}>Send us your CV and we'll reach out when one fits.</span></span>
+              <span className="text-sm font-semibold shrink-0" style={{ color: C.em }}>Send CV</span>
+            </a>
             {shown.length === 0 ? (
               <div className="py-14 text-center max-w-md mx-auto">
                 <div className="text-lg font-semibold">{jobs.length ? "No jobs match your search" : "No open jobs right now"}</div>
@@ -12690,7 +12829,7 @@ export function publicRoute() {
   const q = new URLSearchParams(window.location.search), path = window.location.pathname;
   const m = path.match(/^\/jobs\/([A-Za-z0-9_-]+)\/?$/);
   if (m || q.get("apply")) return { kind: "apply", slug: m ? m[1] : q.get("apply") };
-  if (/^\/(jobs|careers)\/?$/.test(path) || q.has("jobs") || q.has("careers")) return { kind: "board" };
+  if (/^\/(jobs|careers)\/?$/.test(path) || q.has("jobs") || q.has("careers")) return { kind: q.get("join") ? "join" : "board" };
   if (q.get("u")) return { kind: "outreach", token: q.get("u"), linkKind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" };
   if (q.get("t")) return { kind: "client", token: q.get("t") };
   if (q.get("c")) return { kind: "portal", token: q.get("c") };
@@ -12764,6 +12903,7 @@ export function PublicRoot() {
   if (!r) return null;
   if (r.kind === "apply") return <ApplyPage slug={r.slug} />;
   if (r.kind === "board") return <JobsBoard />;
+  if (r.kind === "join") return <JoinPage />;
   if (r.kind === "outreach") return <OutreachLinkPage token={r.token} kind={r.linkKind} action={r.action} />;
   if (r.kind === "client") return <ClientViewPage token={r.token} />;
   if (portalToken === "preview") return <PreferencesPreviewPage />;
@@ -13015,7 +13155,8 @@ export default function App() {
   const role = me.roleKey;
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
-  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner };
+  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner, refCode: me.refCode || "" };
+  MY_REF = me.refCode || "";
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => S.error(e.message)).finally(() => setRefreshing(false)); };
   alertRef.current.onNew = (fresh) => {
     const prefs = { ...DEFAULT_NOTIF_PREFS, ...(me.notificationPrefs || {}) };
@@ -13351,23 +13492,19 @@ export default function App() {
       catch (e) { showError(e.message); throw e; }
       reload();
     },
-    addToActiveFile: async (candidateId) => {
-      let r;
-      try { r = await sbFetch("/rest/v1/rpc/add_to_active_file", { method: "POST", token: session.token, body: { p_candidate: candidateId } }); }
-      catch (e) { showError(e.message); throw e; }
-      reload();
-      return r || {};
-    },
-    // The employer agreed to a candidate from a client lead: processed like a reroute (a Draft job
-    // for the client, the candidate routed to it, other live roles marked Rejected as rerouted),
-    // and they get the same "A new role for you" email to accept it, now with the employer named.
+    // The employer agreed to a candidate from a client lead (who had already said yes): processed
+    // like a reroute. They go on a lead role for that client (kept under Jobs > Client leads, not
+    // public and not shown to recruiters), with the employer, and their other live roles are
+    // marked Rejected as rerouted. Their email still doesn't name the employer; their candidate
+    // page shows who it is.
     processOffer: async (offerId) => {
       let r;
       try { r = await sbFetch("/rest/v1/rpc/lead_offer_process", { method: "POST", token: session.token, body: { p_offer: offerId } }); }
       catch (e) { showError(e.message); throw e; }
-      if (r && r.linkId) await msgCall("invite", { linkId: r.linkId }).catch(() => {});
+      let mail = null;
+      if (r && r.fresh) mail = await srcCall("offer_moving", { offerId }).catch(() => null);
       reload();
-      return r || {};
+      return { ...(r || {}), emailed: !!(mail && mail.sent), emailError: mail && !mail.sent ? mail.error : "" };
     },
     routeToJob: async (candidateId, jobId) => {
       let rows;
@@ -13389,6 +13526,13 @@ export default function App() {
     /* Submit finishes the draft: clears is_draft (making the candidate visible to staff),
        saves the resume-derived fields via score_cv, then attaches to the job with the
        answered screening questions — same pipeline as any other candidate from here on. */
+    // A candidate added straight to the Active file (no job): visible to the team, resume read.
+    finishToActiveFile: async (candidateId) => {
+      await sbFetch("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", token: session.token, body: { is_draft: false } });
+      try { await aiCall("score_cv", { candidateId }); } catch (e) { /* the resume can be read later */ }
+      logAudit("added to the Active file", "candidate", candidateId, "");
+      reload();
+    },
     submitDraftCandidate: async (candidateId, jobId, screeningAnswers, job) => {
       await sbFetch("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", token: session.token, body: { is_draft: false } });
       try { await aiCall("score_cv", { candidateId }); } catch (e) { /* resume may already be scored from Check fit */ }
@@ -13515,8 +13659,9 @@ export default function App() {
     const j = data.jobs.find((x) => x.id === id);
     if (!j || !j.link) { toast(j && j.status === "Draft" ? "Publish the job first, then you can share its link." : "This job doesn't have a link yet."); return; }
     if (j.status !== "Open") toast(j.role + " is " + String(j.status).toLowerCase() + ", so people can't apply right now.");
-    const copy = () => { try { navigator.clipboard.writeText(j.link).then(() => toast("Job link copied"), () => toast(j.link)); } catch (e) { toast(j.link); } };
-    if (navigator.share) navigator.share({ title: j.role, text: "We're hiring: " + j.role, url: j.link }).catch((e) => { if (e && e.name !== "AbortError") copy(); });
+    const url = myLink(j.link);
+    const copy = () => { try { navigator.clipboard.writeText(url).then(() => toast("Your job link copied"), () => toast(url)); } catch (e) { toast(url); } };
+    if (navigator.share) navigator.share({ title: j.role, text: "We're hiring: " + j.role, url }).catch((e) => { if (e && e.name !== "AbortError") copy(); });
     else copy();
   };
   const pendingQ = countFollowups(data.cands, "draft");

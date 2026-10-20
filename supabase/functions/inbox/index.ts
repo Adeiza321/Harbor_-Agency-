@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { loadBrand, sendBrevo } from "./brand.ts";
 import { referralEmail } from "./referral.ts";
+import { assignApplication } from "./assign.ts";
 
 // Inbox: applications that came in through the apply page (or outreach "interested" clicks).
 // Rec Ops and Admins only.
@@ -23,7 +24,6 @@ const cors = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
-const normEmail = (e: string) => { const [u, d] = String(e || "").trim().toLowerCase().split("@"); return d ? u.replace(/\+.*$/, "") + "@" + d : ""; };
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -116,60 +116,8 @@ Deno.serve(async (req: Request) => {
     if (app.status !== "new") return json({ error: "This application was already handled" }, 409);
     if (app.source === "referral" && !app.interest_at) return json({ error: "Waiting for them to say they're interested. Send a follow-up, or wait for their reply." }, 409);
 
-    // Same person already in Pronext? Reuse them instead of creating a duplicate.
-    let candId: string | null = null, reused = false;
-    const em = normEmail(app.email || "");
-    if (em) {
-      const { data: same } = await admin.from("candidates").select("id,email,resume_path,is_draft").eq("is_draft", false).ilike("email", "%@" + em.split("@")[1]);
-      const hit = (same || []).find((c: any) => normEmail(c.email) === em);
-      if (hit) {
-        candId = hit.id; reused = true;
-        // Back from being unassigned: they get the new recruiter.
-        await admin.from("candidates").update({ recruiter_id: rec.id }).eq("id", hit.id).is("recruiter_id", null);
-      }
-    }
-    if (!candId) {
-      const { data: c, error } = await admin.from("candidates").insert({
-        name: app.name, role_title: app.role_title || "Unspecified", email: app.email || null, phone: app.phone || null,
-        linkedin_url: app.linkedin || null, recruiter_id: rec.id, status: "In review", source: app.source || "Inbox", is_draft: false,
-      }).select("id").single();
-      if (error) return json({ error: "Couldn't create the candidate: " + error.message }, 500);
-      candId = c.id;
-    }
-
-    // CV: copied into the candidate's own folder (kept on the application too).
-    if (app.resume_path) {
-      const { data: cand } = await admin.from("candidates").select("resume_path").eq("id", candId).single();
-      if (!cand?.resume_path || !reused) {
-        const file = String(app.resume_name || "CV").replace(/[^A-Za-z0-9._-]+/g, "-").slice(-80);
-        const dest = `${candId}/${Date.now()}-${file}`;
-        const { error: cpErr } = await admin.storage.from("resumes").copy(app.resume_path, dest);
-        if (cpErr) console.error("cv copy", app.id, cpErr.message);
-        else await admin.from("candidates").update({ resume_path: dest, resume_name: app.resume_name || "CV" }).eq("id", candId);
-      }
-    }
-
-    // On the job (starts the automatic AI screening).
-    let linkId: string | null = null;
-    if (app.job_id) {
-      const { data: existing } = await admin.from("candidate_jobs").select("id").eq("candidate_id", candId).eq("job_id", app.job_id).maybeSingle();
-      if (existing) linkId = existing.id;
-      else {
-        const { data: link, error } = await admin.from("candidate_jobs").insert({
-          candidate_id: candId, job_id: app.job_id, stage: "In review", candidate_response: "accepted", added_by: me.id,
-          screening_answers: Array.isArray(app.answers) ? app.answers : [],
-        }).select("id").single();
-        if (error) return json({ error: error.message }, 409);
-        linkId = link.id;
-      }
-    }
-
-    const refBy = app.referrer && typeof app.referrer === "object" && app.referrer.name ? app.referrer : null;
-    const sourceLabel = app.source === "career_page" ? "the apply page" : app.source === "outreach" ? "an outreach email"
-      : app.source === "referral" ? "a referral" + (refBy ? " from " + refBy.name + (refBy.email ? " (" + refBy.email + ")" : "") : "") : (app.source || "the Inbox");
-    await admin.from("candidate_timeline").insert({ candidate_id: candId, title: (app.source === "referral" ? "Came in via " : "Applied via ") + sourceLabel + (app.role_title ? " for " + app.role_title : "") + ", assigned to " + (rec.full_name || "a recruiter") + " by " + (me.full_name || "Rec Ops"), done: true });
-    await admin.from("applications").update({ status: "assigned", assigned_to: rec.id, candidate_id: candId, handled_at: now, handled_by: me.id }).eq("id", app.id);
-    return json({ ok: true, candidateId: candId, linkId, reused });
+    const r = await assignApplication(admin, app, rec, { id: me.id, name: me.full_name || "Rec Ops" });
+    return json({ ok: true, ...r });
   } catch (e) {
     return json({ error: String((e as Error)?.message || e) }, 500);
   }
