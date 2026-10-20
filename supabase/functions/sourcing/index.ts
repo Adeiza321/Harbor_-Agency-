@@ -4,7 +4,7 @@ import { aiCharge } from "./ai.ts";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
-import { fetchLeads, processLead } from "./leads.ts";
+import { fetchLeads, pitchLead, processLead, sendOffers } from "./leads.ts";
 import { composeProspect, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
@@ -123,17 +123,23 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
 // Leads waiting to be checked: a few per run, to stay within time and rate limits.
 async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   const { data: pending } = await admin.from("leads").select("*").eq("status", "pending").order("created_at").limit(n);
-  let kept = 0; const errors: string[] = [];
+  let kept = 0, pitched = 0; const errors: string[] = [];
+  // Leads where a candidate has said yes and confirmed their details: write the employer pitch now.
+  const { data: ready } = await admin.from("lead_offers").select("lead_id,leads!inner(status)").eq("status", "confirmed").eq("leads.status", "awaiting").limit(n);
+  for (const lid of [...new Set((ready || []).map((r: any) => r.lead_id))]) {
+    try {
+      const { data: l } = await admin.from("leads").select("*").eq("id", lid).single();
+      const r: any = await pitchLead(admin, l, s);
+      if (r.kept) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [lid], null, s, agencyName); }
+    } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
+  }
   for (const l of pending || []) {
     try {
       const r = await processLead(admin, l, s);
-      if (r.kept) {
-        kept++;
-        if (s.approval === "auto" && (r as any).channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [l.id], null, s, agencyName);
-      }
+      if (r.kept) kept++; // candidates are asked first (Outreach > Client leads); the pitch follows their yes
     } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
   }
-  return { processed: (pending || []).length, kept, errors };
+  return { processed: (pending || []).length, kept, pitched, errors };
 }
 
 // Everyone still waiting under Needs approval on open roles, with a known location, checked against
@@ -448,6 +454,23 @@ async function handle(req: Request): Promise<Response> {
       return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
     }
     if (action === "process_leads") return json({ ok: true, ...(await stepLeads(admin, s, agencyName, 3)) });
+    // Ask candidates about matched roles (the role goes without the employer's name).
+    if (action === "offer_send") {
+      const ids = (Array.isArray(body.offerIds) ? body.offerIds : []).map(String).filter(Boolean);
+      if (!ids.length) return json({ error: "Pick at least one candidate" }, 400);
+      return json({ ok: true, ...(await sendOffers(admin, ids, me.id)) });
+    }
+    if (action === "offer_skip") {
+      const ids = (Array.isArray(body.offerIds) ? body.offerIds : []).map(String).filter(Boolean);
+      await admin.from("lead_offers").update({ status: "skipped" }).in("id", ids).eq("status", "suggested");
+      return json({ ok: true });
+    }
+    // A lead's pitch right away (after a candidate confirmed), instead of waiting for the next run.
+    if (action === "pitch_lead" && body.leadId) {
+      const { data: l } = await admin.from("leads").select("*").eq("id", body.leadId).single();
+      if (!l) return json({ error: "Lead not found" }, 404);
+      return json({ ok: true, ...(await pitchLead(admin, l, s)) });
+    }
 
     // Won lead -> a draft job in Pronext (then it goes live like any other job).
     if (action === "convert_lead") {

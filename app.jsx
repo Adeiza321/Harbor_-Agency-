@@ -7809,8 +7809,8 @@ function foundOn(p) {
 }
 const CHECK_STYLE = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43" }, unconfirmed: { t: "?", bg: C.soft, fg: "#6B6455" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E" } };
 const PROSPECT_LABEL = { found: "Needs approval", approved: "Approved", queued: "Queued to send", contacted: "Emailed", interested: "Interested", not_interested: "Not interested", unsubscribed: "Unsubscribed", bounced: "Bounced", rejected: "Skipped", converted: "Converted", archived: "In talent pool" };
-const LEAD_TONE = { new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
-const LEAD_LABEL = { new: "New", approved: "Approved", queued: "Queued to send", contacted: "Contacted", replied: "Replied", meeting: "Meeting booked", won: "Won", lost: "Lost", ignored: "Not a fit", unsubscribed: "Unsubscribed" };
+const LEAD_TONE = { awaiting: "warn", new: "info", approved: "warn", queued: "warn", contacted: "neutral", replied: "em", meeting: "em", won: "em", lost: "neutral", ignored: "neutral", unsubscribed: "danger" };
+const LEAD_LABEL = { awaiting: "Asking candidates", new: "New", approved: "Approved", queued: "Queued to send", contacted: "Contacted", replied: "Replied", meeting: "Meeting booked", won: "Won", lost: "Lost", ignored: "Not a fit", unsubscribed: "Unsubscribed" };
 // Where to look for new clients: "EU" for all of Europe, or a country's ISO code.
 const EUROPE_LABEL = "Europe (EU, UK, EEA, Switzerland)";
 const leadPlaceLabel = (k) => k === "EU" ? EUROPE_LABEL : (COUNTRY_DATA.find((x) => x.iso === k) || {}).name || k;
@@ -8331,12 +8331,64 @@ function JobSourcingCard({ job, S, toast }) {
   );
 }
 
+// Candidate first: each candidate who fits a lead is asked (the role without the employer's name)
+// before the employer is pitched. Shows where each one is, and their blind resume once confirmed.
+const OFFER_STATE = { suggested: ["Not asked yet", "neutral"], sent: ["Asked, waiting for a reply", "warn"], interested: ["Interested, checking their details", "info"],
+  confirmed: ["Confirmed", "em"], declined: ["Said no", "neutral"], skipped: ["Skipped", "neutral"] };
+function LeadOffers({ l, offers, S, toast, onChanged }) {
+  const [busy, setBusy] = useState("");
+  const [blindFor, setBlindFor] = useState(null);
+  const run = (key, action, body, msg) => { setBusy(key); S.sourcing(action, body).then((r) => { toast(typeof msg === "function" ? msg(r) : msg); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const waiting = offers.filter((o) => o.status === "suggested");
+  const confirmed = offers.filter((o) => o.status === "confirmed");
+  const sentMsg = (r) => (r.sent ? "Asked " + r.sent + " candidate" + (r.sent === 1 ? "" : "s") + ". The employer isn't named." : "Nothing sent") + (r.errors && r.errors.length ? " · " + r.errors[0] : "") + (r.skipped ? " · " + r.skipped + " skipped (no email or unsubscribed)" : "");
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {l.status === "awaiting" && (
+        <div className="rounded-lg px-3 py-2 text-xs flex flex-wrap items-center gap-2" style={{ background: C.warnBg, color: C.warnText }}>
+          <span className="flex-1 min-w-[200px]">{confirmed.length ? "A candidate confirmed. The pitch to " + l.company + " is written on the next run, or now:" : "Candidates are asked first, without the employer's name. " + l.company + " is pitched once someone says yes and confirms their details."}</span>
+          {confirmed.length > 0 && <Btn kind="primary" disabled={!!busy} onClick={() => run("pitch", "pitch_lead", { leadId: l.id }, "Pitch written. Review it under Messages and notes.")} className="!py-1.5 !px-3 text-xs">{busy === "pitch" ? "Writing…" : "Write the pitch now"}</Btn>}
+          {waiting.length > 1 && <Btn disabled={!!busy} onClick={() => run("all", "offer_send", { offerIds: waiting.map((o) => o.id) }, sentMsg)} className="!py-1.5 !px-3 text-xs">{busy === "all" ? "Sending…" : "Ask all " + waiting.length}</Btn>}
+        </div>
+      )}
+      {offers.slice().sort((a, b) => (b.fit || 0) - (a.fit || 0)).map((o) => {
+        const c = S.cands.find((x) => x.id === o.candidate_id);
+        const [label, tone] = OFFER_STATE[o.status] || [o.status, "neutral"];
+        return (
+          <div key={o.id} className="rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas }}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <button className="font-medium truncate text-left" onClick={() => c && S.openCandidate(c.id)} style={{ color: c ? C.em : C.ink }}>{c ? c.name : "Candidate"}{c && c.status === "Active file" ? <span style={{ color: C.ink3 }}> · Active file</span> : null}</button>
+              <div className="flex items-center gap-1.5">
+                {o.fit != null && <span style={{ color: C.ink2 }}>{o.fit}% · {o.verdict}</span>}
+                <Pill tone={tone}>{label}</Pill>
+              </div>
+            </div>
+            {o.reason && <div className="mt-1" style={{ color: C.ink2 }}>{o.reason}</div>}
+            <div className="flex flex-wrap gap-2 mt-1.5 justify-end">
+              {o.status === "suggested" && <>
+                <button disabled={!!busy} onClick={() => run(o.id, "offer_skip", { offerIds: [o.id] }, "Skipped")} style={{ color: C.ink3 }}>Skip</button>
+                <Btn kind="primary" disabled={!!busy} onClick={() => run(o.id, "offer_send", { offerIds: [o.id] }, sentMsg)} className="!py-1.5 !px-3 text-xs">{busy === o.id ? "Sending…" : "Ask " + (c ? c.name.split(" ")[0] : "candidate")}</Btn>
+              </>}
+              {o.status === "confirmed" && c && <>
+                <span className="self-center" style={{ color: o.blind_pages ? C.em : C.warnFg }}>{o.blind_pages ? "Blind resume ready" : "No blind resume yet"}</span>
+                <Btn onClick={() => setBlindFor(o)} className="!py-1.5 !px-3 text-xs">{o.blind_pages ? "Redo blind resume" : "Make blind resume"}</Btn>
+                {o.blind_pages > 0 && <IconBtn icon={Copy} label={"Copy the blind resume link for " + l.company} size="sm" onClick={() => copyText(window.location.origin + "/?t=" + o.client_token, toast, "Blind resume link copied")} />}
+              </>}
+            </div>
+          </div>
+        );
+      })}
+      {blindFor && <BlindResumeModal open onClose={() => { setBlindFor(null); onChanged(); }} link={{ id: "offer-" + blindFor.id, offerId: blindFor.id }} job={{ client: l.company, role: l.job_title }} candidate={S.cands.find((x) => x.id === blindFor.candidate_id)} S={S} toast={toast} />}
+    </div>
+  );
+}
 function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ pitch_subject: l.pitch_subject || "", pitch_body: l.pitch_body || "", linkedin_message: l.linkedin_message || "", notes: l.notes || "" });
   const dirty = ["pitch_subject", "pitch_body", "linkedin_message", "notes"].some((k) => f[k] !== (l[k] || ""));
   const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => S.error(e.message));
   const matches = Array.isArray(l.matches) ? l.matches : [];
+  const offers = Array.isArray(l.lead_offers) ? l.lead_offers : [];
   const emailable = l.channel === "email" && ["new", "approved"].includes(l.status);
   const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
   const inpS = { borderColor: C.line, background: C.soft };
@@ -8362,7 +8414,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             {l.contact_name ? <>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name}</span>{l.contact_role ? ", " + l.contact_role : ""}{l.contact_email ? " · " + l.contact_email : ""}</> : "No hiring contact listed on the posting."}
           </div>
           <ApolloNote data={l.data} />
-          {matches.length > 0 && (
+          {offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
               {matches.map((m, i) => { const c = S.cands.find((x) => x.id === m.candidate_id); return (
                 <div key={i} className="rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas }}>
@@ -8521,7 +8573,7 @@ function CampaignsPage({ toast, S }) {
   const [leads, setLeads] = useState(null);
   const [pendingLeads, setPendingLeads] = useState(0);
   const [pf, setPf] = useState("found");
-  const [lf, setLf] = useState("new");
+  const [lf, setLf] = useState("awaiting");
   const [sel, setSel] = useState({});
   const [busy, setBusy] = useState("");
   // Search and filters (kept while switching between the status tabs), and pages of up to 50.
@@ -8536,7 +8588,7 @@ function CampaignsPage({ toast, S }) {
   const load = () => {
     S.sourcing("status", {}).then(setStatus).catch(() => setStatus({ error: true }));
     S.sb("/rest/v1/prospects?select=*&order=created_at.desc&limit=2000").then(setProspects).catch(() => setProspects([]));
-    S.sb("/rest/v1/leads?select=*&status=neq.pending&order=created_at.desc&limit=2000").then(setLeads).catch(() => setLeads([]));
+    S.sb("/rest/v1/leads?select=*,lead_offers(*)&status=neq.pending&order=created_at.desc&limit=2000").then(setLeads).catch(() => setLeads([]));
     S.sb("/rest/v1/leads?select=id&status=eq.pending").then((r) => setPendingLeads((r || []).length)).catch(() => {});
   };
   React.useEffect(() => { if (canRun) load(); }, []); // eslint-disable-line
@@ -8550,7 +8602,7 @@ function CampaignsPage({ toast, S }) {
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced"], skipped: ["rejected"], pool: ["archived"] };
-  const lGroups = { new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
+  const lGroups = { awaiting: ["awaiting"], new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
   const low = (v) => String(v || "").toLowerCase();
   // Role = the job title, across clients (e.g. every "Senior Accountant" role); Job = one job.
   const roleOf = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? String(j.role || "").trim() : ""; };
@@ -8654,14 +8706,14 @@ function CampaignsPage({ toast, S }) {
       {tab === "leads" && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <Tabs tabs={[["new", "New"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(lAll, lGroups[k]) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
+            <Tabs tabs={[["awaiting", "Asking candidates"], ["new", "Ready to pitch"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(lAll, lGroups[k]) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
             <div className="flex gap-2 shrink-0 flex-wrap">
               {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
               {pendingLeads > 0 && <Btn disabled={!!busy} onClick={() => run("process", () => S.sourcing("process_leads", {}).then((r) => toast("Checked " + (r.processed || 0) + ", kept " + (r.kept || 0))))}>{busy === "process" ? "Checking…" : "Check " + pendingLeads + " waiting"}</Btn>}
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in the places you chose for new clients for titles your candidates hold, keeps the ones where a candidate who opted in is a strong fit, and drafts an anonymous pitch to the hiring contact: by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send.</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in the places you chose for titles your candidates hold (everyone in the Active file, and anyone who agreed to be pitched) and keeps the ones where a candidate is a strong fit. You ask each candidate first: they get the role without the employer's name, say yes, and confirm their details. Then ProNext drafts an anonymous pitch to the hiring contact (by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send), and you share their blind resume.</div>
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
@@ -9462,9 +9514,12 @@ function ClientViewPage({ token }) {
   const [resumeBusy, setResumeBusy] = useState(false);
   const [blind, setBlind] = useState(null); // { pages, client } once loaded
   React.useEffect(() => {
-    sbFetch("/rest/v1/rpc/client_view", { method: "POST", body: { p_token: token } }).then((j) => { if (!j) throw new Error("not found"); setInfo(j); }).catch(() => setErr("not found"));
-    fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "blind" }) })
-      .then((r) => r.json()).then((j) => setBlind(j && Array.isArray(j.pages) ? j : { pages: [] })).catch(() => setBlind({ pages: [] }));
+    const blindP = fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "blind" }) })
+      .then((r) => r.json()).then((j) => (j && Array.isArray(j.pages) ? j : { pages: [] })).catch(() => ({ pages: [] }));
+    blindP.then(setBlind);
+    // A link sent with a pitch to an employer has no profile record of its own: the blind resume is the profile.
+    sbFetch("/rest/v1/rpc/client_view", { method: "POST", body: { p_token: token } }).then((j) => { if (!j) throw new Error("not found"); setInfo(j); })
+      .catch(() => blindP.then((b) => (b.role ? setInfo({ role: b.role, client: b.client, revealed: false }) : setErr("not found"))));
   }, [token]); // eslint-disable-line
   const hasBlind = !!(blind && blind.pages && blind.pages.length);
   const openResume = () => {
@@ -11556,6 +11611,72 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
   );
 }
 
+// A role we matched them to from outside, asked about before anything goes to the employer
+// (?offer=<token> from the email). The employer isn't named. Yes -> they check and edit what we
+// have on file, then confirm; only then can we pitch them (with a blind resume).
+function PortalOffer({ token, offer }) {
+  const [d, setD] = useState(null);
+  const [state, setState] = useState("loading"); // loading | ask | details | done | declined | gone
+  const [f, setF] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const call = (fn, body) => sbFetch("/rest/v1/rpc/" + fn, { method: "POST", body: { p_token: token, p_offer: offer, ...body } });
+  React.useEffect(() => {
+    const r = new URLSearchParams(window.location.search).get("r");
+    call("candidate_offer", {}).then(async (j) => {
+      if (!j) { setState("gone"); return; }
+      setD(j); setF({ ...(j.profile || {}) });
+      if (j.status === "confirmed") return setState("done");
+      if (r === "no" && j.status === "sent") { await call("candidate_offer_respond", { p_interested: false }).catch(() => {}); return setState("declined"); }
+      if (j.status === "declined") return setState("declined");
+      if (j.status === "interested" || r === "yes") { if (j.status === "sent") await call("candidate_offer_respond", { p_interested: true }).catch(() => {}); return setState("details"); }
+      setState("ask");
+    }).catch(() => setState("gone"));
+  }, [token, offer]); // eslint-disable-line
+  const say = (yes) => { setBusy(true); setErr(""); call("candidate_offer_respond", { p_interested: yes }).then(() => setState(yes ? "details" : "declined")).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  const confirm = () => { setBusy(true); setErr(""); call("candidate_offer_confirm", { p_profile: f }).then(() => setState("done")).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  if (state === "loading" || state === "gone") return state === "gone" ? <Card><div className="text-sm" style={{ color: C.ink2 }}>This role is no longer available.</div></Card> : null;
+  const role = d.role || {};
+  const where = [role.remote ? "Remote" : "", role.location, role.country].filter(Boolean).join(" · ");
+  const field = (k, label, ph) => (
+    <label className="flex flex-col gap-1 text-sm" key={k}><span className="font-medium" style={{ color: C.ink2 }}>{label}</span>
+      <input value={f[k] || ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={ph || ""} className="rounded-xl border px-3 py-2.5 outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} /></label>
+  );
+  return (
+    <Card>
+      <div className="text-xs font-semibold tracking-widest mb-1" style={{ color: C.em }}>A ROLE THAT COULD SUIT YOU</div>
+      <div className="text-xl" style={{ ...SERIF }}>{role.title}</div>
+      {where && <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{where}</div>}
+      {role.salary && <div className="text-sm" style={{ color: C.ink2 }}>{role.salary}</div>}
+      {role.summary && state !== "done" && <div className="text-sm leading-relaxed mt-3 whitespace-pre-line" style={{ color: C.ink }}>{String(role.summary).slice(0, 900)}{String(role.summary).length > 900 ? "…" : ""}</div>}
+      {err && <div className="text-sm rounded-lg px-3 py-2 mt-3" style={{ background: C.dangerBg, color: C.dangerText }}>{err}</div>}
+      {state === "ask" && (
+        <>
+          <div className="text-sm mt-3" style={{ color: C.ink2 }}>The employer's name stays private for now, and nothing about you is shared unless you say yes.</div>
+          <div className="flex gap-2 mt-3 flex-wrap"><Btn kind="primary" disabled={busy} onClick={() => say(true)}>Yes, I'm interested</Btn><Btn disabled={busy} onClick={() => say(false)}>Not for me</Btn></div>
+        </>
+      )}
+      {state === "details" && (
+        <div className="mt-4 flex flex-col gap-3">
+          <div className="text-sm font-medium">Great. Here's what we have on file for you. Change anything that's out of date, then confirm.</div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {field("currentTitle", "Current job title")}
+            {field("location", "Where you live", "City, country")}
+            {field("phone", "Phone")}
+            {field("experience", "Years of experience", "e.g. 6 years")}
+            {field("notice", "Notice period", "e.g. 2 weeks")}
+            {field("pay", "Salary you're looking for")}
+            {field("linkedin", "LinkedIn profile", "https://linkedin.com/in/…")}
+          </div>
+          <div className="text-xs" style={{ color: C.ink3 }}>Email on file: {d.profile && d.profile.email}. To change it, reply to our email.</div>
+          <div><Btn kind="primary" disabled={busy} onClick={confirm}>{busy ? "Saving…" : "Confirm my details"}</Btn></div>
+        </div>
+      )}
+      {state === "done" && <div className="text-sm rounded-lg px-3 py-2.5 mt-3" style={{ background: C.emTint, color: C.emText }}>Thanks, you're all set. Your recruiter will put you forward anonymously and let you know as soon as the employer wants to talk.</div>}
+      {state === "declined" && <div className="text-sm rounded-lg px-3 py-2.5 mt-3" style={{ background: C.neutralBg, color: C.ink2 }}>No problem, we won't put you forward for this one. We'll keep an eye out for roles that suit you better.</div>}
+    </Card>
+  );
+}
 function CandidatePortal({ data, token, onChanged }) {
   const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], applications: [], ...(data || {}) };
   const [answers, setAnswers] = useState({});
@@ -11605,6 +11726,7 @@ function CandidatePortal({ data, token, onChanged }) {
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1"><BrandLogo height={30} /></div>
+        {token && new URLSearchParams(window.location.search).get("offer") && <PortalOffer token={token} offer={new URLSearchParams(window.location.search).get("offer")} />}
         {token && <EmailChoiceNote token={token} onChanged={onChanged} onPitchYes={() => setPrefsSignal((n) => n + 1)} />}
 
         <Card>
@@ -13231,7 +13353,7 @@ export default function App() {
       }
       const extra = Array.from({ length: 12 - blobs.length }, (_, k) => link.id + "/" + (blobs.length + k + 1) + ".webp");
       if (extra.length) await fetch(SB_URL + "/storage/v1/object/blind-resumes", { method: "DELETE", headers: { ...head, "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: extra }) }).catch(() => {});
-      await sbFetch("/rest/v1/candidate_jobs?id=eq." + link.id, { method: "PATCH", token: session.token, body: { blind_pages: blobs.length, blind_at: new Date().toISOString(), blind_by: session.uid } });
+      await sbFetch(link.offerId ? "/rest/v1/lead_offers?id=eq." + link.offerId : "/rest/v1/candidate_jobs?id=eq." + link.id, { method: "PATCH", token: session.token, body: { blind_pages: blobs.length, blind_at: new Date().toISOString(), blind_by: session.uid } });
       await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: candidate.id, title: "Blind resume made for " + (job ? job.client : "the client") + " (" + blobs.length + " page" + (blobs.length === 1 ? "" : "s") + ")", done: true } }).catch(() => {});
       reload();
     },

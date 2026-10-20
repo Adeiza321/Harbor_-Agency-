@@ -27,7 +27,18 @@ Deno.serve(async (req: Request) => {
     // out, stored as page images (no text). Short-lived links, shown in a view-only page.
     if (action === "blind") {
       const { data: l } = await admin.from("candidate_jobs").select("id,blind_pages,blind_at,jobs(client)").eq("client_token", token).maybeSingle();
-      if (!l) return json({ error: "Link not found" }, 404);
+      if (!l) {
+        // A blind resume sent with a pitch to an employer (a client lead): only for candidates who confirmed.
+        const { data: o } = await admin.from("lead_offers").select("id,blind_pages,blind_at,status,client_viewed_at,leads(company,job_title)").eq("client_token", token).maybeSingle();
+        if (!o || o.status !== "confirmed") return json({ error: "Link not found" }, 404);
+        if (!o.client_viewed_at) await admin.from("lead_offers").update({ client_viewed_at: new Date().toISOString() }).eq("id", o.id);
+        const n = Math.max(0, Math.min(12, Number(o.blind_pages) || 0));
+        const lead: any = (o as any).leads || {};
+        if (!n) return json({ ok: true, pages: [], client: lead.company || "", role: lead.job_title || "" });
+        const { data: signed, error } = await admin.storage.from("blind-resumes").createSignedUrls(Array.from({ length: n }, (_, i) => `offer-${o.id}/${i + 1}.webp`), 300);
+        if (error) return json({ error: error.message }, 500);
+        return json({ ok: true, client: lead.company || "", role: lead.job_title || "", pages: (signed || []).map((x: any) => x.signedUrl).filter(Boolean) });
+      }
       const n = Math.max(0, Math.min(12, Number(l.blind_pages) || 0));
       if (!n) return json({ ok: true, pages: [] });
       const v = l.blind_at ? new Date(l.blind_at).getTime() : 0;
