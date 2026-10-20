@@ -1484,17 +1484,60 @@ function Toast({ text }) {
 
 // Errors interrupt with a modal the person has to dismiss, rather than a toast that can be
 // missed or mistaken for a success message.
-function ErrorModal({ message, onClose }) {
+// Error pop-up. For recruiters and candidates it offers "Report to support", which emails the
+// ProNext team what went wrong and where (report-issue function).
+function ErrorModal({ message, onClose, report }) {
+  const [mode, setMode] = useState("show"); // show | form | sending | sent | failed
+  const [note, setNote] = useState("");
+  const [why, setWhy] = useState("");
+  useEffect(() => { setMode("show"); setNote(""); setWhy(""); }, [message]);
   if (!message) return null;
+  const send = async () => {
+    setMode("sending");
+    try {
+      const r = await fetch(SB_URL + "/functions/v1/report-issue", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + (report.sessionToken || SB_KEY), "Content-Type": "application/json" },
+        body: JSON.stringify({ message, note, page: window.location.href, audience: report.audience, token: report.token || null }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) { setWhy(errOf(j.error, "We couldn't send your report right now. Please try again later.")); setMode("failed"); return; }
+      setMode("sent");
+    } catch (e) { setWhy("We couldn't send your report. Check your internet connection and try again."); setMode("failed"); }
+  };
   return (
-    <Modal open={!!message} onClose={onClose} title="Something went wrong">
-      <div className="flex items-start gap-3 mb-5">
-        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}><X size={16} strokeWidth={2.5} /></div>
-        <div className="text-sm leading-relaxed pt-1" style={{ color: C.ink }}>{message}</div>
+    <Modal open={!!message} onClose={onClose} title={mode === "sent" ? "Thanks for telling us" : "Something went wrong"}>
+      {mode !== "sent" && (
+        <div className="flex items-start gap-3 mb-5">
+          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: C.dangerBg, color: C.dangerFg }}><X size={16} strokeWidth={2.5} /></div>
+          <div className="text-sm leading-relaxed pt-1" style={{ color: C.ink }}>{message}</div>
+        </div>
+      )}
+      {report && (mode === "form" || mode === "sending" || mode === "failed") && (
+        <div className="mb-4">
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>What were you trying to do? (optional)</label>
+          <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: I was uploading my CV" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+          <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>We'll get the error, the page you were on and {report.audience === "candidate" ? "your name" : "your account"}, so we can fix it.</div>
+          {mode === "failed" && <div className="text-xs mt-2" style={{ color: C.dangerFg }}>{why}</div>}
+        </div>
+      )}
+      {mode === "sent" && <div className="text-sm mb-5" style={{ color: C.ink }}>Your report was sent to the ProNext team. We'll look into it and get back to you if we need more detail.</div>}
+      <div className="flex flex-col sm:flex-row gap-2">
+        {report && mode === "show" && <Btn full onClick={() => setMode("form")}>Report to support</Btn>}
+        {report && (mode === "form" || mode === "sending" || mode === "failed") && <Btn full onClick={send} disabled={mode === "sending"}>{mode === "sending" ? "Sending…" : "Send report"}</Btn>}
+        <Btn kind="primary" full onClick={onClose}>{mode === "sent" ? "Close" : "Dismiss"}</Btn>
       </div>
-      <Btn kind="primary" full onClick={onClose}>Dismiss</Btn>
     </Modal>
   );
+}
+// Any page can raise the error pop-up: popError(error). The dashboard and the public pages each
+// listen for it (App, and ErrorHost on the public pages) and show ErrorModal.
+const ERR_EVENT = "pn:error";
+function popError(e) {
+  const message = plainError(e);
+  try { window.dispatchEvent(new CustomEvent(ERR_EVENT, { detail: { message } })); } catch (x) { try { window.alert(message); } catch (y) { /* nothing else to do */ } }
+}
+function ErrorHost({ report }) {
+  const [msg, setMsg] = useState("");
+  useEffect(() => { const f = (ev) => setMsg((ev && ev.detail && ev.detail.message) || "Something went wrong. Try again in a minute."); window.addEventListener(ERR_EVENT, f); return () => window.removeEventListener(ERR_EVENT, f); }, []);
+  return <ErrorModal message={msg} onClose={() => setMsg("")} report={report} />;
 }
 
 function Modal({ open, onClose, title, children, wide }) {
@@ -6582,7 +6625,7 @@ function CheckinAnswerForm({ onSubmit, busy, compact }) {
     if (!progress) { setErr("Choose how sourcing is going first."); return; }
     if (progress === "stuck" && !issues.trim()) { setErr("Tell us what's in your way, so we can help."); return; }
     setErr("");
-    try { await onSubmit({ progress, candidates: n === "" ? null : Number(n), issues, reply }); } catch (e) { setErr(e.message || "Your update couldn't be sent. Try again in a minute."); }
+    try { await onSubmit({ progress, candidates: n === "" ? null : Number(n), issues, reply }); } catch (e) { popError(e.message || "Your update couldn't be sent. Try again in a minute."); }
   };
   const field = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
   return (
@@ -6621,7 +6664,7 @@ function JobCheckins({ job, S, toast }) {
   const [pick, setPick] = useState([]);
   const [subject, setSubject] = useState(CHECKIN_TEMPLATE.subject);
   const [message, setMessage] = useState(CHECKIN_TEMPLATE.message);
-  const load = () => S.jobCheckins(job.id).then((r) => { setRows(r || []); setErr(""); }, () => setErr("We couldn't load the update requests. Refresh the page to try again."));
+  const load = () => S.jobCheckins(job.id).then((r) => { setRows(r || []); setErr(""); }, () => { setRows([]); setErr("x"); S.error("We couldn't load the update requests for this role. Refresh the page to try again."); });
   useEffect(() => { load(); }, [job.id]); // eslint-disable-line
   const name = (id) => ((S.users || []).find((u) => u.id === id) || {}).name || "A team member";
   const startAsk = () => { setPick(engaged.map((u) => u.id)); setSubject(CHECKIN_TEMPLATE.subject); setMessage(CHECKIN_TEMPLATE.message.replace("{client_at}", job.client ? " at {client}" : "")); setOpen(true); };
@@ -6644,7 +6687,6 @@ function JobCheckins({ job, S, toast }) {
         <SectionTitle title={staff ? "Recruiter updates" : "Update requests"} sub={staff ? "Ask the recruiters engaged on this role how sourcing is going and whether anything is in their way." : "Your Rec Ops team asked how this role is going."} size="text-xl" />
         {staff && <Btn icon={Mail} onClick={startAsk} disabled={!engaged.length} className="shrink-0" title={engaged.length ? "" : "Nobody is engaged on this role right now"}>Ask for an update</Btn>}
       </div>
-      {err && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{err}</div>}
       {!staff && mine.map((r) => (
         <div key={r.id} className="rounded-xl border p-3.5 mt-3" style={{ borderColor: C.em, background: C.emTint }}>
           <div className="text-sm font-medium mb-1">{name(r.sent_by)} asked {ago(r.sent_at)}</div>
@@ -8606,7 +8648,7 @@ function RecruiterSourcingCard({ job, S, toast, engaged }) {
   const [err, setErr] = useState("");
   const [open, setOpen] = useState({});
   const load = () => Promise.all([
-    S.sb("/rest/v1/rpc/my_sourced_prospects", { method: "POST", body: { p_job: job.id } }).then((r) => setPeople(r || []), () => setErr("We couldn't load the people you found. Refresh the page to try again.")),
+    S.sb("/rest/v1/rpc/my_sourced_prospects", { method: "POST", body: { p_job: job.id } }).then((r) => { setPeople(r || []); setErr(""); }, () => { setPeople([]); setErr("x"); S.error("We couldn't load the people you found for this role. Refresh the page to try again."); }),
     S.sourcing("xray_status", { jobId: job.id }).then(setSt, () => {}),
   ]);
   useEffect(() => { load(); }, [job.id]); // eslint-disable-line
@@ -8630,7 +8672,6 @@ function RecruiterSourcingCard({ job, S, toast, engaged }) {
       {running && <div className="mt-3"><XrayProgress p={st && st.progress} /></div>}
       {waiting && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Another search is running on this role. Yours starts by itself as soon as it finishes <InlineDots /></div>}
       {req && req.finished_at && !running && !waiting && <div className="text-xs mt-3" style={{ color: req.error ? C.warnFg : C.ink2 }}>{req.error ? "Your last search didn't finish: " + req.error : "Your last search " + fdate(req.finished_at) + " found " + plural(req.found || 0, "new person", "new people") + "."}</div>}
-      {err && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{err}</div>}
       {people === null && !err && <div className="mt-3"><SkeletonRows n={2} /></div>}
       {people && list.length === 0 && engaged && !running && !waiting && <div className="text-sm mt-3" style={{ color: C.ink3 }}>You haven't found anyone for this role yet.</div>}
       <div className="flex flex-col gap-2 mt-3">
@@ -9884,8 +9925,8 @@ function OutreachLinkPage({ token, kind, action }) {
     const r = await fetch(SB_URL + "/functions/v1/outreach-public", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, kind, action: a }) });
     const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Something went wrong. Please try again.")); return j;
   };
-  React.useEffect(() => { call("info").then(setInfo).catch((e) => setErr(e.message)); }, []); // eslint-disable-line
-  const go = (a) => { setBusy(true); setErr(""); call(a).then((j) => setDone(j.done || a)).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  React.useEffect(() => { call("info").then(setInfo).catch((e) => popError(e)); }, []); // eslint-disable-line
+  const go = (a) => { setBusy(true); setErr(""); call(a).then((j) => setDone(j.done || a)).catch((e) => popError(e)).finally(() => setBusy(false)); };
   const role = info && info.role;
   const what = kind === "l" ? "about candidates for your " + (role || "open role") + (info && info.company ? " at " + info.company : "") : "about the " + (role || "role") + (info && info.location ? " in " + info.location : "");
   let bodyEl;
@@ -12095,13 +12136,13 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
       try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {}
       setPanel(false);
       await onDone("You've applied for " + r.role + ". " + (recName || "Your recruiter") + " will be in touch about next steps.");
-    } catch (e) { setErr(e.message); }
+    } catch (e) { popError(e); }
     setBusy("");
   };
   const decline = async () => {
     setBusy("decline"); setErr("");
     try { await call({ action: "portal_respond", accept: false }); try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {} await onDone("Got it. We won't put you forward for " + r.role + "."); }
-    catch (e) { setErr(e.message); }
+    catch (e) { popError(e); }
     setBusy("");
   };
   const facts = roleFacts(detail, r);
@@ -12175,8 +12216,8 @@ function PortalOffer({ token, offer }) {
       setState("ask");
     }).catch(() => setState("gone"));
   }, [token, offer]); // eslint-disable-line
-  const say = (yes) => { setBusy(true); setErr(""); call("candidate_offer_respond", { p_interested: yes }).then(() => setState(yes ? "details" : "declined")).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
-  const confirm = () => { setBusy(true); setErr(""); call("candidate_offer_confirm", { p_profile: f }).then(() => setState("done")).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  const say = (yes) => { setBusy(true); setErr(""); call("candidate_offer_respond", { p_interested: yes }).then(() => setState(yes ? "details" : "declined")).catch((e) => popError(e)).finally(() => setBusy(false)); };
+  const confirm = () => { setBusy(true); setErr(""); call("candidate_offer_confirm", { p_profile: f }).then(() => setState("done")).catch((e) => popError(e)).finally(() => setBusy(false)); };
   if (state === "loading" || state === "gone") return state === "gone" ? <Card><div className="text-sm" style={{ color: C.ink2 }}>This role is no longer available.</div></Card> : null;
   const role = d.role || {};
   const where = [role.remote ? "Remote" : "", role.location, role.country].filter(Boolean).join(" · ");
@@ -12235,7 +12276,7 @@ function CandidatePortal({ data, token, onChanged }) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
       setNote(done); if (onChanged) await onChanged();
-    } catch (e) { setErr(e.message); }
+    } catch (e) { popError(e); }
     setBusy("");
   };
   const setA = (linkId, i, v) => setAnswers((m) => { const arr = (m[linkId] || []).slice(); arr[i] = v; return { ...m, [linkId]: arr }; });
@@ -12477,7 +12518,7 @@ function ApplyPage({ slug }) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
       setDone(referring ? "refer" : "apply"); window.scrollTo(0, 0);
-    } catch (x) { setErr(x.message); }
+    } catch (x) { popError(x); }
     setBusy(false);
   };
   const referAnother = () => { setForm({ name: "", email: "", phone: "", linkedin: "", website: "" }); setCv(null); setRef((r) => ({ ...r, note: "" })); setDone(null); formOpenedAt.current = Date.now(); setMode("refer"); };
@@ -12666,7 +12707,7 @@ function JoinPage() {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
       setDone(true); window.scrollTo(0, 0);
-    } catch (x) { setErr(x.message); }
+    } catch (x) { popError(x); }
     setBusy(false);
   };
   const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
@@ -13348,6 +13389,11 @@ export function PublicRoot() {
   }, []); // eslint-disable-line
   const loadPortal = () => sbFetch("/rest/v1/rpc/candidate_portal", { method: "POST", body: { p_token: portalToken } }).then((d) => setPortalData(d || { error: true })).catch(() => setPortalData({ error: true }));
   React.useEffect(() => { if (portalToken && tokenReady) loadPortal(); }, [portalToken, tokenReady]); // eslint-disable-line
+  // Errors on every public page pop up, with "Report to support" for candidates.
+  const host = <ErrorHost report={{ audience: "candidate", token: portalToken && portalToken.length === 32 ? portalToken : null }} />;
+  const page = publicPage();
+  return <>{page}{host}</>;
+  function publicPage() {
   if (!r) return null;
   if (r.kind === "apply") return <ApplyPage slug={r.slug} />;
   if (r.kind === "board") return <JobsBoard />;
@@ -13358,6 +13404,7 @@ export function PublicRoot() {
   if (!portalData) return <PortalSkeleton />;
   if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
   return <CandidatePortal data={portalData} token={portalToken} onChanged={loadPortal} />;
+  }
 }
 
 // Grey placeholder blocks shaped like the page that's loading, instead of a blank "Loading..." screen.
@@ -13437,6 +13484,7 @@ export default function App() {
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
   // Errors get a modal the person has to dismiss, instead of a toast that can be missed.
   const showError = (msg) => setErrorModalMsg(plainError(msg));
+  useEffect(() => { const f = (ev) => setErrorModalMsg((ev && ev.detail && ev.detail.message) || "Something went wrong. Try again in a minute."); window.addEventListener(ERR_EVENT, f); return () => window.removeEventListener(ERR_EVENT, f); }, []);
   const signOut = (reason) => {
     if (session) endServerSession(session);
     store.set(null); idleStore.clear(); setIdleLeft(null);
@@ -13600,7 +13648,7 @@ export default function App() {
 
   if (isPublic) return <PublicRoot />;
   if (setupToken) return <AccountSetup token={setupToken} onDone={() => { window.history.replaceState({}, "", "/"); setSetupToken(""); }} />;
-  if (checkinToken) return <CheckinReply token={checkinToken} onDone={() => { window.history.replaceState({}, "", "/"); setCheckinToken(""); }} />;
+  if (checkinToken) return <><CheckinReply token={checkinToken} onDone={() => { window.history.replaceState({}, "", "/"); setCheckinToken(""); }} /><ErrorHost report={{ audience: "recruiter", sessionToken: session && session.token }} /></>;
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
   if (status === "loading") return <DashboardSkeleton onRetry={() => window.location.reload()} />;
@@ -14201,7 +14249,7 @@ export default function App() {
       <style>{FILTER_CSS}</style>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} S={S} role={role} setPage={setPage} />
       <Toast text={toastText} />
-      <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} />
+      <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} report={me && me.roleKey === "recruiter" ? { audience: "recruiter", sessionToken: session && session.token } : null} />
       <Modal open={idleLeft != null} onClose={() => { idleStore.touch(Date.now()); setIdleLeft(null); }} title="Are you still there?">
         <div className="text-sm mb-5" style={{ color: C.ink2 }}>For security, ProNext signs you out after {idleStore.label()} without activity. You'll be signed out in <span className="font-semibold" style={{ color: C.ink }}>{idleLeft != null ? Math.floor(idleLeft / 60) + ":" + String(idleLeft % 60).padStart(2, "0") : ""}</span>.</div>
         <div className="flex gap-2 justify-end"><Btn onClick={() => signOut()}>Sign out now</Btn><Btn kind="primary" onClick={() => { idleStore.touch(Date.now()); setIdleLeft(null); }}>Stay signed in</Btn></div>
