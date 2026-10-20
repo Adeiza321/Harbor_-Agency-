@@ -13,10 +13,10 @@ import {
 
 /* Design tokens */
 const THEME_KEY = "pn.theme";
-// Light, dark, or (the default) matching the device. Public pages (jobs board, job pages, the
+// Light (the default), dark, or matching the device. Public pages (jobs board, job pages, the
 // candidate page, client links) always stay light.
 const IS_PUBLIC_PAGE = (() => { try { const q = new URLSearchParams(location.search); return /^\/(jobs|careers)(\/|$)/.test(location.pathname) || ["apply", "jobs", "careers", "u", "t", "c"].some((k) => q.has(k)); } catch (e) { return false; } })();
-const DARK = (() => { if (IS_PUBLIC_PAGE) return false; try { const t = localStorage.getItem(THEME_KEY) || "system"; return t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) { return false; } })();
+const DARK = (() => { if (IS_PUBLIC_PAGE) return false; try { const t = localStorage.getItem(THEME_KEY) || "light"; return t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) { return false; } })();
 try { document.documentElement.style.colorScheme = DARK ? "dark" : "light"; } catch (e) { /* no DOM */ }
 const C_LIGHT = {
   canvas: "#F3EFE7", card: "#FFFFFF", soft: "#FAF8F3", ink: "#14201B", ink2: "#56605A",
@@ -2135,7 +2135,7 @@ function SecurityTab({ S, toast }) {
 }
 
 // Light / Dark / Match device. Saved on this browser; the page reloads so every colour switches at once.
-function themeNow() { try { return localStorage.getItem(THEME_KEY) || "system"; } catch (e) { return "system"; } }
+function themeNow() { try { return localStorage.getItem(THEME_KEY) || "light"; } catch (e) { return "light"; } }
 function setTheme(t) { try { localStorage.setItem(THEME_KEY, t); } catch (e) {} location.reload(); }
 function AppearanceCard() {
   const cur = themeNow();
@@ -2371,9 +2371,12 @@ function TopBar({ query, setQuery, S, onCmd }) {
         <input id="harbor-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="bg-transparent outline-none text-sm flex-1 min-w-0" />
         <button type="button" onClick={onCmd} title="Jump to any candidate, job or page" className="rounded px-1.5 py-0.5" style={{ display: desktop ? "inline" : "none", fontSize: 11, background: C.canvas, color: C.ink2 }}>{/Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘ K" : "Ctrl K"}</button>
       </div>
-      <button data-tour="theme" aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"} onClick={() => setTheme(DARK ? "light" : "dark")} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center shrink-0" style={{ borderColor: C.line, background: C.card }}>
-        {DARK ? <Sun size={18} color={C.lime} /> : <Moon size={18} color={C.ink} />}
-      </button>
+      <div className="relative shrink-0">
+        <button data-tour="theme" aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"} onClick={() => { try { localStorage.setItem("pn.themeHint", "1"); } catch (e) {} setTheme(DARK ? "light" : "dark"); }} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center" style={{ borderColor: C.line, background: C.card }}>
+          {DARK ? <Sun size={18} color={C.lime} /> : <Moon size={18} color={C.ink} />}
+        </button>
+        <ThemeHint show={(() => { try { return !!(S.me.tourDoneAt || localStorage.getItem("pn.tourDone." + S.me.id)); } catch (e) { return false; } })()} />
+      </div>
       <div className="relative shrink-0">
         <button data-tour="notifications" aria-label="Notifications" onClick={() => setNotifOpen((v) => !v)} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center relative" style={{ borderColor: C.line, background: C.card }}>
           <Bell size={18} color={C.ink} />
@@ -4760,7 +4763,7 @@ function tourSteps(role, first) {
     t("search", "Search", "Find any candidate or job fast." + (window.innerWidth >= 768 ? " Press Ctrl K (⌘K on a Mac) to jump anywhere." : "")),
     t("notifications", "Notifications", "Replies, stage changes, reminders and anything that needs you."),
     t("assistant", "Your assistant", "Ask about your candidates and roles, or have it draft a message. It suggests; you approve."),
-    t("theme", "Light or dark", "Switch the look any time. It follows your device until you choose."),
+    t("theme", "Light or dark", "ProNext starts in light. Tap here any time to switch to dark, and back."),
     t(null, "You're all set", "That's the tour. You can take it again any time from My profile."),
   ];
 }
@@ -4825,6 +4828,27 @@ function ProductTour({ role, first, onClose }) {
         </div>
       </div>
       <style>{`@keyframes pnx-tour-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } } .pnx-tour { animation: pnx-tour-in .25s ease-out both; } @media (prefers-reduced-motion: reduce) { .pnx-tour { animation: none; } }`}</style>
+    </div>
+  );
+}
+
+// A one-time pointer at the light/dark switch, so people know they can change it. Dismissed for good
+// on this browser once they switch or close it.
+function ThemeHint({ show, place = "below" }) {
+  const [open, setOpen] = useState(() => { try { return !localStorage.getItem("pn.themeHint"); } catch (e) { return false; } });
+  if (!open || !show || DARK) return null;
+  const close = () => { setOpen(false); try { localStorage.setItem("pn.themeHint", "1"); } catch (e) { /* fine */ } };
+  return (
+    <div className="absolute z-30 pnx-hint" style={{ top: place === "below" ? "calc(100% + 10px)" : undefined, right: -6, width: 230 }} role="status">
+      <span aria-hidden="true" className="absolute" style={{ top: -6, right: 20, width: 12, height: 12, background: C.side, transform: "rotate(45deg)", borderRadius: 2 }} />
+      <div className="relative rounded-xl px-3.5 py-3 text-sm shadow-lg" style={{ background: C.side, color: C.onSide }}>
+        <div className="flex items-start gap-2">
+          <Moon size={15} color={C.lime} className="shrink-0 mt-0.5" />
+          <div className="flex-1"><b style={{ color: "#fff" }}>Prefer dark?</b> Tap this button to switch between light and dark.</div>
+          <button onClick={(e) => { e.stopPropagation(); close(); }} aria-label="Got it" className="shrink-0" style={{ color: "rgba(243,239,231,.7)" }}><X size={14} /></button>
+        </div>
+      </div>
+      <style>{`@keyframes pnx-hint-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } } .pnx-hint { animation: pnx-hint-in .3s ease-out .6s both; }`}</style>
     </div>
   );
 }
@@ -12400,10 +12424,7 @@ function PortalOffer({ token, offer }) {
   if (state === "loading" || state === "gone") return state === "gone" ? <Card><div className="text-sm" style={{ color: C.ink2 }}>This role is no longer available.</div></Card> : null;
   const role = d.role || {};
   const where = [role.remote ? "Remote" : "", role.location, role.country].filter(Boolean).join(" · ");
-  const field = (k, label, ph) => (
-    <label className="flex flex-col gap-1 text-sm" key={k}><span className="font-medium" style={{ color: C.ink2 }}>{label}</span>
-      <input value={f[k] || ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={ph || ""} className="rounded-xl border px-3 py-2.5 outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} /></label>
-  );
+  const field = (k, label, ph, icon) => <FInput key={k} label={label} icon={icon} value={f[k] || ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={ph || ""} />;
   return (
     <Card>
       <div className="text-xs font-semibold tracking-widest mb-1" style={{ color: C.em }}>A ROLE THAT COULD SUIT YOU</div>
@@ -12421,14 +12442,15 @@ function PortalOffer({ token, offer }) {
       {state === "details" && (
         <div className="mt-4 flex flex-col gap-3">
           <div className="text-sm font-medium">Great. Here's what we have on file for you. Change anything that's out of date, then confirm.</div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {field("currentTitle", "Current job title")}
-            {field("location", "Where you live", "City, country")}
-            {field("phone", "Phone")}
-            {field("experience", "Years of experience", "e.g. 6 years")}
-            {field("notice", "Notice period", "e.g. 2 weeks")}
-            {field("pay", "Salary you're looking for")}
-            {field("linkedin", "LinkedIn profile", "https://linkedin.com/in/…")}
+          <style>{FORM_CSS}</style>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            {field("currentTitle", "Current job title", "", Briefcase)}
+            {field("location", "Where you live", "City, country", MapPin)}
+            {field("phone", "Phone", "", Phone)}
+            {field("experience", "Years of experience", "e.g. 6 years", Clock)}
+            {field("notice", "Notice period", "e.g. 2 weeks", Calendar)}
+            {field("pay", "Salary you're looking for", "", CreditCard)}
+            {field("linkedin", "LinkedIn profile", "https://linkedin.com/in/…", ExternalLink)}
           </div>
           <div className="text-xs" style={{ color: C.ink3 }}>Email on file: {d.profile && d.profile.email}. To change it, reply to our email.</div>
           <div><Btn kind="primary" disabled={busy} onClick={confirm}>{busy ? "Saving…" : "Confirm my details"}</Btn></div>
@@ -12786,63 +12808,70 @@ function ApplyPage({ slug }) {
   );
   const honeypot = <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />;
   const errBox = err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>;
+  const formMeta = [jobPlace(job.location, job.country), job.workSetup, job.employmentType, payText].filter(Boolean).slice(0, 4);
   const applyForm = (
-    <Card>
-      <SectionTitle title="Apply" sub={"Takes about two minutes. " + job.agency + " never shares your details without asking you."} size="text-xl" />
-      <form onSubmit={submit} className="flex flex-col gap-3.5 mt-4">
-        <div><label className="text-sm font-medium">Full name *</label><input value={form.name} onChange={set("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
-        <div className="grid sm:grid-cols-2 gap-3.5">
-          <div><label className="text-sm font-medium">Email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
-          <div><label className="text-sm font-medium">Phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" className={inp} style={inpStyle} /></div>
-        </div>
-        <div><label className="text-sm font-medium">LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
+    <FormHero icon={Send} eyebrow="APPLY" title={job.title} sub={"Takes about two minutes. " + job.agency + " never shares your details without asking you."} meta={formMeta}>
+      <form onSubmit={submit} className="flex flex-col gap-6">
+        <FSection n={1} title="About you">
+          <FInput label="Full name" required icon={UserRound} value={form.name} onChange={set("name")} autoComplete="name" placeholder="Your name" />
+          <div className="grid sm:grid-cols-2 gap-3.5">
+            <FInput label="Email" required icon={Mail} type="email" value={form.email} onChange={set("email")} autoComplete="email" placeholder="you@example.com" />
+            <FInput label="Phone" icon={Phone} type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" placeholder="Optional" />
+          </div>
+          <FInput label="LinkedIn profile" icon={ExternalLink} value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" />
+        </FSection>
+        <FormDivider />
+        <FSection n={2} title="Your CV" sub="required">
+          <CvDrop cv={cv} onPick={pickCv} label="" />
+        </FSection>
+        {questions.length > 0 && <FormDivider />}
+        {questions.length > 0 && (
+          <FSection n={3} title="A few questions" sub={"from the employer · " + questions.length}>
+            {questions.map((q, i) => (
+              <FInput key={i} area label={q} required value={answers[i] || ""} onChange={(e) => setAnswers((a) => { const n = a.slice(); n[i] = e.target.value; return n; })} placeholder="Your answer" />
+            ))}
+          </FSection>
+        )}
         {/* Honeypot for bots: hidden from people, ignored by the server when filled. */}
         {honeypot}
-        {cvPicker("CV *", "Upload a PDF or Word file (up to 8 MB)")}
-        {questions.map((q, i) => (
-          <div key={i}><label className="text-sm font-medium">{q} *</label>
-            <textarea rows={3} value={answers[i] || ""} onChange={(e) => setAnswers((a) => { const n = a.slice(); n[i] = e.target.value; return n; })} className={inp} style={inpStyle} />
-          </div>
-        ))}
         {errBox}
-        <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send application"}</Btn>
+        <Btn kind="primary" full type="submit" disabled={busy} className="!py-3 !text-[15px]">{busy ? <>Sending <InlineDots color="#fff" /></> : "Send application"}</Btn>
+        <PrivacyNote />
       </form>
-    </Card>
+    </FormHero>
   );
   const referForm = (
-    <Card>
-      <SectionTitle title="Refer someone" sub={"Know someone who'd be great for this role? Tell us who they are and a recruiter from " + job.agency + " will get in touch with them."} size="text-xl" />
-      <form onSubmit={submit} className="flex flex-col gap-3.5 mt-4">
-        <div className="text-xs font-semibold tracking-wider" style={{ color: C.ink3 }}>ABOUT YOU</div>
-        <div className="grid sm:grid-cols-2 gap-3.5">
-          <div><label className="text-sm font-medium">Your name *</label><input value={ref.name} onChange={setR("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
-          <div><label className="text-sm font-medium">Your email *</label><input type="email" value={ref.email} onChange={setR("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
-        </div>
-        <div className="text-xs font-semibold tracking-wider mt-2" style={{ color: C.ink3 }}>THE PERSON YOU'RE REFERRING</div>
-        <div><label className="text-sm font-medium">Their full name *</label><input value={form.name} onChange={set("name")} autoComplete="off" className={inp} style={inpStyle} /></div>
-        <div className="grid sm:grid-cols-2 gap-3.5">
-          <div><label className="text-sm font-medium">Their email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="off" className={inp} style={inpStyle} /></div>
-          <div><label className="text-sm font-medium">Their phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="off" className={inp} style={inpStyle} /></div>
-        </div>
-        <div><label className="text-sm font-medium">Their LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
+    <FormHero icon={Users} eyebrow="REFER SOMEONE" title={job.title} sub={"Know someone who'd be great for this role? Tell us who they are and a recruiter from " + job.agency + " will get in touch with them."} meta={formMeta}>
+      <form onSubmit={submit} className="flex flex-col gap-6">
+        <FSection n={1} title="About you">
+          <div className="grid sm:grid-cols-2 gap-3.5">
+            <FInput label="Your name" required icon={UserRound} value={ref.name} onChange={setR("name")} autoComplete="name" placeholder="Your name" />
+            <FInput label="Your email" required icon={Mail} type="email" value={ref.email} onChange={setR("email")} autoComplete="email" placeholder="you@example.com" />
+          </div>
+        </FSection>
+        <FormDivider />
+        <FSection n={2} title="The person you're referring">
+          <FInput label="Their full name" required icon={UserRound} value={form.name} onChange={set("name")} autoComplete="off" placeholder="Their name" />
+          <div className="grid sm:grid-cols-2 gap-3.5">
+            <FInput label="Their email" required icon={Mail} type="email" value={form.email} onChange={set("email")} autoComplete="off" placeholder="them@example.com" />
+            <FInput label="Their phone" icon={Phone} type="tel" value={form.phone} onChange={set("phone")} autoComplete="off" placeholder="Optional" />
+          </div>
+          <FInput label="Their LinkedIn profile" icon={ExternalLink} value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" />
+          <FInput area label="Why would they be a good fit?" value={ref.note} onChange={setR("note")} placeholder="Optional" />
+          <CvDrop cv={cv} onPick={pickCv} label="Their CV" hint="optional, PDF or Word up to 8 MB" />
+        </FSection>
         {honeypot}
-        <div><label className="text-sm font-medium">Why would they be a good fit?</label><textarea rows={3} value={ref.note} onChange={setR("note")} placeholder="Optional" className={inp} style={inpStyle} /></div>
-        {cvPicker("Their CV", "Optional: PDF or Word file (up to 8 MB)")}
-        <div className="text-xs" style={{ color: C.ink3 }}>Please only refer people who'd be happy to hear from us.</div>
         {errBox}
-        <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send referral"}</Btn>
+        <Btn kind="primary" full type="submit" disabled={busy} className="!py-3 !text-[15px]">{busy ? <>Sending <InlineDots color="#fff" /></> : "Send referral"}</Btn>
+        <PrivacyNote text="Please only refer people who'd be happy to hear from us. We tell them who referred them and ask before going any further." />
       </form>
-    </Card>
+    </FormHero>
   );
 
   // Form open: a compact job header, then the form.
   if (mode !== "view") return shell(
     <>
       <button onClick={() => open("view")} className="self-start flex items-center gap-1.5 text-sm font-medium" style={{ color: C.em }}><ArrowLeft size={16} /> Back to the job</button>
-      <div className="px-1">
-        <div className="text-2xl leading-tight" style={SERIF}>{job.title}</div>
-        {pills}
-      </div>
       {referring ? referForm : applyForm}
       {referring
         ? <button onClick={() => open("apply")} className="text-sm underline self-center" style={{ color: C.ink2 }}>Want this role yourself? Apply instead</button>
@@ -12852,6 +12881,89 @@ function ApplyPage({ slug }) {
   // Reading the job.
   return shell(jobCard);
 }
+
+/* Candidate-facing forms (apply, refer, send your CV, confirm your details): a dark branded header
+   with an icon, numbered sections, fields with icons, a proper CV drop zone and a privacy note, so
+   they feel welcoming instead of blank. Always light (public pages). */
+const FORM_CSS = `.pn-fin{transition:border-color .15s, box-shadow .15s, background .15s} .pn-fin:hover{border-color:${C.line2}} .pn-fin:focus{border-color:${C.em};box-shadow:0 0 0 3px ${C.emTint};background:#fff}
+@keyframes pn-form-in{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}} .pn-form-in{animation:pn-form-in .45s cubic-bezier(.2,.7,.2,1) both} @media (prefers-reduced-motion: reduce){.pn-form-in{animation:none}}`;
+function FormHero({ eyebrow, title, sub, icon: I, meta, children }) {
+  return (
+    <div className="pn-form-in rounded-2xl overflow-hidden border" style={{ borderColor: C.line, background: C.card, boxShadow: "0 22px 50px -32px rgba(18,36,29,.45)" }}>
+      <style>{FORM_CSS}</style>
+      <div className="relative px-5 md:px-7 pt-6 pb-6 overflow-hidden" style={{ background: C.side, color: C.onSide }}>
+        <div className="absolute pointer-events-none" style={{ right: -70, top: -80, width: 240, height: 240, borderRadius: 999, background: "radial-gradient(circle, rgba(200,241,105,.22), transparent 70%)" }} />
+        <div className="absolute pointer-events-none" style={{ left: -40, bottom: -90, width: 180, height: 180, borderRadius: 999, background: "radial-gradient(circle, rgba(46,148,112,.28), transparent 70%)" }} />
+        <div className="relative flex items-start gap-3.5">
+          {I && <span className="w-11 h-11 rounded-xl grid place-items-center shrink-0" style={{ background: "rgba(200,241,105,.14)", color: C.lime, border: "1px solid rgba(200,241,105,.25)" }}><I size={21} /></span>}
+          <div className="min-w-0">
+            {eyebrow && <div className="text-[11px] font-semibold tracking-[.14em]" style={{ color: C.lime }}>{eyebrow}</div>}
+            <div className="text-2xl md:text-[28px] leading-tight text-white mt-0.5" style={SERIF}>{title}</div>
+            {sub && <div className="text-sm mt-1.5 leading-relaxed" style={{ color: "rgba(243,239,231,.74)" }}>{sub}</div>}
+            {meta && <div className="flex flex-wrap gap-1.5 mt-3">{meta.filter(Boolean).map((m, i) => <span key={i} className="text-xs rounded-full px-2.5 py-1" style={{ background: "rgba(243,239,231,.1)", color: "rgba(243,239,231,.88)" }}>{m}</span>)}</div>}
+          </div>
+        </div>
+      </div>
+      <div className="px-5 md:px-7 py-6">{children}</div>
+    </div>
+  );
+}
+function FSection({ n, title, sub, children }) {
+  return (
+    <div className="flex flex-col gap-3.5">
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <span className="w-6 h-6 rounded-full grid place-items-center text-xs font-bold shrink-0" style={{ background: C.emTint, color: C.em }}>{n}</span>
+        <span className="text-[15px] font-semibold" style={{ color: C.ink }}>{title}</span>
+        {sub && <span className="text-xs" style={{ color: C.ink3 }}>{sub}</span>}
+      </div>
+      {children}
+    </div>
+  );
+}
+function FInput({ label, icon: I, required, area, ...rest }) {
+  const cls = "pn-fin w-full rounded-xl border text-[15px] outline-none " + (area ? "px-3.5 py-3 resize-y" : "py-2.5 " + (I ? "pl-10 pr-3.5" : "px-3.5"));
+  const st = { borderColor: C.line, background: C.soft, color: C.ink };
+  return (
+    <label className="block">
+      <span className="text-sm font-medium" style={{ color: C.ink }}>{label}{required && <span style={{ color: C.em }}> *</span>}</span>
+      <span className="relative block mt-1.5">
+        {I && !area && <I size={16} color={C.ink3} className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />}
+        {area ? <textarea rows={3} {...rest} className={cls} style={st} /> : <input {...rest} className={cls} style={st} />}
+      </span>
+    </label>
+  );
+}
+function CvDrop({ cv, onPick, label = "Your CV", hint = "PDF or Word, up to 8 MB", required }) {
+  const ref = React.useRef(null);
+  const [over, setOver] = useState(false);
+  const pick = (f) => f && onPick({ target: { files: [f], value: "" } });
+  return (
+    <div>
+      {label && <span className="text-sm font-medium" style={{ color: C.ink }}>{label}{required && <span style={{ color: C.em }}> *</span>}</span>}
+      <button type="button" onClick={() => ref.current && ref.current.click()}
+        onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files && e.dataTransfer.files[0]); }}
+        className="w-full mt-1.5 rounded-2xl border-2 border-dashed px-4 py-5 flex items-center gap-4 text-left transition-colors"
+        style={{ borderColor: cv || over ? C.em : C.line2, background: cv ? C.emTint : over ? C.emTint : "linear-gradient(180deg, " + C.soft + ", #fff)" }}>
+        <span className="w-12 h-12 rounded-xl grid place-items-center shrink-0" style={{ background: cv ? C.em : C.emTint, color: cv ? "#fff" : C.em }}>{cv ? <Check size={22} /> : <FileText size={22} />}</span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-[15px] font-semibold truncate" style={{ color: C.ink }}>{cv ? cv.name : "Upload your CV"}</span>
+          <span className="block text-xs mt-0.5" style={{ color: C.ink2 }}>{cv ? "Looks good. Tap to choose a different file." : "Drop it here, or tap to choose · " + hint}</span>
+        </span>
+        <Upload size={18} color={C.ink3} className="shrink-0" />
+      </button>
+      <input ref={ref} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={onPick} />
+    </div>
+  );
+}
+function PrivacyNote({ text }) {
+  return (
+    <div className="flex items-start gap-2.5 rounded-xl px-3.5 py-3 text-xs leading-relaxed" style={{ background: C.canvas, color: C.ink2 }}>
+      <Lock size={14} className="shrink-0 mt-0.5" color={C.em} />
+      <span>{text || "Your details stay private. We never share them with an employer without asking you first."}</span>
+    </div>
+  );
+}
+const FormDivider = () => <div className="h-px my-1" style={{ background: C.line }} />;
 
 /* "Send us your CV" (/jobs/?join=1): for people who aren't applying to a specific job. They
    join the Active file, the bench we check for every new role before looking outside. Lands in
@@ -12906,31 +13018,27 @@ function JoinPage() {
             <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="inline-block mt-5"><Btn kind="primary">See open jobs</Btn></a>
           </Card>
         ) : (
-          <Card>
-            <div className="text-2xl md:text-3xl leading-tight" style={SERIF}>Send us your CV</div>
-            <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>Not seeing the right role? Join our Active file. We look here first whenever a new role comes in, and we'll reach out when one fits you.</div>
-            <form onSubmit={submit} className="flex flex-col gap-3.5 mt-5">
-              <div><label className="text-sm font-medium">Full name *</label><input value={form.name} onChange={set("name")} autoComplete="name" className={inp} style={inpStyle} /></div>
-              <div className="grid sm:grid-cols-2 gap-3.5">
-                <div><label className="text-sm font-medium">Email *</label><input type="email" value={form.email} onChange={set("email")} autoComplete="email" className={inp} style={inpStyle} /></div>
-                <div><label className="text-sm font-medium">Phone</label><input type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" className={inp} style={inpStyle} /></div>
-              </div>
-              <div><label className="text-sm font-medium">What kind of role are you looking for? *</label><input value={form.role} onChange={set("role")} placeholder="e.g. Customer Success Manager" className={inp} style={inpStyle} /></div>
-              <div><label className="text-sm font-medium">LinkedIn profile</label><input value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" className={inp} style={inpStyle} /></div>
+          <FormHero icon={FileText} eyebrow="JOIN OUR ACTIVE FILE" title="Send us your CV" sub="Not seeing the right role? We look here first whenever a new role comes in, and reach out when one fits you." meta={["Takes about 2 minutes", "Free, no account needed"]}>
+            <form onSubmit={submit} className="flex flex-col gap-6">
+              <FSection n={1} title="About you">
+                <FInput label="Full name" required icon={UserRound} value={form.name} onChange={set("name")} autoComplete="name" placeholder="Your name" />
+                <div className="grid sm:grid-cols-2 gap-3.5">
+                  <FInput label="Email" required icon={Mail} type="email" value={form.email} onChange={set("email")} autoComplete="email" placeholder="you@example.com" />
+                  <FInput label="Phone" icon={Phone} type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" placeholder="Optional" />
+                </div>
+                <FInput label="LinkedIn profile" icon={ExternalLink} value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" />
+              </FSection>
+              <FormDivider />
+              <FSection n={2} title="What you're looking for">
+                <FInput label="The kind of role you want" required icon={Briefcase} value={form.role} onChange={set("role")} placeholder="e.g. Customer Success Manager" />
+                <CvDrop cv={cv} onPick={pickCv} required />
+              </FSection>
               <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
-              <div>
-                <label className="text-sm font-medium">CV *</label>
-                <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="w-full mt-1.5 rounded-xl border-2 border-dashed px-4 py-4 text-sm flex items-center gap-3 text-left" style={{ borderColor: cv ? C.em : C.line, background: C.soft }}>
-                  <Upload size={18} color={cv ? C.em : C.ink3} />
-                  <span className="flex-1 min-w-0 truncate" style={{ color: cv ? C.ink : C.ink3 }}>{cv ? cv.name : "Upload a PDF or Word file (up to 8 MB)"}</span>
-                  {cv && <span className="text-xs shrink-0" style={{ color: C.em }}>Change</span>}
-                </button>
-                <input ref={fileRef} type="file" accept=".pdf,.doc,.docx" className="hidden" onChange={pickCv} />
-              </div>
               {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
-              <Btn kind="primary" full type="submit" disabled={busy}>{busy ? <>Sending <InlineDots color="#fff" /></> : "Send my CV"}</Btn>
+              <Btn kind="primary" full type="submit" disabled={busy} className="!py-3 !text-[15px]">{busy ? <>Sending <InlineDots color="#fff" /></> : "Send my CV"}</Btn>
+              <PrivacyNote />
             </form>
-          </Card>
+          </FormHero>
         )}
       </div>
     </div>
@@ -13294,10 +13402,13 @@ function AuthShell({ onSubmit, children }) {
       </aside>
       <main className="pnx-auth relative overflow-hidden min-h-screen md:min-h-0 flex items-center justify-center px-4 py-24 md:px-10">
         <AuthScatter />
-        <button type="button" onClick={() => setTheme(DARK ? "light" : "dark")} aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"}
-          className="absolute z-10 w-10 h-10 rounded-xl border flex items-center justify-center" style={{ top: 14, right: 14, borderColor: C.line, background: C.card }}>
-          {DARK ? <Sun size={17} color={C.lime} /> : <Moon size={17} color={C.ink} />}
-        </button>
+        <div className="absolute z-20" style={{ top: 14, right: 14 }}>
+          <button type="button" onClick={() => { try { localStorage.setItem("pn.themeHint", "1"); } catch (e) {} setTheme(DARK ? "light" : "dark"); }} aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"}
+            className="w-10 h-10 rounded-xl border flex items-center justify-center" style={{ borderColor: C.line, background: C.card }}>
+            {DARK ? <Sun size={17} color={C.lime} /> : <Moon size={17} color={C.ink} />}
+          </button>
+          <ThemeHint show />
+        </div>
         <div className="relative w-full max-w-[400px]">
           <AuthTucked />
           <form onSubmit={onSubmit} className="pnx-card relative w-full rounded-2xl border p-7 md:p-9" style={{ background: C.card, borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>
@@ -13888,7 +13999,7 @@ export default function App() {
   const role = me.roleKey;
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
-  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner, refCode: me.refCode || "" };
+  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner, refCode: me.refCode || "", tourDoneAt: me.tourDoneAt || null };
   MY_REF = me.refCode || "";
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => S.error(e.message)).finally(() => setRefreshing(false)); };
   alertRef.current.onNew = (fresh) => {
