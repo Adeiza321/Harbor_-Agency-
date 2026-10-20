@@ -5,6 +5,7 @@ import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, 
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
 import { learnFromOutcome } from "./lessons.ts";
+import { AI_PAUSED, aiDownFrom, isAiPaused, noteAiHealth } from "../sourcing/ai.ts";
 
 // AI screening for Pronext: CV scoring, screening-question drafting and the fit verdict.
 //
@@ -154,9 +155,10 @@ async function askAnthropic(key: string, system: string, text: string, resume: R
   if (!res!.ok) {
     const body = (await res!.text()).slice(0, 300);
     if ([429, 529].includes(res!.status)) throw new Error("Claude is very busy right now. Please try again in a minute.");
-    if (/credit balance/i.test(body)) throw new Error("The Claude account is out of credit. Top up at console.anthropic.com, then try again.");
+    if (aiDownFrom(res!.status, body)) { await noteAiHealth(true, body); throw new Error(AI_PAUSED); }
     throw new Error("AI request failed (" + res!.status + "): " + body);
   }
+  noteAiHealth(false);
   const data = await res!.json();
   await logUsage(data.usage, data.model || ANTHROPIC_MODEL);
   if (data.stop_reason === "max_tokens") throw new Error("Claude's answer was cut off before it finished");
@@ -304,10 +306,12 @@ async function autoScreen(admin: any, linkId: string) {
     if (!ai?.followups && ai?.verdict !== "Reject") { try { await followupsAs(admin, linkId); } catch (_) { /* nothing open to ask about */ } }
     return { ok: true, screened: true };
   } catch (e) {
-    const msg = String((e as Error)?.message || e).slice(0, 200);
+    const paused = isAiPaused(e);
+    const msg = paused ? "AI paused" : String((e as Error)?.message || e).slice(0, 200);
     console.error("auto screen", linkId, msg);
     const { data: cur } = await admin.from("candidate_jobs").select("ai").eq("id", linkId).maybeSingle();
-    if (!cur?.ai?.stage) await admin.from("candidate_jobs").update({ ai: { ...(cur?.ai || {}), auto: { ...stamp, error: msg } } }).eq("id", linkId);
+    // While the AI is paused there's no point retrying: the card says so and the team carries on by hand.
+    if (!cur?.ai?.stage) await admin.from("candidate_jobs").update({ ai: { ...(cur?.ai || {}), auto: { ...stamp, ...(paused ? { tries: 3, paused: true } : {}), error: msg } } }).eq("id", linkId);
     return { ok: false, error: msg };
   }
 }
@@ -512,7 +516,8 @@ async function handle(req: Request): Promise<Response> {
         if (anyAnswer) await admin.from("candidate_timeline").insert({ candidate_id: link.candidate_id, title: "Screening answers entered by " + (me.full_name || "a recruiter"), done: true });
         if (allAnswered && body.rescreen !== false) {
           if (owner?.ai_locked) return json({ ok: true, ai, rescreened: false, locked: true });
-          return json({ ok: true, ai: await screenAs(admin, link.id), rescreened: true });
+          try { return json({ ok: true, ai: await screenAs(admin, link.id), rescreened: true }); }
+          catch (e) { return json({ ok: true, ai, rescreened: false, aiPaused: isAiPaused(e), aiError: String((e as Error)?.message || e).slice(0, 200) }); }
         }
         return json({ ok: true, ai, rescreened: false, removed: removed.length });
       }

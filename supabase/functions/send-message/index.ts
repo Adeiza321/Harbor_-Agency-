@@ -1,4 +1,4 @@
-import { logAiUsage } from "../sourcing/ai.ts";
+import { AI_PAUSED, aiDownFrom, logAiUsage, noteAiHealth } from "../sourcing/ai.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { Brand, button, ccList, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
@@ -184,7 +184,12 @@ async function askClaude(system: string, text: string): Promise<string> {
     body: JSON.stringify({ model: Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5-20251001", max_tokens: 600, temperature: 0.3, system, messages: [{ role: "user", content: text }] }),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("AI request failed (" + res.status + ")");
+  if (!res.ok) {
+    const body = JSON.stringify(data).slice(0, 300);
+    if (aiDownFrom(res.status, body)) { await noteAiHealth(true, body); throw new Error(AI_PAUSED); }
+    throw new Error("AI request failed (" + res.status + ")");
+  }
+  noteAiHealth(false);
   await logAiUsage(data.usage, String(data.model || ""), "message_drafts");
   return (data.content || []).map((x: any) => x.text || "").join("").trim();
 }
@@ -316,7 +321,9 @@ Deno.serve(async (req: Request) => {
         "anything about age, gender, race, religion, health, family, nationality or other personal characteristics, salary figures, or internal names. Don't apologise at length, " +
         "don't promise future roles, no greeting or sign-off. Reply with the paragraph only.";
       const who = kind === "client" ? "The client" : "The agency (before putting them forward)";
-      const text = await askClaude(system, `Role: ${roleLabel}\nDecision by: ${who}\nMain reason: ${REJECT_REASONS[reason]}\nFeedback (internal notes, rewrite kindly; don't quote harsh wording):\n${feedback}`);
+      let text = "";
+      try { text = await askClaude(system, `Role: ${roleLabel}\nDecision by: ${who}\nMain reason: ${REJECT_REASONS[reason]}\nFeedback (internal notes, rewrite kindly; don't quote harsh wording):\n${feedback}`); }
+      catch (e) { return json({ ok: true, message: defaultReasonText(reason, kind), aiUnavailable: String((e as Error)?.message || e).slice(0, 200) }); }
       return json({ ok: true, message: text.replace(/^["']|["']$/g, "").slice(0, 1200) });
     }
 

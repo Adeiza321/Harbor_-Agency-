@@ -36,6 +36,20 @@ function parseJson(text: string) {
   throw new Error("AI returned something unexpected: " + text.slice(0, 200));
 }
 
+// When the Claude account runs out of credit (or its key stops working), ProNext keeps going
+// without the AI: the failure is recorded (public.ai_health, shown as a banner in the dashboard)
+// and callers skip the AI step. It clears itself on the next call that works.
+export const AI_PAUSED = "AI is paused: the Claude account is out of credit or its key isn't working. Everything else keeps working; top up at console.anthropic.com to turn the AI back on.";
+export const isAiPaused = (e: unknown) => /^AI is paused/.test(String((e as Error)?.message || e || ""));
+export const aiDownFrom = (status: number, body: string) => status === 401 || status === 403 || /credit balance|billing|insufficient|invalid x-api-key|authentication_error|permission_error/i.test(body);
+let healthClient: any = null;
+export async function noteAiHealth(down: boolean, reason = "") {
+  try {
+    healthClient = healthClient || createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    await healthClient.rpc("note_ai_health", { p_down: down, p_reason: reason.slice(0, 300) });
+  } catch (_) { /* never let this break the caller */ }
+}
+
 export async function askAI(system: string, text: string, maxTokens = 4000): Promise<any> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) throw new Error("AI is not configured: add an ANTHROPIC_API_KEY secret.");
@@ -52,9 +66,10 @@ export async function askAI(system: string, text: string, maxTokens = 4000): Pro
   }
   if (!res!.ok) {
     const body = (await res!.text()).slice(0, 300);
-    if (/credit balance/i.test(body)) throw new Error("The Claude account is out of credit.");
+    if (aiDownFrom(res!.status, body)) { await noteAiHealth(true, body); throw new Error(AI_PAUSED); }
     throw new Error("AI request failed (" + res!.status + "): " + body);
   }
+  noteAiHealth(false);
   const data = await res!.json();
   await logAiUsage(data.usage, String(data.model || MODEL()));
   if (data.stop_reason === "max_tokens") throw new Error("Claude's answer was cut off before it finished");

@@ -4559,6 +4559,24 @@ function VerifiedTick({ size = 20 }) {
     </span>
   );
 }
+// While the AI is paused (the Claude account ran out of credit, or its key stopped working), the
+// dashboard says so once, at the top. Nothing else stops: candidates are still added, submitted,
+// routed, moved through stages, rejected and messaged; only screening, fit checks and AI drafts
+// are skipped. It disappears by itself once a call to the AI works again.
+function AiPausedBanner({ since, admin }) {
+  const [hide, setHide] = useState(() => { try { return sessionStorage.getItem("pn.aiBanner") === String(since); } catch (e) { return false; } });
+  if (hide) return null;
+  return (
+    <div className="px-4 md:px-8 mt-1 mb-3">
+      <div className="rounded-xl px-3.5 py-2.5 text-sm flex items-start gap-2.5" style={{ background: C.warnBg, color: C.warnText }} role="status">
+        <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0"><b>AI is paused</b> (it stopped {ago(since)}). Everything else keeps working: you can add, submit, route and move candidates as usual. Screening, fit checks and AI drafts are skipped until it's back.{admin ? " The Claude account is out of credit or its key isn't working: top up at console.anthropic.com." : ""}</div>
+        <button aria-label="Hide" title="Hide" onClick={() => { setHide(true); try { sessionStorage.setItem("pn.aiBanner", String(since)); } catch (e) {} }} className="shrink-0"><X size={15} /></button>
+      </div>
+    </div>
+  );
+}
+
 // A note on the profile, shown like a social "note": a small bubble above the photo in the header,
 // for everyone on the team who opens the profile. Tap it to read it all, edit or remove it; with
 // no note, the little + on the photo adds one. (Discussion is the running conversation.)
@@ -4734,7 +4752,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     try {
       const r = await S.aiScreen("score_cv", { candidateId: candidate.id, rescreenCards: true });
       toast(r && r.rescreened ? "Resume read. " + r.rescreened + (r.rescreened === 1 ? " company" : " companies") + " rescreened." : "Resume read");
-    } catch (e) { S.error("Resume saved, but the AI couldn't read it: " + e.message); }
+    } catch (e) { if (/^AI is paused/.test(e.message)) toast("Resume saved. The AI is paused, so it wasn't read yet."); else S.error("Resume saved, but the AI couldn't read it: " + e.message); }
     setAiBusy(false);
   };
   const [readBusy, setReadBusy] = useState(false);
@@ -5333,7 +5351,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const run = async (label, fn) => { setBusy(label); try { await fn(); } catch (err) { S.error(err.message); } setBusy(""); };
   // New cards are screened on the server by themselves. While that runs (up to ~10 minutes,
   // with retries) the card says so and refreshes itself instead of offering a button.
-  const autoRunning = !pending && !ai.stage && !candidate.ai_locked && !(ai.auto && ai.auto.error && (ai.auto.tries || 0) >= 3)
+  const autoRunning = !pending && !ai.stage && !candidate.ai_locked && !S.aiDown && !(ai.auto && ai.auto.error && (ai.auto.tries || 0) >= 3)
     && Date.now() - (link.createdAt || 0) < 12 * 60e3;
   useEffect(() => {
     if (!autoRunning || !S.reload) return;
@@ -5358,7 +5376,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const saveFollow = (label, questions, done) => run(label, async () => {
     const r = await S.aiScreen("save_followups", { linkId: link.id, questions });
     setAnswering(null); setDrafts(null);
-    toast(done(r || {}));
+    toast(r && r.aiError ? "Answers saved. " + (r.aiPaused ? "The AI is paused, so they weren't rescreened." : "They couldn't be rescreened right now.") : done(r || {}));
   });
   const startAnswers = () => setAnswering((editing ? qList.map((q) => ({ q, a: "" })) : ((f && f.questions) || []).map((x) => ({ q: x.q, a: x.a || "" }))).filter((x) => String(x.q || "").trim()));
   const allTyped = !!answering && answering.length > 0 && answering.every((x) => x.a.trim());
@@ -5429,6 +5447,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
               <div className="text-sm flex-1" style={{ color: C.ink2 }}>{pending ? "Not screened yet. It runs automatically once " + first + " accepts this role."
                 : autoRunning ? <span className="inline-flex items-center gap-2"><Sparkles size={14} color={C.em} className="shrink-0" />Screening automatically against this job. It takes about a minute; this card updates by itself. <InlineDots /></span>
                 : candidate.ai_locked ? "Not screened. The review is locked."
+                : (ai.auto && ai.auto.paused) || S.aiDown ? <>Not screened: the AI is paused. Review {first} yourself; you can still forward, route and move them along as usual.</>
                 : <>Automatic screening didn't finish{ai.auto && ai.auto.error ? " (" + ai.auto.error + ")" : ""}. Screen now to try again.</>}</div>
               {!pending && !autoRunning && <Btn kind="primary" onClick={screen} disabled={!!busy || candidate.ai_locked}>{busy === "screen" ? <>Screening <InlineDots color="#fff" /></> : "Screen now"}</Btn>}
             </div>
@@ -5616,7 +5635,7 @@ function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose,
   const link = candidate.jobLinks.find((l) => l.id === linkId) || null;
   const updating = !!(link && link.reject);
   const job = link ? S.jobs.find((j) => j.id === link.jobId) : null;
-  const draft = () => { setBusy("draft"); S.msgQuiet("draft_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason, feedback }).then((r) => { setMessage(r.message || ""); setEdited(false); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const draft = () => { setBusy("draft"); S.msgQuiet("draft_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason, feedback }).then((r) => { setMessage(r.message || ""); setEdited(false); if (r.aiUnavailable) S.error("The AI couldn't write it right now, so the standard wording is filled in. Edit it if you like."); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
   // A plain explanation as soon as a reason is picked; "Write it from the feedback" makes it specific.
   React.useEffect(() => { if (reason && !edited && !feedback.trim()) S.msgQuiet("draft_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason }).then((r) => setMessage(r.message || "")).catch(() => {}); }, [reason, kind]); // eslint-disable-line
   const showPreview = () => { setBusy("preview"); S.msgQuiet("preview_reject", { linkId: linkId || undefined, candidateId: candidate.id, kind, reason, message }).then(setPreview).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
@@ -5770,11 +5789,11 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
   const run = async () => {
     setBusy("review"); setErr("");
     try { const r = await S.aiScreen("review_match", { candidateId: candidate.id, jobId: job.id }); setReview(r.review); setPicked(null); }
-    catch (e) { setErr(e.message); }
+    catch (e) { setErr(/^AI is paused/.test(e.message) ? "The AI review isn't available right now (the AI is paused). You can still route " + first + ", with your own questions if you like." : e.message); }
     setBusy("");
   };
   // First open with no saved review: run it straight away.
-  useEffect(() => { if (open && !saved) run(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (open && !saved && !S.aiDown) run(); else if (open && !saved) setErr("The AI review isn't available right now (the AI is paused). You can still route " + first + ", with your own questions if you like."); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const aiQs = ((review && review.questions) || []).map((x) => {
     const hit = x.already_answered ? { a: x.answer } : coveredBy(x.q, past);
     return { q: x.q, answered: !!hit, answer: hit ? hit.a : "", where: hit && hit.where ? hit.where : "" };
@@ -5855,7 +5874,7 @@ function FitReviewModal({ open, onClose, candidate, job, S, toast }) {
             {past.map((x, i) => <div key={i} className="text-sm"><div className="font-medium">{x.q}</div><div className="whitespace-pre-line mt-0.5" style={{ color: C.ink2 }}>{x.a}</div><div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{x.where}</div></div>)}
           </Fold>
         </div>
-        {(review || extra.length > 0) && (
+        {(review || extra.length > 0 || (!link && err && busy !== "review")) && (
           <div className="flex flex-col gap-2">
             <div className="text-xs font-semibold" style={{ color: C.ink3 }}>QUESTIONS TO CONFIRM THE FIT · {chosen.length} selected</div>
             {allQs.map((x, i) => (
@@ -5988,9 +6007,11 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
     setScoring(true);
     try {
       await S.setScreeningAnswers(link.id, answers);
-      if (link.response === "accepted") { await S.aiScreen("screen", { linkId: link.id }); toast("Answers saved and rescreened"); }
-      else toast("Answers saved");
-    } catch (e) { S.error(e.message || "AI screening failed"); }
+      if (link.response === "accepted") {
+        try { await S.aiScreen("screen", { linkId: link.id }); toast("Answers saved and rescreened"); }
+        catch (e) { toast("Answers saved. " + (/^AI is paused/.test(e.message) ? "The AI is paused, so they weren't rescreened." : "They couldn't be rescreened right now.")); }
+      } else toast("Answers saved");
+    } catch (e) { S.error(e.message || "Couldn't save the answers"); }
     setScoring(false);
   };
   return (
@@ -12946,7 +12967,7 @@ async function loadAll(token) {
   // Reaching a recruiter's app is what "delivered" means for candidate messages (two grey ticks).
   // Sent alongside the data, not before it, so it never delays the dashboard.
   sbFetch("/rest/v1/rpc/staff_mark_delivered", { method: "POST", token }).catch(() => {});
-  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks, cheers] = await Promise.all([
+  const [profiles, candidates, jobs, applications, placements, campaigns, ads, settingsRows, jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks, cheers, aiHealthRows] = await Promise.all([
     sbFetch("/rest/v1/profiles?select=*", { token }),
     sbFetch(FETCH_PATH, { token }),
     sbFetch("/rest/v1/jobs?select=*,job_recruiters(*),candidate_jobs(*)&order=created_at.desc", { token }),
@@ -12963,8 +12984,9 @@ async function loadAll(token) {
     sbFetch("/rest/v1/rpc/job_view_stats", { method: "POST", token }).catch(() => []), // views + applications per job
     sbFetch("/rest/v1/tasks?select=*&order=created_at.desc&limit=1000", { token }).catch(() => []), // to-do list (RLS: yours, ones you assigned, or all for Admin / Rec Ops)
     sbFetch("/rest/v1/placement_cheers?select=*,placement_kudos(id,from_id,message,created_at)&order=created_at.desc&limit=300", { token }).catch(() => []), // team wins and congratulations
+    sbFetch("/rest/v1/ai_health?select=down_since,reason", { token }).catch(() => []), // set while the AI is paused (out of credit)
   ]);
-  return { ...mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks }), cheers: cheers || [] };
+  return { ...mapAll({ profiles, candidates, jobs, applications, placements, campaigns, ads, settings: settingsRows[0], jobEngagements, auditLog, profileSecurity, interviews, chatClears, jobViews, tasks }), aiDownSince: (aiHealthRows && aiHealthRows[0] && aiHealthRows[0].down_since) || null, cheers: cheers || [] };
 }
 
 export default function App() {
@@ -13620,6 +13642,7 @@ export default function App() {
       const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "Couldn't read that file"); return j;
     },
     aiScreen: aiCall,
+    aiDown: !!data.aiDownSince,
     interviews: data.interviews || [],
     iv: ivCall,
     ivQuiet: ivQuiet,
@@ -13713,6 +13736,7 @@ export default function App() {
       <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} onCmd={() => setCmdOpen(true)} />
+        {data.aiDownSince && <AiPausedBanner since={data.aiDownSince} admin={role === "admin"} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
