@@ -64,7 +64,7 @@ export async function buildDigest(admin: any, me: Me, kind: "brief" | "roundup",
   const stuck = jobs.filter((j: any) => j.status === "Open" && now - new Date(j.created_at).getTime() > 7 * DAY && now - (lastMove.get(j.id) || new Date(j.created_at).getTime()) > 7 * DAY).slice(0, 3);
 
   // Top 3 things, most urgent first.
-  const todo: { title: string; candidate_id?: string; job_id?: string }[] = [];
+  const todo: { title: string; candidate_id?: string; job_id?: string; existing?: boolean }[] = [];
   const push = (x: any) => { if (todo.length < 3 && !todo.some((t) => t.title === x.title)) todo.push(x); };
   const repliedLinks = [...new Set(unread.map((m: any) => m.link_id))];
   for (const id of repliedLinks) { const l: any = linkById.get(id); const c: any = l && cById.get(l.candidate_id); if (c) push({ title: `Reply to ${c.name} about ${roleOf(l.job_id)}`, candidate_id: c.id, job_id: l.job_id }); }
@@ -72,7 +72,7 @@ export async function buildDigest(admin: any, me: Me, kind: "brief" | "roundup",
   for (const l of live.filter((x: any) => x.stage === "Offer")) { const c: any = cById.get(l.candidate_id); if (c) push({ title: `Push ${c.name}'s offer on ${roleOf(l.job_id)} to a decision`, candidate_id: c.id, job_id: l.job_id }); }
   for (const l of waiting) { const c: any = cById.get(l.candidate_id); if (c) push({ title: `Chase the client for feedback on ${c.name} (${roleOf(l.job_id)})`, candidate_id: c.id, job_id: l.job_id }); }
   for (const j of stuck) push({ title: `Restart sourcing on ${j.role_title}${j.client ? " (" + j.client + ")" : ""}`, job_id: j.id });
-  for (const t of overdue) push({ title: t.title });
+  for (const t of overdue) push({ title: t.title, existing: true });
 
   // The message.
   const lines: string[] = [];
@@ -100,10 +100,10 @@ export async function buildDigest(admin: any, me: Me, kind: "brief" | "roundup",
   if (wait.length) lines.push("", "**Waiting:** " + wait.join("; ") + ".");
   if (todo.length) {
     lines.push("", `**${kind === "brief" ? "Top 3 for today" : "First 3 tomorrow"}:**`);
-    todo.forEach((t, i) => lines.push(`${i + 1}. ${t.title}`));
-    lines.push("", "Approve the reminders below to add them to your to-do list.");
+    todo.forEach((t, i) => lines.push(`${i + 1}. ${t.title}${t.existing ? " (already on your to-do list)" : ""}`));
+    if (todo.some((t) => !t.existing)) lines.push("", "Approve the reminders below to add them to your to-do list.");
   } else lines.push("", "Nothing urgent needs you. A good moment to source for your open roles.");
 
-  const proposals = todo.map((t) => ({ tool: "propose_task", input: { title: t.title, due_on: due, ...(t.candidate_id ? { candidate_id: t.candidate_id } : {}), ...(t.job_id ? { job_id: t.job_id } : {}) } }));
+  const proposals = todo.filter((t) => !t.existing).map((t) => ({ tool: "propose_task", input: { title: t.title, due_on: due, ...(t.candidate_id ? { candidate_id: t.candidate_id } : {}), ...(t.job_id ? { job_id: t.job_id } : {}) } }));
   return { text: lines.join("\n"), proposals };
 }
