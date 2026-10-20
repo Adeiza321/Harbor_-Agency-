@@ -37,6 +37,13 @@ const cors = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const BASE = "https://api.apollo.io/api/v1";
+// Apollo limits how many requests an account makes per minute, hour and day. When it says "too
+// many" even after waiting, every scheduled run pauses for a while instead of hammering it (which
+// kept the limit hit all night), and the manual button explains it in plain words.
+class RateLimited extends Error {}
+const RATE_MSG = "Apollo is limiting how often ProNext can check it right now. It catches up by itself within the hour, so there's nothing to do.";
+const PAUSE_KEY = "apollo_sync_pause";
+const PAUSE_MIN = 45;
 
 const REPLY_CLASSES = ["willing_to_meet", "follow_up_question", "person_referral", "out_of_office",
   "already_left_company_or_not_right_person", "not_interested", "unsubscribe", "none_of_the_above"];
@@ -61,11 +68,11 @@ async function apollo(path: string, q: URLSearchParams) {
     const res = await fetch(`${BASE}${path}?${q}`, { headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": key }, signal: AbortSignal.timeout(30000) });
     if (res.status === 429) { await sleep(attempt ? 20000 : 5000); continue; }
     const data = await res.json().catch(() => ({}));
-    if (res.status === 403) throw new Error("Apollo refused: this needs a Master API key (Settings > Integrations > API).");
+    if (res.status === 403) throw new Error("Apollo refused the request: it needs a Master API key (Apollo: Settings > Integrations > API).");
     if (!res.ok) throw new Error("Apollo " + res.status + ": " + String(data?.error || data?.message || "").slice(0, 200));
     return data;
   }
-  throw new Error("Apollo is rate-limiting requests; try again in a minute");
+  throw new RateLimited(RATE_MSG);
 }
 
 async function apolloPost(path: string, body: Record<string, unknown>) {
@@ -78,7 +85,7 @@ async function apolloPost(path: string, body: Record<string, unknown>) {
     if (!res.ok) throw new Error("Apollo " + res.status + ": " + String(data?.error || data?.message || "").slice(0, 200));
     return data;
   }
-  throw new Error("Apollo is rate-limiting requests; try again in a minute");
+  throw new RateLimited(RATE_MSG);
 }
 
 // ---- The reply's own text, from the email's activities in Apollo (no credits) ----
@@ -244,13 +251,13 @@ async function sync(admin: any) {
   return { ok: true, checked: events.length, applied, replies, unsubscribes, bounces, statusChanges: changes.length, repliesFilled: filled };
 }
 
-// Replies synced before ProNext read their text (or whose read failed): fill in up to 15 per run.
+// Replies synced before ProNext read their text (or whose read failed): fill in up to 5 per run.
 async function backfillReplies(admin: any) {
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
   const { data: evs } = await admin.from("apollo_events").select("id,at,prospect_id,lead_id,status_change").eq("kind", "reply").gte("at", since).order("at", { ascending: false }).limit(200);
   let filled = 0;
   for (const ev of evs || []) {
-    if (filled >= 15) break;
+    if (filled >= 5) break;
     const table = ev.prospect_id ? "prospects" : ev.lead_id ? "leads" : "";
     if (!table) continue;
     const { data: row } = await admin.from(table).select("id,status,data").eq("id", ev.prospect_id || ev.lead_id).maybeSingle();
@@ -305,7 +312,8 @@ async function tracking(admin: any, days: number, withSample = false) {
   const STATS = ["delivered", "opened", "clicked", "bounced", "spam_blocked", "unsubscribed", "failed_other"];
   const flags = new Map<string, Set<string>>();
   // Each status is its own search; they run side by side (with the sequence lookups below) instead of one after another.
-  const statsTask = raw.length ? Promise.all(STATS.map(async (stat) => {
+  // One status at a time (seven searches at once tripped Apollo's per-minute limit).
+  const statsTask = raw.length ? (async () => { for (const stat of STATS) {
     for (let page = 1; page <= 20; page++) {
       const q = new URLSearchParams();
       seqs.forEach((id) => q.append("emailer_campaign_ids[]", id));
@@ -317,7 +325,7 @@ async function tracking(admin: any, days: number, withSample = false) {
       for (const m of list) { const id = String(m.id); if (!flags.has(id)) flags.set(id, new Set()); flags.get(id)!.add(stat); }
       if (list.length < 100) break;
     }
-  })) : Promise.resolve([]);
+  } })() : Promise.resolve();
   // The sequences themselves (steps, daily cap) and where each person is in them.
   const sequences: any[] = [];
   const stepById = new Map<string, { position: number; seq: string }>();
@@ -437,7 +445,7 @@ Deno.serve(async (req: Request) => {
     if (!opsKey) {
       const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
       const { data: caller } = await admin.auth.getUser(jwt);
-      if (!caller?.user) return json({ error: "Not signed in" }, 401);
+      if (!caller?.user) return json({ error: "Your session has ended. Sign in again." }, 401);
       const { data: me } = await admin.from("profiles").select("role,status").eq("id", caller.user.id).single();
       if (!me || me.status !== "Active") return json({ error: "Your account isn't active" }, 403);
       if ((body.action === "tracking" || body.action === "preview") && me.role !== "admin") return json({ error: "Only admins can see email tracking" }, 403);
@@ -458,15 +466,39 @@ Deno.serve(async (req: Request) => {
       if (!m) return json({ error: "ProNext has no copy of this email (it may have been written in Apollo)." }, 404);
       return json({ subject: m.subject, html: m.html || "<pre style='font-family:Arial;white-space:pre-wrap'>" + String(m.body || "").replace(/[&<>]/g, (c: string) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" } as any)[c]) + "</pre>", name: m.to_name, date: m.sent_at || m.created_at });
     }
-    if (body.action !== "sync") return json({ error: "Unknown action" }, 400);
-    const result = await sync(admin);
-    // The scheduled run also rebuilds the tracking snapshot (the "Check Apollo for replies" button doesn't wait for it).
+    if (body.action !== "sync") return json({ error: "That request isn't supported." }, 400);
+    // Paused after Apollo's limit was hit: scheduled runs wait it out quietly.
+    const { data: pause } = await admin.from("app_cache").select("payload").eq("key", PAUSE_KEY).maybeSingle();
+    const until = pause?.payload?.until ? new Date(pause.payload.until).getTime() : 0;
+    if (until > Date.now()) {
+      if (opsKey) return json({ ok: true, paused: true, until: pause?.payload?.until });
+      return json({ error: RATE_MSG }, 429);
+    }
+    let result: any;
+    try { result = await sync(admin); }
+    catch (e) {
+      if (!(e instanceof RateLimited)) throw e;
+      const untilIso = new Date(Date.now() + PAUSE_MIN * 60e3).toISOString();
+      await admin.from("app_cache").upsert({ key: PAUSE_KEY, payload: { until: untilIso, at: new Date().toISOString() }, fetched_at: new Date().toISOString() });
+      console.warn("apollo-sync: Apollo rate limit hit, pausing until", untilIso);
+      return opsKey ? json({ ok: true, paused: true, until: untilIso }) : json({ error: RATE_MSG }, 429);
+    }
+    // The scheduled run also rebuilds the tracking snapshot, at most once an hour (the page shows a
+    // snapshot up to an hour old; rebuilding it every 15 minutes used up Apollo's request limit).
     if (!opsKey) return json(result);
     let tracking_rows: number | string = "";
-    try { tracking_rows = (await buildSnapshot(admin)).rows.length; } catch (e) { tracking_rows = "failed: " + String((e as Error)?.message || e).slice(0, 200); }
+    const { data: snap } = await admin.from("app_cache").select("fetched_at").eq("key", SNAP_KEY).maybeSingle();
+    if (!snap?.fetched_at || Date.now() - new Date(snap.fetched_at).getTime() > 50 * 60000) {
+      try { tracking_rows = (await buildSnapshot(admin)).rows.length; }
+      catch (e) {
+        tracking_rows = e instanceof RateLimited ? "paused: Apollo rate limit" : "failed: " + String((e as Error)?.message || e).slice(0, 200);
+        if (e instanceof RateLimited) await admin.from("app_cache").upsert({ key: PAUSE_KEY, payload: { until: new Date(Date.now() + PAUSE_MIN * 60e3).toISOString(), at: new Date().toISOString() }, fetched_at: new Date().toISOString() });
+      }
+    } else tracking_rows = "snapshot is recent";
     return json({ ...result, tracking_rows });
   } catch (e) {
     console.error("apollo-sync", String((e as Error)?.message || e));
-    return json({ error: String((e as Error)?.message || e) }, 500);
+    const m = String((e as Error)?.message || e);
+    return json({ error: e instanceof RateLimited ? RATE_MSG : /Master API key/.test(m) ? m : "We couldn't check Apollo just now. It tries again by itself in 15 minutes." }, e instanceof RateLimited ? 429 : 500);
   }
 });

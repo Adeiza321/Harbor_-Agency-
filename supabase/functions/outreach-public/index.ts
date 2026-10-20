@@ -45,7 +45,7 @@ Deno.serve(async (req: Request) => {
     const token = String(body.token || "");
     const kind = body.kind === "l" ? "l" : "p";
     const action = String(body.action || "info");
-    if (!/^[0-9a-f]{32}$/.test(token)) return json({ error: "This link isn't valid" }, 400);
+    if (!/^[0-9a-f]{32}$/.test(token)) return json({ error: "This link isn't valid. Check you used the whole link from the email." }, 400);
 
     const suppress = async (email: string, reason: string) => {
       if (email) await admin.from("outreach_suppressions").upsert({ email_norm: await emailHash(email), reason }, { onConflict: "email_norm" });
@@ -85,9 +85,11 @@ Deno.serve(async (req: Request) => {
       if (action === "interested") {
         if (job.status === "Closed") return json({ ok: true, done: "closed", role: job.role_title });
         if (!["interested", "converted"].includes(p.status)) {
-          await admin.from("prospects").update({ status: "interested" }).eq("id", p.id);
+          // The Inbox row first, then the status: someone a recruiter found is then given to that
+          // recruiter straight away (prospects_sourced_interest), using this row.
           const { data: dup } = await admin.from("applications").select("id").eq("job_id", p.job_id).ilike("email", p.email).limit(1);
-          if (!dup?.length) await admin.from("applications").insert({ name: p.full_name || p.first_name || "Outreach contact", email: p.email, role_title: job.role_title || "Role", job_id: p.job_id, source: "outreach" });
+          if (!dup?.length) await admin.from("applications").insert({ name: p.full_name || p.first_name || "Outreach contact", email: p.email, role_title: job.role_title || "Role", job_id: p.job_id, source: "outreach", interest_at: new Date().toISOString() });
+          await admin.from("prospects").update({ status: "interested" }).eq("id", p.id);
         }
         return json({ ok: true, done: "interested", role: job.role_title });
       }
@@ -114,6 +116,7 @@ Deno.serve(async (req: Request) => {
     }
     return json({ error: "Unknown action" }, 400);
   } catch (e) {
-    return json({ error: String((e as Error)?.message || e) }, 500);
+    console.error("outreach-public", String((e as Error)?.message || e));
+    return json({ error: "Something went wrong on our side. Please try again in a minute." }, 500);
   }
 });

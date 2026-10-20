@@ -19,7 +19,7 @@ const EXPIRED = "This link has expired or has already been used. Ask your admin 
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+  if (req.method !== "POST") return json({ error: "That request isn't supported." }, 405);
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const body = await req.json().catch(() => ({}));
@@ -32,31 +32,37 @@ Deno.serve(async (req: Request) => {
       const { data: t } = await admin.from("account_setup_tokens").select("user_id").eq("token_hash", hash).is("used_at", null).gt("expires_at", nowIso).maybeSingle();
       if (!t) return json({ error: EXPIRED }, 400);
       const { data: p } = await admin.from("profiles").select("full_name,email,status").eq("id", t.user_id).maybeSingle();
-      if (!p || p.status !== "Active") return json({ error: "This account isn't active. Ask your admin." }, 400);
+      if (!p || p.status === "Disabled") return json({ error: "This account has been turned off. Ask your admin." }, 400);
       return json({ ok: true, name: p.full_name || "", email: p.email || "" });
     }
 
     if (body.action === "set") {
       const password = String(body.password || "");
-      if (password.length < 8) return json({ error: "Use at least 8 characters" }, 400);
-      if (password.length > 128) return json({ error: "That password is too long" }, 400);
+      if (password.length < 8) return json({ error: "Use at least 8 characters." }, 400);
+      if (password.length > 128) return json({ error: "That password is too long. Use 128 characters or fewer." }, 400);
       // Use the link up first, so it can only ever work once.
       const { data: used } = await admin.from("account_setup_tokens").update({ used_at: nowIso })
         .eq("token_hash", hash).is("used_at", null).gt("expires_at", nowIso).select("user_id").maybeSingle();
       if (!used) return json({ error: EXPIRED }, 400);
       const { data: p } = await admin.from("profiles").select("email,status").eq("id", used.user_id).maybeSingle();
-      if (!p || p.status !== "Active") return json({ error: "This account isn't active. Ask your admin." }, 400);
+      if (!p || p.status === "Disabled") {
+        await admin.from("account_setup_tokens").update({ used_at: null }).eq("token_hash", hash);
+        return json({ error: "This account has been turned off. Ask your admin." }, 400);
+      }
       const { error } = await admin.auth.admin.updateUserById(used.user_id, { password });
       if (error) {
         await admin.from("account_setup_tokens").update({ used_at: null }).eq("token_hash", hash);
-        return json({ error: /weak|pwned|leak/i.test(error.message) ? "That password is too common or has appeared in a data breach. Choose another." : error.message }, 400);
+        return json({ error: /weak|pwned|leak/i.test(error.message) ? "That password is too common or has appeared in a data breach. Choose another." : "We couldn't save your password. Try again." }, 400);
       }
+      // Setting the password is their first sign-in: an Invited account becomes Active now.
+      if (p.status === "Invited") await admin.from("profiles").update({ status: "Active" }).eq("id", used.user_id).eq("status", "Invited");
       try { await admin.from("audit_log").insert({ actor_id: used.user_id, action: "password set from welcome email", entity_type: "profile", entity_id: used.user_id }); } catch (_) { /* best effort */ }
       return json({ ok: true, email: p.email || "" });
     }
 
-    return json({ error: "Unknown action" }, 400);
+    return json({ error: "That request isn't supported." }, 400);
   } catch (e) {
-    return json({ error: String((e as Error)?.message || e) }, 500);
+    console.error("account-setup", String((e as Error)?.message || e));
+    return json({ error: "Something went wrong on our side. Try again in a minute." }, 500);
   }
 });

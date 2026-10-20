@@ -1,19 +1,20 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { storeEvents, toRow } from "./events.ts";
 
-// Admin-only: every email the app sent to a CANDIDATE through Brevo in the last 7 or 30 days, one row
-// per email, with the candidate's name, whether it was delivered, opened and clicked (or bounced /
-// blocked / marked as spam). Emails to staff (welcome, password reset, approvals, tests) are left out.
+// Admin-only: every email the app sent through Brevo in the chosen period, one row per email, with the
+// recipient's name, whether it was delivered, opened and clicked (or bounced / blocked / marked as spam).
+// Two audiences: "candidates" (the default) and "staff" (welcome emails, update requests, approvals,
+// password resets, assistant updates and tests sent to your own team).
 // A recipient counts as a candidate when their address is on a candidate, an application/referral or
 // a sourced prospect, and isn't a staff account.
 // Events are stored in public.email_events: pushed by Brevo's webhook (brevo-webhook) as they
 // happen, plus a catch-up every 15 minutes (action "sync", scheduler only) that asks Brevo's event
 // log (GET /v3/smtp/statistics/events) only for events since the newest one stored. The page reads
 // the table, so it loads straight away and keeps history after Brevo has dropped it.
-//   POST { days: 7 | 30 | 90 | 365, refresh? }  ->  { rows, totals, days, syncedAt }  (refresh: catch up first)
+//   POST { days: 7 | 30 | 90 | 365, refresh?, audience?: "candidates" | "staff" }  ->  { rows, totals, days, syncedAt }
 //   POST { action: "sync" } + x-harbor-ops      ->  { fetched, stored }
 //   POST { action: "preview", messageId }       ->  { subject, to, date, html }  (the email as sent;
-//        only for candidate recipients, so staff emails with reset codes or setup links never show)
+//        never for welcome or password-reset emails, which carry one-time links and codes)
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +28,7 @@ function typeOf(subject: string, tag: string): string {
   const s = subject || "";
   if (/^\[TEST\]/.test(s)) return "Test";
   if (/^Welcome to /.test(s)) return "Welcome";
+  if (/^(How's sourcing going|Quick check-in on)/i.test(s)) return "Update request";
   if (/password reset/i.test(s)) return "Password reset";
   if (/^(Interview booked|Interview cancelled|Updated time|Tomorrow:|Starting in an hour|We missed you)/.test(s)) return "Interview";
   if (/under review/i.test(s)) return "Application received";
@@ -50,10 +52,12 @@ type Row = {
   clickedAt: string | null; clicks: number; links: string[];
   problem: string | null; spam: boolean; unsubscribed: boolean; lastAt: string; name?: string;
 };
-const STAFF_TYPES = new Set(["Welcome", "Password reset", "Approval", "Test"]);
+const STAFF_TYPES = new Set(["Welcome", "Password reset", "Approval", "Test", "Update request"]);
+// Emails that carry a one-time sign-in link or reset code: never shown in a preview.
+const SECRET_TYPES = new Set(["Welcome", "Password reset"]);
 
 // email (lowercase) -> candidate name, from candidates, then applications/referrals, then prospects.
-async function candidateNames(admin: any): Promise<{ names: Map<string, string>; staff: Set<string> }> {
+async function candidateNames(admin: any): Promise<{ names: Map<string, string>; staff: Set<string>; staffNames: Map<string, string> }> {
   const names = new Map<string, string>();
   const all = async (table: string, cols: string) => {
     const out: any[] = [];
@@ -65,13 +69,15 @@ async function candidateNames(admin: any): Promise<{ names: Map<string, string>;
     return out;
   };
   const [cands, apps, pros, staff] = await Promise.all([
-    all("candidates", "email,name"), all("applications", "email,name"), all("prospects", "email,full_name,first_name,last_name"), all("profiles", "email"),
+    all("candidates", "email,name"), all("applications", "email,name"), all("prospects", "email,full_name,first_name,last_name"), all("profiles", "email,full_name"),
   ]);
   const add = (email: string, name: string) => { const k = String(email || "").trim().toLowerCase(); if (k && !names.has(k)) names.set(k, String(name || "").trim()); };
   for (const c of cands) add(c.email, c.name);
   for (const a of apps) add(a.email, a.name);
   for (const p of pros) add(p.email, p.full_name || [p.first_name, p.last_name].filter(Boolean).join(" "));
-  return { names, staff: new Set(staff.map((p: any) => String(p.email || "").trim().toLowerCase())) };
+  const staffNames = new Map<string, string>();
+  for (const p of staff) { const k = String(p.email || "").trim().toLowerCase(); if (k) staffNames.set(k, String(p.full_name || "").trim()); }
+  return { names, staff: new Set(staffNames.keys()), staffNames };
 }
 
 // Ask Brevo only for what's new: from the day before the newest stored event (the event log
@@ -117,12 +123,12 @@ Deno.serve(async (req: Request) => {
     }
     const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
     const { data: caller } = await admin.auth.getUser(token);
-    if (!caller?.user) return json({ error: "Not signed in" }, 401);
+    if (!caller?.user) return json({ error: "Your session has ended. Sign in again." }, 401);
     const { data: me } = await admin.from("profiles").select("role,status").eq("id", caller.user.id).single();
-    if (!me || me.role !== "admin" || me.status !== "Active") return json({ error: "Only admins can see email tracking" }, 403);
+    if (!me || me.role !== "admin" || me.status !== "Active") return json({ error: "Only admins can see email tracking." }, 403);
 
     const key = Deno.env.get("BREVO_API_KEY");
-    if (!key) return json({ error: "Brevo isn't connected (BREVO_API_KEY is not set)" }, 400);
+    if (!key) return json({ error: "Email sending isn't set up yet, so there's nothing to track. Add the Brevo key in Supabase settings." }, 400);
     const body = await req.json().catch(() => ({}));
 
     if (body.action === "preview") {
@@ -134,12 +140,14 @@ Deno.serve(async (req: Request) => {
       const meta = (lj.transactionalEmails || [])[0];
       if (!lr.ok || !meta?.uuid) return json({ error: "Brevo no longer has a copy of this email (it keeps them for a limited time)." }, 404);
       const k = String(meta.email || "").trim().toLowerCase();
-      const { names, staff } = await candidateNames(admin);
-      if (staff.has(k) || !names.has(k) || STAFF_TYPES.has(typeOf(String(meta.subject || ""), ""))) return json({ error: "Only emails sent to candidates can be previewed here." }, 403);
+      const { names, staff, staffNames } = await candidateNames(admin);
+      const kind = typeOf(String(meta.subject || ""), "");
+      if (SECRET_TYPES.has(kind)) return json({ error: "Welcome and password-reset emails can't be previewed, because they contain a private sign-in link." }, 403);
+      if (!staff.has(k) && !names.has(k)) return json({ error: "This email wasn't sent to a candidate or a team member, so it can't be previewed here." }, 403);
       const cr = await fetch("https://api.brevo.com/v3/smtp/emails/" + encodeURIComponent(meta.uuid), { headers: h, signal: AbortSignal.timeout(15000) });
       const cj = await cr.json().catch(() => ({}));
       if (!cr.ok || !cj.body) return json({ error: "Brevo no longer has the content of this email (it keeps it for a limited time)." }, 404);
-      return json({ ok: true, subject: cj.subject || meta.subject || "", to: meta.email || "", name: names.get(k) || "", date: cj.date || meta.date || "", html: String(cj.body) });
+      return json({ ok: true, subject: cj.subject || meta.subject || "", to: meta.email || "", name: staffNames.get(k) || names.get(k) || "", date: cj.date || meta.date || "", html: String(cj.body) });
     }
 
     const days = [7, 30, 90, 365].includes(Number(body.days)) ? Number(body.days) : 30;
@@ -147,14 +155,14 @@ Deno.serve(async (req: Request) => {
     // "Refresh", or nothing stored yet: catch up with Brevo first (only new events are fetched).
     const { count: have } = await admin.from("email_events").select("id", { count: "exact", head: true }).eq("source", "sync");
     let syncError = "";
-    if (body.refresh || !have) { try { await syncFromBrevo(admin, key); } catch (e) { syncError = String((e as Error)?.message || e); if (!have) return json({ error: syncError }, 502); } }
+    if (body.refresh || !have) { try { await syncFromBrevo(admin, key); } catch (e) { syncError = String((e as Error)?.message || e); if (!have) return json({ error: "We couldn't reach Brevo to load the email log. Try again in a few minutes." }, 502); } }
 
     // The stored events for the period, oldest first.
     const since = new Date(Date.now() - days * 864e5).toISOString();
     const events: any[] = [];
     for (let from = 0; from < 300000; from += 1000) {
       const { data, error } = await admin.from("email_events").select("message_id,email,event,subject,tag,link,reason,at").gte("at", since).order("at").range(from, from + 999);
-      if (error) return json({ error: error.message }, 500);
+      if (error) return json({ error: "We couldn't load the email log. Try again in a minute." }, 500);
       events.push(...(data || []));
       if (!data || data.length < 1000) break;
     }
@@ -184,9 +192,17 @@ Deno.serve(async (req: Request) => {
         default: { const ev = String(e.event || ""); if (BOUNCE[ev] && ev !== "deferred") row.problem = String(e.reason || BOUNCE[ev]).slice(0, 200); }
       }
     }
-    const { names, staff } = await candidateNames(admin);
+    const { names, staff, staffNames } = await candidateNames(admin);
+    const audience = body.audience === "staff" ? "staff" : "candidates";
     const rows = [...byId.values()].filter((r) => {
       const k = r.to.trim().toLowerCase();
+      const isStaff = staff.has(k) || (STAFF_TYPES.has(r.type) && !names.has(k));
+      if (audience === "staff") {
+        if (!isStaff) return false;
+        r.name = staffNames.get(k) || "";
+        (r as any).noPreview = SECRET_TYPES.has(r.type);
+        return true;
+      }
       if (STAFF_TYPES.has(r.type) || staff.has(k) || !names.has(k)) return false;
       r.name = names.get(k) || "";
       return true;
@@ -206,8 +222,9 @@ Deno.serve(async (req: Request) => {
       clicked: rows.filter((r) => r.clickedAt).length,
       problems: rows.filter((r) => r.problem || r.spam).length,
     };
-    return json({ ok: true, days, rows: rows.slice(0, 5000), totals, truncated: rows.length > 5000, syncedAt: newest?.created_at || null, ...(syncError ? { warning: "Couldn't reach Brevo just now; showing what's stored. " + syncError.slice(0, 160) } : {}) });
+    return json({ ok: true, days, audience, rows: rows.slice(0, 5000), totals, truncated: rows.length > 5000, syncedAt: newest?.created_at || null, ...(syncError ? { warning: "Couldn't reach Brevo just now, so this shows what was already saved. Try Refresh again in a few minutes." } : {}) });
   } catch (e) {
-    return json({ error: String((e as Error)?.message || e) }, 500);
+    console.error("email-tracking", String((e as Error)?.message || e));
+    return json({ error: "Something went wrong loading the email log. Try again in a minute." }, 500);
   }
 });

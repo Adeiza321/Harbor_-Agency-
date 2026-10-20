@@ -28,6 +28,23 @@ const errMsg = (e: unknown) => String((e as Error)?.message || e);
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const MAX_QUERIES = 12;
 
+// What went wrong, in one plain sentence for the job page (the technical detail goes to the logs).
+export function friendlyXrayError(raw: unknown): string {
+  const m = String((raw as Error)?.message ?? raw ?? "");
+  if (/out of credit|credit balance|insufficient|billing|payment required|\b402\b/i.test(m)) return "The AI is out of credit, so the people found couldn't be reviewed. Top up the AI credits, then search again.";
+  if (/\b429\b|quota|rate.?limit|too many requests|exceeded/i.test(m)) return "A search service is busy or has used up today's free searches. Try again in an hour.";
+  if (/cut off|max_tokens|truncat/i.test(m)) return "The AI's answer was cut short, so a few people may not have been reviewed.";
+  if (/timeout|timed out|aborted|took too long/i.test(m)) return "A search took too long to answer and was skipped.";
+  if (/ops token|couldn't continue/i.test(m)) return "The search couldn't carry on to its next step. Search again.";
+  if (/couldn't write searches/i.test(m)) return "The AI couldn't work out searches for this job. Add more detail to the job description, then search again.";
+  if (/no (free )?search engine|no engine available|not connected/i.test(m)) return "No search engine is connected, so nothing could be searched. Ask an Admin to add a search key in Supabase.";
+  if (/job not found/i.test(m)) return "This job no longer exists.";
+  if (/\b5\d\d\b|overloaded|unavailable|bad gateway|fetch failed|network/i.test(m)) return "A service ProNext relies on was briefly unavailable. Search again in a few minutes.";
+  return "The search hit a problem and stopped. Search again in a few minutes.";
+}
+const friendlyList = (xs: unknown[]) => [...new Set(xs.map(friendlyXrayError))].slice(0, 5);
+const RECRUITER_DAILY_SEARCHES = 5;
+
 async function setXray(admin: any, jobId: string, xray: Record<string, unknown>) {
   await admin.from("jobs").update({ xray: { ...xray, at: new Date().toISOString() } }).eq("id", jobId);
 }
@@ -50,22 +67,57 @@ export function cleanGuide(g: any): XrayGuide | null {
 // once: each run works in short steps, each in its own call of this function (xray_step), saving
 // where it got to on jobs.xray.cp and handing over to the next step before the server's time limit.
 // So a long review never gets cut off, and many jobs can search at the same time.
-export const XRAY_STALE_MS = 8 * 60e3;
+export const XRAY_STALE_MS = 5 * 60e3;
 const STEP_BUDGET_MS = 80e3;     // stop and hand over after this long in one step
 const REVIEW_BATCH = 8;          // results per AI review call
 const MAX_RESUMES = 4;           // a step that died (stale) is picked up again at most this often
 export async function startXray(admin: any, jobId: string, s: Settings, by: string | null = null, guide: XrayGuide | null = null, _fromQueue = false) {
-  const { data: job } = await admin.from("jobs").select("id,xray").eq("id", jobId).maybeSingle();
-  if (!job) return { ok: false, message: "Job not found" };
+  const { data: job } = await admin.from("jobs").select("id,status,xray").eq("id", jobId).maybeSingle();
+  if (!job) return { ok: false, message: "This job no longer exists." };
   const e = searchEngines();
-  if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No free search engine is connected yet. Add a TAVILY_API_KEY, SERPER_API_KEY, BRAVE_API_KEY or GEMINI_API_KEY secret in Supabase." };
+  if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No search engine is connected yet, so X-ray can't run. Ask an Admin to add a search key (Tavily, Serper, Brave or Gemini) in Supabase." };
+  const { data: who } = by ? await admin.from("profiles").select("role").eq("id", by).maybeSingle() : { data: null };
+  const recruiter = who?.role === "recruiter";
   const x = job.xray || {};
-  if (x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < XRAY_STALE_MS) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
+  const busy = x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < XRAY_STALE_MS;
+  if (recruiter && !_fromQueue) {
+    // A recruiter's searches are tracked (and capped) one by one, so they can wait their turn.
+    const since = new Date(); since.setUTCHours(0, 0, 0, 0);
+    const { count } = await admin.from("xray_requests").select("id", { count: "exact", head: true }).eq("requested_by", by).gte("created_at", since.toISOString());
+    const { data: open } = await admin.from("xray_requests").select("id,started_at").eq("job_id", jobId).eq("requested_by", by).is("finished_at", null).maybeSingle();
+    if (open) return { ok: true, queued: !open.started_at, running: !!open.started_at, message: open.started_at ? "Your X-ray search is already running for this role." : "Your X-ray search is waiting for another search on this role to finish. It starts by itself." };
+    if ((count || 0) >= RECRUITER_DAILY_SEARCHES) return { ok: false, message: `You've run ${RECRUITER_DAILY_SEARCHES} X-ray searches today, the daily limit. You can search again tomorrow.` };
+    const { error: qErr } = await admin.from("xray_requests").insert({ job_id: jobId, requested_by: by, ...(busy ? {} : { started_at: new Date().toISOString() }) });
+    if (qErr) return { ok: false, message: "We couldn't start your search. Try again in a minute." };
+    if (busy) return { ok: true, queued: true, message: "Another search is running on this role. Yours starts by itself as soon as it finishes, usually within a few minutes." };
+  } else if (busy) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
   await setXray(admin, jobId, { state: "running", by, ...(guide ? { guide } : {}), progress: { step: "plan" } });
   try { await kickXray(admin, jobId); }
-  catch (err) { await setXray(admin, jobId, { state: "error", by, error: errMsg(err).slice(0, 300), ...(guide ? { guide } : {}) }); return { ok: false, message: errMsg(err) }; }
+  catch (err) {
+    console.error("xray start", jobId, errMsg(err));
+    const msg = friendlyXrayError(err);
+    await setXray(admin, jobId, { state: "error", by, error: msg, ...(guide ? { guide } : {}) });
+    await finishRequest(admin, jobId, by, { error: msg });
+    return { ok: false, message: msg };
+  }
   void s;
   return { ok: true, started: true, message: "X-ray search started" + (guide ? " with your direction" : "") + ". Results appear under this job in a few minutes." };
+}
+
+// A recruiter's search finished (or failed): close their request, then start whoever is waiting next.
+async function finishRequest(admin: any, jobId: string, by: string | null, r: { found?: number; error?: string }) {
+  if (!by) return;
+  await admin.from("xray_requests").update({ finished_at: new Date().toISOString(), found: r.found ?? null, error: r.error ?? null })
+    .eq("job_id", jobId).eq("requested_by", by).is("finished_at", null).not("started_at", "is", null);
+}
+export async function startNextRequest(admin: any, jobId: string, s: Settings) {
+  const { data: next } = await admin.from("xray_requests").select("id,requested_by").eq("job_id", jobId).is("started_at", null).is("finished_at", null).order("created_at").limit(1).maybeSingle();
+  if (!next) return false;
+  const { data: claimed } = await admin.from("xray_requests").update({ started_at: new Date().toISOString() }).eq("id", next.id).is("started_at", null).select("id");
+  if (!claimed?.length) return false;
+  const r: any = await startXray(admin, jobId, s, next.requested_by, null, true);
+  if (r.ok === false) await admin.from("xray_requests").update({ finished_at: new Date().toISOString(), error: r.message }).eq("id", next.id);
+  return r.ok !== false;
 }
 
 // A valid ops token, so a step can call the next one (and the search can be started by a person).
@@ -167,7 +219,19 @@ type Person = Hit & { key: string; site: SiteKey; query: string };
 export async function stepXrayQueue(admin: any, s: Settings) {
   const { data: rows } = await admin.from("jobs").select("id,status,xray").in("xray->>state", ["running", "queued"]);
   const now = Date.now();
-  let stopped = 0, started = 0, resumed = 0;
+  let stopped = 0, started = 0, resumed = 0, fromRequests = 0;
+  // Recruiters' searches waiting their turn on a role where nothing is running any more.
+  const { data: waiting } = await admin.from("xray_requests").select("job_id").is("started_at", null).is("finished_at", null).limit(50);
+  for (const jobId of [...new Set((waiting || []).map((w: any) => w.job_id))] as string[]) {
+    const { data: j } = await admin.from("jobs").select("status,xray").eq("id", jobId).maybeSingle();
+    if (!j || j.status === "Closed") { await admin.from("xray_requests").update({ finished_at: new Date().toISOString(), error: "The role closed before the search could run." }).eq("job_id", jobId).is("finished_at", null); continue; }
+    const x = j.xray || {};
+    if (x.state === "running" && now - new Date(x.at || 0).getTime() <= XRAY_STALE_MS) continue;
+    if (await startNextRequest(admin, jobId, s)) fromRequests++;
+  }
+  // Requests left open by a run that ended without closing them (over an hour old).
+  await admin.from("xray_requests").update({ finished_at: new Date().toISOString(), error: "The search stopped before finishing. Search again." })
+    .is("finished_at", null).not("started_at", "is", null).lt("started_at", new Date(now - 60 * 60e3).toISOString());
   for (const j of rows || []) {
     const x = j.xray || {};
     if (x.state === "queued" && j.status !== "Closed") { await startXray(admin, j.id, s, x.by || null, x.guide || null, true); started++; continue; }
@@ -177,10 +241,12 @@ export async function stepXrayQueue(admin: any, s: Settings) {
       await setXray(admin, j.id, { ...x, resumes: tries + 1 });
       try { await kickXray(admin, j.id); resumed++; continue; } catch (_) { /* falls through to stopped */ }
     }
-    await setXray(admin, j.id, { ...x, state: "error", cp: undefined, error: "It stopped before finishing. Run it again." });
+    await setXray(admin, j.id, { ...x, state: "error", cp: undefined, error: "The search stopped before finishing. Search again." });
+    await finishRequest(admin, j.id, x.by || null, { error: "The search stopped before finishing. Search again." });
+    await startNextRequest(admin, j.id, s).catch(() => false);
     stopped++;
   }
-  return { stopped, started, resumed };
+  return { stopped, started, resumed, fromRequests };
 }
 
 // One step of a run (called by xray_step). Errors end the run with the reason shown on the job.
@@ -190,7 +256,10 @@ export async function runXrayStep(admin: any, jobId: string, s: Settings) {
     console.error("xray", jobId, errMsg(err));
     const { data: j } = await admin.from("jobs").select("xray").eq("id", jobId).maybeSingle();
     const x = j?.xray || {};
-    await setXray(admin, jobId, { state: "error", error: errMsg(err).slice(0, 300), ...(x.by ? { by: x.by } : {}), ...(x.guide ? { guide: x.guide } : {}) });
+    const msg = friendlyXrayError(err);
+    await setXray(admin, jobId, { state: "error", error: msg, detail: errMsg(err).slice(0, 300), ...(x.by ? { by: x.by } : {}), ...(x.guide ? { guide: x.guide } : {}) });
+    await finishRequest(admin, jobId, x.by || null, { error: msg });
+    await startNextRequest(admin, jobId, s).catch(() => false);
   }
 }
 
@@ -210,70 +279,89 @@ async function xrayStep(admin: any, jobId: string, s: Settings) {
   // Searched where the job is (its own country), like every other outside search.
   const area = await searchArea(admin, job, jobCountryNames(job));
   const perJob = s.xrayPerJob;
+  // 1. Plan (first step only): the searches and the must-have checklist, saved before searching.
   if (!cp) {
-  await prog({ step: "plan" });
-  const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8) as string[];
-  const { data: ls } = await admin.from("screening_lessons").select("lesson,kind").eq("job_id", jobId).eq("active", true).in("kind", ["client_reject", "internal_reject"]).limit(6);
-  const p = await plan(job, area, (ls || []).map((l: any) => l.lesson), titles, guide);
-  // Exact searches from the direction run first (LinkedIn ones count as LinkedIn).
-  if (guide?.queries?.length) {
-    for (const q of [...guide.queries].reverse()) {
-      if (/^site:linkedin\.com/i.test(q)) p.linkedin.unshift(q);
-      else { const site = (Object.keys(SITES) as SiteKey[]).find((k) => k !== "linkedin" && q.toLowerCase().startsWith(SITES[k].prefix.toLowerCase())); if (site) p.sites.unshift({ site, query: q }); else p.linkedin.unshift(q); }
+    await prog({ step: "plan" });
+    const titles = [...new Set([job.role_title, ...(Array.isArray(job.parallel_titles) ? job.parallel_titles : [])].filter(Boolean))].slice(0, 8) as string[];
+    const { data: ls } = await admin.from("screening_lessons").select("lesson,kind").eq("job_id", jobId).eq("active", true).in("kind", ["client_reject", "internal_reject"]).limit(6);
+    const p = await plan(job, area, (ls || []).map((l: any) => l.lesson), titles, guide);
+    // Exact searches from the direction run first (LinkedIn ones count as LinkedIn).
+    if (guide?.queries?.length) {
+      for (const q of [...guide.queries].reverse()) {
+        if (/^site:linkedin\.com/i.test(q)) p.linkedin.unshift(q);
+        else { const site = (Object.keys(SITES) as SiteKey[]).find((k) => k !== "linkedin" && q.toLowerCase().startsWith(SITES[k].prefix.toLowerCase())); if (site) p.sites.unshift({ site, query: q }); else p.linkedin.unshift(q); }
+      }
     }
-  }
-  if (!p.linkedin.length && !p.sites.length && !p.github) throw new Error("The AI couldn't write searches for this job");
-
-  // 2. Search, until there are enough new people to choose from.
-  const want = Math.min(perJob * 2, 90);
-  const { data: existing } = await admin.from("prospects").select("external_id").eq("job_id", jobId);
-  const seen = new Set((existing || []).map((x: any) => String(x.external_id || "")));
-  const { data: cands } = await admin.from("candidates").select("linkedin_url").not("linkedin_url", "is", null);
-  const inPronext = new Set((cands || []).map((c: any) => profileOf(c.linkedin_url)?.key).filter(Boolean));
-  const people = new Map<string, Person>();
-  const used: Record<string, number> = {};
-  const errors: string[] = [];
-  const skip = new Set<string>();
-  let dropped = 0, searched = 0;
-  const add = (h: Hit, query: string) => {
-    const pr = profileOf(h.url);
-    if (!pr) return;
-    if (seen.has(pr.key) || inPronext.has(pr.key)) { dropped++; return; }
-    const cur = people.get(pr.key);
-    if (cur) { if (!cur.snippet && h.snippet) people.set(pr.key, { ...cur, ...h, url: pr.key, key: pr.key, site: pr.site, query }); return; }
-    people.set(pr.key, { ...h, url: pr.key, key: pr.key, site: pr.site, query });
-  };
-  const queries = [...p.linkedin.map((q) => ({ q, site: "linkedin" as SiteKey })), ...p.sites.map((x) => ({ q: x.query, site: x.site }))].slice(0, MAX_QUERIES);
-  // LinkedIn first, then the technical sites; stop early once there are plenty.
-  await prog({ step: "search", done: 0, total: queries.length, found: 0 });
-  for (const [qi, { q }] of queries.entries()) {
-    if (people.size >= want) break;
-    if (qi) await prog({ step: "search", done: qi, total: queries.length, found: people.size });
-    const r = await searchWeb(admin, q, skip);
-    errors.push(...r.errors);
-    if (!r.engine) { if (skip.size >= 4) break; continue; }
-    searched++;
-    used[r.engine] = (used[r.engine] || 0) + 1;
-    for (const h of r.hits) add(h, q);
-  }
-  if (p.github && people.size < want) {
-    try {
-      const hits = await githubUsers(p.github, 30);
-      used.github = (used.github || 0) + 1;
-      for (const h of hits) add(h, `GitHub users: ${[p.github.keywords, p.github.location, p.github.language].filter(Boolean).join(", ")}`);
-    } catch (e) { errors.push(errMsg(e).slice(0, 200)); }
-  }
-  if (!people.size) {
-    const why = searched ? `The searches found nobody new (${dropped} already on this job or in ProNext).` : "No search could run: " + ([...new Set(errors)].join("; ") || "no engine available");
-    await setXray(admin, jobId, { state: "done", found: 0, searched, used, technical: p.technical, checklist: p.checklist, queries: queries.map((x) => x.q), note: why, ...(guide ? { guide } : {}) });
-    return { ok: true, found: 0, message: why };
+    if (!p.linkedin.length && !p.sites.length && !p.github) throw new Error("The AI couldn't write searches for this job");
+    const queries = [...p.linkedin.map((q) => ({ q, site: "linkedin" as SiteKey })), ...p.sites.map((x) => ({ q: x.query, site: x.site }))].slice(0, MAX_QUERIES);
+    cp = { stage: "search", technical: p.technical, checklist: p.checklist, github: p.github, queries, qi: 0, people: [], used: {}, errors: [], dropped: 0, searched: 0, githubDone: false };
+    await prog({ step: "search", done: 0, total: queries.length, found: 0 });
   }
 
-  // Saved for the review steps: who was found, and what the plan and searches were.
-  const found = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
-  cp = { stage: "review", technical: p.technical, checklist: p.checklist, queries: queries.map((x) => x.q), used, searched,
-    errors: [...new Set(errors)].slice(0, 10), list: found, reviewed: [], next: 0 };
-  await prog({ step: "review", done: 0, total: Math.ceil(found.length / REVIEW_BATCH), found: found.length });
+  // 2. Search, one query at a time, saving after each, until there are enough new people to choose
+  //    from. Close to the time limit, the next step carries on from the next query.
+  if (cp.stage === "search") {
+    const want = Math.min(perJob * 2, 90);
+    const queries: { q: string; site: SiteKey }[] = cp.queries || [];
+    // Within a role, whoever finds someone first keeps them: anyone already found for this role (by
+    // any search, Apollo included) or already in ProNext is never shown again.
+    const { data: existing } = await admin.from("prospects").select("external_id,linkedin_url").eq("job_id", jobId);
+    const seen = new Set<string>();
+    for (const x of existing || []) { if (x.external_id) seen.add(String(x.external_id)); const k = x.linkedin_url ? profileOf(x.linkedin_url)?.key : null; if (k) seen.add(k); }
+    const { data: cands } = await admin.from("candidates").select("linkedin_url").not("linkedin_url", "is", null);
+    const inPronext = new Set((cands || []).map((c: any) => profileOf(c.linkedin_url)?.key).filter(Boolean));
+    const people = new Map<string, Person>((cp.people || []).map((x: Person) => [x.key, x]));
+    const used: Record<string, number> = cp.used || {};
+    const errors: string[] = [...(cp.errors || [])];
+    const skip = new Set<string>(cp.skip || []);
+    let dropped = cp.dropped || 0, searched = cp.searched || 0;
+    const add = (h: Hit, query: string) => {
+      const pr = profileOf(h.url);
+      if (!pr) return;
+      if (seen.has(pr.key) || inPronext.has(pr.key)) { dropped++; return; }
+      const cur = people.get(pr.key);
+      if (cur) { if (!cur.snippet && h.snippet) people.set(pr.key, { ...cur, ...h, url: pr.key, key: pr.key, site: pr.site, query }); return; }
+      people.set(pr.key, { ...h, url: pr.key, key: pr.key, site: pr.site, query });
+    };
+    const keep = () => ({ ...cp, people: [...people.values()], used, errors: [...new Set(errors)].slice(0, 10), skip: [...skip], dropped, searched });
+    let qi = cp.qi || 0;
+    for (; qi < queries.length; qi++) {
+      if (people.size >= want || skip.size >= 4) break;
+      if (qi > (cp.qi || 0) && Date.now() - t0 > STEP_BUDGET_MS) {
+        cp = { ...keep(), qi };
+        await save({ progress: { step: "search", done: qi, total: queries.length, found: people.size } });
+        await kickXray(admin, jobId);
+        return;
+      }
+      cp = { ...keep(), qi };
+      await prog({ step: "search", done: qi, total: queries.length, found: people.size });
+      const r = await searchWeb(admin, queries[qi].q, skip);
+      errors.push(...r.errors);
+      if (!r.engine) continue;
+      searched++;
+      used[r.engine] = (used[r.engine] || 0) + 1;
+      for (const h of r.hits) add(h, queries[qi].q);
+    }
+    if (cp.github && !cp.githubDone && people.size < want) {
+      try {
+        const hits = await githubUsers(cp.github, 30);
+        used.github = (used.github || 0) + 1;
+        for (const h of hits) add(h, `GitHub users: ${[cp.github.keywords, cp.github.location, cp.github.language].filter(Boolean).join(", ")}`);
+      } catch (e) { errors.push(errMsg(e).slice(0, 200)); }
+    }
+    if (!people.size) {
+      const why = searched ? `The searches found nobody new (${dropped} already found for this role or already in ProNext).` : "No search could run. " + (errors.length ? friendlyList(errors).join(" ") : "No search engine was available.");
+      await setXray(admin, jobId, { state: "done", found: 0, searched, used, technical: !!cp.technical, checklist: cp.checklist || [], queries: queries.map((x) => x.q), note: why, by, ...(guide ? { guide } : {}) });
+      await finishRequest(admin, jobId, by, { found: 0 });
+      await startNextRequest(admin, jobId, s).catch(() => false);
+      return { ok: true, found: 0, message: why };
+    }
+    // Saved for the review steps: who was found, and what the plan and searches were.
+    const found = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
+    cp = { stage: "review", technical: cp.technical, checklist: cp.checklist, queries: queries.map((x) => x.q), used, searched,
+      errors: [...new Set(errors)].slice(0, 10), list: found, reviewed: [], next: 0 };
+    await prog({ step: "review", done: 0, total: Math.ceil(found.length / REVIEW_BATCH), found: found.length });
+    if (Date.now() - t0 > STEP_BUDGET_MS) { await save({ progress: { step: "review", done: 0, total: Math.ceil(found.length / REVIEW_BATCH), found: found.length } }); await kickXray(admin, jobId); return; }
   }
 
   // 4. Review what each result shows, in batches (two at a time), saving after each pair. Close to
@@ -328,14 +416,14 @@ async function xrayStep(admin: any, jobId: string, s: Settings) {
       title: clip(r.headline, 160) || null, company: clip(r.company, 120) || null, location: j.location || null,
       linkedin_url: x.site === "linkedin" ? x.key : null,
       fit: j.fit, verdict: j.verdict,
-      fit_reason: clip(r.overview, 300) || null, status: "found",
+      fit_reason: clip(r.overview, 300) || null, status: "found", sourced_by: by,
       data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: j.clientHistory, location_source: j.locationSource, location_hold: hold || null, remote_worker: j.remote, own_practice: j.ownPractice, overview: clip(r.overview, 400), checklist: j.checklist, gaps: j.gaps, snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
     };
   });
   let inserted: any[] = [];
   if (rows.length) {
     const { data, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id");
-    if (error) throw new Error(error.message);
+    if (error) throw new Error("Couldn't save the people found: " + error.message);
     inserted = data || [];
   }
   // GitHub people often show a public email on their profile: picked up now, free.
@@ -354,7 +442,9 @@ async function xrayStep(admin: any, jobId: string, s: Settings) {
   const usage = await searchUsage(admin).catch(() => ({}));
   await setXray(admin, jobId, {
     state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, byEngine, ghEmails, technical: !!cp.technical, checklist: cp.checklist || [],
-    queries: cp.queries || [], usage, by, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: [...new Set(errors)].slice(0, 5) } : {}),
+    queries: cp.queries || [], usage, by, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: friendlyList(errors) } : {}),
   });
+  await finishRequest(admin, jobId, by, { found: inserted.length });
+  await startNextRequest(admin, jobId, s).catch(() => false);
   return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches${tooFar ? `; ${tooFar} left out for being too far from the office` : ""}).` };
 }

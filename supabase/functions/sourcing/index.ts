@@ -10,7 +10,8 @@ import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./ap
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
-import { cleanGuide, runXrayStep, startXray, stepXrayQueue } from "./xray.ts";
+import { cleanGuide, friendlyXrayError, runXrayStep, startXray, stepXrayQueue, XRAY_STALE_MS } from "./xray.ts";
+import { sourcedInterest, sweepSourcedInterest } from "./sourced.ts";
 import { searchEngines, searchUsage, checkEngines } from "./search.ts";
 import { autoFindEmails, draftEmails, findEmails, skipTooFar } from "./emails.ts";
 import { matchPool } from "./pool.ts";
@@ -193,12 +194,18 @@ async function handle(req: Request): Promise<Response> {
         try { out.jobs = await stepJobs(admin, s, opsKey, agencyName); } catch (e) { out.jobsError = errMsg(e); }
         if (!out.jobs) { try { out.leads = await stepLeads(admin, s, agencyName, 2); } catch (e) { out.leadsError = errMsg(e); } }
         try { out.xray = await stepXrayQueue(admin, s); } catch (e) { out.xrayError = errMsg(e); }
+        try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
       }
       // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, pick up stalled ones.
       if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
+      // Someone a recruiter found is interested (database trigger prospects_sourced_interest).
+      if (body.action === "sourced_interest" && body.prospectId) {
+        try { return json(await sourcedInterest(admin, String(body.prospectId))); }
+        catch (e) { console.error("sourced interest", errMsg(e)); return json({ error: errMsg(e) }, 500); }
+      }
       // One step of an X-ray run, in its own call (so its own time limit). Answers straight away;
       // the step works in the background and hands over to the next one when it needs to.
       if (body.action === "xray_step" && body.jobId) {
@@ -265,12 +272,36 @@ async function handle(req: Request): Promise<Response> {
     // Staff actions.
     const token = (req.headers.get("Authorization") || "").replace("Bearer ", "");
     const { data: caller } = await admin.auth.getUser(token);
-    if (!caller?.user) return json({ error: "Not signed in" }, 401);
+    if (!caller?.user) return json({ error: "Your session has ended. Sign in again." }, 401);
     const { data: me } = await admin.from("profiles").select("id,role,status,full_name,email").eq("id", caller.user.id).single();
     if (charged && me?.id) charged.userId = me.id;
-    if (!me || me.status !== "Active") return json({ error: "Your account is not active" }, 403);
-    if (!(me.role === "admin" || me.role === "recops")) return json({ error: "Only Rec Ops or Admins can run sourcing and outreach" }, 403);
+    if (!me || me.status !== "Active") return json({ error: "Your account isn't active. Ask your admin." }, 403);
     const { action } = body;
+    // Recruiters: their own X-ray search on a role they're engaged on, and how it's going. They see
+    // the people they found through my_sourced_prospects (no emails); everything else is Rec Ops'.
+    if (me.role === "recruiter") {
+      const jobId = String(body.jobId || "");
+      if (action === "xray" || action === "xray_status") {
+        const { data: job } = await admin.from("jobs").select("id,status,lead_role,xray").eq("id", jobId).maybeSingle();
+        if (!job) return json({ error: "We couldn't find this job. Refresh the page and try again." }, 404);
+        if (action === "xray_status") {
+          const { data: reqs } = await admin.from("xray_requests").select("created_at,started_at,finished_at,found,error").eq("job_id", jobId).eq("requested_by", me.id).order("created_at", { ascending: false }).limit(1);
+          const r = (reqs || [])[0] || null;
+          const x = job.xray || {};
+          const mine = x.by === me.id && x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < XRAY_STALE_MS;
+          return json({ ok: true, request: r, running: mine, progress: mine ? x.progress || null : null });
+        }
+        if (job.status !== "Open" || job.lead_role) return json({ error: "You can only search for roles that are open." }, 400);
+        const [{ data: onList }, { data: eng }] = await Promise.all([
+          admin.from("job_recruiters").select("job_id").eq("job_id", jobId).eq("recruiter_id", me.id).limit(1),
+          admin.from("job_engagements").select("id").eq("job_id", jobId).eq("recruiter_id", me.id).is("disengaged_at", null).limit(1),
+        ]);
+        if (!onList?.length && !eng?.length) return json({ error: "Engage on this role first, then you can run an X-ray search for it." }, 403);
+        return json(await startXray(admin, jobId, s, me.id, null));
+      }
+      return json({ error: "Only Rec Ops and Admins can do this. Ask them, or message them from the role." }, 403);
+    }
+    if (!(me.role === "admin" || me.role === "recops")) return json({ error: "Only Rec Ops and Admins can run sourcing and outreach." }, 403);
     const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).slice(0, 200);
 
     if (action === "status") {
@@ -332,7 +363,7 @@ async function handle(req: Request): Promise<Response> {
     if (action === "redraft_template") return json(await redraftWaiting(admin, String(body.jobId || ""), s));
 
     if (action === "xray") {
-      if (!body.jobId) return json({ error: "jobId is required" }, 400);
+      if (!body.jobId) return json({ error: "Choose a job first." }, 400);
       // Optional direction (titles, places, must-haves, companies, exclusions, exact searches).
       return json(await startXray(admin, String(body.jobId), s, me.id, cleanGuide(body.guide)));
     }
@@ -498,6 +529,7 @@ async function handle(req: Request): Promise<Response> {
 
     return json({ error: "Unknown action" }, 400);
   } catch (e) {
-    return json({ error: errMsg(e) }, 500);
+    console.error("sourcing", errMsg(e));
+    return json({ error: friendlyXrayError(e) }, 500);
   }
 }

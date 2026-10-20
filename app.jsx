@@ -7,7 +7,7 @@ import {
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
-  KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
+  KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, ThumbsUp, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
   Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon, Pin, FolderPlus,
 } from "lucide-react";
 
@@ -64,6 +64,25 @@ const uid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : "i
 // Requests that stall (a dropped connection) are cut off instead of hanging forever;
 // reads are retried once automatically before giving up with a clear message.
 const SLOW_MSG = "The server didn't answer in time. Check your internet connection and try again.";
+// Every error shown to people is one plain sentence: database and network messages (codes, JSON,
+// "violates row-level security policy"...) are turned into what happened and what to do. Messages
+// that are already written for people pass through unchanged.
+const errOf = (e, fallback) => (e ? plainError(e) : fallback);
+function plainError(raw) {
+  const m = String((raw && raw.message) || raw || "").trim();
+  if (!m) return "Something went wrong. Try again in a minute.";
+  if (/jwt expired|invalid jwt|not signed in|invalid refresh token|session.*(expired|not found)/i.test(m)) return "Your session has ended. Sign in again.";
+  if (/row-level security|permission denied|not authori[sz]ed|forbidden|\b403\b/i.test(m)) return "You don't have permission to do that. Ask an Admin if you think you should.";
+  if (/duplicate key|already exists|unique constraint/i.test(m)) return "That already exists, so nothing new was added.";
+  if (/foreign key|violates.*constraint|still referenced/i.test(m)) return "That can't be changed because other records depend on it.";
+  if (/check constraint|invalid input (value|syntax)|out of range|malformed/i.test(m)) return "Something in that entry isn't in the right format. Check it and try again.";
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) return "Couldn't reach the server. Check your internet connection and try again.";
+  if (/\b429\b|too many requests|rate.?limit/i.test(m)) return "Too many requests at once. Wait a minute and try again.";
+  if (/\b5\d\d\b|internal server error|bad gateway|service unavailable|gateway time-?out|worker (boot|limit)|edge function/i.test(m)) return "Something went wrong on our side. Try again in a minute.";
+  if (/^(TypeError|ReferenceError|SyntaxError|RangeError)\b|undefined is not|cannot read propert|is not a function|unexpected token|^\s*[{[]/i.test(m)) return "Something went wrong. Refresh the page and try again.";
+  if (/\b(PGRST|SQLSTATE|P0001|23505|42501)\w*/.test(m)) return "Something went wrong saving that. Try again in a minute.";
+  return m.length > 300 ? m.slice(0, 280).replace(/\s+\S*$/, "") + "…" : m;
+}
 async function sbFetch(path, { method = "GET", body, token, prefer, timeout = 20000 } = {}, attempt = 0) {
   const ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timer = ctl ? setTimeout(() => ctl.abort(), timeout) : null;
@@ -77,7 +96,7 @@ async function sbFetch(path, { method = "GET", body, token, prefer, timeout = 20
   }
   if (timer) clearTimeout(timer);
   const t = await r.text(); let j = null; try { j = t ? JSON.parse(t) : null; } catch (e) { j = { message: t }; }
-  if (!r.ok) throw new Error((j && (j.message || j.msg || j.error_description || j.error)) || r.statusText);
+  if (!r.ok) throw new Error(plainError((j && (j.message || j.msg || j.error_description || j.error)) || r.statusText || ("Error " + r.status)));
   return j;
 }
 const store = { get: () => { try { return JSON.parse(localStorage.getItem("harbor.session") || "null"); } catch (e) { return null; } }, set: (v) => { try { if (v) localStorage.setItem("harbor.session", JSON.stringify(v)); else localStorage.removeItem("harbor.session"); } catch (e) {} } };
@@ -2344,6 +2363,15 @@ function proposalSummary(S, p) {
     case "propose_message": return { icon: MessageCircle, title: "Message " + who + (role ? " about " + role : ""), detail: i.text };
     case "propose_stage": return { icon: ArrowRightLeft, title: "Move " + who + " to " + i.stage + (role ? " on " + role : ""), detail: "" };
     case "propose_task": { const u = (S.users || []).find((x) => x.id === i.assigned_to); return { icon: ListTodo, title: (u && u.id !== S.me.id ? "Give " + u.name + " a task: " : "Remind you: ") + (i.title || ""), detail: i.due_on ? "Due " + fdate(i.due_on + "T12:00:00") : "No due date" }; }
+    case "propose_task_update": {
+      const u = (S.users || []).find((x) => x.id === i.assigned_to), t = i.title ? "“" + i.title + "”" : "this task";
+      const title = { done: "Mark " + t + " done", reopen: "Reopen " + t, due_date: "Move " + t + " to " + (i.due_on ? fdate(i.due_on + "T12:00:00") : "a new date"), reassign: "Give " + t + " to " + (u ? u.name : "someone else"), dismiss: "Dismiss " + t }[i.action] || "Update " + t;
+      return { icon: ListTodo, title, detail: "" };
+    }
+    case "propose_checkin": {
+      const names = (i.recruiter_ids || []).map((id) => ((S.users || []).find((x) => x.id === id) || {}).name).filter(Boolean);
+      return { icon: Mail, title: "Ask for an update on " + (role || "this role"), detail: (names.length ? "To " + names.join(", ") + ". " : "To everyone engaged on it. ") + (i.message ? "\n\n" + i.message : "Uses the standard “How's sourcing going?” email.") };
+    }
     case "propose_route": return { icon: Forward, title: "Put " + who + " forward for " + (role || "a role"), detail: (i.questions || []).length ? "With questions: " + i.questions.join(" / ") : "They accept on their candidate page." };
     case "propose_xray": { const g = i.guide || {}; const bits = [g.titles && g.titles.length ? "Titles: " + g.titles.join(", ") : "", g.locations && g.locations.length ? "Places: " + g.locations.join(", ") : "", g.must_have && g.must_have.length ? "Must-haves: " + g.must_have.join(", ") : "", g.target_companies && g.target_companies.length ? "Target: " + g.target_companies.join(", ") : "", g.exclude && g.exclude.length ? "Leave out: " + g.exclude.join(", ") : "", g.notes || "", (g.queries || []).length ? "Searches: " + g.queries.join("  ·  ") : ""].filter(Boolean);
       return { icon: ScanSearch, title: "Run an X-ray search for " + (role || "this role"), detail: [i.why || "", ...bits].filter(Boolean).join("\n") || "Free LinkedIn and web searches, reviewed against the job." }; }
@@ -2386,8 +2414,35 @@ async function runProposal(S, p) {
     return "Draft job created. Check it and set it to Open to publish.";
   }
   if (p.tool === "propose_task") {
-    await S.addTask({ title: i.title, dueOn: i.due_on || null, assignedTo: staff && i.assigned_to ? i.assigned_to : S.me.id, jobId: i.job_id || null, candidateId: i.candidate_id || null });
-    return "Added to To-do.";
+    // Only Admins and Rec Ops give tasks to other people; a Recruiter's task is always their own.
+    const to = staff && i.assigned_to ? i.assigned_to : S.me.id;
+    if (to !== S.me.id && !(S.users || []).some((u) => u.id === to)) throw new Error("I couldn't find that team member. Check the name and try again.");
+    await S.addTask({ title: i.title, notes: i.notes || null, dueOn: i.due_on || null, assignedTo: to, jobId: i.job_id || null, candidateId: i.candidate_id || null });
+    const u = (S.users || []).find((x) => x.id === to);
+    return to === S.me.id ? "Added to your To-do." : "Task given to " + (u ? u.name : "them") + ". They'll see it in their To-do.";
+  }
+  if (p.tool === "propose_task_update") {
+    if (i.action === "reassign") {
+      if (!staff) throw new Error("Only Admins and Rec Ops can give tasks to other people.");
+      if (!(S.users || []).some((u) => u.id === i.assigned_to)) throw new Error("I couldn't find that team member. Check the name and try again.");
+      await S.reassignTask(i.task_id, i.assigned_to); S.reload && S.reload(); return "Task reassigned.";
+    }
+    if (i.action === "done" || i.action === "reopen" || i.action === "dismiss") {
+      await S.setTaskStatus(i.task_id, i.action === "reopen" ? "open" : i.action === "dismiss" ? "dismissed" : "done"); S.reload && S.reload();
+      return i.action === "reopen" ? "Task reopened." : i.action === "dismiss" ? "Task dismissed." : "Task marked done.";
+    }
+    if (i.action === "due_date") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(i.due_on || "")) throw new Error("Give me the new due date.");
+      await S.sb("/rest/v1/tasks?id=eq." + i.task_id, { method: "PATCH", body: { due_on: i.due_on } }); S.reload && S.reload(); return "Due date changed.";
+    }
+    throw new Error("I can't make that change to a task.");
+  }
+  if (p.tool === "propose_checkin") {
+    if (!staff) throw new Error("Only Admins and Rec Ops can ask recruiters for an update.");
+    const job = S.jobs.find((j) => j.id === i.job_id);
+    if (!job) throw new Error("I couldn't find that role.");
+    const j = await S.sendCheckin({ jobId: job.id, subject: i.subject || CHECKIN_TEMPLATE.subject, message: i.message || CHECKIN_TEMPLATE.message.replace("{client_at}", job.client ? " at {client}" : ""), recruiterIds: i.recruiter_ids || null });
+    return "Update request sent to " + (j.sent || []).join(", ") + ". Their answers will show on the job.";
   }
   if (p.tool === "propose_xray") {
     if (!staff) throw new Error("Only Admins and Rec Ops can run X-ray searches.");
@@ -4518,7 +4573,7 @@ function ChatRoom({ linkId, room, mine, api, title, subtitle, avatarSrc, avatarI
 const chatFileCall = async (body) => {
   const r = await fetch(SB_URL + "/functions/v1/chat-file", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || "Couldn't send the file. Please try again.");
+  if (!r.ok) throw new Error(errOf(j.error, "Couldn't send the file. Please try again."));
   return j;
 };
 // A candidate's conversation is with one person (staffId) about one role (linkId).
@@ -6509,6 +6564,172 @@ function MessagesPage({ toast, S }) {
   );
 }
 
+// "Ask for an update": Admin / Rec Ops email the recruiters engaged on a role with an editable
+// template; each answers from the email (no sign-in) or right here. Recruiters see their own
+// open requests on the job and can answer in place.
+const CHECKIN_PROGRESS = [["on_track", "Going well", "em"], ["slow", "Slower than hoped", "warn"], ["stuck", "Stuck, needs help", "danger"]];
+const CHECKIN_TEMPLATE = {
+  subject: "How's sourcing going on {role}?",
+  message: "Hi {first},\n\nQuick check-in on {role}{client_at}. How is sourcing going so far, and are you facing any issues we can help with (the brief, pay, location, candidates going quiet, or anything else)?\n\nUse the button below to send a short update. Thanks!",
+};
+function CheckinAnswerForm({ onSubmit, busy, compact }) {
+  const [progress, setProgress] = useState("");
+  const [n, setN] = useState("");
+  const [issues, setIssues] = useState("");
+  const [reply, setReply] = useState("");
+  const [err, setErr] = useState("");
+  const go = async () => {
+    if (!progress) { setErr("Choose how sourcing is going first."); return; }
+    if (progress === "stuck" && !issues.trim()) { setErr("Tell us what's in your way, so we can help."); return; }
+    setErr("");
+    try { await onSubmit({ progress, candidates: n === "" ? null : Number(n), issues, reply }); } catch (e) { setErr(e.message || "Your update couldn't be sent. Try again in a minute."); }
+  };
+  const field = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>How is sourcing going?</div>
+        <div className="flex flex-wrap gap-2">
+          {CHECKIN_PROGRESS.map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setProgress(k)} className="rounded-xl border px-3 py-2 text-sm"
+              style={{ borderColor: progress === k ? C.em : C.line, background: progress === k ? C.emTint : C.card, color: progress === k ? C.em : C.ink }}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <label className="text-xs font-medium" style={{ color: C.ink2 }}>Candidates you're working on for this role (optional)
+        <input type="number" min="0" inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} className={field + (compact ? " max-w-[140px]" : "")} style={{ borderColor: C.line, background: C.soft }} />
+      </label>
+      <label className="text-xs font-medium" style={{ color: C.ink2 }}>Any issues? {progress === "stuck" ? "(needed)" : "(optional)"}
+        <textarea rows={3} value={issues} onChange={(e) => setIssues(e.target.value)} placeholder="For example: pay is below market, too few people in that city, candidates aren't replying" className={field} style={{ borderColor: C.line, background: C.soft }} />
+      </label>
+      <label className="text-xs font-medium" style={{ color: C.ink2 }}>Anything else (optional)
+        <textarea rows={2} value={reply} onChange={(e) => setReply(e.target.value)} className={field} style={{ borderColor: C.line, background: C.soft }} />
+      </label>
+      {err && <div className="text-xs" style={{ color: C.dangerFg }}>{err}</div>}
+      <Btn kind="primary" onClick={go} disabled={busy} className="self-start">{busy ? "Sending…" : "Send update"}</Btn>
+    </div>
+  );
+}
+function JobCheckins({ job, S, toast }) {
+  const staff = S.role !== "recruiter";
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [answering, setAnswering] = useState(null);
+  const engaged = (S.users || []).filter((u) => (job.engagedIds || []).includes(u.id) && u.id !== S.me.id && u.status === "Active");
+  const [pick, setPick] = useState([]);
+  const [subject, setSubject] = useState(CHECKIN_TEMPLATE.subject);
+  const [message, setMessage] = useState(CHECKIN_TEMPLATE.message);
+  const load = () => S.jobCheckins(job.id).then((r) => { setRows(r || []); setErr(""); }, () => setErr("We couldn't load the update requests. Refresh the page to try again."));
+  useEffect(() => { load(); }, [job.id]); // eslint-disable-line
+  const name = (id) => ((S.users || []).find((u) => u.id === id) || {}).name || "A team member";
+  const startAsk = () => { setPick(engaged.map((u) => u.id)); setSubject(CHECKIN_TEMPLATE.subject); setMessage(CHECKIN_TEMPLATE.message.replace("{client_at}", job.client ? " at {client}" : "")); setOpen(true); };
+  const send = () => {
+    if (!pick.length) { toast("Choose at least one recruiter."); return; }
+    if (!subject.trim() || !message.trim()) { toast("Add a subject and a message first."); return; }
+    setBusy(true);
+    S.sendCheckin({ jobId: job.id, subject, message, recruiterIds: pick })
+      .then((j) => { setOpen(false); toast("Update request sent to " + (j.sent || []).join(", ") + ((j.failed || []).length ? ". Couldn't reach " + j.failed.join(", ") + "." : ".")); load(); })
+      .catch((e) => S.error(e.message)).finally(() => setBusy(false));
+  };
+  const mine = (rows || []).filter((r) => r.recruiter_id === S.me.id && !r.answered_at && new Date(r.expires_at) > new Date());
+  const shown = staff ? (rows || []) : (rows || []).filter((r) => r.recruiter_id === S.me.id);
+  if (!staff && !shown.length) return null;
+  const tone = (p) => (CHECKIN_PROGRESS.find((x) => x[0] === p) || [])[2] || "neutral";
+  const label = (p) => (CHECKIN_PROGRESS.find((x) => x[0] === p) || [])[1] || "";
+  return (
+    <Card>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <SectionTitle title={staff ? "Recruiter updates" : "Update requests"} sub={staff ? "Ask the recruiters engaged on this role how sourcing is going and whether anything is in their way." : "Your Rec Ops team asked how this role is going."} size="text-xl" />
+        {staff && <Btn icon={Mail} onClick={startAsk} disabled={!engaged.length} className="shrink-0" title={engaged.length ? "" : "Nobody is engaged on this role right now"}>Ask for an update</Btn>}
+      </div>
+      {err && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{err}</div>}
+      {!staff && mine.map((r) => (
+        <div key={r.id} className="rounded-xl border p-3.5 mt-3" style={{ borderColor: C.em, background: C.emTint }}>
+          <div className="text-sm font-medium mb-1">{name(r.sent_by)} asked {ago(r.sent_at)}</div>
+          <div className="text-sm whitespace-pre-wrap mb-3" style={{ color: C.ink2 }}>{r.message}</div>
+          <CheckinAnswerForm compact busy={answering === r.id} onSubmit={async (v) => { setAnswering(r.id); try { await S.answerCheckin({ checkinId: r.id, ...v }); toast("Update sent. Thanks!"); load(); } finally { setAnswering(null); } }} />
+        </div>
+      ))}
+      {rows === null && !err && <div className="text-sm mt-3" style={{ color: C.ink3 }}>Loading <InlineDots /></div>}
+      {rows && shown.length === 0 && staff && <div className="text-sm mt-3" style={{ color: C.ink3 }}>{engaged.length ? "No update requests yet." : "Nobody is engaged on this role right now."}</div>}
+      <div className="flex flex-col gap-2 mt-3">
+        {shown.filter((r) => staff || r.answered_at).map((r) => (
+          <div key={r.id} className="rounded-xl border p-3" style={{ borderColor: C.line }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm"><span className="font-medium">{staff ? name(r.recruiter_id) : "You"}</span><span style={{ color: C.ink3 }}> · asked by {r.sent_by === S.me.id ? "you" : name(r.sent_by)} {ago(r.sent_at)}</span></div>
+              {r.answered_at ? <Pill tone={tone(r.progress)}>{label(r.progress)}</Pill> : new Date(r.expires_at) < new Date() ? <Pill tone="neutral">No answer</Pill> : <Pill tone="neutral">Waiting for an answer</Pill>}
+            </div>
+            {r.answered_at && (
+              <div className="text-sm mt-2 flex flex-col gap-1" style={{ color: C.ink2 }}>
+                {r.candidates_in_progress != null && <div><span style={{ color: C.ink3 }}>Candidates in progress:</span> {r.candidates_in_progress}</div>}
+                {r.issues && <div className="whitespace-pre-wrap"><span style={{ color: C.ink3 }}>Issues:</span> {r.issues}</div>}
+                {r.reply && <div className="whitespace-pre-wrap"><span style={{ color: C.ink3 }}>Also:</span> {r.reply}</div>}
+                <div className="text-xs" style={{ color: C.ink3 }}>Answered {ago(r.answered_at)}</div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <Modal open={open} onClose={() => !busy && setOpen(false)} title="Ask for an update">
+        <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Send to</div>
+        <div className="flex flex-col gap-1.5 mb-3">
+          {engaged.map((u) => (
+            <label key={u.id} className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={pick.includes(u.id)} onChange={(e) => setPick((p) => e.target.checked ? [...p, u.id] : p.filter((x) => x !== u.id))} />
+              {u.name}<span className="text-xs" style={{ color: C.ink3 }}>{u.email}</span>
+            </label>
+          ))}
+        </div>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Subject</label>
+        <input value={subject} onChange={(e) => setSubject(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Message</label>
+        <textarea rows={8} value={message} onChange={(e) => setMessage(e.target.value)} className="w-full mt-1.5 mb-2 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+        <div className="text-xs mb-4" style={{ color: C.ink3 }}>{"{first}"} becomes each recruiter's first name, {"{role}"} the job title and {"{client}"} the client. The email has a button for their answer, which shows here and is emailed to you.</div>
+        <Btn kind="primary" full onClick={send} disabled={busy}>{busy ? "Sending…" : "Send to " + plural(pick.length, "recruiter")}</Btn>
+      </Modal>
+    </Card>
+  );
+}
+// Answering an update request from the email link (/?checkin=<code>): no sign-in needed.
+function CheckinReply({ token, onDone }) {
+  const [state, setState] = useState("checking");
+  const [info, setInfo] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const call = async (body) => {
+    const r = await fetch(SB_URL + "/functions/v1/job-checkin", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) throw new Error(errOf(j.error, "Something went wrong on our side. Try again in a minute."));
+    return j;
+  };
+  React.useEffect(() => { call({ action: "check" }).then((j) => { setInfo(j); setState("form"); }, (e) => { setErr(e.message); setState("invalid"); }); }, []); // eslint-disable-line
+  const first = info && (info.name || "").trim().split(/\s+/)[0];
+  return (
+    <div className="min-h-screen flex items-start sm:items-center justify-center p-4" style={{ background: C.canvas }}>
+      <div className="w-full max-w-md rounded-2xl border p-6 my-6" style={{ background: C.card, borderColor: C.line }}>
+        <div className="mb-5"><BrandLogo height={30} /></div>
+        {state === "checking" && <div className="text-sm py-6 text-center" style={{ color: C.ink2 }}>Opening your update <InlineDots /></div>}
+        {state === "form" && info && (<>
+          <div className="text-xl mb-1" style={{ ...SERIF }}>{first ? "Hi " + first : "Your update"}</div>
+          <div className="text-sm mb-4" style={{ color: C.ink2 }}>{info.askedBy || "Your Rec Ops team"} asked how <b style={{ color: C.ink }}>{info.role}{info.client ? " at " + info.client : ""}</b> is going.</div>
+          <CheckinAnswerForm busy={busy} onSubmit={async (v) => { setBusy(true); try { await call({ action: "answer", ...v }); setState("done"); } catch (e) { if (/expired|already/i.test(e.message)) { setErr(e.message); setState("invalid"); } else throw e; } finally { setBusy(false); } }} />
+        </>)}
+        {state === "done" && (<>
+          <div className="text-xl mb-1" style={{ ...SERIF }}>Thanks, update sent</div>
+          <div className="text-sm mb-4" style={{ color: C.ink2 }}>{info && info.askedBy ? info.askedBy + " will see it" : "Your team will see it"} on the job in ProNext.</div>
+          <Btn full onClick={onDone}>Open ProNext</Btn>
+        </>)}
+        {state === "invalid" && (<>
+          <div className="text-xl mb-1" style={{ ...SERIF }}>This link can't be used</div>
+          <div className="text-sm mb-4" style={{ color: C.ink2 }}>{err}</div>
+          <Btn full onClick={onDone}>Open ProNext</Btn>
+        </>)}
+      </div>
+    </div>
+  );
+}
 function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddCandidate }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
@@ -6679,6 +6900,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           </div>
         </Card>
       )}
+      {!job.leadRole && <JobCheckins job={job} S={S} toast={toast} />}
       {S.role !== "recruiter" && jobEngLog.length > 0 && (
         <Card>
           <SectionTitle title="Engagement log" sub="Who has worked this role, how long, and why they stepped back." size="text-xl" />
@@ -6728,6 +6950,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         </Card>
       )}
       {S.role !== "recruiter" && <JobSourcingCard job={job} S={S} toast={toast} />}
+      {S.role === "recruiter" && !job.leadRole && <RecruiterSourcingCard job={job} S={S} toast={toast} engaged={!!myOpenEngagement || onWorklist(S, job)} />}
       <Card>
         <SectionTitle title="Candidates on this role" sub={activeCount + " active \u00b7 " + candidates.length + " total"} size="text-xl" />
         <div className="mt-3">
@@ -8230,6 +8453,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
             </div>
             <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{statusLabel}</Pill></div>
           </div>
+          {S && p.sourced_by && (() => { const u = (S.users || []).find((x) => x.id === p.sourced_by); return u && u.roleKey === "recruiter" ? <div className="text-xs mt-1 flex flex-wrap items-center gap-1.5" style={{ color: C.ink2 }}><Pill tone="info">Found by {u.name}</Pill>{d.linkedin_connected && <span>Connected on LinkedIn {ago(d.linkedin_connected.at)}</span>}{p.candidate_id && <span>· now {u.name.split(" ")[0]}'s candidate</span>}</div> : null; })()}
           {(jobLabel || (p.status === "archived" && d.archived_role)) && <div className="text-xs mt-1" style={{ color: C.ink3 }}>{p.status === "archived" ? "Found for" : "For"} {jobLabel || d.archived_role}</div>}
           {p.status === "rejected" && d.skipped && d.skipped.reason && <div className="text-xs mt-1" style={{ color: C.warnFg }}>Skipped automatically ({d.skipped.by || "check"}): {d.skipped.reason}. Put back in pool if that's wrong.</div>}
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
@@ -8370,6 +8594,81 @@ function OutreachTemplate({ job, S, toast, tpl, onSaved }) {
 }
 
 // Job page: parallel titles, the bench result, and outside candidates found for this job.
+// A recruiter's own X-ray search on a role they're engaged on. They see the people they found
+// (summary, must-haves, fit and the profile link), can open the profile and connect, and say when
+// someone is interested: that person becomes their candidate. Emails and outreach stay with Rec Ops.
+// Within a role nobody is shown a person someone else found first.
+const CHECK_MARK = { met: { t: "✓", bg: "#E6F4EC", fg: "#1E6B43", label: "Met" }, "not met": { t: "✗", bg: "#FBE9E7", fg: "#9A2B1E", label: "Not met" }, unconfirmed: { t: "?", bg: "#F1EEE6", fg: "#6B6455", label: "Not shown on their profile" } };
+function RecruiterSourcingCard({ job, S, toast, engaged }) {
+  const [people, setPeople] = useState(null);
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState({});
+  const load = () => Promise.all([
+    S.sb("/rest/v1/rpc/my_sourced_prospects", { method: "POST", body: { p_job: job.id } }).then((r) => setPeople(r || []), () => setErr("We couldn't load the people you found. Refresh the page to try again.")),
+    S.sourcing("xray_status", { jobId: job.id }).then(setSt, () => {}),
+  ]);
+  useEffect(() => { load(); }, [job.id]); // eslint-disable-line
+  const req = st && st.request;
+  const waiting = !!(req && !req.started_at && !req.finished_at);
+  const running = !!(st && st.running) || !!(req && req.started_at && !req.finished_at);
+  useEffect(() => { if (!running && !waiting) return; const t = setTimeout(load, 5000); return () => clearTimeout(t); }, [st]); // eslint-disable-line
+  const search = () => { setBusy("xray"); S.sourcing("xray", { jobId: job.id }).then((r) => { toast(r.message || "X-ray search started."); load(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const connected = (p, on) => { setBusy(p.id); S.sb("/rest/v1/rpc/prospect_mark_connected", { method: "POST", body: { p_id: p.id, p_on: on } }).then(() => { toast(on ? "Marked as connected" : "Connection mark removed"); load(); }).catch((e) => S.error(e.message || "That didn't save. Try again.")).finally(() => setBusy("")); };
+  const interested = (p) => { setBusy(p.id); S.sb("/rest/v1/rpc/prospect_mark_interested", { method: "POST", body: { p_id: p.id } }).then(() => { toast((p.full_name || "They").split(" ")[0] + " is interested. They'll appear in My candidates on this role in a moment."); setTimeout(() => { load(); S.reload && S.reload(); }, 4000); }).catch((e) => S.error(e.message || "That didn't save. Try again.")).finally(() => setBusy("")); };
+  const list = people || [];
+  const STATUS = { found: ["To connect", "neutral"], approved: ["Being emailed by Rec Ops", "info"], queued: ["Being emailed by Rec Ops", "info"], contacted: ["Contacted", "info"], interested: ["Interested", "em"], converted: ["Your candidate", "em"], not_interested: ["Not interested", "neutral"], unsubscribed: ["Not interested", "neutral"], bounced: ["Contacted", "neutral"], rejected: ["Skipped by Rec Ops", "neutral"], archived: ["Role closed", "neutral"] };
+  return (
+    <Card>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+        <SectionTitle title="Your sourcing" sub="Run a free X-ray search of public LinkedIn profiles for this role. You see who you found and how they fit; open their profile and connect. When someone says they're interested, they become your candidate. Rec Ops handles emails." size="text-xl" />
+        <Btn kind="primary" icon={Search} onClick={search} disabled={!engaged || !!busy || running || waiting || job.status !== "Open"} className="shrink-0"
+          title={!engaged ? "Engage on this role first" : job.status !== "Open" ? "This role isn't open" : ""}>{busy === "xray" ? "Starting…" : running ? "Searching…" : waiting ? "Waiting to start…" : list.length ? "X-ray search again" : "X-ray search"}</Btn>
+      </div>
+      {!engaged && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Engage on this role to run an X-ray search for it.</div>}
+      {running && <div className="mt-3"><XrayProgress p={st && st.progress} /></div>}
+      {waiting && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Another search is running on this role. Yours starts by itself as soon as it finishes <InlineDots /></div>}
+      {req && req.finished_at && !running && !waiting && <div className="text-xs mt-3" style={{ color: req.error ? C.warnFg : C.ink2 }}>{req.error ? "Your last search didn't finish: " + req.error : "Your last search " + fdate(req.finished_at) + " found " + plural(req.found || 0, "new person", "new people") + "."}</div>}
+      {err && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{err}</div>}
+      {people === null && !err && <div className="mt-3"><SkeletonRows n={2} /></div>}
+      {people && list.length === 0 && engaged && !running && !waiting && <div className="text-sm mt-3" style={{ color: C.ink3 }}>You haven't found anyone for this role yet.</div>}
+      <div className="flex flex-col gap-2 mt-3">
+        {list.map((p) => {
+          const chk = Array.isArray(p.checklist) ? p.checklist : [], gaps = Array.isArray(p.gaps) ? p.gaps : [];
+          const met = chk.filter((c) => c.status === "met").length;
+          const [lab, tone] = p.candidate_id ? ["Your candidate", "em"] : STATUS[p.status] || [p.status, "neutral"];
+          const canAct = ["found", "approved", "queued", "contacted"].includes(p.status) && !p.candidate_id;
+          return (
+            <div key={p.id} className="rounded-xl border p-3" style={{ borderColor: C.line }}>
+              <div className="flex items-start justify-between gap-2 flex-wrap">
+                <div className="min-w-0"><div className="font-medium text-sm truncate">{p.full_name || "Unknown"}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[p.title, p.company, p.location].filter(Boolean).join(" · ")}</div></div>
+                <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={tone}>{lab}</Pill></div>
+              </div>
+              {p.summary && <div className="text-sm mt-2 leading-relaxed" style={{ color: C.ink, ...(open[p.id] ? {} : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }) }}>{p.summary}</div>}
+              {open[p.id] && chk.length > 0 && (
+                <ul className="flex flex-col gap-1 mt-2">
+                  {chk.map((c, i) => { const m = CHECK_MARK[c.status] || CHECK_MARK.unconfirmed; return (
+                    <li key={i} className="flex items-start gap-2 text-sm"><span title={m.label} className="mt-0.5 w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 text-[11px] font-bold" style={{ background: m.bg, color: m.fg }}>{m.t}</span><span><span style={{ color: C.ink }}>{c.item}</span>{c.evidence ? <span className="text-xs" style={{ color: C.ink3 }}> · {c.evidence}</span> : null}</span></li>
+                  ); })}
+                </ul>
+              )}
+              {open[p.id] && gaps.length > 0 && <div className="text-xs mt-2" style={{ color: C.ink2 }}><span className="font-medium">Gaps to check:</span> {gaps.join(" · ")}</div>}
+              <div className="flex items-center gap-2 flex-wrap mt-2.5">
+                {p.profile_url && <a href={p.profile_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold" style={{ border: `1px solid ${C.line}`, color: C.em, background: C.card }}><ExternalLink size={13} /> {/linkedin\.com/i.test(p.profile_url) ? "View LinkedIn profile" : "View profile"}</a>}
+                {canAct && (p.connected_at
+                  ? <button onClick={() => connected(p, false)} disabled={busy === p.id} className="text-xs rounded-lg px-3 py-1.5" style={{ background: C.emTint, color: C.em }} title="Click to undo">✓ Connected {ago(p.connected_at)}</button>
+                  : <Btn onClick={() => connected(p, true)} disabled={busy === p.id}>Mark connected</Btn>)}
+                {canAct && <Btn kind="primary" icon={ThumbsUp} onClick={() => interested(p)} disabled={busy === p.id} title="They said yes on LinkedIn: they become your candidate on this role">Interested</Btn>}
+                {(chk.length > 0 || gaps.length > 0 || (p.summary || "").length > 160) && <button onClick={() => setOpen((o) => ({ ...o, [p.id]: !o[p.id] }))} className="text-xs rounded-lg px-3 py-1.5" style={{ color: C.ink2, background: C.canvas }}>{open[p.id] ? "Hide details" : (chk.length ? met + " of " + chk.length + " must-haves met · " : "") + "Show details"}</button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 function JobSourcingCard({ job, S, toast }) {
   const [row, setRow] = useState(null);
   const [confirm, setConfirm] = useState(null);
@@ -8377,8 +8676,12 @@ function JobSourcingCard({ job, S, toast }) {
   const [prospects0, setProspects] = useState([]);
   // Skipped people leave this job's list; "Skipped" shows them, and Put back returns them.
   const [showSkipped, setShowSkipped] = useState(false);
+  // "Sourced by recruiters": only the people recruiters found with their own X-ray searches.
+  const recruiterIds = new Set((S.users || []).filter((u) => u.roleKey === "recruiter").map((u) => u.id));
+  const [byRecruiters, setByRecruiters] = useState(false);
+  const fromRecruiters = prospects0.filter((p) => p.sourced_by && recruiterIds.has(p.sourced_by) && p.status !== "rejected");
   const skipped = prospects0.filter((p) => p.status === "rejected");
-  const prospects = showSkipped ? skipped : prospects0.filter((p) => p.status !== "rejected");
+  const prospects = showSkipped ? skipped : byRecruiters ? fromRecruiters : prospects0.filter((p) => p.status !== "rejected");
   const [busy, setBusy] = useState("");
   const [sel, setSel] = useState({});
   const [pPage, setPPage] = useState(1);
@@ -8399,9 +8702,9 @@ function JobSourcingCard({ job, S, toast }) {
     S.sourcing("search_area", { jobId: job.id }).then(() => load()).catch(() => {});
   }, [row]); // eslint-disable-line
   // While an X-ray search runs on the server, check back every few seconds.
-  // A search still "running" after 8 minutes was cut off by the server: shown as stopped so it can
-  // be run again. "queued" waits for one of the two running searches to finish (starts by itself).
-  const xrStale = !!(row && row.xray && row.xray.state === "running" && Date.now() - new Date(row.xray.at || 0).getTime() > 8 * 60e3);
+  // "queued" waits to start (it starts by itself).
+  // The server picks a stalled search back up by itself (a few times), so it only counts as cut off after 25 minutes.
+  const xrStale = !!(row && row.xray && row.xray.state === "running" && Date.now() - new Date(row.xray.at || 0).getTime() > 25 * 60e3);
   const xrayRunning = !!(row && row.xray && (row.xray.state === "running" || row.xray.state === "queued") && !xrStale);
   React.useEffect(() => {
     if (!xrayRunning) return;
@@ -8478,7 +8781,7 @@ function JobSourcingCard({ job, S, toast }) {
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
           <div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
-          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts when another search finishes (two run at a time) <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "unknown error") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts by itself in a moment <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "the search hit a problem. Search again in a few minutes.") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
           {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
         </div>
       </div>
@@ -8487,7 +8790,11 @@ function JobSourcingCard({ job, S, toast }) {
       {canRun && <OutreachTemplate job={job} S={S} toast={toast} tpl={row.outreach_template} onSaved={load} />}
       {canRun && (prospects.length > 0 || skipped.length > 0) && (
         <div className="mt-4">
-          {(skipped.length > 0 || showSkipped) && <div className="flex justify-end mb-1"><button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => { setShowSkipped((v) => !v); setPPage(1); }}>{showSkipped ? "Back to people found" : "Skipped " + skipped.length}</button></div>}
+          <div className="flex justify-end gap-3 mb-1">
+            {(fromRecruiters.length > 0 || byRecruiters) && !showSkipped && <button className="text-xs underline" style={{ color: byRecruiters ? C.em : C.ink2 }} onClick={() => { setByRecruiters((v) => !v); setPPage(1); }}>{byRecruiters ? "Show everyone found" : "Sourced by recruiters " + fromRecruiters.length}</button>}
+            {(skipped.length > 0 || showSkipped) && <button className="text-xs underline" style={{ color: C.ink2 }} onClick={() => { setShowSkipped((v) => !v); setByRecruiters(false); setPPage(1); }}>{showSkipped ? "Back to people found" : "Skipped " + skipped.length}</button>}
+          </div>
+          {byRecruiters && <div className="text-xs mb-2" style={{ color: C.ink2 }}>People recruiters found with their own X-ray searches. They can only open the profile and connect; you can find emails and email them. When one says they're interested, they become that recruiter's candidate.</div>}
           {showSkipped && <div className="text-xs mb-2" style={{ color: C.ink2 }}>People you skipped for this role. Put back in pool returns them to the list above as Needs approval.</div>}
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
             <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} email{waiting.length === 1 ? "" : "s"} waiting for approval{toContact ? " · " + toContact + " to contact on LinkedIn or their site" : ""}</span></div>
@@ -9575,7 +9882,7 @@ function OutreachLinkPage({ token, kind, action }) {
   const [err, setErr] = useState("");
   const call = async (a) => {
     const r = await fetch(SB_URL + "/functions/v1/outreach-public", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, kind, action: a }) });
-    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Something went wrong. Please try again."); return j;
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Something went wrong. Please try again.")); return j;
   };
   React.useEffect(() => { call("info").then(setInfo).catch((e) => setErr(e.message)); }, []); // eslint-disable-line
   const go = (a) => { setBusy(true); setErr(""); call(a).then((j) => setDone(j.done || a)).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
@@ -9705,7 +10012,7 @@ function ClientViewPage({ token }) {
   const openResume = () => {
     setResumeBusy(true);
     fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token }) })
-      .then((r) => r.json()).then((j) => { if (j.error) throw new Error(j.error); window.open(j.url, "_blank"); })
+      .then((r) => r.json()).then((j) => { if (j.error) throw new Error(plainError(j.error)); window.open(j.url, "_blank"); })
       .catch((e) => setErr(e.message)).finally(() => setResumeBusy(false));
   };
   let bodyEl;
@@ -10510,17 +10817,15 @@ function UsersPage({ toast, S }) {
       .then(() => { toast(delUser.name + " deleted"); setDelUser(null); }).catch((e) => S.error(e.message)).finally(() => setDelBusy(false));
   };
   const [welcomeBusyId, setWelcomeBusyId] = useState(null);
-  // Activating a new (Invited) account also sends their welcome email with a set-your-password link.
+  // Turns a disabled account back on. New (Invited) accounts don't need this: they become Active
+  // by themselves the first time they sign in.
   const activate = async (u) => {
-    try { await S.enableUser(u.id); } catch (e) { S.error(e.message || "Could not activate"); return; }
-    if (u.status !== "Invited") { toast("Account re-enabled"); return; }
-    try { const j = await S.sendWelcome(u.id); toast("Account activated · welcome email sent to " + (j.to || u.email)); }
-    catch (e) { S.error("Account activated, but the welcome email didn't send: " + (e.message || "unknown error") + ". Use Send welcome email on their row to try again."); }
+    try { await S.enableUser(u.id); toast(u.name + " can sign in again"); } catch (e) { S.error(e.message || "We couldn't turn this account back on. Try again."); }
   };
   const resendWelcome = async (u) => {
     setWelcomeBusyId(u.id);
     try { const j = await S.sendWelcome(u.id); toast("Welcome email sent to " + (j.to || u.email) + " — any earlier link stops working"); }
-    catch (e) { S.error(e.message || "Could not send the welcome email"); }
+    catch (e) { S.error(e.message || "The welcome email couldn't be sent. Try again in a minute."); }
     setWelcomeBusyId(null);
   };
   const invite = async () => {
@@ -10528,8 +10833,12 @@ function UsersPage({ toast, S }) {
     if (!email.includes("@")) { toast("Enter a valid email"); return; }
     if (users.some((u) => u.email.toLowerCase() === email.toLowerCase())) { toast("That email already has an account"); return; }
     setBusy(true);
-    try { await S.createAccount({ email, full_name: name, role: roleKey }); setName(""); setEmail(""); setOpen(false); toast("Account created for " + name + " — click Activate to send their welcome email"); }
-    catch (e) { S.error(e.message || "Could not create account"); }
+    try {
+      const j = await S.createAccount({ email, full_name: name, role: roleKey }); setName(""); setEmail(""); setOpen(false);
+      if (j && j.welcomed) toast("Welcome email sent to " + (j.to || email) + ". Their account turns on when they first sign in.");
+      else S.error("The account for " + name + " was created, but the welcome email couldn't be sent. Use Send welcome email on their row to try again.");
+    }
+    catch (e) { S.error(e.message || "We couldn't create the account. Try again."); }
     setBusy(false);
   };
   const changeRole = (u, newRoleKey) => {
@@ -10578,9 +10887,9 @@ function UsersPage({ toast, S }) {
                   <RowMenu label={"Actions for " + u.name} busy={welcomeBusyId === u.id} items={[
                     { label: "Edit details", icon: Pencil, onClick: () => openEdit(u) },
                     { label: "Set password", icon: KeyRound, onClick: () => { setPwUser(u); setPwValue(""); }, hidden: !other },
-                    { label: u.welcomeSentAt ? "Resend welcome email" : "Send welcome email", icon: Mail, onClick: () => resendWelcome(u), hidden: !(other && u.status === "Active" && u.id !== S.me.id),
+                    { label: u.welcomeSentAt ? "Resend welcome email" : "Send welcome email", icon: Mail, onClick: () => resendWelcome(u), hidden: !(other && (u.status === "Active" || u.status === "Invited") && u.id !== S.me.id),
                       title: u.welcomeSentAt ? "Last sent " + new Date(u.welcomeSentAt).toLocaleDateString() : "Not sent yet" },
-                    { label: u.status === "Invited" ? "Activate" : "Enable", icon: Power, onClick: () => activate(u), hidden: !(other && (u.status === "Disabled" || u.status === "Invited")) },
+                    { label: "Enable", icon: Power, onClick: () => activate(u), hidden: !(other && u.status === "Disabled") },
                     { label: "Disable", icon: PowerOff, danger: true, onClick: () => setDisUser(u), hidden: !(other && u.status !== "Disabled" && u.status !== "Invited" && !lastAdmin && u.roleKey !== "admin") },
                     { label: "Delete", icon: Trash2, danger: true, onClick: () => setDelUser(u), hidden: !(other && !lastAdmin) },
                   ]} />
@@ -10627,7 +10936,7 @@ function UsersPage({ toast, S }) {
           ))}
         </div>
         <Btn kind="primary" full onClick={invite}>{busy ? "Creating\u2026" : "Create account"}</Btn>
-        <div className="text-xs mt-2" style={{ color: C.ink3 }}>The account starts as "Invited". When you click Activate on their row, they get a welcome email with a link to set their own password (it works once and expires in 72 hours).</div>
+        <div className="text-xs mt-2" style={{ color: C.ink3 }}>They get a welcome email straight away with a link to set their own password (it works once and expires in 72 hours). Their account shows as "Invited" until they sign in for the first time, then it turns on by itself.</div>
       </Modal>
       <Modal open={transferOpen} onClose={() => setTransferOpen(false)} title="Transfer ownership">
         <div className="text-sm mb-3" style={{ color: C.ink2 }}>The new owner becomes an admin who can't be demoted or disabled by anyone but themselves. You'll lose that protection.</div>
@@ -10684,7 +10993,7 @@ function EmailPreviewModal({ row, onClose, S, load }) {
       {p && <>
         <iframe title="Email preview" sandbox="allow-same-origin" srcDoc={safeEmailHtml(p.html)} className="w-full rounded-xl border" style={{ borderColor: C.line, height: h, background: C.card }}
           onLoad={(e) => { try { const d = e.target.contentDocument; setH(Math.min(1400, Math.max(300, d.documentElement.scrollHeight + 8))); } catch (x) {} }} />
-        <div className="text-xs mt-2" style={{ color: C.ink3 }}>This is exactly what the candidate received. Links are switched off in the preview, and viewing it doesn't count as an open.</div>
+        <div className="text-xs mt-2" style={{ color: C.ink3 }}>This is exactly what was sent. Links are switched off in the preview, and viewing it doesn't count as an open.</div>
       </>}
     </Modal>
   );
@@ -10731,7 +11040,12 @@ function EmailTrackingPage({ S }) {
 }
 function BrevoTrackingView({ S, sw }) {
   const [days, setDays] = useState(30);
-  const { res, err, busy, updating, refresh } = useTrackingData("brevo", days, S.emailTracking);
+  // Candidates (messages, interviews, applications) or Team (welcome emails, update requests, approvals).
+  const [aud, setAud] = useState(() => { try { return localStorage.getItem("harbor.emailAud") || "candidates"; } catch (e) { return "candidates"; } });
+  const pickAud = (k) => { setAud(k); try { localStorage.setItem("harbor.emailAud", k); } catch (e) {} };
+  const fetcher = React.useCallback((d, r) => S.emailTracking(d, r, aud), [aud]); // eslint-disable-line
+  const { res, err, busy, updating, refresh } = useTrackingData("brevo-" + aud, days, fetcher);
+  const team = aud === "staff";
   const [filter, setFilter] = useState("all");
   const [type, setType] = useState("");
   const [q, setQ] = useState("");
@@ -10760,13 +11074,19 @@ function BrevoTrackingView({ S, sw }) {
     <div className="flex flex-col gap-5 md:gap-6">
       {sw}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 -mt-1">
-        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub="Emails the app sends to candidates through Brevo: messages, interviews, applications and referrals." />
+        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub={team ? "Emails the app sends to your team through Brevo: welcome emails, update requests, approvals and password resets." : "Emails the app sends to candidates through Brevo: messages, interviews, applications and referrals."} />
         <div className="flex gap-2 items-center">
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
             <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last 12 months</option>
           </select>
           <Btn onClick={refresh} disabled={busy} title="Fetch anything new from Brevo now">{busy ? "Loading…" : updating ? "Updating…" : "Refresh"}</Btn>
         </div>
+      </div>
+      <div className="inline-flex rounded-xl border p-1 self-start -mt-2" style={{ borderColor: C.line, background: C.card }} role="tablist" aria-label="Who the emails went to">
+        {[["candidates", "Candidates"], ["staff", "Team"]].map(([k, l]) => (
+          <button key={k} role="tab" aria-selected={aud === k} onClick={() => { pickAud(k); setType(""); }} className="rounded-lg px-4 py-1.5 text-sm font-medium"
+            style={{ background: aud === k ? C.emTint : "transparent", color: aud === k ? C.em : C.ink2 }}>{l}</button>
+        ))}
       </div>
       {err && <Card><div className="text-sm flex items-start gap-2" style={{ color: C.dangerFg }}><AlertTriangle size={16} className="shrink-0 mt-0.5" />{err}</div></Card>}
       {res && res.warning && <div className="text-xs" style={{ color: C.warnFg }}>{res.warning}</div>}
@@ -10798,16 +11118,16 @@ function BrevoTrackingView({ S, sw }) {
             keyField="id"
             rows={shown}
             pageSize={25}
-            onRowClick={(r) => { if (!String(r.id).startsWith("nomsg|")) setPreview(r); }}
-            empty={rows.length ? "No emails match these filters." : "No emails sent to candidates in this period."}
+            onRowClick={(r) => { if (!String(r.id).startsWith("nomsg|") && !r.noPreview) setPreview(r); }}
+            empty={rows.length ? "No emails match these filters." : team ? "No emails sent to your team in this period." : "No emails sent to candidates in this period."}
             columns={[
-              { key: "to", label: "CANDIDATE", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
+              { key: "to", label: team ? "TEAM MEMBER" : "CANDIDATE", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
               { key: "subj", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="text-sm truncate" style={{ color: C.ink, maxWidth: 300 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}><Pill>{r.type}</Pill>{r.spam && <Pill tone="danger">Marked spam</Pill>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
               { key: "sent", label: "DATE SENT", render: (r) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={when(r.sentAt)}>{when(r.sentAt)}</span> },
               { key: "del", label: "DELIVERED", render: (r) => r.problem && !r.deliveredAt ? <span title={r.problem}><Pill tone="danger">{/blocked/i.test(r.problem) ? "Blocked" : /invalid/i.test(r.problem) ? "Invalid" : /soft/i.test(r.problem) ? "Soft bounce" : "Bounced"}</Pill></span> : mark(r.deliveredAt, "Delivered") },
               { key: "open", label: "OPENED", render: (r) => r.openedAt ? <span className="inline-flex items-center gap-1">{mark(r.openedAt, "First opened")}{r.opens > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.opens}</span>}{r.proxyOnly && <span className="text-xs" style={{ color: C.ink3 }} title="Opened by Apple Mail's privacy protection, which loads emails automatically. The person may not have read it.">*</span>}</span> : mark(null) },
               { key: "click", label: "CLICKED", render: (r) => r.clickedAt ? <span className="inline-flex items-center gap-1" title={(r.links || []).join("\n")}>{mark(r.clickedAt, "First clicked")}{r.clicks > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.clicks}</span>}</span> : mark(null) },
-              { key: "view", label: "PREVIEW", render: (r) => String(r.id).startsWith("nomsg|") ? <span className="text-xs" style={{ color: C.ink3 }}>—</span> : <button onClick={(e) => { e.stopPropagation(); setPreview(r); }} className="text-xs font-medium whitespace-nowrap" style={{ color: C.em }}>View email</button> },
+              { key: "view", label: "PREVIEW", render: (r) => String(r.id).startsWith("nomsg|") || r.noPreview ? <span className="text-xs" style={{ color: C.ink3 }} title={r.noPreview ? "Hidden: it contains a private sign-in link" : ""}>—</span> : <button onClick={(e) => { e.stopPropagation(); setPreview(r); }} className="text-xs font-medium whitespace-nowrap" style={{ color: C.em }}>View email</button> },
             ]}
           />
         )}
@@ -11583,7 +11903,7 @@ function PortalPhoto({ src, name, token, onChanged, onError }) {
     try {
       const r = await fetch(SB_URL + "/functions/v1/candidate-photo", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Couldn't save your photo. Please try again.");
+      if (!r.ok) throw new Error(errOf(j.error, "Couldn't save your photo. Please try again."));
       if (onChanged) await onChanged();
     } catch (e) { onError(e.message); }
     setBusy(false);
@@ -11763,7 +12083,7 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
   const call = async (body) => {
     const res = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, linkId: r.linkId, ...body }) });
     const j = await res.json().catch(() => ({}));
-    if (!res.ok && !j.already) throw new Error(j.error || "Something went wrong. Please try again.");
+    if (!res.ok && !j.already) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
     return j;
   };
   // Applying: answers first (so the screening that starts on accepting reads them), then accept.
@@ -11913,7 +12233,7 @@ function CandidatePortal({ data, token, onChanged }) {
     try {
       const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Something went wrong. Please try again.");
+      if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
       setNote(done); if (onChanged) await onChanged();
     } catch (e) { setErr(e.message); }
     setBusy("");
@@ -12155,7 +12475,7 @@ function ApplyPage({ slug }) {
         ...(referring ? { referrer: { name: ref.name.trim(), email: ref.email.trim(), note: ref.note.trim() } } : {}) };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Something went wrong. Please try again.");
+      if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
       setDone(referring ? "refer" : "apply"); window.scrollTo(0, 0);
     } catch (x) { setErr(x.message); }
     setBusy(false);
@@ -12344,7 +12664,7 @@ function JoinPage() {
       const payload = { ft: Date.now() - opened.current, source: "career_page", role_title: form.role.trim(), ref: PUB_REF(), name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, cv: { name: cv.name, data: cv.data } };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Something went wrong. Please try again.");
+      if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
       setDone(true); window.scrollTo(0, 0);
     } catch (x) { setErr(x.message); }
     setBusy(false);
@@ -12781,7 +13101,7 @@ function ForgotPassword({ onDone, initialEmail }) {
   const call = async (body) => {
     const r = await fetch(SB_URL + "/functions/v1/forgot-password", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.error) throw new Error(j.error || "Something went wrong");
+    if (!r.ok || j.error) throw new Error(errOf(j.error, "Something went wrong"));
     return j;
   };
 
@@ -12854,7 +13174,7 @@ function AccountSetup({ token, onDone }) {
   const call = async (body) => {
     const r = await fetch(SB_URL + "/functions/v1/account-setup", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok || j.error) throw new Error(j.error || "Something went wrong");
+    if (!r.ok || j.error) throw new Error(errOf(j.error, "Something went wrong"));
     return j;
   };
   React.useEffect(() => {
@@ -12867,7 +13187,7 @@ function AccountSetup({ token, onDone }) {
     if (password !== password2) { setErr("Passwords don't match"); return; }
     setBusy(true); setErr("");
     try { await call({ action: "set", password }); setState("done"); }
-    catch (e) { setErr(e.message); if (/expired|already been used|isn't active/i.test(e.message)) setState("invalid"); }
+    catch (e) { setErr(e.message); if (/expired|already been used|turned off/i.test(e.message)) setState("invalid"); }
     setBusy(false);
   };
   const first = (info.name || "").trim().split(/\s+/)[0];
@@ -12936,12 +13256,13 @@ function SignIn({ onSignedIn, notice }) {
     </AuthShell>
   );
 }
-function AwaitingAccess({ onSignOut }) {
+function AwaitingAccess({ onSignOut, status }) {
+  const off = status === "Disabled";
   return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
       <div className="max-w-sm">
-        <div className="text-2xl mb-2" style={{ ...SERIF }}>Almost there</div>
-        <div className="text-sm mb-5" style={{ color: C.ink2 }}>Your account is signed in but not active yet. Ask your ProNext admin to activate it.</div>
+        <div className="text-2xl mb-2" style={{ ...SERIF }}>{off ? "Account turned off" : "Almost there"}</div>
+        <div className="text-sm mb-5" style={{ color: C.ink2 }}>{off ? "Your account has been turned off, so you can't open ProNext right now. Ask your admin if you think this is a mistake." : "We couldn't finish setting up your account. Refresh the page, or ask your admin to send you a new welcome email."}</div>
         <Btn onClick={onSignOut}>Sign out</Btn>
       </div>
     </div>
@@ -13111,10 +13432,11 @@ export default function App() {
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [isPublic] = useState(isPublicRoute);
   const [setupToken, setSetupToken] = useState(() => new URLSearchParams(window.location.search).get("setup") || "");
+  const [checkinToken, setCheckinToken] = useState(() => new URLSearchParams(window.location.search).get("checkin") || "");
 
   const toast = (t) => { setToastText(t); setTimeout(() => setToastText(""), 2600); };
   // Errors get a modal the person has to dismiss, instead of a toast that can be missed.
-  const showError = (msg) => setErrorModalMsg(String(msg || "Something went wrong."));
+  const showError = (msg) => setErrorModalMsg(plainError(msg));
   const signOut = (reason) => {
     if (session) endServerSession(session);
     store.set(null); idleStore.clear(); setIdleLeft(null);
@@ -13152,6 +13474,14 @@ export default function App() {
       // Your profile and the workspace data load at the same time (not one after the other).
       const all = loadAll(sess.token).then((d) => ({ d }), (e) => ({ e }));
       const profile = (await sbFetch("/rest/v1/profiles?select=*&id=eq." + sess.uid, { token: sess.token }))[0];
+      // First sign-in of a new (Invited) account: it turns on by itself, then the dashboard loads.
+      if (profile && profile.status === "Invited") {
+        try {
+          const r = await fetch(SB_URL + "/functions/v1/record-login", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + sess.token, "Content-Type": "application/json" }, body: JSON.stringify({ activateOnly: true }) });
+          const j = await r.json().catch(() => ({}));
+          if (r.ok && j.activated) { setTimeout(() => window.location.reload(), 50); return; }
+        } catch (e) {}
+      }
       if (!profile || profile.status !== "Active") { setSession(sess); setMe(profile ? mapUser(profile) : null); setStatus("pending"); return; }
       setSession(sess); setMe(mapUser(profile));
       const r = await all;
@@ -13168,7 +13498,7 @@ export default function App() {
           }
         } catch (e) {}
       }, 1500);
-    } catch (e) { setErrMsg(e.message); setStatus("error"); }
+    } catch (e) { setErrMsg(plainError(e)); setStatus("error"); }
   };
 
   React.useEffect(() => { if (session) boot(session); else setStatus("signedout"); }, []); // eslint-disable-line
@@ -13185,7 +13515,7 @@ export default function App() {
   React.useEffect(() => {
     const url = new URL(window.location.href);
     // Public pages (jobs board, a job's page, candidate page, outreach links) keep their own URL.
-    if (/^\/(jobs|careers)(\/|$)/.test(url.pathname) || ["apply", "jobs", "careers", "c", "u", "setup"].some((k) => url.searchParams.has(k))) return;
+    if (/^\/(jobs|careers)(\/|$)/.test(url.pathname) || ["apply", "jobs", "careers", "c", "u", "setup", "checkin"].some((k) => url.searchParams.has(k))) return;
     if (url.searchParams.get("page") === page) return;
     url.searchParams.set("page", page);
     if (routeSkipPush.current) { routeSkipPush.current = false; window.history.replaceState({ page }, "", url); }
@@ -13264,17 +13594,18 @@ export default function App() {
     try { await sbFetch("/rest/v1/assistant_updates?seen_at=is.null", { method: "PATCH", body: { seen_at: at }, token: s.token }); } catch (e) { /* shown as seen here; tried again next time */ }
   };
   React.useEffect(() => {
-    if (isPublic || setupToken) return;
+    if (isPublic || setupToken || checkinToken) return;
     document.title = (msgUnread > 0 ? "(" + msgUnread + ") " : "") + "ProNext";
   }, [msgUnread]); // eslint-disable-line
 
   if (isPublic) return <PublicRoot />;
   if (setupToken) return <AccountSetup token={setupToken} onDone={() => { window.history.replaceState({}, "", "/"); setSetupToken(""); }} />;
+  if (checkinToken) return <CheckinReply token={checkinToken} onDone={() => { window.history.replaceState({}, "", "/"); setCheckinToken(""); }} />;
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
   if (status === "loading") return <DashboardSkeleton onRetry={() => window.location.reload()} />;
   if (status === "signedout") return <SignIn notice={signedOutReason === "idle" ? "You were signed out after " + idleStore.label() + " without activity. Sign in again to continue." : signedOutReason === "elsewhere" ? "You were signed out in another tab." : ""} onSignedIn={(s) => { idleStore.touch(Date.now()); setSignedOutReason(""); setSession(s); setStatus("loading"); boot(s); }} />;
-  if (status === "pending") return <AwaitingAccess onSignOut={signOut} />;
+  if (status === "pending") return <AwaitingAccess onSignOut={signOut} status={me && me.status} />;
   if (status === "error") return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
       <div className="max-w-sm"><div className="text-sm mb-4" style={{ color: C.dangerFg }}>Could not load ProNext: {errMsg}</div><div className="flex gap-2 justify-center flex-wrap"><Btn kind="primary" onClick={retry}>Try again</Btn><Btn onClick={signOut}>Sign out</Btn></div></div>
@@ -13322,24 +13653,24 @@ export default function App() {
   const call = async (path, opts) => { try { await sbFetch(path, { ...opts, token: session.token }); reload(); } catch (e) { S.error(e.message); throw e; } };
   const aiCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "AI request failed"); reload(); return j;
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(errOf(j.error, "AI request failed")); reload(); return j;
   };
   // Interviews (interviews Edge Function): ivCall refreshes ProNext's data after a change; ivQuiet
   // is for lookups (Google status, busy times) that change nothing.
   const ivQuiet = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/interviews", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Request failed"); return j;
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Request failed")); return j;
   };
   const ivCall = async (action, payload) => { const j = await ivQuiet(action, payload); reload(); return j; };
   // Gmail drafts (gmail Edge Function): status, connect, draft {to, subject, body}.
   const gmailCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/gmail", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Request failed"); return j;
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Request failed")); return j;
   };
   // Sourcing and outreach (sourcing Edge Function). Pages refresh their own lists, so no reload here.
   const srcCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/sourcing", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Request failed"); return j;
+    const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "That didn't work. Try again in a minute.")); return j;
   };
   // Recruiter -> candidate messaging (candidate_job_messages, one thread per candidate_jobs
   // link). Sending goes through the send-message edge function rather than a plain insert
@@ -13347,11 +13678,11 @@ export default function App() {
   // each jobLink, and marking a thread read is a plain PATCH (RLS-scoped, no edge function).
   const msgQuiet = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/send-message", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Request failed"); return j;
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(errOf(j.error, "Request failed")); return j;
   };
   const msgCall = async (action, payload) => {
     const r = await fetch(SB_URL + "/functions/v1/send-message", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...payload }) });
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || "Could not send"); reload(); return j;
+    const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(errOf(j.error, "Could not send")); reload(); return j;
   };
   // Fire-and-forget entry in the admin-only audit log. Never blocks or fails the action it's logging.
   const logAudit = (action, entityType, entityId, detail) => {
@@ -13512,36 +13843,47 @@ export default function App() {
     deleteAd: (id) => { const a = data.ads.find((x) => x.id === id); return call("/rest/v1/ad_campaigns?id=eq." + id, { method: "DELETE" }).then(() => logAudit("deleted", "ad_campaign", id, a ? a.job : "")); },
     users: data.users,
     /* Email tracking page: the Brevo email log grouped per email (admins only). */
-    emailTracking: async (days, refresh) => {
-      const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ days, refresh: !!refresh }) });
-      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load the email log");
+    emailTracking: async (days, refresh, audience) => {
+      const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ days, refresh: !!refresh, audience: audience || "candidates" }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "We couldn't load the email log. Try again in a minute."));
       return j;
     },
     /* Email tracking > Apollo: ProNext's Apollo sequence emails, live from Apollo (apollo-sync). */
     apolloTracking: async (days, refresh) => {
       const r = await fetch(SB_URL + "/functions/v1/apollo-sync", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "tracking", days, refresh: !!refresh }) });
-      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load Apollo's emails");
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Couldn't load Apollo's emails"));
       return j;
     },
     apolloPreview: async (contactId) => {
       const r = await fetch(SB_URL + "/functions/v1/apollo-sync", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "preview", contactId }) });
-      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load this email");
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Couldn't load this email"));
       return j;
     },
     emailPreview: async (messageId) => {
       const r = await fetch(SB_URL + "/functions/v1/email-tracking", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "preview", messageId }) });
-      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Couldn't load this email");
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Couldn't load this email"));
       return j;
+    },
+    /* "Ask for an update" on a job (job-checkin edge function, job_checkins table). */
+    jobCheckins: async (jobId) => sbFetch("/rest/v1/job_checkins?select=id,job_id,recruiter_id,sent_by,subject,message,sent_at,expires_at,answered_at,progress,candidates_in_progress,issues,reply&job_id=eq." + jobId + "&order=sent_at.desc&limit=100", { token: session.token }),
+    sendCheckin: async (body) => {
+      const r = await fetch(SB_URL + "/functions/v1/job-checkin", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "send", ...body }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "The update request couldn't be sent. Try again in a minute."));
+      logAudit("asked for an update", "job", body.jobId, (j.sent || []).join(", ")); return j;
+    },
+    answerCheckin: async (body) => {
+      const r = await fetch(SB_URL + "/functions/v1/job-checkin", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "answer", ...body }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "Your update couldn't be sent. Try again in a minute.")); return j;
     },
     /* Welcome email with a fresh one-time "Set your password" link (create-user edge function). */
     sendWelcome: async (id) => {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "send_welcome", id }) });
-      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(j.error || "Could not send the welcome email");
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "The welcome email couldn't be sent. Try again in a minute."));
       reload(); return j;
     },
     createAccount: async ({ email, password, full_name, role }) => {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ email, password, full_name, role }) });
-      const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not create account"); logAudit("created", "user", j.id || null, full_name + " (" + role + ")"); reload();
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "We couldn't create the account. Try again.")); logAudit("created", "user", j.id || null, full_name + " (" + role + ")"); reload(); return j;
     },
     disableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Disabled" } }).then(() => logAudit("disabled", "user", id, u ? u.name : "")); },
     enableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Active" } }).then(() => logAudit("enabled", "user", id, u ? u.name : "")); },
@@ -13563,7 +13905,7 @@ export default function App() {
     setUserPassword: async (id, password) => {
       const u = data.users.find((x) => x.id === id);
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_password", id, password }) });
-      const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not set password");
+      const j = await r.json(); if (!r.ok) throw new Error(errOf(j.error, "Could not set password"));
       logAudit("password reset", "user", id, u ? u.name : "");
     },
     /* Permanently removes their login (auth.users, cascading to profiles). The edge function
@@ -13572,7 +13914,7 @@ export default function App() {
     deleteUser: async (id) => {
       const u = data.users.find((x) => x.id === id);
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete", id }) });
-      const j = await r.json(); if (!r.ok) throw new Error(j.error || "Could not delete account");
+      const j = await r.json(); if (!r.ok) throw new Error(errOf(j.error, "Could not delete account"));
       logAudit("deleted", "user", id, u ? u.name : ""); reload();
     },
     settings: data.settings,
@@ -13713,7 +14055,7 @@ export default function App() {
       const w = window.open("", "_blank");
       try {
         const r = await fetch(SB_URL + "/storage/v1/object/sign/" + bucket + "/" + path, { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ expiresIn: 600 }) });
-        const j = await r.json(); if (!r.ok || !j.signedURL) throw new Error(j.message || j.error || "Could not open resume");
+        const j = await r.json(); if (!r.ok || !j.signedURL) throw new Error(errOf(j.message || j.error, "We couldn't open the CV. Try again in a minute."));
         const url = SB_URL + "/storage/v1" + j.signedURL; if (w) w.location.href = url; else window.location.href = url;
       } catch (e) { if (w) w.close(); showError(e.message); }
     },
@@ -13740,14 +14082,14 @@ export default function App() {
     /* AI rewrite of a job ad for search (job-redraft Edge Function) */
     aiRedraft: async (payload) => {
       const r = await fetch(SB_URL + "/functions/v1/job-redraft", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "AI redraft failed"); return j;
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(errOf(j.error || j.message || j.msg, "The AI redraft didn't work this time. Try again in a minute.")); return j;
     },
     /* Reads an uploaded job brief (PDF, Word, text, photo) and has AI pull the job fields
        out of it, to prefill "Post a job" (job-redraft Edge Function, "extract" mode). */
     parseJobDoc: async (file) => {
       const data = await fileToBase64(file);
       const r = await fetch(SB_URL + "/functions/v1/job-redraft", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ mode: "extract", file: { name: file.name, data } }) });
-      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || j.message || j.msg || "Couldn't read that file"); return j;
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(errOf(j.error || j.message || j.msg, "We couldn't read that file. Try a PDF or Word file.")); return j;
     },
     aiScreen: aiCall,
     aiDown: !!data.aiDownSince,
