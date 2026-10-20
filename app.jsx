@@ -4408,7 +4408,19 @@ function endedPath(candidate, status, S) {
   const why = declined ? "They declined the role" : ended.stage === "Withdrawn" ? "They withdrew" : r ? (r.kind === "client" ? "Rejected by the client" : r.kind === "rerouted" ? "Routed to another role" : "Rejected by us") + (r.reason && r.kind !== "rerouted" ? ": " + (REJECT_LABEL[r.reason] || r.reason) : "") : "Rejected";
   return { passed, label, why: why + (job ? " · " + job.role + (job.client ? ", " + job.client : "") : "") + (r && r.at ? " · " + fdate(r.at) : "") };
 }
-function ProfileHeader({ candidate, status, path }) {
+// A "verified" tick like on social media: shown when our emails reach the candidate's address
+// (Brevo reported it delivered or opened), nothing otherwise.
+function VerifiedTick({ size = 20 }) {
+  return (
+    <span title="Verified email" aria-label="Verified email" role="img" className="inline-flex shrink-0 align-middle" style={{ width: size, height: size }}>
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <path fill={C.lime} d="M12 1.5l2.47 1.8 3.05-.07.95 2.9 2.5 1.75-.95 2.9.95 2.9-2.5 1.75-.95 2.9-3.05-.07L12 22.5l-2.47-1.8-3.05.07-.95-2.9-2.5-1.75.95-2.9-.95-2.9 2.5-1.75.95-2.9 3.05.07z" />
+        <path d="M7.6 12.3l3 3 5.8-6.1" fill="none" stroke={C.side} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
+  );
+}
+function ProfileHeader({ candidate, status, path, verified }) {
   const idx = { "In review": 1, "With client": 2, Interview: 3, Offer: 4, Placed: 5, Hired: 5 }[status];
   const fit = Number(candidate.ai) || 0, R = 31, CIRC = 2 * Math.PI * R;
   return (
@@ -4419,7 +4431,7 @@ function ProfileHeader({ candidate, status, path }) {
           <Avatar init={initialsOf(candidate.name)} tone="em" size={64} src={candidate.photoUrl || undefined} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-2xl md:text-3xl text-white" style={{ ...SERIF }}>{candidate.name}</div>
+          <div className="text-2xl md:text-3xl text-white flex items-center gap-2 min-w-0" style={{ ...SERIF }}><span className="truncate">{candidate.name}</span>{verified && <VerifiedTick size={22} />}</div>
           {candidate.currentTitle && <div className="text-sm font-medium mt-0.5" style={{ color: "rgba(243,239,231,.9)" }}>{candidate.currentTitle}{candidate.currentCompany ? " at " + candidate.currentCompany : ""}</div>}
           <div className="text-sm font-medium mt-0.5" style={{ color: C.lime }}>{candidate.currentTitle ? "Added for " : ""}{candidate.role || "Role not set"}</div>
           <div className="text-sm flex items-center gap-1 mt-0.5" style={{ color: "rgba(243,239,231,.62)" }}><MapPin size={13} className="shrink-0" />{candidate.location || "Location not set"}</div>
@@ -4477,6 +4489,12 @@ function ProfileHeader({ candidate, status, path }) {
 
 function CandidateDetail({ candidate, onBack, toast, S }) {
   const [tab, setTab] = useState("companies");
+  const [verified, setVerified] = useState(false);
+  React.useEffect(() => {
+    let on = true; setVerified(false);
+    if (candidate.emailAddr) S.sb("/rest/v1/rpc/candidate_email_verified", { method: "POST", body: { p_cand: candidate.id } }).then((v) => on && setVerified(v === true)).catch(() => {});
+    return () => { on = false; };
+  }, [candidate.id, candidate.emailAddr]); // eslint-disable-line
   const status = candidate.status;
   const patch = (fn) => S.updateCand(candidate.id, fn);
   const setStatus = (v) => patch((c) => ({ status: v, timeline: [...c.timeline, { t: "Status set to " + v, d: todayStr(), done: true }] }));
@@ -4726,7 +4744,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
       {rejectKind && <RejectModal candidate={candidate} kind={rejectKind} S={S} toast={toast} onClose={() => setRejectKind(null)} onDone={afterReject} />}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
         <div className="md:col-span-2 flex flex-col gap-4">
-          <ProfileHeader candidate={candidate} status={status} path={endedPath(candidate, status, S)} />
+          <ProfileHeader candidate={candidate} status={status} path={endedPath(candidate, status, S)} verified={verified} />
           <Card>
             {candidate.ai_locked && (
               <div className="rounded-lg p-2.5 mb-3 flex items-center gap-2 text-xs flex-wrap" style={{ background: C.warnBg, color: C.warnFg }}>
@@ -4761,7 +4779,6 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             </div>
             <div className="flex flex-wrap gap-2 mb-4">
               <StatusPill status={status} />
-              <Pill tone="em">Verified, opened {candidate.opens}x</Pill>
               {candidate.recruiter && <Pill tone="neutral">Sourced by {candidate.recruiter}</Pill>}
               <span title="Whether they agreed, on their candidate page, to be presented anonymously to other employers"><Pill tone={candidate.pitchConsent ? "em" : "neutral"}>{candidate.pitchConsent ? "Open to anonymous pitches" : candidate.pitchAnswered ? "Declined pitches" : "Not asked about pitches yet"}</Pill></span>
               {candidate.emailOptOut && <span title="They clicked unsubscribe in one of our emails. ProNext no longer emails them; contact them another way."><Pill tone="danger">Unsubscribed from emails</Pill></span>}
