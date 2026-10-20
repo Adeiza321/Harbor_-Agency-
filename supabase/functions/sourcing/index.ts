@@ -209,7 +209,7 @@ async function handle(req: Request): Promise<Response> {
       // One step of an X-ray run, in its own call (so its own time limit). Answers straight away;
       // the step works in the background and hands over to the next one when it needs to.
       if (body.action === "xray_step" && body.jobId) {
-        const work = runXrayStep(admin, String(body.jobId), s);
+        const work = runXrayStep(admin, String(body.jobId), s, String(body.run || ""));
         // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
         if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
         return json({ ok: true });
