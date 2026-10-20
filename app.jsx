@@ -13,7 +13,11 @@ import {
 
 /* Design tokens */
 const THEME_KEY = "pn.theme";
-const DARK = (() => { try { const t = localStorage.getItem(THEME_KEY); return t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) { return false; } })();
+// Light, dark, or (the default) matching the device. Public pages (jobs board, job pages, the
+// candidate page, client links) always stay light.
+const IS_PUBLIC_PAGE = (() => { try { const q = new URLSearchParams(location.search); return /^\/(jobs|careers)(\/|$)/.test(location.pathname) || ["apply", "jobs", "careers", "u", "t", "c"].some((k) => q.has(k)); } catch (e) { return false; } })();
+const DARK = (() => { if (IS_PUBLIC_PAGE) return false; try { const t = localStorage.getItem(THEME_KEY) || "system"; return t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) { return false; } })();
+try { document.documentElement.style.colorScheme = DARK ? "dark" : "light"; } catch (e) { /* no DOM */ }
 const C_LIGHT = {
   canvas: "#F3EFE7", card: "#FFFFFF", soft: "#FAF8F3", ink: "#14201B", ink2: "#56605A",
   ink3: "#8C948E", line: "#E6E1D6", line2: "#D5D2C7", side: "#12241D", lime: "#C8F169",
@@ -2032,7 +2036,7 @@ function SecurityTab({ S, toast }) {
 }
 
 // Light / Dark / Match device. Saved on this browser; the page reloads so every colour switches at once.
-function themeNow() { try { return localStorage.getItem(THEME_KEY) || "light"; } catch (e) { return "light"; } }
+function themeNow() { try { return localStorage.getItem(THEME_KEY) || "system"; } catch (e) { return "system"; } }
 function setTheme(t) { try { localStorage.setItem(THEME_KEY, t); } catch (e) {} location.reload(); }
 function AppearanceCard() {
   const cur = themeNow();
@@ -2178,6 +2182,15 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
         <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: C.line }} />
         <NavList items={[...items, ...extra]} page={page} setPage={setPage} onNavigate={onClose} badges={badges} />
         <div className="pt-3 mt-3" style={{ borderTop: `1px solid ${C.line}` }}>
+          <div className="text-xs font-medium px-3 mb-2" style={{ color: C.ink3 }}>APPEARANCE</div>
+          <div className="grid grid-cols-3 gap-1 rounded-xl p-1 mx-1 mb-2" style={{ background: C.neutralBg }} role="group" aria-label="Appearance">
+            {[["light", "Light", Sun], ["dark", "Dark", Moon], ["system", "Auto", Monitor]].map(([k, l, I]) => (
+              <button key={k} type="button" aria-pressed={themeNow() === k} onClick={() => themeNow() !== k && setTheme(k)} className="flex items-center justify-center gap-1.5 rounded-lg py-2 text-sm"
+                style={themeNow() === k ? { background: C.card, color: C.ink, fontWeight: 500 } : { color: C.ink2 }}><I size={15} />{l}</button>
+            ))}
+          </div>
+        </div>
+        <div className="pt-3 mt-1" style={{ borderTop: `1px solid ${C.line}` }}>
           <button onClick={() => { setPage("myProfile"); onClose(); }} className="w-full flex items-center gap-2.5 text-left rounded-xl px-3 py-2.5">
             <Avatar init={me.init} src={me.avatarUrl} tone="em" size={32} />
             <div className="min-w-0"><div className="text-sm font-medium truncate">{me.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{me.label}</div></div>
@@ -2251,7 +2264,7 @@ function TopBar({ query, setQuery, S, onCmd }) {
         <input id="harbor-search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search" className="bg-transparent outline-none text-sm flex-1 min-w-0" />
         <button type="button" onClick={onCmd} title="Jump to any candidate, job or page" className="rounded px-1.5 py-0.5" style={{ display: desktop ? "inline" : "none", fontSize: 11, background: C.canvas, color: C.ink2 }}>{/Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘ K" : "Ctrl K"}</button>
       </div>
-      <button aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"} onClick={() => setTheme(DARK ? "light" : "dark")} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border hidden md:flex items-center justify-center shrink-0" style={{ borderColor: C.line, background: C.card }}>
+      <button aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"} onClick={() => setTheme(DARK ? "light" : "dark")} className="w-10 h-10 md:w-11 md:h-11 rounded-xl border flex items-center justify-center shrink-0" style={{ borderColor: C.line, background: C.card }}>
         {DARK ? <Sun size={18} color={C.lime} /> : <Moon size={18} color={C.ink} />}
       </button>
       <div className="relative shrink-0">
@@ -12615,7 +12628,7 @@ const AUTH_LOOSE = [
 // gently in place instead of wandering across the screen.
 const AUTH_MOBILE = [
   ["profile", "New application", "Plumber · Croydon", { left: "3%", top: "2%" }, -5],
-  ["calendar", "Interview booked", "Tue · 10:00", { right: "3%", top: "7.5%" }, 5],
+  ["calendar", "Interview booked", "Tue · 10:00", { right: "4%", top: "10.5%" }, 5],
   ["chat", "New message", "\u201cHappy to chat\u201d", { right: "6%", bottom: "11%" }, 4],
   ["offer", "Offer accepted", "Staff Accountant", { left: "4%", bottom: "5.5%" }, -4],
   ["briefcase", "Role filled", "Electrician", { right: "3%", bottom: "1%" }, -5],
@@ -12732,6 +12745,10 @@ function AuthShell({ onSubmit, children }) {
       </aside>
       <main className="pnx-auth relative overflow-hidden min-h-screen md:min-h-0 flex items-center justify-center px-4 py-24 md:px-10">
         <AuthScatter />
+        <button type="button" onClick={() => setTheme(DARK ? "light" : "dark")} aria-label={DARK ? "Switch to light mode" : "Switch to dark mode"} title={DARK ? "Light mode" : "Dark mode"}
+          className="absolute z-10 w-10 h-10 rounded-xl border flex items-center justify-center" style={{ top: 14, right: 14, borderColor: C.line, background: C.card }}>
+          {DARK ? <Sun size={17} color={C.lime} /> : <Moon size={17} color={C.ink} />}
+        </button>
         <div className="relative w-full max-w-[400px]">
           <AuthTucked />
           <form onSubmit={onSubmit} className="pnx-card relative w-full rounded-2xl border p-7 md:p-9" style={{ background: C.card, borderColor: C.line, boxShadow: "0 1px 0 rgba(20,32,27,.04), 0 18px 40px -24px rgba(18,36,29,.28)" }}>

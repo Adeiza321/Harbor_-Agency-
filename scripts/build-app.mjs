@@ -38,7 +38,7 @@ for (const [name, ext] of [["style", "css"], ["app", "js"], ["public", "js"]]) {
 }
 
 // The page itself: styles first, then whichever bundle this address needs (decided before anything downloads).
-const pick = `(function(){try{var t=localStorage.getItem("pn.theme");if(t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.className+=" pn-dark"}catch(e){}var l=location,q=new URLSearchParams(l.search),p=/^\\/(jobs|careers)(\\/|$)/.test(l.pathname)||["apply","jobs","careers","u","t","c"].some(function(k){return q.has(k)});var s=document.createElement("script");s.src=p?"${out.public}":"${out.app}";document.head.appendChild(s)})();`;
+const pick = `(function(){var l=location,q=new URLSearchParams(l.search),p=/^\\/(jobs|careers)(\\/|$)/.test(l.pathname)||["apply","jobs","careers","u","t","c"].some(function(k){return q.has(k)});try{var t=localStorage.getItem("pn.theme")||"system";if(!p&&(t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches)))document.documentElement.className+=" pn-dark"}catch(e){}var s=document.createElement("script");s.src=p?"${out.public}":"${out.app}";document.head.appendChild(s)})();`;
 // Content-Security-Policy: the browser only runs this site's own scripts (plus the one-line
 // loader above, allowed by its hash) and only talks to this site and Supabase. If someone ever
 // slipped a script into a page, it couldn't run or send a signed-in session anywhere.
