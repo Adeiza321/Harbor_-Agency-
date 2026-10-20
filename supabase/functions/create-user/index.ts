@@ -96,6 +96,27 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, to: w.to });
     }
 
+    // Two-factor: who has it on (Users and permissions), and turning it off for someone who lost their phone.
+    if (action === "mfa_status") {
+      const on: string[] = [];
+      for (let page = 1; page <= 10; page++) {
+        const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+        if (error) return json({ error: "We couldn't check two-factor right now. Try again in a minute." }, 500);
+        for (const u of data.users || []) if ((u.factors || []).some((f: any) => f.status === "verified")) on.push(u.id);
+        if ((data.users || []).length < 200) break;
+      }
+      return json({ ok: true, on });
+    }
+    if (action === "reset_mfa") {
+      const { id } = body;
+      if (!id) return json({ error: "Choose an account first." }, 400);
+      const { data: list, error } = await admin.auth.admin.mfa.listFactors({ userId: id });
+      if (error) return json({ error: "We couldn't turn off two-factor for this account. Try again in a minute." }, 500);
+      for (const f of list?.factors || []) await admin.auth.admin.mfa.deleteFactor({ userId: id, id: f.id });
+      try { await admin.from("audit_log").insert({ actor_id: caller.user.id, action: "two-factor turned off by an admin", entity_type: "user", entity_id: id }); } catch (_) { /* best effort */ }
+      return json({ ok: true, removed: (list?.factors || []).length });
+    }
+
     if (action === "delete") {
       const { id } = body;
       if (!id) return json({ error: "Choose an account first." }, 400);

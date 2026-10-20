@@ -116,6 +116,20 @@ const idleExpired = () => { const l = idleStore.last(); return !!l && Date.now()
 const endServerSession = (s) => { try { fetch(SB_URL + "/auth/v1/logout?scope=local", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + s.token } }).catch(() => {}); } catch (e) {} };
 const toSession = (j) => ({ token: j.access_token, refresh: j.refresh_token, uid: j.user.id, exp: Date.now() + j.expires_in * 1000 });
 const signIn = async (email, password) => toSession(await sbFetch("/auth/v1/token?grant_type=password", { method: "POST", body: { email, password } }));
+// Two-factor sign-in: the password gives a first-step session (aal1). Anyone with a verified
+// authenticator must then enter its code, which swaps it for a full session (aal2).
+const jwtClaims = (t) => { try { return JSON.parse(atob(String(t).split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))); } catch (e) { return {}; } };
+const sessionAal = (s) => (s && jwtClaims(s.token).aal) || "aal1";
+const signInStart = async (email, password) => {
+  const j = await sbFetch("/auth/v1/token?grant_type=password", { method: "POST", body: { email, password } });
+  const totp = ((j.user && j.user.factors) || []).find((f) => f.factor_type === "totp" && f.status === "verified");
+  return { session: toSession(j), factorId: totp ? totp.id : null };
+};
+const mfaSignIn = async (s, factorId, code) => {
+  const ch = await sbFetch("/auth/v1/factors/" + factorId + "/challenge", { method: "POST", token: s.token, body: {} });
+  return toSession(await sbFetch("/auth/v1/factors/" + factorId + "/verify", { method: "POST", token: s.token, body: { challenge_id: ch.id, code: String(code).replace(/\s+/g, "") } }));
+};
+const verifiedTotp = async (token) => { const u = await sbFetch("/auth/v1/user", { token }); return ((u && u.factors) || []).find((f) => f.factor_type === "totp" && f.status === "verified") || null; };
 const refreshSession = async (s) => toSession(await sbFetch("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token: s.refresh } }));
 
 const ROLE_KEY_LABEL = { admin: "Admin", recops: "Rec Ops manager", recruiter: "Recruiter" };
@@ -2034,12 +2048,12 @@ function SecurityTab({ S, toast }) {
     S.mfaEnroll().then((j) => setEnroll({ factorId: j.id, qr: j.totp && j.totp.qr_code, secret: j.totp && j.totp.secret })).catch((e) => S.error(e.message)).finally(() => setMfaBusy(false));
   };
   const confirmEnroll = () => {
-    if (!code.trim()) { toast("Enter the 6-digit code"); return; }
+    if (!/^\d{6}$/.test(code.replace(/\s+/g, ""))) { toast("Enter the 6-digit code from your authenticator app"); return; }
     setMfaBusy(true);
     S.mfaChallenge(enroll.factorId)
       .then((ch) => S.mfaVerify(enroll.factorId, ch.id, code.trim()))
-      .then(() => { toast("Two-factor authentication turned on"); setEnroll(null); setCode(""); return S.mfaListFactors().then(setFactors); })
-      .catch((e) => S.error(e.message))
+      .then(() => { toast("Two-factor authentication is on. You'll enter a code from your app each time you sign in."); setEnroll(null); setCode(""); S.reload && S.reload(); return S.mfaListFactors().then(setFactors); })
+      .catch((e) => S.error(/invalid|expired|code/i.test(e.message) ? "That code didn't match. Codes change every 30 seconds: enter the one showing now. If it keeps failing, check your phone's time is set automatically." : e.message))
       .finally(() => setMfaBusy(false));
   };
   const removeFactor = (id) => {
@@ -2076,12 +2090,14 @@ function SecurityTab({ S, toast }) {
           )}
           {enroll && (
             <div className="flex flex-col gap-3">
-              <div className="text-sm" style={{ color: C.ink2 }}>Scan this in your authenticator app, or enter the code manually, then type the 6-digit code it shows.</div>
-              {enroll.qr && <div className="w-40 h-40 [&_svg]:w-full [&_svg]:h-full" dangerouslySetInnerHTML={{ __html: enroll.qr }} />}
+              <div className="text-sm" style={{ color: C.ink2 }}>1. Install an authenticator app on your phone (Google Authenticator, Microsoft Authenticator or Authy). 2. In the app, add an account and scan this QR code, or type the key under it. 3. Enter the 6-digit code the app shows.</div>
+              {enroll.qr && (/^data:/.test(enroll.qr)
+                ? <img src={enroll.qr} alt="QR code for your authenticator app" className="w-44 h-44 rounded-lg p-2" style={{ background: "#fff" }} />
+                : <div className="w-44 h-44 rounded-lg p-2 [&_svg]:w-full [&_svg]:h-full" style={{ background: "#fff" }} dangerouslySetInnerHTML={{ __html: enroll.qr }} />)}
               {enroll.secret && <div className="text-xs font-mono rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{enroll.secret}</div>}
-              <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+              <input inputMode="numeric" autoComplete="one-time-code" maxLength={7} value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none tracking-widest" style={{ borderColor: C.line, background: C.soft }} />
               <div className="flex gap-2">
-                <Btn onClick={() => { setEnroll(null); setCode(""); }} disabled={mfaBusy}>Cancel</Btn>
+                <Btn onClick={() => { const id = enroll.factorId; setEnroll(null); setCode(""); S.mfaUnenroll(id).catch(() => {}); }} disabled={mfaBusy}>Cancel</Btn>
                 <Btn kind="primary" disabled={mfaBusy} onClick={confirmEnroll}>{mfaBusy ? <>Verifying <InlineDots color="#fff" /></> : "Verify and turn on"}</Btn>
               </div>
             </div>
@@ -4707,6 +4723,29 @@ function RerouteAsk({ ask, onDone }) {
 // dashboard says so once, at the top. Nothing else stops: candidates are still added, submitted,
 // routed, moved through stages, rejected and messaged; only screening, fit checks and AI drafts
 // are skipped. It disappears by itself once a call to the AI works again.
+// Recruiters without two-factor see a reminder at the top until they turn it on ("Later" hides it for 3 days).
+function TwoFactorNudge({ S }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    let snooze = 0; try { snooze = Number(localStorage.getItem("pn.2faLater") || 0); } catch (e) {}
+    if (Date.now() < snooze) return;
+    S.mfaListFactors().then((f) => setShow(!(f || []).some((x) => x.status === "verified"))).catch(() => {});
+  }, []); // eslint-disable-line
+  if (!show) return null;
+  const later = () => { setShow(false); try { localStorage.setItem("pn.2faLater", String(Date.now() + 3 * 864e5)); } catch (e) {} };
+  return (
+    <div className="px-4 md:px-8 mt-1 mb-3">
+      <div className="rounded-xl px-3.5 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center gap-2.5" style={{ background: C.emTint, color: C.ink }} role="status">
+        <Lock size={16} className="shrink-0 hidden sm:block" style={{ color: C.em }} />
+        <div className="flex-1 min-w-0"><b>Protect your account with two-factor authentication.</b> You handle candidates' personal details; a code from your phone at sign-in stops anyone who gets your password. It takes 2 minutes.</div>
+        <div className="flex gap-2 shrink-0">
+          <Btn kind="primary" onClick={() => S.goProfile("security")}>Turn it on</Btn>
+          <Btn onClick={later}>Later</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
 function AiPausedBanner({ since, admin }) {
   const [hide, setHide] = useState(() => { try { return sessionStorage.getItem("pn.aiBanner") === String(since); } catch (e) { return false; } });
   if (hide) return null;
@@ -10858,6 +10897,14 @@ function UsersPage({ toast, S }) {
       .then(() => { toast(delUser.name + " deleted"); setDelUser(null); }).catch((e) => S.error(e.message)).finally(() => setDelBusy(false));
   };
   const [welcomeBusyId, setWelcomeBusyId] = useState(null);
+  // Who has two-factor on (shown beside their status), and turning it off for someone who lost their phone.
+  const [mfaOn, setMfaOn] = useState(null);
+  useEffect(() => { S.mfaStatus().then(setMfaOn).catch(() => setMfaOn(null)); }, [users.length]); // eslint-disable-line
+  const resetMfa = (u) => {
+    setWelcomeBusyId(u.id);
+    S.resetMfa(u.id).then(() => { toast("Two-factor turned off for " + u.name + ". They can sign in with just their password and set it up again."); return S.mfaStatus().then(setMfaOn); })
+      .catch((e) => S.error(e.message)).finally(() => setWelcomeBusyId(null));
+  };
   // Turns a disabled account back on. New (Invited) accounts don't need this: they become Active
   // by themselves the first time they sign in.
   const activate = async (u) => {
@@ -10919,7 +10966,7 @@ function UsersPage({ toast, S }) {
                 </select>
               );
             } },
-            { key: "status", label: "STATUS", render: (u) => <StatusPill status={u.status} /> },
+            { key: "status", label: "STATUS", render: (u) => <div className="flex flex-wrap items-center gap-1.5"><StatusPill status={u.status} />{mfaOn && (mfaOn.includes(u.id) ? <span title="Two-factor authentication is on"><Pill tone="em">2FA on</Pill></span> : u.status === "Active" ? <span title="This person hasn't turned on two-factor authentication yet"><Pill tone="warn">No 2FA</Pill></span> : null)}</div> },
             { key: "act", label: "", render: (u) => {
               const lastAdmin = u.roleKey === "admin" && u.status === "Active" && adminCount <= 1;
               const other = !u.isOwner;
@@ -10928,6 +10975,7 @@ function UsersPage({ toast, S }) {
                   <RowMenu label={"Actions for " + u.name} busy={welcomeBusyId === u.id} items={[
                     { label: "Edit details", icon: Pencil, onClick: () => openEdit(u) },
                     { label: "Set password", icon: KeyRound, onClick: () => { setPwUser(u); setPwValue(""); }, hidden: !other },
+                    { label: "Turn off two-factor", icon: Lock, onClick: () => resetMfa(u), hidden: !(other && mfaOn && mfaOn.includes(u.id)), title: "For someone who lost their phone: they sign in with their password and set it up again" },
                     { label: u.welcomeSentAt ? "Resend welcome email" : "Send welcome email", icon: Mail, onClick: () => resendWelcome(u), hidden: !(other && (u.status === "Active" || u.status === "Invited") && u.id !== S.me.id),
                       title: u.welcomeSentAt ? "Last sent " + new Date(u.welcomeSentAt).toLocaleDateString() : "Not sent yet" },
                     { label: "Enable", icon: Power, onClick: () => activate(u), hidden: !(other && u.status === "Disabled") },
@@ -13260,22 +13308,51 @@ function AccountSetup({ token, onDone }) {
   );
 }
 
-function SignIn({ onSignedIn, notice }) {
+function SignIn({ onSignedIn, notice, mfaPending }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
+  // { session, factorId } after the password, when the account has two-factor turned on.
+  const [mfa, setMfa] = useState(mfaPending || null);
+  const [code, setCode] = useState("");
   const submit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
     if (busy) return;
+    if (mfa) return submitCode();
     if (!email || !password) { setErr("Enter your email and password"); return; }
     setBusy(true); setErr("");
-    try { const s = await signIn(email.trim(), password); store.set(s); onSignedIn(s); }
-    catch (e) { setErr(e.message === "Invalid login credentials" ? "Wrong email or password" : e.message); }
+    try {
+      const r = await signInStart(email.trim(), password);
+      if (r.factorId) { setMfa(r); setCode(""); }
+      else { store.set(r.session); onSignedIn(r.session); }
+    }
+    catch (e) { setErr(/invalid login credentials|wrong email or password/i.test(e.message) ? "Wrong email or password." : e.message); }
+    setBusy(false);
+  };
+  const submitCode = async () => {
+    const c = code.replace(/\s+/g, "");
+    if (!/^\d{6}$/.test(c)) { setErr("Enter the 6-digit code from your authenticator app."); return; }
+    setBusy(true); setErr("");
+    try { const s = await mfaSignIn(mfa.session, mfa.factorId, c); store.set(s); onSignedIn(s); }
+    catch (e) { setErr(/invalid|expired|code/i.test(e.message) ? "That code didn't work. Codes change every 30 seconds: enter the one showing now. If it keeps failing, check your phone's time is set automatically." : e.message); }
     setBusy(false);
   };
   if (forgot) return <ForgotPassword initialEmail={email} onDone={() => setForgot(false)} />;
+  if (mfa) return (
+    <AuthShell onSubmit={submit}>
+        <div className="flex items-center gap-2.5 mb-6"><BrandLogo height={34} /></div>
+        <h1 className="text-[28px] leading-tight mb-1" style={{ ...SERIF, color: C.ink }}>Enter your code</h1>
+        <p className="text-sm mb-6" style={{ color: C.ink2 }}>Open your authenticator app and type the 6-digit code for ProNext.</p>
+        <input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={7} value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456"
+          className="w-full mb-2 rounded-lg border px-3.5 py-2.5 text-lg tracking-[0.3em] outline-none text-center" style={{ borderColor: C.line, background: C.soft }} />
+        {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
+        <Btn type="submit" kind="primary" full className="mt-3" onClick={submit}>{busy ? <>Checking <InlineDots color="#fff" /></> : "Sign in"}</Btn>
+        <button type="button" onClick={() => { setMfa(null); setCode(""); setErr(""); }} className="text-xs mt-4" style={{ color: C.ink2, textDecoration: "underline" }}>Use a different account</button>
+        <div className="text-xs mt-5 pt-4 border-t" style={{ color: C.ink3, borderColor: C.line }}>Lost your phone? Ask your admin to turn off two-factor for your account, then set it up again.</div>
+    </AuthShell>
+  );
   return (
     <AuthShell onSubmit={submit}>
         <div className="flex items-center gap-2.5 mb-6">
@@ -13476,6 +13553,7 @@ export default function App() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [toastText, setToastText] = useState("");
   const [errorModalMsg, setErrorModalMsg] = useState("");
+  const [mfaPending, setMfaPending] = useState(null);
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [isPublic] = useState(isPublicRoute);
   const [setupToken, setSetupToken] = useState(() => new URLSearchParams(window.location.search).get("setup") || "");
@@ -13521,6 +13599,11 @@ export default function App() {
       if (sess.exp < Date.now() + 30000) { sess = await refreshSession(sess); store.set(sess); }
       // Your profile and the workspace data load at the same time (not one after the other).
       const all = loadAll(sess.token).then((d) => ({ d }), (e) => ({ e }));
+      // A saved first-step session (password only) for an account with two-factor on: ask for the code.
+      if (sessionAal(sess) !== "aal2") {
+        const f = await verifiedTotp(sess.token).catch(() => null);
+        if (f) { store.set(null); setMfaPending({ session: sess, factorId: f.id }); setSession(null); setStatus("signedout"); return; }
+      }
       const profile = (await sbFetch("/rest/v1/profiles?select=*&id=eq." + sess.uid, { token: sess.token }))[0];
       // First sign-in of a new (Invited) account: it turns on by itself, then the dashboard loads.
       if (profile && profile.status === "Invited") {
@@ -13652,7 +13735,7 @@ export default function App() {
 
   const retry = () => { setStatus("loading"); setErrMsg(""); if (session) boot(session); else setStatus("signedout"); };
   if (status === "loading") return <DashboardSkeleton onRetry={() => window.location.reload()} />;
-  if (status === "signedout") return <SignIn notice={signedOutReason === "idle" ? "You were signed out after " + idleStore.label() + " without activity. Sign in again to continue." : signedOutReason === "elsewhere" ? "You were signed out in another tab." : ""} onSignedIn={(s) => { idleStore.touch(Date.now()); setSignedOutReason(""); setSession(s); setStatus("loading"); boot(s); }} />;
+  if (status === "signedout") return <SignIn key={mfaPending ? "mfa" : "pw"} mfaPending={mfaPending} notice={signedOutReason === "idle" ? "You were signed out after " + idleStore.label() + " without activity. Sign in again to continue." : signedOutReason === "elsewhere" ? "You were signed out in another tab." : ""} onSignedIn={(s) => { idleStore.touch(Date.now()); setSignedOutReason(""); setMfaPending(null); setSession(s); setStatus("loading"); boot(s); }} />;
   if (status === "pending") return <AwaitingAccess onSignOut={signOut} status={me && me.status} />;
   if (status === "error") return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
@@ -13977,10 +14060,29 @@ export default function App() {
     },
     /* Your own account security: password, TOTP two-factor, and signing out other sessions. */
     changePassword: (password) => sbFetch("/auth/v1/user", { method: "PUT", token: session.token, body: { password } }),
+    mfaStatus: async () => {
+      const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "mfa_status" }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "We couldn't check two-factor right now.")); return j.on || [];
+    },
+    resetMfa: async (id) => {
+      const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "reset_mfa", id }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "We couldn't turn off two-factor for this account.")); return j;
+    },
     mfaListFactors: async () => { const j = await sbFetch("/auth/v1/user", { token: session.token }); return j.factors || []; },
-    mfaEnroll: () => sbFetch("/auth/v1/factors", { method: "POST", token: session.token, body: { factor_type: "totp", friendly_name: "Authenticator app" } }),
+    // Set-ups left half-done (QR never confirmed) are removed first: they block a new one with the same name.
+    mfaEnroll: async () => {
+      const u = await sbFetch("/auth/v1/user", { token: session.token });
+      for (const f of (u.factors || []).filter((x) => x.status !== "verified")) await sbFetch("/auth/v1/factors/" + f.id, { method: "DELETE", token: session.token }).catch(() => {});
+      return sbFetch("/auth/v1/factors", { method: "POST", token: session.token, body: { factor_type: "totp", friendly_name: "Authenticator app " + new Date().toISOString().slice(0, 16).replace("T", " ") } });
+    },
     mfaChallenge: (factorId) => sbFetch("/auth/v1/factors/" + factorId + "/challenge", { method: "POST", token: session.token, body: {} }),
-    mfaVerify: (factorId, challengeId, code) => sbFetch("/auth/v1/factors/" + factorId + "/verify", { method: "POST", token: session.token, body: { challenge_id: challengeId, code } }),
+    // A correct code also upgrades this session to the full two-factor level; keep it, so turning
+    // two-factor on doesn't lock this device out.
+    mfaVerify: async (factorId, challengeId, code) => {
+      const j = await sbFetch("/auth/v1/factors/" + factorId + "/verify", { method: "POST", token: session.token, body: { challenge_id: challengeId, code: String(code).replace(/\s+/g, "") } });
+      if (j && j.access_token) { const s = toSession(j); store.set(s); setSession(s); }
+      return j;
+    },
     mfaUnenroll: (factorId) => sbFetch("/auth/v1/factors/" + factorId, { method: "DELETE", token: session.token }),
     signOutEverywhere: () => sbFetch("/auth/v1/logout?scope=others", { method: "POST", token: session.token, body: {} }),
     updateNotificationPrefs: (prefs) => { setMe((m) => ({ ...m, notificationPrefs: prefs })); return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { notification_prefs: prefs } }).catch((e) => showError(e.message)); },
@@ -14237,6 +14339,7 @@ export default function App() {
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} onCmd={() => setCmdOpen(true)} />
         {data.aiDownSince && role === "admin" && <AiPausedBanner since={data.aiDownSince} admin />}
+        {role === "recruiter" && page !== "myProfile" && <TwoFactorNudge S={S} />}
         {rerouteAsk && <RerouteAsk ask={rerouteAsk} onDone={(v) => { rerouteAsk.resolve(v); setRerouteAsk(null); }} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>

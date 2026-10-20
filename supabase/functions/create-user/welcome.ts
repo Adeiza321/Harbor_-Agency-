@@ -7,12 +7,14 @@ export const ROLE_LABEL: Record<string, string> = { admin: "Admin", recops: "Rec
 
 const STEPS: Record<string, string[]> = {
   recruiter: [
+    "Turn on <b>two-factor authentication</b> under <b>My profile</b>, <b>Security</b>. It keeps your account and your candidates' details safe.",
     "Add your photo and job title under <b>My profile</b>, so candidates know who they're talking to.",
     "Open <b>Jobs</b> and click <b>Engage</b> on the roles you're working on.",
     "Check <b>Candidates</b> and your <b>Inbox</b> for people assigned to you.",
     "Message candidates from their profile. They reply from their own candidate page.",
   ],
   recops: [
+    "Turn on <b>two-factor authentication</b> under <b>My profile</b>, <b>Security</b>.",
     "Add your photo and job title under <b>My profile</b>.",
     "Review new applications and referrals in the <b>Inbox</b> and assign them to recruiters.",
     "Check <b>Jobs</b> for roles that still need candidates, and approve outreach under <b>Outreach</b>.",
