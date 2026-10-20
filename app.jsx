@@ -4489,9 +4489,9 @@ function ProfileHeader({ candidate, status, path, verified }) {
 
 function CandidateDetail({ candidate, onBack, toast, S }) {
   const [tab, setTab] = useState("companies");
-  const [verified, setVerified] = useState(false);
+  const [verified, setVerified] = useState(candidate.email === "Verified");
   React.useEffect(() => {
-    let on = true; setVerified(false);
+    let on = true; setVerified(candidate.email === "Verified");
     if (candidate.emailAddr) S.sb("/rest/v1/rpc/candidate_email_verified", { method: "POST", body: { p_cand: candidate.id } }).then((v) => on && setVerified(v === true)).catch(() => {});
     return () => { on = false; };
   }, [candidate.id, candidate.emailAddr]); // eslint-disable-line
@@ -4805,7 +4805,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             </div>
             <IndustryExperience candidate={candidate} S={S} toast={toast} />
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-6 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
-              <div className="flex items-center gap-2 min-w-0" style={{ color: C.ink2 }}><Mail size={15} className="shrink-0" /><span className="truncate">{candidate.emailAddr || "No email on file"}</span></div>
+              <div className="flex items-center gap-2 min-w-0" style={{ color: C.ink2 }}><Mail size={15} className="shrink-0" /><span className="truncate">{candidate.emailAddr || "No email on file"}</span>{candidate.emailAddr && <Pill tone={verified ? "em" : "warn"}>{verified ? "Verified" : "Unverified"}</Pill>}</div>
               <div className="flex items-center gap-2" style={{ color: C.ink2 }}><Phone size={15} className="shrink-0" />{candidate.phone || "No phone on file"}</div>
               {candidate.linkedin && <a href={candidate.linkedin} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 font-medium" style={{ color: C.em }}><span className="text-[10px] font-bold rounded px-1 leading-4" style={{ background: C.em, color: "#fff" }}>in</span>LinkedIn</a>}
               <div className="flex items-center gap-1.5 sm:ml-auto">
