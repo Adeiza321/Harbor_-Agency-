@@ -2525,6 +2525,15 @@ function VoiceOrb({ phase }) {
     </div>
   );
 }
+// What the assistant says when it can't answer: plain words, never codes. The server already
+// words the usual cases ("The assistant is down right now…"); anything else gets a calm line.
+function assistantErrText(msg) {
+  const m = String(msg || "");
+  if (/^The assistant /.test(m)) return m;
+  if (/fetch|network|internet|reach|slow|timed? ?out|abort/i.test(m)) return "I couldn't reach the assistant just now. Check your connection and try again.";
+  return "The assistant is having trouble right now. Please try again in a few minutes. Everything else in ProNext keeps working.";
+}
+
 function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRefreshUpdates, goUpdate }) {
   const desktop = useDesktop();
   const [open, setOpen] = useState(false);
@@ -2670,7 +2679,7 @@ function AssistantPanel({ S, badges, pageCtx, updates = [], onUpdatesSeen, onRef
       const page = { jobId: (opts && opts.jobId) || (pageCtx && pageCtx.jobId) || null, candidateId: (pageCtx && pageCtx.candidateId) || null };
       const r = await S.sb("/functions/v1/assistant", { method: "POST", body: { messages: history, mode: (opts && opts.mode) || mode, page, tz: MY_TZ, smart: !!(opts && opts.smart), threadId: (opts && opts.fresh) ? null : threadId }, timeout: 150000 });
       list = [...next, { role: "assistant", content: r.text || "", proposals: (r.proposals || []).map((p) => ({ ...p, state: p.tool === "propose_email" ? "draft" : "waiting" })) }];
-    } catch (e) { list = [...next, { role: "assistant", content: e.message || "Something went wrong. Try again.", error: true }]; }
+    } catch (e) { list = [...next, { role: "assistant", content: assistantErrText(e && e.message), error: true }]; }
     setMsgs(list); setBusy(false); if (!voiceRef.current) playAssistChime(S.me);
     save(list, base.length ? null : ask || (atts[0] && (atts[0].kind === "voice" ? atts[0].text : atts[0].name)) || "New conversation");
     return list[list.length - 1];
@@ -13837,7 +13846,7 @@ export default function App() {
       <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} onCmd={() => setCmdOpen(true)} />
-        {data.aiDownSince && <AiPausedBanner since={data.aiDownSince} admin={role === "admin"} />}
+        {data.aiDownSince && role === "admin" && <AiPausedBanner since={data.aiDownSince} admin />}
         {rerouteAsk && <RerouteAsk ask={rerouteAsk} onDone={(v) => { rerouteAsk.resolve(v); setRerouteAsk(null); }} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>

@@ -421,12 +421,29 @@ async function handle(req: Request): Promise<Response> {
       // Automatic screening: called by the database the moment a candidate is added to a role,
       // and by a sweep every 2 minutes for anything that slipped through (a few per run).
       if (body.action === "screen_link" && body.linkId) return json(await autoScreen(admin, String(body.linkId)));
+      // While the AI is marked down, the database asks every 15 minutes whether it's back: one tiny
+      // call (a few tokens). Working again clears the flag and queues the skipped screenings.
+      if (body.action === "ai_ping") {
+        const key = Deno.env.get("ANTHROPIC_API_KEY");
+        if (!key) return json({ ok: false, error: "No ANTHROPIC_API_KEY" });
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({ model: ANTHROPIC_MODEL, max_tokens: 1, messages: [{ role: "user", content: "ok" }] }),
+        });
+        const t = res.ok ? "" : (await res.text()).slice(0, 300);
+        if (res.ok) await noteAiHealth(false);
+        else if (aiDownFrom(res.status, t)) await noteAiHealth(true, t);
+        return json({ ok: res.ok, status: res.status });
+      }
       if (body.action === "screen_pending") {
         const since = new Date(Date.now() - 3 * 864e5).toISOString(), settled = new Date(Date.now() - 90e3).toISOString();
         const { data: rows } = await admin.from("candidate_jobs").select("id,ai,candidate_response,candidates!inner(ai_locked,is_draft)")
           .gt("created_at", since).lt("created_at", settled).eq("candidates.ai_locked", false).eq("candidates.is_draft", false)
           .order("created_at").limit(40);
-        const due = (rows || []).filter((r: any) => (r.candidate_response || "accepted") === "accepted" && !r.ai?.stage
+        // Plus cards skipped while the AI was down, whatever their age (queued when it came back).
+        const { data: resumed } = await admin.from("candidate_jobs").select("id,ai,candidate_response,candidates!inner(ai_locked,is_draft)")
+          .eq("ai->auto->>resume", "true").eq("candidates.ai_locked", false).eq("candidates.is_draft", false).limit(20);
+        const due = [...(resumed || []), ...(rows || [])].filter((r: any) => (r.candidate_response || "accepted") === "accepted" && !r.ai?.stage
           && (r.ai?.auto?.tries || 0) < 3 && Date.now() - new Date(r.ai?.auto?.at || 0).getTime() > 10 * 60e3).slice(0, 3);
         const out = [];
         for (const r of due) out.push({ id: r.id, ...(await autoScreen(admin, r.id)) });

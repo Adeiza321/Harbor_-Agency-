@@ -2,6 +2,7 @@ import { MEMORY_TOOLS, learnFromTurn, loadMemories, memoryPrompt, runMemoryTool 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { readAttachment } from "./attach.ts";
 import { buildDigest } from "./digest.ts";
+import { aiDownFrom, noteAiHealth } from "../sourcing/ai.ts";
 
 // The ProNext assistant: helps close roles. Signed-in staff only.
 //   - It LOOKS THINGS UP itself (candidates, jobs, pipelines, interviews, client feedback, AI
@@ -613,11 +614,19 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
     }
     if (!res.ok) {
       const t = (await res.text()).slice(0, 300);
-      status = /credit balance/i.test(t) ? 402 : 502;
-      error = /credit balance/i.test(t) ? "The Claude account is out of credit. Top up at console.anthropic.com, then try again."
-        : [429, 529].includes(res.status) ? "The assistant is busy right now. Try again in a minute." : "The assistant couldn't answer (" + res.status + "): " + t.slice(0, 160);
+      console.error("assistant claude", res.status, t);
+      const down = aiDownFrom(res.status, t);
+      if (down) await noteAiHealth(true, t);
+      status = down ? 402 : 502;
+      // Plain words for the person, no codes. Only an Admin is told why it's down.
+      error = down
+        ? (me.role === "admin" ? "The assistant is down right now because the Claude account is out of credit (or its key stopped working). Top up at console.anthropic.com and it comes back by itself. Everything else in ProNext keeps working."
+          : "The assistant is down right now. Everything else in ProNext keeps working, so carry on as usual. It'll be back soon.")
+        : [429, 529].includes(res.status) ? "The assistant is very busy right now. Please try again in a minute."
+        : "The assistant is having trouble right now. Please try again in a few minutes.";
       break;
     }
+    noteAiHealth(false);
     const out = await res.json();
     inTok += (Number(out?.usage?.input_tokens) || 0) + (Number(out?.usage?.cache_creation_input_tokens) || 0) * 1.25 + (Number(out?.usage?.cache_read_input_tokens) || 0) * 0.1;
     outTok += Number(out?.usage?.output_tokens) || 0;
