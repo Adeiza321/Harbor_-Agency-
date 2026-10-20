@@ -20,7 +20,7 @@ Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
   try {
     const { token, action } = await req.json().catch(() => ({}));
-    if (!token || typeof token !== "string" || token.length < 16) return json({ error: "Missing token" }, 400);
+    if (!token || typeof token !== "string" || token.length < 12) return json({ error: "Missing token" }, 400);
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
     // The blind resume: the candidate's own CV with names, contact details and employers blacked
