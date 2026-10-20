@@ -12791,6 +12791,7 @@ function ApplyPage({ slug }) {
         <div className="mt-4">
           <div className="text-[15px] leading-relaxed" style={{ whiteSpace: "pre-wrap", color: C.ink }}>{more || desc.length <= 700 ? desc : desc.slice(0, 700).replace(/\s+\S*$/, "") + "…"}</div>
           {desc.length > 700 && <button onClick={() => setMore((v) => !v)} className="text-sm font-medium mt-2" style={{ color: C.em }}>{more ? "Show less" : "Read the full description"}</button>}
+          <EeoNote agency={job.agency} />
         </div>
       )}
     </Card>
@@ -12964,6 +12965,17 @@ function PrivacyNote({ text }) {
   );
 }
 const FormDivider = () => <div className="h-px my-1" style={{ background: C.line }} />;
+
+// Equal opportunity statement, shown on every live job (job page, jobs board, the static job pages).
+const EEO_TEXT = (agency) => (agency || "Pronext") + " and the employers we recruit for are equal opportunity employers. We welcome applicants of every background and don't discriminate on the basis of race, colour, religion, sex, sexual orientation, gender identity or expression, national origin, age, disability, veteran status, or any other protected characteristic. If you need any adjustments to apply or interview, just let us know.";
+function EeoNote({ agency }) {
+  return (
+    <div className="mt-5 rounded-xl px-4 py-3.5 text-xs leading-relaxed flex gap-2.5" style={{ background: C.canvas, color: C.ink2 }}>
+      <Shield size={15} className="shrink-0 mt-0.5" color={C.em} />
+      <div><b style={{ color: C.ink }}>Equal opportunity employer.</b> {EEO_TEXT(agency)}</div>
+    </div>
+  );
+}
 
 /* "Send us your CV" (/jobs/?join=1): for people who aren't applying to a specific job. They
    join the Active file, the bench we check for every new role before looking outside. Lands in
@@ -13239,6 +13251,7 @@ function JobsBoard() {
                       <div className="border-t pt-6" style={{ borderColor: C.line }}>
                         <div className="text-lg font-semibold mb-3">Full job description</div>
                         <JobDescription text={current.description} />
+                        <EeoNote agency={agency} />
                       </div>
                       <div className="text-xs border-t pt-4" style={{ borderColor: C.line, color: C.ink3 }}>{postedAgo(current.postedAt)} · Recruiting by {agency}</div>
                     </div>

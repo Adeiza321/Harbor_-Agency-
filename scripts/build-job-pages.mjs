@@ -181,6 +181,7 @@ const jobBody = (j) => `<main style="max-width:720px;margin:0 auto;padding:24px;
 <p>${esc([org.name, jobPlace(j.location, j.country), j.workSetup, j.employmentType, payText(j.pay)].filter(Boolean).join(" · "))}</p>
 <p><a href="${jobUrl(j.slug)}?go=apply">Apply now</a> · <a href="${jobUrl(j.slug)}?refer=1">Refer someone</a></p>
 <article>${descHtml(j.description)}</article>
+<p><strong>Equal opportunity employer.</strong> ${esc(org.name)} and the employers we recruit for are equal opportunity employers. We welcome applicants of every background and don't discriminate on the basis of race, colour, religion, sex, sexual orientation, gender identity or expression, national origin, age, disability, veteran status, or any other protected characteristic. If you need any adjustments to apply or interview, just let us know.</p>
 </main>`;
 
 // ---------- write ----------
