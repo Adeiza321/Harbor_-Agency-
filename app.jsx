@@ -129,6 +129,27 @@ const mfaSignIn = async (s, factorId, code) => {
   const ch = await sbFetch("/auth/v1/factors/" + factorId + "/challenge", { method: "POST", token: s.token, body: {} });
   return toSession(await sbFetch("/auth/v1/factors/" + factorId + "/verify", { method: "POST", token: s.token, body: { challenge_id: ch.id, code: String(code).replace(/\s+/g, "") } }));
 };
+// Remembered browsers: after the code, this browser keeps a secret (per account) for 30 days, so
+// signing in again here needs only the password (trust-device function).
+const trustStore = {
+  get: (uid) => { try { return localStorage.getItem("pn.trust." + uid) || ""; } catch (e) { return ""; } },
+  set: (uid, v) => { try { if (v) localStorage.setItem("pn.trust." + uid, v); else localStorage.removeItem("pn.trust." + uid); } catch (e) {} },
+};
+const trustCall = async (s, body) => {
+  try {
+    const r = await fetch(SB_URL + "/functions/v1/trust-device", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + s.token, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return await r.json().catch(() => ({}));
+  } catch (e) { return {}; }
+};
+const rememberBrowser = async (s) => { const j = await trustCall(s, { action: "remember", previous: trustStore.get(s.uid) || undefined }); if (j.ok && j.secret) trustStore.set(s.uid, j.secret); };
+// A password-only session on a remembered browser: true when the server accepts it without a code.
+const useRememberedBrowser = async (s) => {
+  const secret = trustStore.get(s.uid);
+  if (!secret) return false;
+  const j = await trustCall(s, { action: "use", secret });
+  if (!j.ok) trustStore.set(s.uid, "");
+  return !!j.ok;
+};
 const verifiedTotp = async (token) => { const u = await sbFetch("/auth/v1/user", { token }); return ((u && u.factors) || []).find((f) => f.factor_type === "totp" && f.status === "verified") || null; };
 const refreshSession = async (s) => toSession(await sbFetch("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token: s.refresh } }));
 
@@ -2052,7 +2073,7 @@ function SecurityTab({ S, toast }) {
     setMfaBusy(true);
     S.mfaChallenge(enroll.factorId)
       .then((ch) => S.mfaVerify(enroll.factorId, ch.id, code.trim()))
-      .then(() => { toast("Two-factor authentication is on. You'll enter a code from your app each time you sign in."); setEnroll(null); setCode(""); S.reload && S.reload(); return S.mfaListFactors().then(setFactors); })
+      .then(() => { toast("Two-factor authentication is on. This browser is remembered: you'll enter a code on new browsers and every 30 days."); setEnroll(null); setCode(""); S.reload && S.reload(); return S.mfaListFactors().then(setFactors); })
       .catch((e) => S.error(/invalid|expired|code/i.test(e.message) ? "That code didn't match. Codes change every 30 seconds: enter the one showing now. If it keeps failing, check your phone's time is set automatically." : e.message))
       .finally(() => setMfaBusy(false));
   };
@@ -2076,7 +2097,7 @@ function SecurityTab({ S, toast }) {
         </div>
       </Card>
       <Card>
-        <SectionTitle title="Two-factor authentication" sub="Adds a one-time code from an authenticator app when you sign in." size="text-lg" />
+        <SectionTitle title="Two-factor authentication" sub="Adds a code from an authenticator app when you sign in on a new browser, and again every 30 days." size="text-lg" />
         <div className="mt-4">
           {factors === null && <div className="text-sm" style={{ color: C.ink3 }}>Loading <InlineDots /></div>}
           {factors !== null && verified.length > 0 && !enroll && (
@@ -4847,7 +4868,7 @@ function TwoFactorNudge({ S }) {
     <div className="px-4 md:px-8 mt-1 mb-3">
       <div className="rounded-xl px-3.5 py-2.5 text-sm flex flex-col sm:flex-row sm:items-center gap-2.5" style={{ background: C.emTint, color: C.ink }} role="status">
         <Lock size={16} className="shrink-0 hidden sm:block" style={{ color: C.em }} />
-        <div className="flex-1 min-w-0"><b>Protect your account with two-factor authentication.</b> You handle candidates' personal details; a code from your phone at sign-in stops anyone who gets your password. It takes 2 minutes.</div>
+        <div className="flex-1 min-w-0"><b>Protect your account with two-factor authentication.</b> You handle candidates' personal details; a code from your phone stops anyone who gets your password. You only enter it on a new browser and once a month. It takes 2 minutes.</div>
         <div className="flex gap-2 shrink-0">
           <Btn kind="primary" onClick={() => S.goProfile("security")}>Turn it on</Btn>
           <Btn onClick={later}>Later</Btn>
@@ -13435,7 +13456,8 @@ function SignIn({ onSignedIn, notice, mfaPending }) {
     setBusy(true); setErr("");
     try {
       const r = await signInStart(email.trim(), password);
-      if (r.factorId) { setMfa(r); setCode(""); }
+      // Two-factor on: skipped on a browser that entered the code in the last 30 days.
+      if (r.factorId && !(await useRememberedBrowser(r.session))) { setMfa(r); setCode(""); }
       else { store.set(r.session); onSignedIn(r.session); }
     }
     catch (e) { setErr(/invalid login credentials|wrong email or password/i.test(e.message) ? "Wrong email or password." : e.message); }
@@ -13445,7 +13467,7 @@ function SignIn({ onSignedIn, notice, mfaPending }) {
     const c = code.replace(/\s+/g, "");
     if (!/^\d{6}$/.test(c)) { setErr("Enter the 6-digit code from your authenticator app."); return; }
     setBusy(true); setErr("");
-    try { const s = await mfaSignIn(mfa.session, mfa.factorId, c); store.set(s); onSignedIn(s); }
+    try { const s = await mfaSignIn(mfa.session, mfa.factorId, c); await rememberBrowser(s); store.set(s); onSignedIn(s); }
     catch (e) { setErr(/invalid|expired|code/i.test(e.message) ? "That code didn't work. Codes change every 30 seconds: enter the one showing now. If it keeps failing, check your phone's time is set automatically." : e.message); }
     setBusy(false);
   };
@@ -13454,7 +13476,7 @@ function SignIn({ onSignedIn, notice, mfaPending }) {
     <AuthShell onSubmit={submit}>
         <div className="flex items-center gap-2.5 mb-6"><BrandLogo height={34} /></div>
         <h1 className="text-[28px] leading-tight mb-1" style={{ ...SERIF, color: C.ink }}>Enter your code</h1>
-        <p className="text-sm mb-6" style={{ color: C.ink2 }}>Open your authenticator app and type the 6-digit code for ProNext.</p>
+        <p className="text-sm mb-6" style={{ color: C.ink2 }}>Open your authenticator app and type the 6-digit code for ProNext. We'll remember this browser for 30 days, so you won't need a code here again until then.</p>
         <input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={7} value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456"
           className="w-full mb-2 rounded-lg border px-3.5 py-2.5 text-lg tracking-[0.3em] outline-none text-center" style={{ borderColor: C.line, background: C.soft }} />
         {err && <div className="text-xs mb-3" style={{ color: C.dangerFg }}>{err}</div>}
@@ -13713,7 +13735,7 @@ export default function App() {
       // A saved first-step session (password only) for an account with two-factor on: ask for the code.
       if (sessionAal(sess) !== "aal2") {
         const f = await verifiedTotp(sess.token).catch(() => null);
-        if (f) { store.set(null); setMfaPending({ session: sess, factorId: f.id }); setSession(null); setStatus("signedout"); return; }
+        if (f && !(await useRememberedBrowser(sess))) { store.set(null); setMfaPending({ session: sess, factorId: f.id }); setSession(null); setStatus("signedout"); return; }
       }
       const profile = (await sbFetch("/rest/v1/profiles?select=*&id=eq." + sess.uid, { token: sess.token }))[0];
       // First sign-in of a new (Invited) account: it turns on by itself, then the dashboard loads.
@@ -14200,10 +14222,10 @@ export default function App() {
     // two-factor on doesn't lock this device out.
     mfaVerify: async (factorId, challengeId, code) => {
       const j = await sbFetch("/auth/v1/factors/" + factorId + "/verify", { method: "POST", token: session.token, body: { challenge_id: challengeId, code: String(code).replace(/\s+/g, "") } });
-      if (j && j.access_token) { const s = toSession(j); store.set(s); setSession(s); }
+      if (j && j.access_token) { const s = toSession(j); store.set(s); setSession(s); rememberBrowser(s); }
       return j;
     },
-    mfaUnenroll: (factorId) => sbFetch("/auth/v1/factors/" + factorId, { method: "DELETE", token: session.token }),
+    mfaUnenroll: (factorId) => sbFetch("/auth/v1/factors/" + factorId, { method: "DELETE", token: session.token }).then((r) => { trustStore.set(session.uid, ""); return r; }),
     signOutEverywhere: () => sbFetch("/auth/v1/logout?scope=others", { method: "POST", token: session.token, body: {} }),
     updateNotificationPrefs: (prefs) => { setMe((m) => ({ ...m, notificationPrefs: prefs })); return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body: { notification_prefs: prefs } }).catch((e) => showError(e.message)); },
     team: buildTeam(data.users, data.cands, data.placements),

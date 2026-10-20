@@ -113,6 +113,9 @@ Deno.serve(async (req: Request) => {
       const { data: list, error } = await admin.auth.admin.mfa.listFactors({ userId: id });
       if (error) return json({ error: "We couldn't turn off two-factor for this account. Try again in a minute." }, 500);
       for (const f of list?.factors || []) await admin.auth.admin.mfa.deleteFactor({ userId: id, id: f.id });
+      // Their remembered browsers go too, so the next set-up starts fresh.
+      await admin.from("trusted_devices").delete().eq("user_id", id);
+      await admin.from("trusted_sessions").delete().eq("user_id", id);
       try { await admin.from("audit_log").insert({ actor_id: caller.user.id, action: "two-factor turned off by an admin", entity_type: "user", entity_id: id }); } catch (_) { /* best effort */ }
       return json({ ok: true, removed: (list?.factors || []).length });
     }
