@@ -6043,7 +6043,9 @@ function CandidateJobsCard({ candidate, S, toast }) {
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0"><div className="text-sm font-medium truncate">{j ? j.role : "Job removed"}</div><div className="text-xs truncate" style={{ color: l.response === "accepted" ? C.ink2 : C.warnFg }}>{(j ? j.client : "") + (l.response === "pending" ? " · routed, waiting for them to accept" : l.response === "declined" ? " · declined" : l.fit != null ? " · fit " + l.fit + "%" : "")}</div></div>
             <div className="flex items-center gap-2 shrink-0">
-              <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>
+              {j && j.leadRole && S.role === "recruiter"
+                ? <span title="A client lead role: Rec Ops or an Admin moves this candidate along"><Pill tone="info">{l.stage}</Pill></span>
+                : <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
               {S.role !== "recruiter" && ["Rejected", "Withdrawn"].includes(l.stage) && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
             </div>
           </div>
@@ -6481,11 +6483,12 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           <div>
             <div className="text-2xl md:text-3xl" style={{ ...SERIF }}>{job.role}</div>
             <div className="text-sm" style={{ color: C.ink2 }}>{job.client}</div>
+            {job.leadRole && <div className="mt-2"><Pill tone="info">Client lead role</Pill></div>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {job.status !== "Closed" && <Btn icon={Sparkles} onClick={() => askAssistant("Close this role: what's really blocking " + job.role + " at " + job.client + ", and what should we do this week to get a hire?", { jobId: job.id })} title="The assistant reviews this role and proposes what to do">Close with AI</Btn>}
-            <Btn icon={UserPlus} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job) || !onWorklist(S, job)} title={!takesCandidates(job) ? "This role isn't taking new candidates" : !onWorklist(S, job) ? "Engage first: the role goes on your worklist, then you can submit candidates" : ""}>Add candidate</Btn>
-            {!myOpenEngagement && <Btn kind="primary" onClick={engage} disabled={busy || job.status === "Closed"}>Engage</Btn>}
+            {!job.leadRole && <Btn icon={UserPlus} kind="dark" onClick={onAddCandidate} disabled={!takesCandidates(job) || !onWorklist(S, job)} title={!takesCandidates(job) ? "This role isn't taking new candidates" : !onWorklist(S, job) ? "Engage first: the role goes on your worklist, then you can submit candidates" : ""}>Add candidate</Btn>}
+            {!myOpenEngagement && !job.leadRole && <Btn kind="primary" onClick={engage} disabled={busy || job.status === "Closed"}>Engage</Btn>}
             {S.role !== "recruiter" && (
               <div className="relative">
                 <Btn kind="primary" onClick={() => setMenuOpen((m) => !m)}>Change status</Btn>
@@ -6559,7 +6562,14 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             </div>
           </div>
         )}
-        {job.link && (
+        {job.leadRole && (
+          <div className="rounded-xl px-3.5 py-2.5 mb-4 text-sm" style={{ background: C.canvas, color: C.ink2 }}>
+            {S.role === "recruiter"
+              ? "This role came from a client lead. You can see it because one of your candidates is with this employer. It's view only: you can't engage on it or add candidates."
+              : "This role came from a client lead: the employer agreed to a candidate we pitched. It isn't public, recruiters only see it while one of their candidates is on it, and only Rec Ops and Admins can work on it."}
+          </div>
+        )}
+        {job.link && !job.leadRole && (
           <div>
             <div className="text-xs mb-1.5" style={{ color: C.ink3 }}>Apply link (applications land in the Inbox)</div>
             <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Send size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate flex-1">{myLink(job.link)}</span><Copy size={15} color={C.ink2} className="cursor-pointer shrink-0" onClick={copyLink} /></div>
@@ -6720,7 +6730,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
   const bar = (cls) => <div className={"flex h-2 rounded-full overflow-hidden " + cls} style={{ background: C.neutralBg }} aria-hidden="true">{[seg(n.added - n.submitted, "#C9D8CF"), seg(n.submitted - n.interview, "#6FA88A"), seg(n.interview - n.offer, C.em), seg(n.offer, C.lime)]}</div>;
   const people = <>{j.recruiters.length > 0 && <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.slice(0, 3).map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={22} />)}</div>}
     {mine && <span className="text-[11px] font-semibold" style={{ color: C.em }}>You</span>}</>;
-  const share = <IconBtn icon={Share2} label="Share job link" tone="em" size="sm" bare onClick={(e) => { e.stopPropagation(); onShare(); }} />;
+  const share = j.leadRole ? null : <IconBtn icon={Share2} label="Share job link" tone="em" size="sm" bare onClick={(e) => { e.stopPropagation(); onShare(); }} />;
   if (row) return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift rounded-xl border px-4 py-3 cursor-pointer flex flex-wrap md:flex-nowrap items-center gap-x-5 gap-y-2" style={{ borderColor: C.line, background: C.card }}>
       <div className="min-w-0 flex-1 basis-full md:basis-0">
@@ -6771,7 +6781,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const inTab = (j, t) => t === "All" || (t === "Mine" ? mine(j) : j.status === t);
   const filtered = (tab === "Leads" ? leadJobs : main.filter((j) => inTab(j, tab))).filter((j) => hit(j, q.toLowerCase()) && hit(j, gq));
   const tabs = [...["All", "Open", "On hold", "Closed", "Mine"].map((t) => ({ key: t, label: (t === "Mine" ? "I'm engaged" : t) + " " + main.filter((j) => inTab(j, t)).length })),
-    ...(S.role !== "recruiter" ? [{ key: "Leads", label: "Client leads " + leadJobs.length }] : [])];
+    ...(S.role !== "recruiter" || leadJobs.length ? [{ key: "Leads", label: "Client leads " + leadJobs.length }] : [])];
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -6781,7 +6791,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
       </div>
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
-        {tab === "Leads" && <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>Roles from client leads: an employer agreed to a candidate we pitched to them. Only Rec Ops and Admins see these. They're not on the jobs board and recruiters don't see them.</div>}
+        {tab === "Leads" && <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{S.role === "recruiter" ? "Roles from client leads where one of your candidates is with the employer. View only: you can follow your candidate here, but not engage or add candidates." : "Roles from client leads: an employer agreed to a candidate we pitched to them. Not on the jobs board. Recruiters see one only while one of their candidates is on it, and only to view."}</div>}
         <div className="mb-3 flex items-center gap-3">
           <div className="flex flex-1 min-w-0 sm:flex-none sm:w-72"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
           <div className="ml-auto flex rounded-xl p-1 shrink-0" style={{ background: C.neutralBg }} role="group" aria-label="Layout">
