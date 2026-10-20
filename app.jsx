@@ -6514,7 +6514,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         </div>
         <div className="flex flex-wrap gap-2 mb-4">
           <StatusPill status={job.status} />
-          {myOpenEngagement ? <Pill tone="em">You're engaged{myOpenEngagement.engagedAt ? " · since " + ago(myOpenEngagement.engagedAt) : ""}</Pill> : <Pill tone="neutral">You're not engaged</Pill>}
+          {job.leadRole ? null : myOpenEngagement ? <Pill tone="em">You're engaged{myOpenEngagement.engagedAt ? " · since " + ago(myOpenEngagement.engagedAt) : ""}</Pill> : <Pill tone="neutral">You're not engaged</Pill>}
           {engagedPeople.length > 0 && <span title={engagedPeople.join(", ")}><Pill tone="neutral">{engagedPeople.length} {engagedPeople.length === 1 ? "person" : "people"} engaged</Pill></span>}
         </div>
         {job.status === "On hold" && (
