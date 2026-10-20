@@ -21,6 +21,8 @@ for (const f of ["main.jsx", "public.jsx", "lucide-shim.js"]) copyFileSync("src/
 
 sh("npx tailwindcss -c tailwind.config.cjs -i src/styles.css -o build/style.css --minify");
 const bun = (entry, out) => sh(`bun build build/${entry} --minify --target=browser --format=iife --define 'process.env.NODE_ENV="production"' --outfile=build/${out}`);
+// Blind-resume maker first (its version goes into the dashboard so browsers fetch new copies).
+sh("bun scripts/bundle-redact.mjs");
 // Dashboard: Preact instead of React too (see bundle-app.mjs).
 sh("bun scripts/bundle-app.mjs");
 // Public pages: Preact instead of React (see bundle-public.mjs).
@@ -43,7 +45,7 @@ const pick = `(function(){try{var t=localStorage.getItem("pn.theme");if(t==="dar
 const SB = "https://acjmsihvvupqiikxckho.supabase.co";
 const csp = [
   "default-src 'self'",
-  `script-src 'self' 'sha256-${createHash("sha256").update(pick).digest("base64")}'`,
+  `script-src 'self' 'wasm-unsafe-eval' 'sha256-${createHash("sha256").update(pick).digest("base64")}'`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",

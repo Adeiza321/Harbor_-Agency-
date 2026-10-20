@@ -302,6 +302,7 @@ function mapAll(d) {
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: answersFor(l), ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
+      blindPages: l.blind_pages || 0, blindAt: l.blind_at || null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
       messages: (l.candidate_job_messages || []).slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at)).map((m) => ({ id: m.id, sender: m.sender, authorId: m.author_id, body: m.body, at: new Date(m.created_at).getTime(), recruiterReadAt: m.recruiter_read_at, candidateReadAt: m.candidate_read_at, deliveredAt: m.delivered_at, emailStatus: m.email_status, emailError: m.email_error, deleted: !!m.deleted_at, file: m.attachment_path && !m.deleted_at ? { name: m.attachment_name, type: m.attachment_type, size: m.attachment_size } : null })) })),
@@ -5106,11 +5107,102 @@ function CompanyScreeningCards({ candidate, S, toast }) {
   );
 }
 
+// ---- Blind resume: the candidate's own CV with names, contact details, photos and every employer
+// blacked out (src/redact.js, loaded on demand), checked by the recruiter, then saved as page
+// images for the client link.
+let redactLoading = null;
+function loadRedact() {
+  if (window.PNRedact) return Promise.resolve(window.PNRedact);
+  if (!redactLoading) redactLoading = new Promise((ok, no) => {
+    const el = document.createElement("script");
+    el.type = "module";
+    el.src = typeof REDACT_URL !== "undefined" ? REDACT_URL : "/assets/redact/redact.js";
+    el.onload = () => (window.PNRedact ? ok(window.PNRedact) : no(new Error("The blind resume tool didn't start.")));
+    el.onerror = () => { redactLoading = null; no(new Error("Couldn't load the blind resume tool. Check your connection and try again.")); };
+    document.head.appendChild(el);
+  });
+  return redactLoading;
+}
+function blindBaseTerms(c) {
+  const name = String(c.name || "").trim();
+  return [name, ...name.split(/\s+/).filter((x) => x.length >= 3), c.emailAddr, c.phone, c.linkedin, c.currentCompany,
+    ...(c.industries || []).map((x) => x && x.company)].filter((x) => x && String(x).trim().length >= 2);
+}
+function BlindResumeModal({ open, onClose, link, job, candidate, S, toast }) {
+  const [step, setStep] = useState("");
+  const [err, setErr] = useState("");
+  const [pages, setPages] = useState([]); // { blob, url }
+  const [boxes, setBoxes] = useState(0);
+  const [extra, setExtra] = useState("");
+  const [saving, setSaving] = useState(false);
+  const docRef = React.useRef(null);
+  const termsRef = React.useRef([]);
+  const clearPages = () => setPages((old) => { old.forEach((p) => URL.revokeObjectURL(p.url)); return []; });
+  const draw = async () => {
+    const d = docRef.current; if (!d) return;
+    const more = extra.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
+    setStep("Covering the details…");
+    const out = await d.render([...termsRef.current, ...more], (i, n) => setStep("Covering page " + i + " of " + n + "…"));
+    clearPages();
+    setPages(out.pages.map((b) => ({ blob: b, url: URL.createObjectURL(b) })));
+    setBoxes(out.boxes); setStep("");
+  };
+  const start = async () => {
+    setErr(""); clearPages(); setBoxes(0);
+    try {
+      if (!candidate.cv) throw new Error("There's no CV on file for " + candidate.name.split(" ")[0] + ". Upload one first.");
+      setStep("Loading the blind resume tool…");
+      const R = await loadRedact();
+      setStep("Downloading the CV…");
+      const blob = await S.downloadResume(candidate.cv);
+      setStep("Reading the CV…");
+      if (docRef.current) docRef.current.dispose();
+      docRef.current = await R.prepare(blob, candidate.cvName || candidate.cv);
+      setStep("Finding names and employers…");
+      let ai = [];
+      try { const r = await S.aiScreen("blind_terms", { candidateId: candidate.id, text: docRef.current.text }); ai = r.terms || []; } catch (e) { /* the name, contacts and employers on file are still covered */ }
+      termsRef.current = [...blindBaseTerms(candidate), ...(docRef.current.nameGuess ? [docRef.current.nameGuess, ...docRef.current.nameGuess.split(/\s+/).filter((x) => x.length >= 3)] : []), ...ai];
+      await draw();
+    } catch (e) { setErr(e.message || "That didn't work."); setStep(""); }
+  };
+  React.useEffect(() => { if (open) start(); else { clearPages(); if (docRef.current) { docRef.current.dispose(); docRef.current = null; } } }, [open]); // eslint-disable-line
+  const save = async () => {
+    setSaving(true);
+    try { await S.saveBlindResume(link, candidate, job, pages.map((p) => p.blob)); toast("Blind resume saved. " + job.client + " sees it on their link."); onClose(); }
+    catch (e) { setErr(e.message); }
+    setSaving(false);
+  };
+  return (
+    <Modal open={open} onClose={onClose} title={"Blind resume for " + job.client} wide>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>{candidate.name.split(" ")[0]}'s own CV with the name, contact details, address, links, photos and every employer blacked out. Check every page: anything still readable here, {job.client} will see.</div>
+        {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{err}</div>}
+        {step && <div className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}><InlineDots /> {step}</div>}
+        {pages.length > 0 && (
+          <>
+            <div className="text-xs" style={{ color: C.ink3 }}>{boxes} detail{boxes === 1 ? "" : "s"} covered across {pages.length} page{pages.length === 1 ? "" : "s"}.</div>
+            <div className="flex flex-col gap-3 rounded-xl p-3 overflow-y-auto" style={{ background: C.neutralBg, maxHeight: "55vh" }}>
+              {pages.map((p, i) => <img key={i} src={p.url} alt={"Page " + (i + 1)} className="w-full rounded-md shadow-sm" style={{ background: "#fff" }} />)}
+            </div>
+            <label className="text-sm font-medium" htmlFor="blind-extra">Anything else to hide?</label>
+            <textarea id="blind-extra" rows={2} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Words or names, separated by commas" className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} />
+            <div className="flex flex-wrap gap-2 justify-end">
+              <Btn onClick={() => draw().catch((e) => setErr(e.message))} disabled={!!step || saving || !extra.trim()}>Hide these too</Btn>
+              <Btn kind="primary" onClick={save} disabled={!!step || saving}>{saving ? "Saving…" : "Save blind resume"}</Btn>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // A blind, anonymized profile link to share with the client once a candidate is sent to them.
 // Hides name, contact details and current employer until a recruiter/Rec Ops explicitly reveals
 // them on the same link -- the client never gets a second link.
 function ClientLinkBox({ link, job, candidate, S, toast }) {
   const [busy, setBusy] = useState(false);
+  const [blindOpen, setBlindOpen] = useState(false);
   const canManage = S.role !== "recruiter";
   const url = window.location.origin + window.location.pathname + "?t=" + link.clientToken;
   const copy = () => copyText(url, toast, "Client link copied");
@@ -5130,11 +5222,16 @@ function ClientLinkBox({ link, job, candidate, S, toast }) {
           {link.clientRevealed ? "Full details revealed" + (link.clientRevealedAt ? " " + ago(link.clientRevealedAt) : "" ) : "Name, contact and current employer are hidden until you reveal them"}
           {link.clientViewedAt ? " · opened by the client" : ""}
         </div>
+        <div className="text-xs mt-1" style={{ color: link.blindPages ? C.em : C.warnFg }}>
+          {link.blindPages ? "Blind resume ready (" + link.blindPages + " page" + (link.blindPages === 1 ? "" : "s") + ", made " + ago(link.blindAt) + ")" : "No blind resume yet: until you make one, the client sees our summary."}
+        </div>
       </div>
       <div className="flex gap-2 shrink-0">
+        <Btn onClick={() => setBlindOpen(true)}>{link.blindPages ? "Redo blind resume" : "Make blind resume"}</Btn>
         <IconBtn icon={Copy} label="Copy client link" onClick={copy} className="!w-10 !h-10 !rounded-xl" />
         {canManage && !link.clientRevealed && <Btn kind="primary" disabled={busy} onClick={reveal}>{busy ? "Revealing…" : "Reveal full details"}</Btn>}
       </div>
+      {blindOpen && <BlindResumeModal open={blindOpen} onClose={() => setBlindOpen(false)} link={link} job={job} candidate={candidate} S={S} toast={toast} />}
     </div>
   );
 }
@@ -9304,15 +9401,72 @@ function OutreachLinkPage({ token, kind, action }) {
   );
 }
 
+// The blind resume as the client sees it: page images only (no text to copy), a watermark with the
+// client's name and the date on every page, no right-click, dragging, saving or printing, and the
+// pages blur whenever the window isn't in front (screenshot tools usually take the focus first).
+// No web page can stop a phone camera; the watermark is what makes a leaked copy traceable.
+function ProtectedPages({ pages, client }) {
+  const [hidden, setHidden] = useState(false);
+  React.useEffect(() => {
+    let t = null;
+    const hide = (ms) => { setHidden(true); clearTimeout(t); if (ms) t = setTimeout(() => setHidden(false), ms); };
+    const onBlur = () => hide(0), onFocus = () => setHidden(false);
+    const onVis = () => (document.hidden ? hide(0) : setHidden(false));
+    const onKey = (e) => {
+      const k = (e.key || "").toLowerCase();
+      if (k === "printscreen" || ((e.ctrlKey || e.metaKey) && ["p", "s", "c", "a"].includes(k)) || (e.metaKey && e.shiftKey)) {
+        e.preventDefault(); hide(2500);
+        if (k === "printscreen" && navigator.clipboard) navigator.clipboard.writeText("").catch(() => {});
+      }
+    };
+    const stop = (e) => e.preventDefault();
+    window.addEventListener("blur", onBlur); window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("keydown", onKey, true); window.addEventListener("keyup", onKey, true);
+    window.addEventListener("beforeprint", onBlur); window.addEventListener("afterprint", onFocus);
+    ["copy", "cut", "contextmenu", "dragstart", "selectstart"].forEach((ev) => document.addEventListener(ev, stop));
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("blur", onBlur); window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("keydown", onKey, true); window.removeEventListener("keyup", onKey, true);
+      window.removeEventListener("beforeprint", onBlur); window.removeEventListener("afterprint", onFocus);
+      ["copy", "cut", "contextmenu", "dragstart", "selectstart"].forEach((ev) => document.removeEventListener(ev, stop));
+    };
+  }, []);
+  const mark = "Confidential · " + (client || "Client") + " · " + new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + " · ProNext";
+  return (
+    <div className="pn-blind flex flex-col gap-4" style={{ userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" }} onContextMenu={(e) => e.preventDefault()}>
+      <style>{"@media print{.pn-blind{display:none!important}body:after{content:'This document can only be viewed on screen.';display:block;padding:40px;font:16px sans-serif}}"}</style>
+      {pages.map((src, i) => (
+        <div key={i} className="relative overflow-hidden rounded-lg shadow" style={{ background: "#fff" }}>
+          <img src={src} alt={"Blind resume, page " + (i + 1)} draggable="false" className="block w-full" style={{ pointerEvents: "none", filter: hidden ? "blur(22px)" : "none", transition: "filter .15s" }} />
+          <div aria-hidden="true" className="absolute inset-0 pointer-events-none overflow-hidden">
+            <div style={{ position: "absolute", inset: "-50%", display: "flex", flexWrap: "wrap", alignContent: "space-around", justifyContent: "space-around", transform: "rotate(-28deg)", gap: "70px 40px" }}>
+              {Array.from({ length: 36 }, (_, k) => <span key={k} style={{ font: "600 15px/1 DM Sans, sans-serif", color: "rgba(31,111,84,.16)", whiteSpace: "nowrap" }}>{mark}</span>)}
+            </div>
+          </div>
+          {hidden && <div className="absolute inset-0 flex items-center justify-center text-sm font-medium" style={{ color: C.ink2 }}>Click here to keep viewing</div>}
+        </div>
+      ))}
+      <div className="text-xs text-center" style={{ color: C.ink3 }}>View only. This resume is watermarked for {client || "you"} and can't be copied, saved or printed.</div>
+    </div>
+  );
+}
+
 // Public page behind the blind-profile link shared with a client: /?t=<client_token>.
 // Blind until the recruiter reveals it -- same link, same token, no second link to send.
 function ClientViewPage({ token }) {
   const [info, setInfo] = useState(null);
   const [err, setErr] = useState("");
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [blind, setBlind] = useState(null); // { pages, client } once loaded
   React.useEffect(() => {
     sbFetch("/rest/v1/rpc/client_view", { method: "POST", body: { p_token: token } }).then((j) => { if (!j) throw new Error("not found"); setInfo(j); }).catch(() => setErr("not found"));
+    fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, action: "blind" }) })
+      .then((r) => r.json()).then((j) => setBlind(j && Array.isArray(j.pages) ? j : { pages: [] })).catch(() => setBlind({ pages: [] }));
   }, [token]); // eslint-disable-line
+  const hasBlind = !!(blind && blind.pages && blind.pages.length);
   const openResume = () => {
     setResumeBusy(true);
     fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token }) })
@@ -9332,6 +9486,7 @@ function ClientViewPage({ token }) {
         <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>{info.role}{info.client ? ", " + info.client : ""}</div>
         <div className="text-xl mb-3" style={{ ...SERIF }}>{info.revealed ? info.name : "Candidate profile"}</div>
         {!info.revealed && <div className="text-xs rounded-lg px-3 py-2 mb-4" style={{ background: C.neutralBg, color: C.ink2 }}>Presented anonymously. Your recruiter will share full contact details once you'd like to move forward.</div>}
+        {!info.revealed && hasBlind ? <ProtectedPages pages={blind.pages} client={blind.client || info.client} /> : <>
         {info.score != null && <div className="flex items-center gap-2 mb-3"><div className="text-2xl" style={{ ...SERIF }}>{info.score}%</div>{info.verdict && <Pill tone={VERDICT_TONE[info.verdict] || "neutral"}>{info.verdict}</Pill>}</div>}
         {info.summary && <div className="text-sm leading-relaxed mb-4">{info.summary}</div>}
         <div className="flex flex-col gap-1.5 mb-3">
@@ -9348,12 +9503,13 @@ function ClientViewPage({ token }) {
         {!!(info.strengths && info.strengths.length) && <div className="mb-3"><div className="text-xs font-semibold" style={{ color: C.ink3 }}>STRENGTHS</div>{chips(info.strengths, "em")}</div>}
         {!!(info.industries && info.industries.length) && <div className="mb-3"><div className="text-xs font-semibold" style={{ color: C.ink3 }}>INDUSTRIES</div>{chips(info.industries, "info")}</div>}
         {info.revealed && info.hasResume && <Btn kind="primary" full disabled={resumeBusy} onClick={openResume} className="mt-2">{resumeBusy ? "Opening…" : "View resume"}</Btn>}
+        </>}
       </>
     );
   }
   return (
     <div className="min-h-screen flex items-center justify-center p-4" style={{ background: C.canvas }}>
-      <div className="w-full max-w-sm rounded-2xl border p-6" style={{ background: C.card, borderColor: C.line }}>
+      <div className={"w-full rounded-2xl border p-6 " + (hasBlind && info && !info.revealed ? "max-w-3xl" : "max-w-sm")} style={{ background: C.card, borderColor: C.line }}>
         <div className="mb-4"><BrandLogo height={30} /></div>
         {bodyEl}
       </div>
@@ -13058,6 +13214,26 @@ export default function App() {
         const j = await r.json(); if (!r.ok || !j.signedURL) throw new Error(j.message || j.error || "Could not open resume");
         const url = SB_URL + "/storage/v1" + j.signedURL; if (w) w.location.href = url; else window.location.href = url;
       } catch (e) { if (w) w.close(); showError(e.message); }
+    },
+    /* The candidate's CV file itself (for making a blind resume). */
+    downloadResume: async (path) => {
+      const bucket = path.includes("/") ? "resumes" : "cvs";
+      const r = await fetch(SB_URL + "/storage/v1/object/authenticated/" + bucket + "/" + path.split("/").map(encodeURIComponent).join("/"), { headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token } });
+      if (!r.ok) throw new Error("Couldn't download the CV (" + r.status + ")");
+      return r.blob();
+    },
+    /* Blind resume pages: private `blind-resumes` bucket at <link id>/<n>.webp; the client link shows them. */
+    saveBlindResume: async (link, candidate, job, blobs) => {
+      const head = { apikey: SB_KEY, Authorization: "Bearer " + session.token };
+      for (let i = 0; i < blobs.length; i++) {
+        const r = await fetch(SB_URL + "/storage/v1/object/blind-resumes/" + link.id + "/" + (i + 1) + ".webp", { method: "POST", headers: { ...head, "Content-Type": "image/webp", "x-upsert": "true", "cache-control": "no-store" }, body: blobs[i] });
+        if (!r.ok) { const t = await r.text(); throw new Error("Saving page " + (i + 1) + " failed: " + t); }
+      }
+      const extra = Array.from({ length: 12 - blobs.length }, (_, k) => link.id + "/" + (blobs.length + k + 1) + ".webp");
+      if (extra.length) await fetch(SB_URL + "/storage/v1/object/blind-resumes", { method: "DELETE", headers: { ...head, "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: extra }) }).catch(() => {});
+      await sbFetch("/rest/v1/candidate_jobs?id=eq." + link.id, { method: "PATCH", token: session.token, body: { blind_pages: blobs.length, blind_at: new Date().toISOString(), blind_by: session.uid } });
+      await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: candidate.id, title: "Blind resume made for " + (job ? job.client : "the client") + " (" + blobs.length + " page" + (blobs.length === 1 ? "" : "s") + ")", done: true } }).catch(() => {});
+      reload();
     },
     /* AI rewrite of a job ad for search (job-redraft Edge Function) */
     aiRedraft: async (payload) => {

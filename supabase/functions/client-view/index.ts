@@ -1,6 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 
-// Signs a resume URL for the client-facing blind-profile page (/?t=<client_token>). The
+// Signs a resume URL for the client-facing blind-profile page (/?t=<client_token>), and
+// (action "blind") the blind resume's page images. The
 // profile data itself comes from the public.client_view(p_token) RPC, called directly from the
 // app. This function only handles the one thing the RPC can't: signing a Storage URL, and only
 // once the recruiter has revealed full details for this link (client_revealed = true).
@@ -18,9 +19,22 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
   try {
-    const { token } = await req.json().catch(() => ({}));
-    if (!token) return json({ error: "Missing token" }, 400);
+    const { token, action } = await req.json().catch(() => ({}));
+    if (!token || typeof token !== "string" || token.length < 16) return json({ error: "Missing token" }, 400);
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+    // The blind resume: the candidate's own CV with names, contact details and employers blacked
+    // out, stored as page images (no text). Short-lived links, shown in a view-only page.
+    if (action === "blind") {
+      const { data: l } = await admin.from("candidate_jobs").select("id,blind_pages,blind_at,jobs(client)").eq("client_token", token).maybeSingle();
+      if (!l) return json({ error: "Link not found" }, 404);
+      const n = Math.max(0, Math.min(12, Number(l.blind_pages) || 0));
+      if (!n) return json({ ok: true, pages: [] });
+      const v = l.blind_at ? new Date(l.blind_at).getTime() : 0;
+      const { data: signed, error } = await admin.storage.from("blind-resumes").createSignedUrls(Array.from({ length: n }, (_, i) => `${l.id}/${i + 1}.webp`), 300);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true, client: (l as any).jobs?.client || "", pages: (signed || []).map((x: any) => x.signedUrl).filter(Boolean), v });
+    }
 
     const { data: cj } = await admin.from("candidate_jobs").select("client_revealed,candidate_id").eq("client_token", token).maybeSingle();
     if (!cj) return json({ error: "Link not found" }, 404);

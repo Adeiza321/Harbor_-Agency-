@@ -177,6 +177,7 @@ function featureOf(action: string) {
   if (/learn/.test(action)) return "learning";
   if (/title/.test(action)) return "parallel titles";
   if (/refresh|profile|read/.test(action)) return "cv read";
+  if (/blind/.test(action)) return "blind resume";
   return "screening";
 }
 
@@ -614,6 +615,23 @@ async function handle(req: Request): Promise<Response> {
       if (candidate.cv_path) await admin.storage.from("cvs").remove([candidate.cv_path]);
       await admin.from("candidates").update({ resume_path: null, resume_name: null, cv_path: null }).eq("id", candidateId);
       return json({ ok: true });
+    }
+
+    // Blind resume: the words in the CV text that identify the person or where they worked, so the
+    // app can black them out on the CV itself. Fails soft: the app still hides contact details,
+    // the name and every employer on file without it.
+    if (action === "blind_terms") {
+      const text = String(body.text || "").slice(0, 24000);
+      if (!text.trim()) return json({ ok: true, terms: [] });
+      const system = "You prepare a blind CV for a recruitment agency. From the CV text, list every word or phrase that would identify the candidate or where they worked: " +
+        "the candidate's full name and any part or nickname of it, email addresses, phone numbers, street addresses and postcodes, personal websites and social media handles or links, " +
+        "and the name of EVERY employer, company, organisation, client or brand they worked for or with (write each exactly as it appears in the text, plus short forms used in it). " +
+        "Do NOT list job titles, skills, tools, degrees, schools, cities, countries or dates. Reply with STRICT JSON only: {\"terms\": string[]}";
+      try {
+        const out = await askAI(system, text, null, 900);
+        const terms = (Array.isArray(out?.terms) ? out.terms : []).map((t: unknown) => String(t || "").trim()).filter((t: string) => t.length >= 2 && t.length <= 120).slice(0, 150);
+        return json({ ok: true, terms });
+      } catch (e) { return json({ ok: true, terms: [], warning: String((e as Error)?.message || e) }); }
     }
 
     // Re-read profile facts (current title/employer, experience, location, phone, notice, pay,
