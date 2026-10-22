@@ -4,12 +4,15 @@
 //   2. AI ranks the search results on title, seniority and employer; only the best get revealed
 //   3. reveal emails (1 Apollo credit each) up to the per-job limit; drop anyone unsubscribed,
 //      already in Pronext
-//   4. AI checks each revealed profile against the job; keeps Perfect/Good fits
-//   5. AI writes each person a short email; saved as prospects for review (or queued if auto)
+//   4. the must-have check (musthaves.ts) on what Apollo has plus their public LinkedIn snippet;
+//      kept: fit 70%+ and no core must-have clearly not met; the rest are saved as skipped
+//   5. the job's outreach template drafts each email; saved as prospects for review (or queued
+//      if auto); anyone whose core must-haves aren't shown waits for a full-profile check
 
 import { draftFromTemplate } from "./template.ts";
 import { askAI } from "./ai.ts";
-import { checkMustHaves } from "./musthaves.ts";
+import { assessPeople, checkedData, linkedinSnippet, skippedData, type LinkedInSnippet } from "./musthaves.ts";
+import { holdForProfileCheck } from "./profilecheck.ts";
 import { splitByArea } from "./area_check.ts";
 import { searchPeople, matchById, bestEmail, apolloKey, type ApolloPerson } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, jobCountryCode, jobCountryNames, regionOf } from "./regions.ts";
@@ -173,39 +176,46 @@ export async function sourceExternal(admin: any, jobId: string, s: Settings, opt
   people.splice(0, people.length, ...placed.kept.map((k) => k.p));
   if (!people.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0, tooFar }); return { ok: true, found: 0, message: `All ${tooFar} people found were too far from the office.` }; }
 
-  // 4. Fit check on the full profile.
-  const fitSys = "You are a recruitment analyst. For each person, judge fit for the job from their title, employer, location and work history: " +
-    "must-have experience, seniority and location/work setup. Reply with STRICT JSON only: {\"results\": [{\"id\": string, \"fit\": number (a percentage from 0 to 100, e.g. 85; never a 0-10 score), \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"reason\": string}]}. " +
-    "reason: one short sentence naming the deciding points. Be strict: 'Good fit' only when most must-haves are clearly shown.";
-  const profiles = people.map((p) => `id=${p.id} | ${p.title} at ${p.company} | ${[p.city, p.state, p.country].filter(Boolean).join(", ")} | history: ${p.history || "?"}`).join("\n");
-  const fits = await askAI(fitSys, jobBrief(job, false) + "\n\nPeople:\n" + profiles, 4000);
-  const byId: Record<string, any> = {};
-  for (const r of fitsToPercent(Array.isArray(fits?.results) ? fits.results : [])) byId[String(r.id)] = r;
-  const keep = people.filter((p) => { const r = byId[p.id]; return r && (["Perfect fit", "Good fit"].includes(r.verdict) || Number(r.fit) >= 70); });
-  if (!keep.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0 }); return { ok: true, found: 0, message: `Checked ${people.length} people; none were a strong enough fit.` }; }
-
-  // 5. The first email comes from the job's outreach template (template.ts) after the insert below,
-  //    the same template every candidate on this job gets. No separate AI-written note.
-  const rows = keep.map((p) => {
-    const r = byId[p.id] || {};
+  // 4. The must-have check (musthaves.ts), before anyone is kept: what Apollo has plus the public
+  //    snippet of their LinkedIn profile (free search). Kept only with a fit of 70%+ and no core
+  //    must-have clearly not met; anyone else is saved as skipped with the reason, so their Apollo
+  //    credit is never spent again. Anyone the AI couldn't check right now is saved unchecked and
+  //    held from emailing until the next run checks them (recheckApollo).
+  const li = new Map<string, LinkedInSnippet | null>();
+  for (const p of people) li.set(p.id, p.linkedin_url ? await linkedinSnippet(admin, p.linkedin_url, p.name || `${p.first_name} ${p.last_name}`, p.company).catch(() => null) : null);
+  const checks = await assessPeople(admin, job, people.map((p) => ({ id: p.id, title: p.title, company: p.company, location: [p.city, p.state, p.country].filter(Boolean).join(", "), history: p.history, headline: p.headline, linkedin: li.get(p.id) })));
+  const kept = people.filter((p) => checks.get(p.id)?.keep !== false);
+  const rowOf = (p: ApolloPerson) => {
+    const a = checks.get(p.id);
     const cc = countryCode(p.country);
+    const skip = a && !a.keep;
     return {
       job_id: jobId, source: "apollo", external_id: p.id,
       first_name: p.first_name, last_name: p.last_name, full_name: p.name || `${p.first_name} ${p.last_name}`.trim(),
       title: p.title, company: p.company, location: [p.city, p.state].filter(Boolean).join(", "), country: cc || p.country, region: regionOf(cc),
       linkedin_url: p.linkedin_url, email: p.email, email_status: p.email_status,
-      fit: Math.max(0, Math.min(100, Math.round(Number(r.fit) || 0))), verdict: String(r.verdict || ""), fit_reason: String(r.reason || "").slice(0, 300),
+      fit: a ? a.fit : 0, verdict: a ? a.verdict : "", fit_reason: a ? (a.reason || "").slice(0, 300) : "",
       subject: null, body: null,   // written from the job's template just below
-      status: "found", data: { history: p.history, domain: p.domain, location_hold: holdOf.get(p.id) || null },
+      status: skip ? "rejected" : "found",
+      data: { history: p.history, headline: p.headline || undefined, domain: p.domain, location_hold: holdOf.get(p.id) || null,
+        ...(a ? checkedData(a, li.get(p.id), "search") : li.get(p.id) ? { linkedin: li.get(p.id) } : {}), ...(skip ? skippedData(a!.why, "must-have check") : {}) },
     };
-  });
+  };
+  const rows = kept.map(rowOf);
+  const skippedRows = people.filter((p) => checks.get(p.id)?.keep === false).map(rowOf);
+  if (skippedRows.length) await admin.from("prospects").upsert(skippedRows, { onConflict: "job_id,external_id", ignoreDuplicates: true });
+  if (!rows.length) { await record({ searched: total, ranked: picks.length, revealed, kept: 0, skipped: skippedRows.length }); return { ok: true, found: 0, message: `Checked ${people.length} people against the must-haves; none were a strong enough fit (each is under Skipped with the reason).` }; }
+
+  // 5. The first email comes from the job's outreach template (template.ts) after the insert below,
+  //    the same template every candidate on this job gets. No separate AI-written note.
   const { data: inserted, error } = await admin.from("prospects").upsert(rows, { onConflict: "job_id,external_id", ignoreDuplicates: true }).select("id,first_name,full_name,title,company,location,fit_reason,data");
   if (error) throw new Error(error.message);
   // The job's outreach template (template.ts). If it can't be written right now (AI unavailable), the
   // emails stay unwritten and the next email check drafts them from the template (emails.ts).
   try { await draftFromTemplate(admin, job, inserted || [], (s.senderName || "").split(" ")[0], s.includePay); } catch (e) { console.error("template drafts", String((e as Error)?.message || e)); }
-  // The same summary and must-have checklist X-ray people get (musthaves.ts).
-  try { await checkMustHaves(admin, job, inserted || []); } catch (e) { console.error("must-haves", String((e as Error)?.message || e)); }
-  await record({ searched: total, ranked: picks.length, revealed, kept: rows.length });
-  return { ok: true, found: rows.length, ids: (inserted || []).map((x: any) => x.id), revealed, message: `Found ${rows.length} strong outside ${rows.length === 1 ? "match" : "matches"} (${revealed} Apollo credits used).` };
+  // Kept, but a core must-have isn't shown anywhere free: held for a full-profile check (an Admin approves the credits).
+  const unsure = (inserted || []).filter((x: any) => (x.data?.core_unconfirmed || []).length).map((x: any) => x.id);
+  try { await holdForProfileCheck(admin, s, jobId, unsure); } catch (e) { console.error("profile check request", String((e as Error)?.message || e)); }
+  await record({ searched: total, ranked: picks.length, revealed, kept: rows.length, skipped: skippedRows.length });
+  return { ok: true, found: rows.length, ids: (inserted || []).map((x: any) => x.id), revealed, message: `Found ${rows.length} strong outside ${rows.length === 1 ? "match" : "matches"} (${revealed} Apollo credits used)` + (skippedRows.length ? `; ${skippedRows.length} skipped after the must-have check` : "") + (unsure.length ? `; ${unsure.length} wait for a full-profile check an Admin approves` : "") + "." };
 }

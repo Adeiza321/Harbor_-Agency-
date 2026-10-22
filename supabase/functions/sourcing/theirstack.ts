@@ -25,8 +25,16 @@ export async function searchJobs(opts: { titles: string[]; countries: string[]; 
       page: 0,
     }),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error("Job feed " + res.status + ": " + String(data?.error?.message || data?.detail || data?.message || "").slice(0, 200));
+  const raw = await res.text().catch(() => "");
+  let data: any = {};
+  try { data = raw ? JSON.parse(raw) : {}; } catch { data = {}; }
+  if (!res.ok) {
+    // TheirStack's reason, whatever shape it comes in (it was coming back blank as "Job feed 403: ").
+    const why = String(data?.error?.message || (typeof data?.detail === "string" ? data.detail : data?.detail ? JSON.stringify(data.detail) : "") || data?.message || raw || "").replace(/\s+/g, " ").slice(0, 200);
+    const hint = res.status === 401 || res.status === 403 ? " TheirStack refused the API key: check THEIRSTACK_API_KEY (Edge Functions > Secrets), that your plan includes API access, and that you have credits left."
+      : res.status === 402 ? " TheirStack is out of credits." : "";
+    throw new Error("Job feed " + res.status + (why ? ": " + why : "") + "." + hint);
+  }
   return (Array.isArray(data?.data) ? data.data : []).map((j: any) => ({
     id: String(j.id ?? ""), title: String(j.job_title || ""), url: String(j.final_url || j.url || ""),
     posted_at: j.date_posted || null, company: String(j.company || j.company_object?.name || ""),

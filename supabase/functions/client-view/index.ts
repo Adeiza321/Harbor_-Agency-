@@ -23,10 +23,42 @@ Deno.serve(async (req: Request) => {
     if (!token || typeof token !== "string" || token.length < 12) return json({ error: "Missing token" }, 400);
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
+    // Client leads: the page behind the pitch's "View the candidates" button (/?t=s-<client_token>).
+    // Up to 5 candidates, each as a blind resume (only checked ones), with their selling points;
+    // never a name. "shortlist_interest" is their "We're interested": the contract follows by itself.
+    if (action === "shortlist" || action === "shortlist_interest") {
+      const ct = token.replace(/^s-/, "");
+      if (!/^[0-9a-f-]{36}$/i.test(ct)) return json({ error: "Link not found" }, 404);
+      const { data: l } = await admin.from("leads").select("id,company,job_title,location,matches,data,status,client_viewed_at,interested_at,notes").eq("client_token", ct).maybeSingle();
+      if (!l || ["unsubscribed", "ignored"].includes(l.status)) return json({ error: "Link not found" }, 404);
+      if (action === "shortlist_interest") {
+        if (!l.interested_at) await admin.from("leads").update({ interested_at: new Date().toISOString(), status: ["meeting", "won"].includes(l.status) ? l.status : "replied",
+          notes: [l.notes, "Said they're interested on the candidates page " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id);
+        return json({ ok: true });
+      }
+      if (!l.client_viewed_at) await admin.from("leads").update({ client_viewed_at: new Date().toISOString() }).eq("id", l.id);
+      const ids: string[] = Array.isArray(l.data?.pitched) ? l.data.pitched.map(String) : [];
+      const { data: cands } = ids.length ? await admin.from("candidates").select("id,blind_pages,blind_checked_at").in("id", ids) : { data: [] };
+      const matches: any[] = Array.isArray(l.matches) ? l.matches : [];
+      const out: any[] = [];
+      for (const id of ids.slice(0, 5)) {
+        const c = (cands || []).find((x: any) => x.id === id);
+        const m = matches.find((x: any) => x.candidate_id === id) || {};
+        const n = c && c.blind_checked_at ? Math.max(0, Math.min(12, Number(c.blind_pages) || 0)) : 0;
+        let pages: string[] = [];
+        if (n) {
+          const { data: signed } = await admin.storage.from("blind-resumes").createSignedUrls(Array.from({ length: n }, (_, i) => `cand-${id}/${i + 1}.webp`), 600);
+          pages = (signed || []).map((x: any) => x.signedUrl).filter(Boolean);
+        }
+        out.push({ n: out.length + 1, verdict: m.verdict || "", fit: m.fit || null, bullets: Array.isArray(m.bullets) ? m.bullets.slice(0, 3) : [], pages });
+      }
+      return json({ ok: true, company: l.company || "", role: l.job_title || "", location: l.location || "", interested: !!l.interested_at, candidates: out });
+    }
+
     // The blind resume: the candidate's own CV with names, contact details and employers blacked
     // out, stored as page images (no text). Short-lived links, shown in a view-only page.
     if (action === "blind") {
-      const { data: l } = await admin.from("candidate_jobs").select("id,blind_pages,blind_at,jobs(client)").eq("client_token", token).maybeSingle();
+      const { data: l } = await admin.from("candidate_jobs").select("id,candidate_id,blind_pages,blind_at,jobs(client)").eq("client_token", token).maybeSingle();
       if (!l) {
         // A blind resume sent with a pitch to an employer (a client lead): only for candidates who confirmed.
         const { data: o } = await admin.from("lead_offers").select("id,blind_pages,blind_at,status,client_viewed_at,leads(company,job_title)").eq("client_token", token).maybeSingle();
@@ -39,10 +71,15 @@ Deno.serve(async (req: Request) => {
         if (error) return json({ error: error.message }, 500);
         return json({ ok: true, client: lead.company || "", role: lead.job_title || "", pages: (signed || []).map((x: any) => x.signedUrl).filter(Boolean) });
       }
-      const n = Math.max(0, Math.min(12, Number(l.blind_pages) || 0));
+      // A blind resume made for this link, or else the candidate's own one (made once, reused everywhere).
+      let n = Math.max(0, Math.min(12, Number(l.blind_pages) || 0)), folder = l.id, at = l.blind_at;
+      if (!n) {
+        const { data: c } = await admin.from("candidates").select("blind_pages,blind_at").eq("id", l.candidate_id).maybeSingle();
+        n = Math.max(0, Math.min(12, Number(c?.blind_pages) || 0)); folder = "cand-" + l.candidate_id; at = c?.blind_at;
+      }
       if (!n) return json({ ok: true, pages: [] });
-      const v = l.blind_at ? new Date(l.blind_at).getTime() : 0;
-      const { data: signed, error } = await admin.storage.from("blind-resumes").createSignedUrls(Array.from({ length: n }, (_, i) => `${l.id}/${i + 1}.webp`), 300);
+      const v = at ? new Date(at).getTime() : 0;
+      const { data: signed, error } = await admin.storage.from("blind-resumes").createSignedUrls(Array.from({ length: n }, (_, i) => `${folder}/${i + 1}.webp`), 300);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true, client: (l as any).jobs?.client || "", pages: (signed || []).map((x: any) => x.signedUrl).filter(Boolean), v });
     }

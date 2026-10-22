@@ -1,10 +1,13 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { loadBrand, emailShell, button, esc, sendBrevo } from "./brand.ts";
+import { countryCode } from "../sourcing/regions.ts";
+import { regionMatch } from "../sourcing/world_regions.ts";
 
 // Role emails to recruiters, sent by the database (triggers on jobs and job_recruiters) with the
 // ops token:
 //   { kind: "status", jobId, from, to }  a role went live (Draft/new -> Open): every active
-//                                         recruiter hears about the new role; any other status
+//                                         recruiter hears about the new role (recruiters who
+//                                         work best in its region get "a new role in your region"); any other status
 //                                         change (On hold, Closed, reopened): every active recruiter
 //                                         hears about it too.
 //   { kind: "worklist", jobId, recruiterId, actorId }  a role was added to a recruiter's worklist
@@ -65,7 +68,7 @@ Deno.serve(async (req: Request) => {
     if (!["status", "worklist"].includes(String(body.kind || "status"))) return json(await activity(admin, body));
     const jobId = String(body.jobId || "");
     if (!/^[0-9a-f-]{36}$/i.test(jobId)) return json({ error: "No job" }, 400);
-    const { data: j } = await admin.from("jobs").select("id,role_title,client,status,location,work_setup,employment_type,min_pay,max_pay,currency,salary_period,incentive_type,incentive_amount,incentive_currency,headcount,hold_reason").eq("id", jobId).maybeSingle();
+    const { data: j } = await admin.from("jobs").select("id,role_title,client,status,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,incentive_type,incentive_amount,incentive_currency,headcount,hold_reason").eq("id", jobId).maybeSingle();
     if (!j) return json({ ok: true, skipped: "job not found" });
     const brand = await loadBrand(admin);
     const role = j.role_title + (j.client ? " at " + j.client : "");
@@ -108,10 +111,22 @@ Deno.serve(async (req: Request) => {
       subject = "Closed: " + j.role_title;
       inner = p(`<b>${esc(role)}</b> is closed and no longer taking candidates. Thank you to everyone who worked on it.`);
     } else return json({ ok: true, skipped: "status " + to });
-    const { data: people } = await admin.from("profiles").select("id,email,full_name,status,role,notification_prefs").eq("role", "recruiter").eq("status", "Active");
-    let sent = 0;
-    for (const u of (people || []).filter(wants)) if (await send(u, subject, inner)) sent++;
-    return json({ ok: true, sent });
+    const { data: people } = await admin.from("profiles").select("id,email,full_name,status,role,notification_prefs,regions").eq("role", "recruiter").eq("status", "Active");
+    // A new role in a region a recruiter works best in (My profile): their own version, first in
+    // their inbox with the region named.
+    const newRole = to === "Open" && (!from || from === "Draft");
+    const code = countryCode(j.country) || countryCode(String(j.location || "").split(",").pop());
+    let sent = 0, special = 0;
+    for (const u of (people || []).filter(wants)) {
+      const hit = newRole ? regionMatch(u.regions, code, String(j.country || "")) : "";
+      if (hit) {
+        const ok = await send(u, "New role in your region (" + hit + "): " + j.role_title + (j.client ? " at " + j.client : ""),
+          p(`A new role just opened in <b>${esc(hit)}</b>, one of the regions you work best in: <b>${esc(role)}</b>.`) + facts(j) +
+          p("You're hearing about it first because of the regions on your profile. Engage on it to add it to your worklist.") + button(brand, link, "View the role"));
+        if (ok) { sent++; special++; }
+      } else if (await send(u, subject, inner)) sent++;
+    }
+    return json({ ok: true, sent, special });
   } catch (e) {
     console.error("role-emails", String((e as Error)?.message || e));
     return json({ error: String((e as Error)?.message || e) }, 500);

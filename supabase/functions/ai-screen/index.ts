@@ -5,6 +5,7 @@ import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, 
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
 import { learnFromOutcome } from "./lessons.ts";
+import { answerMemory, prefillAnswers, prefsPrefill, type PrefOptions } from "./prefill.ts";
 import { AI_PAUSED, aiDownFrom, isAiPaused, noteAiHealth } from "../sourcing/ai.ts";
 
 // AI screening for Pronext: CV scoring, screening-question drafting and the fit verdict.
@@ -178,7 +179,7 @@ function featureOf(action: string) {
   if (/bench|review_match/.test(action)) return "bench check";
   if (/learn/.test(action)) return "learning";
   if (/title/.test(action)) return "parallel titles";
-  if (/refresh|profile|read/.test(action)) return "cv read";
+  if (/refresh|profile|read|prefill/.test(action)) return "cv read";
   if (/blind/.test(action)) return "blind resume";
   return "screening";
 }
@@ -373,6 +374,75 @@ async function handle(req: Request): Promise<Response> {
     // Candidate page actions. No staff login: the candidate's secret portal token
     // proves who they are, and they can only act on their own job cards.
     // ---------------------------------------------------------------
+    // The questions a candidate is about to answer for one role, with anything they've already
+    // answered elsewhere filled in (they can change it): the job's own questions on a role we put
+    // them forward for (routed), plus follow-up questions that were sent. Cached on the card.
+    if (body.action === "portal_prefill") {
+      const portalToken = String(body.token || "");
+      if (portalToken.length < 12) return json({ error: "Invalid link" }, 403);
+      const { data: cand } = await admin.from("candidates").select("id").eq("portal_token", portalToken).maybeSingle();
+      if (!cand) return json({ error: "Invalid link" }, 403);
+      const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", body.linkId).eq("candidate_id", cand.id).maybeSingle();
+      if (!link) return json({ error: "This role is no longer available" }, 404);
+      const { data: job } = await admin.from("jobs").select("screening_questions").eq("id", link.job_id).maybeSingle();
+      const done = new Set((Array.isArray(link.screening_answers) ? link.screening_answers : []).map((x: any) => String(x?.q || "")).filter(Boolean));
+      const jobQs: string[] = link.candidate_response === "pending" ? (Array.isArray(job?.screening_questions) ? job.screening_questions : []).map(String).filter((q: string) => q && !done.has(q)) : [];
+      const f = link.ai?.followups;
+      const fuQs: string[] = f && f.state === "sent" ? (f.questions || []).map((x: any) => String(x?.q || "")).filter(Boolean) : [];
+      const all = [...jobQs.map((q) => ({ q, kind: "job" })), ...fuQs.map((q) => ({ q, kind: "followup" }))];
+      if (!all.length) return json({ ok: true, questions: [] });
+      const memory = await answerMemory(admin, cand.id, link.id);
+      const key = all.map((x) => x.q).join("\n") + "|" + memory.length;
+      let filled: { a: string; from: string }[];
+      if (link.ai?.prefill?.key === key && Array.isArray(link.ai.prefill.items)) filled = link.ai.prefill.items;
+      else {
+        filled = await prefillAnswers(askAI, memory, all.map((x) => x.q));
+        await admin.from("candidate_jobs").update({ ai: { ...(link.ai || {}), prefill: { key, items: filled, at: new Date().toISOString() } } }).eq("id", link.id);
+      }
+      return json({ ok: true, questions: all.map((x, i) => ({ ...x, a: filled[i]?.a || "", from: filled[i]?.from || "" })) });
+    }
+
+    // "Help us match you", filled in as far as we can already tell: from the candidate page
+    // (portal token) or, on the Send-us-your-CV page, from the application just sent (id + its
+    // prefs token, for two days). Cached on the candidate; never saved as their answers.
+    if (body.action === "prefs_prefill") {
+      const o = (body.options || {}) as PrefOptions;
+      const list = (v: unknown) => (Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 80) : []);
+      const opts: PrefOptions = { seniority: list(o.seniority), employmentTypes: list(o.employmentTypes), availability: list(o.availability), workSetup: list(o.workSetup), relocate: list(o.relocate), sponsorship: list(o.sponsorship), industries: list(o.industries), languages: list(o.languages), langLevels: list(o.langLevels) };
+      if (body.appId) {
+        const { data: app } = await admin.from("applications").select("id,name,role_title,resume_path,resume_name,created_at,prefs_token").eq("id", String(body.appId)).maybeSingle();
+        if (!app || String(app.prefs_token) !== String(body.appToken || "") || Date.parse(app.created_at) < Date.now() - 2 * 864e5) return json({ error: "Invalid link" }, 403);
+        let resume: ResumeInput | null = null;
+        if (app.resume_path) {
+          const { data: file } = await admin.storage.from("resumes").download(app.resume_path);
+          if (file) { const r = await prepareResume(new Uint8Array(await file.arrayBuffer()), app.resume_name || app.resume_path); resume = r.input || null; }
+        }
+        const material = `What they're looking for (if they said): ${app.role_title && app.role_title !== "Active file" ? app.role_title : "(not given)"}\nTheir CV is attached.`;
+        try { return json({ ok: true, prefill: resume ? await prefsPrefill(askAI, material, opts, resume) : null }); }
+        catch (e) { return json({ ok: true, prefill: null, warning: String((e as Error)?.message || e).slice(0, 200) }); }
+      }
+      const portalToken = String(body.token || "");
+      if (portalToken.length < 12) return json({ error: "Invalid link" }, 403);
+      const { data: cand } = await admin.from("candidates").select("*").eq("portal_token", portalToken).maybeSingle();
+      if (!cand) return json({ error: "Invalid link" }, 403);
+      if (cand.prefs_prefill && cand.prefs_prefill_at && Date.parse(cand.prefs_prefill_at) > Date.parse(cand.updated_at || cand.prefs_prefill_at) - 5000 && !body.fresh) return json({ ok: true, prefill: cand.prefs_prefill });
+      const memory = await answerMemory(admin, cand.id);
+      const { data: apps } = await admin.from("applications").select("role_title").eq("candidate_id", cand.id).limit(10);
+      const material = [
+        `Applied for / looking for: ${[cand.role_title, ...(apps || []).map((a: any) => a.role_title)].filter((x) => x && x !== "Unspecified" && x !== "Active file").join("; ") || "(not given)"}`,
+        `Current title: ${cand.current_title || "?"}; parallel titles: ${(cand.parallel_titles || []).join(", ") || "?"}`,
+        `Where they live: ${cand.location || "?"}; experience: ${cand.experience || "?"}; notice: ${cand.notice || "?"}; pay they want: ${cand.pay || "?"}`,
+        `Employers and industries: ${(Array.isArray(cand.industries) ? cand.industries : []).map((x: any) => [x?.company, x?.industry].filter(Boolean).join(" – ")).join("; ") || "?"}`,
+        `Skills: ${(cand.skills || []).slice(0, 30).join(", ") || "?"}`,
+        "Earlier answers:\n" + (memory.length ? memory.map((m) => `Q: ${m.q}\nA: ${m.a}`).join("\n") : "(none)"),
+      ].join("\n");
+      try {
+        const prefill = await prefsPrefill(askAI, material, opts, null);
+        await admin.from("candidates").update({ prefs_prefill: prefill, prefs_prefill_at: new Date().toISOString() }).eq("id", cand.id);
+        return json({ ok: true, prefill });
+      } catch (e) { return json({ ok: true, prefill: null, warning: String((e as Error)?.message || e).slice(0, 200) }); }
+    }
+
     if (body.action === "portal_respond" || body.action === "portal_answer") {
       const portalToken = String(body.token || "");
       // Older candidates have 12-character tokens (links already emailed); newer ones have 32.
@@ -397,16 +467,28 @@ async function handle(req: Request): Promise<Response> {
         return json({ ok: true });
       }
 
-      // portal_answer
+      // portal_answer: the job's own questions (a role we put them forward for: jobAnswers as
+      // [{q, a}]) and/or the follow-up questions that were sent (answers, in order).
       const f = link.ai?.followups;
-      if (!f || f.state !== "sent") return json({ error: "These questions have already been answered" }, 409);
-      const answers: unknown[] = Array.isArray(body.answers) ? body.answers : [];
-      const questions = (f.questions || []).map((x: any, i: number) => ({ q: x.q, a: String(answers[i] ?? "").trim().slice(0, 4000) }));
-      if (questions.some((x: any) => !x.a)) return json({ error: "Please answer every question" }, 400);
-      const ai = { ...(link.ai || {}), followups: { ...f, state: "answered", questions, answeredAt: new Date().toISOString() } };
-      await admin.from("candidate_jobs").update({ ai }).eq("id", link.id);
+      const jobGiven = (Array.isArray(body.jobAnswers) ? body.jobAnswers : []).map((x: any) => ({ q: String(x?.q || "").slice(0, 600), a: String(x?.a ?? "").trim().slice(0, 4000) })).filter((x: any) => x.q);
+      const fuOpen = !!f && f.state === "sent";
+      if (!fuOpen && !jobGiven.length) return json({ error: "These questions have already been answered" }, 409);
+      if (jobGiven.some((x: any) => !x.a)) return json({ error: "Please answer every question" }, 400);
+      const update: any = {};
+      if (jobGiven.length) {
+        const prev = (Array.isArray(link.screening_answers) ? link.screening_answers : []).filter((x: any) => x && typeof x === "object" && !jobGiven.some((g: any) => g.q === x.q));
+        update.screening_answers = [...prev, ...jobGiven];
+      }
+      if (fuOpen) {
+        const answers: unknown[] = Array.isArray(body.answers) ? body.answers : [];
+        const questions = (f.questions || []).map((x: any, i: number) => ({ q: x.q, a: String(answers[i] ?? "").trim().slice(0, 4000) }));
+        if (questions.some((x: any) => !x.a)) return json({ error: "Please answer every question" }, 400);
+        update.ai = { ...(link.ai || {}), followups: { ...f, state: "answered", questions, answeredAt: new Date().toISOString() } };
+      }
+      await admin.from("candidate_jobs").update(update).eq("id", link.id);
       await admin.from("candidate_timeline").insert({ candidate_id: cand.id, title: "Answered screening questions for " + roleName, done: true });
-      try { await screenAs(admin, link.id); } catch (e) { console.error("screen after answers", String((e as Error)?.message || e)); }
+      // A role they haven't accepted yet is screened when they accept (portal_respond), with these answers.
+      if (link.candidate_response !== "pending") { try { await screenAs(admin, link.id); } catch (e) { console.error("screen after answers", String((e as Error)?.message || e)); } }
       return json({ ok: true });
     }
 
@@ -647,8 +729,8 @@ async function handle(req: Request): Promise<Response> {
       if (!text.trim()) return json({ ok: true, terms: [] });
       const system = "You prepare a blind CV for a recruitment agency. From the CV text, list every word or phrase that would identify the candidate or where they worked: " +
         "the candidate's full name and any part or nickname of it, email addresses, phone numbers, street addresses and postcodes, personal websites and social media handles or links, " +
-        "and the name of EVERY employer, company, organisation, client or brand they worked for or with (write each exactly as it appears in the text, plus short forms used in it). " +
-        "Do NOT list job titles, skills, tools, degrees, schools, cities, countries or dates. Reply with STRICT JSON only: {\"terms\": string[]}";
+        "and the name of EVERY employer they worked for: each company or organisation that employed them, as a job or a contract (write each exactly as it appears in the text, plus short forms used in it). " +
+        "Do NOT list clients, customers, brands or partners they only worked with, job titles, skills, tools, degrees, schools, certifications, cities, countries or dates: those stay visible. Reply with STRICT JSON only: {\"terms\": string[]}";
       try {
         const out = await askAI(system, text, null, 900);
         const terms = (Array.isArray(out?.terms) ? out.terms : []).map((t: unknown) => String(t || "").trim()).filter((t: string) => t.length >= 2 && t.length <= 120).slice(0, 150);

@@ -16,34 +16,54 @@ const SCALE = 2;
 const mctx = (typeof document !== "undefined" ? document.createElement("canvas") : null)?.getContext("2d");
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// Only these are ever hidden: the candidate's name, their address, their contact details and the
+// names of their employers. Everything else on the CV (titles, dates, skills, schools, cities)
+// stays readable for the client.
 // Always hidden, whatever the CV says: emails, links and handles, phone numbers, street addresses, postcodes.
+// Street addresses: a house number, then up to four Capitalised words on the same line, ending in a
+// Capitalised street word ("12 King Fahd Road"). Case matters on purpose: lower-case "close", "way",
+// "place" or "drive" in a sentence ("2019 - present. Managed month-end close") is not an address.
+const STREET = "(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Boulevard|Blvd|Way|Court|Ct|Close|Crescent|Place|Pl|Terrace|Highway|Hwy|Parkway|Pkwy|Strasse|Straße)";
 const GENERIC = [
   /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi,
   /\b(?:https?:\/\/|www\.)\S+/gi,
   /\b(?:linkedin|github|gitlab|behance|dribbble|twitter|x|facebook|instagram|medium)\.com\/\S*/gi,
-  /\b\d{1,5}\s+(?:[A-Za-z0-9'.-]+\s){0,4}(?:Street|St|Avenue|Ave|Road|Rd|Lane|Ln|Drive|Dr|Boulevard|Blvd|Way|Court|Ct|Close|Crescent|Place|Pl|Terrace|Highway|Hwy|Parkway|Pkwy)\b\.?/gi,
-  /\b[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/g,
-  /\b[A-Z]{1,2}\d[A-Z\d]?\s+\d[A-Z]{2}\b/g,
+  new RegExp("\\b\\d{1,5}[A-Za-z]?,?[ \\t]+(?:[A-Z][A-Za-z0-9'.-]*[ \\t]+){0,4}" + STREET + "\\b\\.?", "g"),
+  /\b[A-Z]{2}[ \t]+\d{5}(?:-\d{4})?\b/g,
+  /\b[A-Z]{1,2}\d[A-Z\d]?[ \t]+\d[A-Z]{2}\b/g,
 ];
-const PHONE = /\+?\(?\d[\d\s().\-–]{7,}\d/g;
+// Phone numbers: 9+ digits on one line. Not date ranges ("2016 - 2019 2012 - 2016"): a run made
+// only of four-digit years is left alone.
+const PHONE = /\+?\(?\d[\d \t().\-–]{7,}\d/g;
+const onlyYears = (s) => { const g = s.match(/\d+/g) || []; return g.length > 1 && g.every((x) => /^(19|20)\d\d$/.test(x)); };
 
+// A term as a pattern. Besides the exact spelling (any case), letters-only terms (names, most
+// employers) also match when the CV spaces their letters out ("L A M A   A L S H E N A I F I"),
+// or writes them with a hyphen, apostrophe or space inside ("Al-Shenaifi", "Al Shenaifi").
 function patterns(terms) {
   const out = [];
+  const seen = new Set();
   for (const t of terms || []) {
     const s = String(t || "").trim();
-    if (s.length < 2) continue;
+    if (s.length < 2 || seen.has(s.toLowerCase())) continue;
+    seen.add(s.toLowerCase());
     const words = s.split(/\s+/).map(esc);
     const edgeA = /^\w/.test(s) ? "\\b" : "", edgeB = /\w$/.test(s) ? "\\b" : "";
     out.push(new RegExp(edgeA + words.join("[\\s,.-]*") + edgeB, "gi"));
+    const letters = s.replace(/[\s'’.-]+/g, "");
+    if (letters.length >= 3 && /^[\p{L}]+$/u.test(letters)) {
+      const loose = [...letters].map(esc).join("[ \\t'’.-]{0,4}");
+      out.push(new RegExp("(?<![\\p{L}])" + loose + "(?![\\p{L}])", "giu"));
+    }
   }
   return out;
 }
 // Character ranges [start, end) in text to cover.
 function ranges(text, pats) {
   const r = [];
-  for (const p of [...GENERIC, ...pats]) { p.lastIndex = 0; let m; while ((m = p.exec(text))) { if (m[0].length) r.push([m.index, m.index + m[0].length]); if (!p.global) break; } }
+  for (const p of [...GENERIC, ...pats]) { p.lastIndex = 0; let m; while ((m = p.exec(text))) { if (m[0].length) r.push([m.index, m.index + m[0].length]); else p.lastIndex++; if (!p.global) break; } }
   PHONE.lastIndex = 0; let m;
-  while ((m = PHONE.exec(text))) { if ((m[0].match(/\d/g) || []).length >= 9) r.push([m.index, m.index + m[0].length]); }
+  while ((m = PHONE.exec(text))) { if ((m[0].match(/\d/g) || []).length >= 9 && !onlyYears(m[0])) r.push([m.index, m.index + m[0].length]); }
   r.sort((a, b) => a[0] - b[0]);
   const merged = [];
   for (const x of r) { const last = merged[merged.length - 1]; if (last && x[0] <= last[1]) last[1] = Math.max(last[1], x[1]); else merged.push([...x]); }
@@ -233,14 +253,16 @@ async function prepare(blob, name) {
     p.ocr = await ocrWords(c); d.text += p.ocr.map((w) => w.text).join(" ") + "\n";
   }
   // Safety net for the name: most CVs open with it as the biggest line (or the first line).
-  const looksLikeName = (t) => /^[\p{Lu}][\p{L}'’.-]+(?:\s+[\p{Lu}][\p{L}'’.-]+){1,3}$/u.test(String(t || "").trim()) && String(t).trim().length <= 48;
+  // A heading with its letters spaced out ("L A M A   A L S H E N A I F I") is read as "LAMA ALSHENAIFI".
+  const unspace = (t) => { const s = String(t || "").trim(); return /^(?:\p{L}[ \t]){2,}\p{L}/u.test(s) ? s.split(/[ \t]{2,}/).map((w) => w.replace(/[ \t]+/g, "")).join(" ") : s; };
+  const looksLikeName = (t) => { const s = unspace(t); return /^[\p{Lu}][\p{L}'’.-]+(?:\s+[\p{Lu}][\p{L}'’.-]+){1,3}$/u.test(s) && s.length <= 48; };
   let nameGuess = "";
   if (d.kind === "pdf" && d.pages[0] && !d.pages[0].scanned) {
     const its = d.pages[0].items.filter((it) => it.str.trim()).slice(0, 12);
     const big = its.slice().sort((a, b) => Math.hypot(b.transform[2], b.transform[3]) - Math.hypot(a.transform[2], a.transform[3]))[0];
-    if (big && looksLikeName(big.str)) nameGuess = big.str.trim();
+    if (big && looksLikeName(big.str)) nameGuess = unspace(big.str);
   }
-  if (!nameGuess) { const firstLine = String(d.text || "").split(/\n/).map((x) => x.trim()).find(Boolean); if (looksLikeName(firstLine)) nameGuess = firstLine; }
+  if (!nameGuess) { const firstLine = String(d.text || "").split(/\n/).map((x) => x.trim()).find(Boolean); if (looksLikeName(firstLine)) nameGuess = unspace(firstLine); }
   return {
     nameGuess,
     kind: d.kind, text: d.text, ocr: d.kind === "image" || (d.kind === "pdf" && d.pages.some((p) => p.scanned)),

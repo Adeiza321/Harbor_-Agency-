@@ -7,7 +7,7 @@ import {
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
-  KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, ThumbsUp, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
+  KeyRound, Power, PowerOff, UserCheck, Bot, RefreshCw, Forward, Rocket, ThumbsDown, ThumbsUp, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
   Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon, Pin, FolderPlus,
 } from "lucide-react";
 
@@ -48,7 +48,7 @@ const STATUS_TONE = {
   Open: "info", "On hold": "warn", Closed: "neutral", Offer: "em", Engaged: "em", Closing: "warn",
   Guarantee: "warn", Ready: "em", Invoiced: "info", Paid: "em", Fallout: "danger",
   Sent: "em", Scheduled: "info", Draft: "neutral", Live: "em",
-  "Pending approval": "warn", Ended: "neutral", Active: "em", Invited: "warn",
+  "Pending approval": "warn", Ended: "neutral", Active: "em", Invited: "warn", Suspended: "danger", Disabled: "neutral",
 };
 
 /* Mock data */
@@ -244,6 +244,44 @@ const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/re
    posted and paid in their own money. Packed as "<ISO2><CUR><Name>" / "<CUR><Name>" to keep the bundle small. */
 const COUNTRY_DATA = "AFAFNAfghanistan|ALALLAlbania|DZDZDAlgeria|ADEURAndorra|AOAOAAngola|AGXCDAntigua and Barbuda|ARARSArgentina|AMAMDArmenia|AWAWGAruba|AUAUDAustralia|ATEURAustria|AZAZNAzerbaijan|BSBSDBahamas|BHBHDBahrain|BDBDTBangladesh|BBBBDBarbados|BYBYNBelarus|BEEURBelgium|BZBZDBelize|BJXOFBenin|BMBMDBermuda|BTBTNBhutan|BOBOBBolivia|BABAMBosnia and Herzegovina|BWBWPBotswana|BRBRLBrazil|VGUSDBritish Virgin Islands|BNBNDBrunei|BGEURBulgaria|BFXOFBurkina Faso|BIBIFBurundi|KHKHRCambodia|CMXAFCameroon|CACADCanada|CVCVECape Verde|KYKYDCayman Islands|CFXAFCentral African Republic|TDXAFChad|CLCLPChile|CNCNYChina|COCOPColombia|KMKMFComoros|CDCDFCongo (DRC)|CGXAFCongo (Republic)|CRCRCCosta Rica|CIXOFCôte d'Ivoire|HREURCroatia|CUCUPCuba|CWANGCuraçao|CYEURCyprus|CZCZKCzechia|DKDKKDenmark|DJDJFDjibouti|DMXCDDominica|DODOPDominican Republic|ECUSDEcuador|EGEGPEgypt|SVUSDEl Salvador|GQXAFEquatorial Guinea|ERERNEritrea|EEEUREstonia|SZSZLEswatini|ETETBEthiopia|FODKKFaroe Islands|FJFJDFiji|FIEURFinland|FREURFrance|GFEURFrench Guiana|PFXPFFrench Polynesia|GAXAFGabon|GMGMDGambia|GEGELGeorgia|DEEURGermany|GHGHSGhana|GIGIPGibraltar|GREURGreece|GLDKKGreenland|GDXCDGrenada|GPEURGuadeloupe|GUUSDGuam|GTGTQGuatemala|GGGBPGuernsey|GNGNFGuinea|GWXOFGuinea-Bissau|GYGYDGuyana|HTHTGHaiti|HNHNLHonduras|HKHKDHong Kong|HUHUFHungary|ISISKIceland|ININRIndia|IDIDRIndonesia|IRIRRIran|IQIQDIraq|IEEURIreland|IMGBPIsle of Man|ILILSIsrael|ITEURItaly|JMJMDJamaica|JPJPYJapan|JEGBPJersey|JOJODJordan|KZKZTKazakhstan|KEKESKenya|KIAUDKiribati|XKEURKosovo|KWKWDKuwait|KGKGSKyrgyzstan|LALAKLaos|LVEURLatvia|LBLBPLebanon|LSLSLLesotho|LRLRDLiberia|LYLYDLibya|LICHFLiechtenstein|LTEURLithuania|LUEURLuxembourg|MOMOPMacao|MGMGAMadagascar|MWMWKMalawi|MYMYRMalaysia|MVMVRMaldives|MLXOFMali|MTEURMalta|MHUSDMarshall Islands|MQEURMartinique|MRMRUMauritania|MUMURMauritius|YTEURMayotte|MXMXNMexico|FMUSDMicronesia|MDMDLMoldova|MCEURMonaco|MNMNTMongolia|MEEURMontenegro|MAMADMorocco|MZMZNMozambique|MMMMKMyanmar|NANADNamibia|NRAUDNauru|NPNPRNepal|NLEURNetherlands|NCXPFNew Caledonia|NZNZDNew Zealand|NINIONicaragua|NEXOFNiger|NGNGNNigeria|KPKPWNorth Korea|MKMKDNorth Macedonia|NONOKNorway|OMOMROman|PKPKRPakistan|PWUSDPalau|PSILSPalestine|PAPABPanama|PGPGKPapua New Guinea|PYPYGParaguay|PEPENPeru|PHPHPPhilippines|PLPLNPoland|PTEURPortugal|PRUSDPuerto Rico|QAQARQatar|REEURRéunion|RORONRomania|RURUBRussia|RWRWFRwanda|KNXCDSaint Kitts and Nevis|LCXCDSaint Lucia|VCXCDSaint Vincent and the Grenadines|WSWSTSamoa|SMEURSan Marino|STSTNSão Tomé and Príncipe|SASARSaudi Arabia|SNXOFSenegal|RSRSDSerbia|SCSCRSeychelles|SLSLESierra Leone|SGSGDSingapore|SKEURSlovakia|SIEURSlovenia|SBSBDSolomon Islands|SOSOSSomalia|ZAZARSouth Africa|KRKRWSouth Korea|SSSSPSouth Sudan|ESEURSpain|LKLKRSri Lanka|SDSDGSudan|SRSRDSuriname|SESEKSweden|CHCHFSwitzerland|SYSYPSyria|TWTWDTaiwan|TJTJSTajikistan|TZTZSTanzania|THTHBThailand|TLUSDTimor-Leste|TGXOFTogo|TOTOPTonga|TTTTDTrinidad and Tobago|TNTNDTunisia|TRTRYTürkiye|TMTMTTurkmenistan|TVAUDTuvalu|UGUGXUganda|UAUAHUkraine|AEAEDUnited Arab Emirates|GBGBPUnited Kingdom|USUSDUnited States|UYUYUUruguay|VIUSDUS Virgin Islands|UZUZSUzbekistan|VUVUVVanuatu|VAEURVatican City|VEVESVenezuela|VNVNDVietnam|YEYERYemen|ZMZMWZambia|ZWUSDZimbabwe".split("|").map((s) => ({ iso: s.slice(0, 2), currency: s.slice(2, 5), name: s.slice(5) }));
 const COUNTRIES = COUNTRY_DATA.map((x) => x.name);
+// Countries by name (any case, plus common short forms) to their ISO code, and a small flag image
+// (assets/flags, from the MIT-licensed flag-icons set, served with the app).
+const COUNTRY_ISO = Object.fromEntries(COUNTRY_DATA.map((x) => [x.name.toLowerCase(), x.iso]).concat([["usa", "US"], ["us", "US"], ["u.s.", "US"], ["united states of america", "US"], ["uk", "GB"], ["england", "GB"], ["scotland", "GB"], ["wales", "GB"], ["great britain", "GB"], ["uae", "AE"]]));
+const isoOf = (name) => COUNTRY_ISO[String(name || "").trim().toLowerCase()] || "";
+const COUNTRY_BY_ISO = Object.fromEntries(COUNTRY_DATA.map((x) => [x.iso, x.name]));
+function Flag({ country, size = 12, style }) {
+  const iso = isoOf(country);
+  if (!iso) return null;
+  return <img src={"/assets/flags/" + iso.toLowerCase() + ".svg"} alt={country} title={country} loading="lazy" decoding="async"
+    style={{ width: Math.round(size * 4 / 3), height: size, borderRadius: 2, objectFit: "cover", boxShadow: "0 0 0 1px rgba(0,0,0,.12)", display: "inline-block", flexShrink: 0, ...style }} />;
+}
+// Broad regions a recruiter can work best in (same names as sourcing/world_regions.ts), and the
+// kinds of roles they can close. Both are asked when a recruiter sets up their account.
+const WORLD_REGIONS = ["Africa", "Middle East", "Europe", "Asia", "North America", "Latin America & Caribbean", "Oceania"];
+const SPECIALTIES = ["Accounting & Finance", "Software Engineering", "IT & Infrastructure", "Data & Analytics", "Cybersecurity", "Product & Design", "Sales & Business Development",
+  "Marketing & Communications", "HR & Recruiting", "Customer Service", "Operations & Supply Chain", "Engineering (Mechanical, Electrical, Civil)", "Oil, Gas & Energy",
+  "Healthcare & Nursing", "Legal", "Executive & Leadership", "Admin & Office Support", "Skilled Trades", "Construction & Real Estate", "Education"];
+// A candidate's country: from their job preferences, else their location ("Tulsa, OK" and
+// "Coral Springs, Florida" are the United States).
+function candidateCountry(c) {
+  const pref = c && c.preferences && c.preferences.currentCountry;
+  if (pref && isoOf(pref)) return COUNTRY_BY_ISO[isoOf(pref)];
+  const parts = String((c && c.location) || "").split(",").map((x) => x.trim()).filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i].replace(/\s+\d[\d-]*$/, "").trim();   // "NJ 07506" -> "NJ"
+    const iso = part.length > 2 || i === parts.length - 1 ? isoOf(part) : "";
+    if (iso && !(part.length === 2 && US_STATE_TZ[part.toUpperCase()] && i > 0)) return COUNTRY_BY_ISO[iso];
+    if (/^[A-Z]{2}$/.test(part) && US_STATE_TZ[part]) return "United States";
+    if (US_STATE_NAMES[part.toLowerCase()]) return "United States";
+  }
+  return "";
+}
+// What's still missing from a recruiter's account setup (shown on their Overview until done).
+function setupGaps(u) {
+  if (!u || u.roleKey !== "recruiter") return [];
+  return [!u.phone && "your phone number", !u.avatarUrl && "a profile picture", !u.country && "your country",
+    !(u.specialties || []).length && "the roles you can close", !(u.regions || []).length && "the regions you work best in"].filter(Boolean);
+}
 const COUNTRY_CURRENCY = Object.fromEntries(COUNTRY_DATA.map((x) => [x.name, x.currency]).concat([["Remote \u2013 worldwide", ""]]));
 const CURRENCY_NAMES = Object.fromEntries("AEDUnited Arab Emirates Dirham|AFNAfghan Afghani|ALLAlbanian Lek|AMDArmenian Dram|ANGNetherlands Antillean Guilder|AOAAngolan Kwanza|ARSArgentine Peso|AUDAustralian Dollar|AWGAruban Florin|AZNAzerbaijani Manat|BAMBosnia-Herzegovina Convertible Mark|BBDBarbadian Dollar|BDTBangladeshi Taka|BHDBahraini Dinar|BIFBurundian Franc|BMDBermudan Dollar|BNDBrunei Dollar|BOBBolivian Boliviano|BRLBrazilian Real|BSDBahamian Dollar|BTNBhutanese Ngultrum|BWPBotswanan Pula|BYNBelarusian Ruble|BZDBelize Dollar|CADCanadian Dollar|CDFCongolese Franc|CHFSwiss Franc|CLPChilean Peso|CNYChinese Yuan|COPColombian Peso|CRCCosta Rican Colón|CUPCuban Peso|CVECape Verdean Escudo|CZKCzech Koruna|DJFDjiboutian Franc|DKKDanish Krone|DOPDominican Peso|DZDAlgerian Dinar|EGPEgyptian Pound|ERNEritrean Nakfa|ETBEthiopian Birr|EUREuro|FJDFijian Dollar|GBPBritish Pound|GELGeorgian Lari|GHSGhanaian Cedi|GIPGibraltar Pound|GMDGambian Dalasi|GNFGuinean Franc|GTQGuatemalan Quetzal|GYDGuyanaese Dollar|HKDHong Kong Dollar|HNLHonduran Lempira|HTGHaitian Gourde|HUFHungarian Forint|IDRIndonesian Rupiah|ILSIsraeli New Shekel|INRIndian Rupee|IQDIraqi Dinar|IRRIranian Rial|ISKIcelandic Króna|JMDJamaican Dollar|JODJordanian Dinar|JPYJapanese Yen|KESKenyan Shilling|KGSKyrgystani Som|KHRCambodian Riel|KMFComorian Franc|KPWNorth Korean Won|KRWSouth Korean Won|KWDKuwaiti Dinar|KYDCayman Islands Dollar|KZTKazakhstani Tenge|LAKLaotian Kip|LBPLebanese Pound|LKRSri Lankan Rupee|LRDLiberian Dollar|LSLLesotho Loti|LYDLibyan Dinar|MADMoroccan Dirham|MDLMoldovan Leu|MGAMalagasy Ariary|MKDMacedonian Denar|MMKMyanmar Kyat|MNTMongolian Tugrik|MOPMacanese Pataca|MRUMauritanian Ouguiya|MURMauritian Rupee|MVRMaldivian Rufiyaa|MWKMalawian Kwacha|MXNMexican Peso|MYRMalaysian Ringgit|MZNMozambican Metical|NADNamibian Dollar|NGNNigerian Naira|NIONicaraguan Córdoba|NOKNorwegian Krone|NPRNepalese Rupee|NZDNew Zealand Dollar|OMROmani Rial|PABPanamanian Balboa|PENPeruvian Sol|PGKPapua New Guinean Kina|PHPPhilippine Peso|PKRPakistani Rupee|PLNPolish Zloty|PYGParaguayan Guarani|QARQatari Riyal|RONRomanian Leu|RSDSerbian Dinar|RUBRussian Ruble|RWFRwandan Franc|SARSaudi Riyal|SBDSolomon Islands Dollar|SCRSeychellois Rupee|SDGSudanese Pound|SEKSwedish Krona|SGDSingapore Dollar|SLESierra Leonean Leone|SOSSomali Shilling|SRDSurinamese Dollar|SSPSouth Sudanese Pound|STNSão Tomé and Príncipe Dobra|SYPSyrian Pound|SZLSwazi Lilangeni|THBThai Baht|TJSTajikistani Somoni|TMTTurkmenistani Manat|TNDTunisian Dinar|TOPTongan Paʻanga|TRYTurkish Lira|TTDTrinidad and Tobago Dollar|TWDNew Taiwan Dollar|TZSTanzanian Shilling|UAHUkrainian Hryvnia|UGXUgandan Shilling|USDUS Dollar|UYUUruguayan Peso|UZSUzbekistani Som|VESVenezuelan Bolívar|VNDVietnamese Dong|VUVVanuatu Vatu|WSTSamoan Tala|XAFCentral African CFA Franc|XCDEast Caribbean Dollar|XOFWest African CFA Franc|XPFCFP Franc|YERYemeni Rial|ZARSouth African Rand|ZMWZambian Kwacha".split("|").map((s) => [s.slice(0, 3), s.slice(3)]));
 const CURRENCIES = Object.keys(CURRENCY_NAMES);
@@ -336,7 +374,12 @@ function playChime() {
 }
 // The assistant's sound, unless you turned it off (My profile > Notifications).
 const playAssistChime = (me) => { if (((me && me.notificationPrefs) || {}).assistSound !== false) playChime(); };
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "", tourDoneAt: p.tour_done_at || null });
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, country: p.country || "", specialties: p.specialties || [], regions: p.regions || [], lastSeenAt: p.last_seen_at ? new Date(p.last_seen_at).getTime() : null, suspendedAt: p.suspended_at || null, suspendedReason: p.suspended_reason || "", notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "", tourDoneAt: p.tour_done_at || null });
+
+// Job lists: roles On hold, then Closed, go to the end of every list; within each group the
+// newest first (the order they're loaded in). Sort is stable, so nothing else moves.
+const JOB_STATUS_RANK = { "On hold": 1, Closed: 2 };
+function jobOrder(a, b) { return (JOB_STATUS_RANK[a.status] || 0) - (JOB_STATUS_RANK[b.status] || 0); }
 
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
@@ -370,6 +413,10 @@ function mapAll(d) {
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, photoUrl: c.photo_url || null, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
+    // Their one blind resume (made once, reused for every client link and pitch); checked = a Rec Ops/Admin approved it.
+    // "Open to new roles" (their candidate page): off = not put forward until open_paused_until.
+    open: c.open_to_roles !== false || (!!c.open_paused_until && new Date(c.open_paused_until).getTime() < Date.now()), pausedUntil: c.open_to_roles === false ? c.open_paused_until || null : null,
+    blind: c.blind_pages ? { pages: c.blind_pages, at: c.blind_at, by: c.blind_by ? pname(c.blind_by) : "", checkedAt: c.blind_checked_at || null, checkedBy: c.blind_checked_by ? pname(c.blind_checked_by) : "" } : null,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
@@ -444,6 +491,7 @@ function mapAll(d) {
   const jobViews = Object.fromEntries((Array.isArray(d.jobViews) ? d.jobViews : []).map((v) => [v.job_id, v]));
   const tasks = (Array.isArray(d.tasks) ? d.tasks : []).map((t) => ({ id: t.id, title: t.title, notes: t.notes || "", assignedTo: t.assigned_to, createdBy: t.created_by, dueOn: t.due_on || null,
     status: t.status, candidateId: t.candidate_id || null, jobId: t.job_id || null, createdAt: new Date(t.created_at).getTime(), doneAt: t.done_at ? new Date(t.done_at).getTime() : null }));
+  jobs.sort(jobOrder);
   return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears, jobViews, tasks,
     settings: { name: set.agency_name || "ProNext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
@@ -1014,6 +1062,16 @@ function ScoreRing({ value, size = 38 }) {
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(c * v) / 100} ${c}`} />
       </svg>
       <span className="text-[11px] font-semibold" style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
+    </span>
+  );
+}
+// A team member's picture (or initials) with their country's flag at the corner.
+function UserAvatar({ u, size = 36, tone = "em" }) {
+  const init = u.init || initialsOf(u.name || "");
+  return (
+    <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
+      <Avatar init={init} src={u.avatarUrl} tone={tone} size={size} />
+      {u.country && <span className="absolute" style={{ right: -3, bottom: -1, lineHeight: 0 }}><Flag country={u.country} size={Math.max(9, Math.round(size * 0.3))} /></span>}
     </span>
   );
 }
@@ -1890,6 +1948,8 @@ const NAV_ADMIN_EXTRA = [
   { key: "audit", label: "Team audit", icon: Trophy },
   { key: "settings", label: "Agency settings", icon: Settings },
 ];
+// Rec Ops: the recruiters on the team (Users & permissions, recruiters only: country, suspend).
+const NAV_RECOPS_EXTRA = [{ key: "users", label: "Recruiters", icon: Shield }];
 const NAV_RECRUITER = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "candidates", label: "My candidates", icon: Users },
@@ -1918,6 +1978,70 @@ const NOTIF_EVENTS = [
   { key: "jobPosted", label: "New job posted", sub: "A new role goes live." },
 ];
 
+// Where you're based (your flag shows by your picture) and, for recruiters, the roles you can close
+// and the regions you work best in (a new role there emails you first).
+function WorkProfileCard({ S, toast }) {
+  const me = S.me;
+  const rec = me.roleKey === "recruiter";
+  const [f, setF] = useState({ country: me.country || "", specialties: me.specialties || [], regions: me.regions || [] });
+  const [busy, setBusy] = useState(false);
+  const dirty = f.country !== (me.country || "") || JSON.stringify(f.specialties) !== JSON.stringify(me.specialties || []) || JSON.stringify(f.regions) !== JSON.stringify(me.regions || []);
+  const save = () => { setBusy(true); S.updateMyProfile(rec ? f : { country: f.country }).then(() => toast("Saved")).catch(() => {}).finally(() => setBusy(false)); };
+  return (
+    <Card>
+      <SectionTitle title={rec ? "Your work" : "Where you're based"} sub={rec ? "Rec Ops use this to match you to roles, and you're emailed first about new roles in your regions." : "Your country's flag shows next to your picture."} size="text-xl" />
+      <div className="mt-4">
+        {rec ? <RecruiterInfoFields f={f} set={setF} self /> : (
+          <select value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })} aria-label="Country" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
+            <option value="">Choose a country</option>
+            {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+      </div>
+      <Btn kind="primary" full className="mt-5" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
+    </Card>
+  );
+}
+
+// Recruiters who haven't finished setting up their account: asked once each time they open
+// ProNext (they can do it later; it stays on their Overview until it's done).
+function SetupAccountModal({ S, toast }) {
+  const me = S.me;
+  const gaps = setupGaps(me);
+  const [open, setOpen] = useState(() => { try { return gaps.length > 0 && !sessionStorage.getItem("pn.setupLater"); } catch (e) { return gaps.length > 0; } });
+  const [f, setF] = useState({ country: me.country || "", specialties: me.specialties || [], regions: me.regions || [] });
+  const [phone, setPhone] = useState(me.phone || "");
+  const [busy, setBusy] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const fileRef = React.useRef(null);
+  if (!open || !gaps.length) return null;
+  const later = () => { try { sessionStorage.setItem("pn.setupLater", "1"); } catch (e) { /* fine */ } setOpen(false); };
+  const save = () => {
+    setBusy(true);
+    S.updateMyProfile({ ...f, phone: phone.trim() }).then(() => { toast("Account set up. Thank you!"); setOpen(false); }).catch(() => {}).finally(() => setBusy(false));
+  };
+  const onFile = (e) => { const file = e.target.files && e.target.files[0]; e.target.value = ""; if (!file || !file.type.startsWith("image/")) return; setAvatarBusy(true); S.uploadAvatar(file).then(() => toast("Profile picture added")).catch(() => {}).finally(() => setAvatarBusy(false)); };
+  return (
+    <Modal open onClose={later} title="Finish setting up your account">
+      <div className="text-sm mb-4" style={{ color: C.ink2 }}>A few details so Rec Ops can match you to the right roles, and so you hear first about new roles where you work best.</div>
+      <div className="flex items-center gap-3 mb-4">
+        <UserAvatar u={{ ...me, country: f.country }} size={56} />
+        <div>
+          <Btn onClick={() => fileRef.current && fileRef.current.click()} disabled={avatarBusy}>{avatarBusy ? "Uploading\u2026" : me.avatarUrl ? "Change picture" : "Add a profile picture"}</Btn>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+        </div>
+      </div>
+      <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone number</label>
+      <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+234 …" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+      <RecruiterInfoFields f={f} set={setF} self />
+      <div className="flex gap-2 mt-5">
+        <Btn onClick={later}>Later</Btn>
+        <Btn kind="primary" full onClick={save} disabled={busy}>{busy ? "Saving\u2026" : "Save"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function AccountTab({ S, toast }) {
   const me = S.me;
   const [name, setName] = useState(me.name);
@@ -1944,7 +2068,7 @@ function AccountTab({ S, toast }) {
     <Card>
       <div className="flex items-center gap-4 mb-6">
         <div className="relative">
-          <Avatar init={me.init} src={me.avatarUrl} tone="em" size={72} />
+          <UserAvatar u={me} tone="em" size={72} />
           <button onClick={pickAvatar} disabled={avatarBusy} className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center border-2" style={{ background: C.em, borderColor: "#fff" }} title="Change profile picture">
             <Pencil size={12} color="#fff" />
           </button>
@@ -2172,6 +2296,7 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       )}
       {tab === "account" && <MyWins S={S} />}
       {tab === "account" && <AccountTab S={S} toast={toast} />}
+      {tab === "account" && <WorkProfileCard S={S} toast={toast} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
       {tab === "security" && <SecurityTab S={S} toast={toast} />}
       {tab === "calendar" && <GoogleCalendarTab S={S} toast={toast} />}
@@ -2216,7 +2341,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
   const desktop = useDesktop();
   const [collapsed, setCollapsed] = useState(false);
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
-  const extra = role === "admin" ? NAV_ADMIN_EXTRA : [];
+  const extra = role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : [];
   return (
     <div className="flex-col shrink-0 h-screen sticky top-0" style={{ display: desktop ? "flex" : "none", width: collapsed ? 72 : 260, background: C.side }}>
       <div className="flex items-center gap-2.5 px-4 pt-6 pb-5">
@@ -2230,7 +2355,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
       <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
         {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <>
           <NavList items={items} page={page} setPage={setPage} dark badges={badges} />
-          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>ADMIN</div><NavList items={extra} page={page} setPage={setPage} dark badges={badges} /></>}
+          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} dark badges={badges} /></>}
         </>}
       </div>
       {!collapsed && (
@@ -2239,7 +2364,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
         </div>
       )}
       <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full shrink-0" style={{ background: page === "myProfile" ? "rgba(255,255,255,0.07)" : "transparent" }} title="My profile">
-        <Avatar init={me.init} src={me.avatarUrl} tone="em" />
+        <UserAvatar u={me} tone="em" />
         {!collapsed && (
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-white truncate">{me.name}</div>
@@ -2280,7 +2405,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
   const desktop = useDesktop();
   if (!open || desktop) return null;
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
-  const extra = role === "admin" ? NAV_ADMIN_EXTRA : [];
+  const extra = role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : [];
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0" style={{ background: "rgba(20,32,27,0.45)" }} onClick={onClose} />
@@ -2298,7 +2423,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
         </div>
         <div className="pt-3 mt-1" style={{ borderTop: `1px solid ${C.line}` }}>
           <button onClick={() => { setPage("myProfile"); onClose(); }} className="w-full flex items-center gap-2.5 text-left rounded-xl px-3 py-2.5">
-            <Avatar init={me.init} src={me.avatarUrl} tone="em" size={32} />
+            <UserAvatar u={me} tone="em" size={32} />
             <div className="min-w-0"><div className="text-sm font-medium truncate">{me.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{me.label}</div></div>
           </button>
           <button onClick={() => { onClose(); setTimeout(() => window.dispatchEvent(new Event("pn:tour")), 250); }} className="w-full text-left text-sm rounded-xl px-3 py-2.5" style={{ color: C.ink }}>Take the tour</button>
@@ -2316,7 +2441,7 @@ function CommandPalette({ open, onClose, S, role, setPage }) {
   React.useEffect(() => { if (open) { setQ(""); setSel(0); } }, [open]);
   if (!open) return null;
   const recent = (() => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { return []; } })();
-  const pages = [...(role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS), ...(role === "admin" ? NAV_ADMIN_EXTRA : []), { key: "myProfile", label: "My profile", icon: Users }];
+  const pages = [...(role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS), ...(role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : []), { key: "myProfile", label: "My profile", icon: Users }];
   const all = [
     ...S.cands.map((c) => ({ id: "c:" + c.id, kind: "Candidate", title: c.name, sub: [c.role, c.status].filter(Boolean).join(" · "), init: initialsOf(c.name), go: () => S.openCandidate(c.id) })),
     ...S.jobs.map((j) => ({ id: "j:" + j.id, kind: "Job", title: j.role, sub: [j.client, j.status].filter(Boolean).join(" · "), icon: Briefcase, go: () => S.openJob(j.id) })),
@@ -2485,7 +2610,7 @@ async function runProposal(S, p) {
     const nm = i.name || "They";
     if (i.action === "approve_email") {
       const r = await S.sourcing("approve_prospects", { ids: [i.prospect_id] });
-      if (!r.queued && r.held) throw new Error(nm + "'s location needs checking first: open them on the role's Sourcing tab and press Location OK if they can work there.");
+      if (!r.queued && r.held) throw new Error((r.heldWhy || []).includes("location") || !(r.heldWhy || []).length ? nm + "'s location needs checking first: open them on the role's Sourcing tab and press Location OK if they can work there." : nm + " can't be emailed yet: " + (r.heldWhy || []).map((w) => HELD_WHY[w] || w).join("; ") + ".");
       if (!r.queued) throw new Error(nm + " can't be emailed yet: they need an email address and a drafted email. Find their email on the role's Sourcing tab first.");
       return "Approved. " + nm + "'s email goes out with the next send.";
     }
@@ -3412,6 +3537,41 @@ function rolePicks(S, earnings, from, to) {
     return { j, value, currency: earnings ? s.incentiveCurrency : s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
   }).filter((x) => x.j.status === "Open" || x.active > 0).sort((a, b) => b.expected - a.expected || b.value - a.value);
 }
+// A recruiter's Overview: the roles they're engaged on (their worklist), open ones first, with
+// how their own candidates are doing on each.
+function MyEngagedRoles({ S }) {
+  const mine = S.jobs.filter((j) => (j.engagedIds || []).includes(S.me.id) && j.status !== "Draft");
+  const rows = mine.map((j) => {
+    let mineOn = 0, late = 0;
+    S.cands.forEach((c) => { if (c.recruiterId !== S.me.id) return; const l = (c.jobLinks || []).find((x) => x.jobId === j.id); if (l && l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)) { mineOn++; if (["Interview", "Offer", "Placed"].includes(l.stage)) late++; } });
+    const s = suggestBilling(j, null);
+    return { j, mineOn, late, incentive: Number(s.incentive) || 0, cur: s.incentiveCurrency };
+  });
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2"><Briefcase size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Roles you're engaged on</div></div>
+        <button onClick={() => S.go("jobs")} className="text-xs" style={{ color: C.em }}>All roles</button>
+      </div>
+      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Your worklist, with your candidates on each.</div>
+      <div className="mt-3 flex flex-col">
+        {rows.length === 0 && <div className="text-sm py-3" style={{ color: C.ink3 }}>You're not engaged on any roles yet. Open Jobs and engage on one to add it here.</div>}
+        {rows.map((x, i) => (
+          <button key={x.j.id} onClick={() => S.openJob(x.j.id)} className="flex items-center gap-3 py-2.5 text-left" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium truncate">{x.j.role} <span className="font-normal" style={{ color: C.ink3 }}>· {x.j.client}</span></div>
+              <div className="text-xs truncate" style={{ color: C.ink2 }}>{x.mineOn ? plural(x.mineOn, "of your candidates", "of your candidates") + " on it" + (x.late ? ", " + x.late + " at interview or later" : "") : "None of your candidates on it yet"}</div>
+            </div>
+            <div className="text-right shrink-0 flex flex-col items-end gap-1">
+              <StatusPill status={x.j.status} />
+              {x.incentive > 0 && <div className="text-xs" style={{ color: C.ink3 }}>{money(x.incentive, x.cur)} incentive</div>}
+            </div>
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
 function RolePicker({ S, earnings }) {
   const pr = usePeriod("this_month");
   const picks = rolePicks(S, earnings, pr.from, pr.to).slice(0, 6);
@@ -3503,7 +3663,7 @@ function TeamToday({ S }) {
    recruiter, or split between the job's recruiters when none is named) + AI (the actual cost of every AI call, logged in ai_usage). Screening is charged to the person who put the
    candidate forward for that job (candidate_jobs.added_by); screenings from before that logging
    began are estimated at AI_SCREEN_EST each, charged the same way. Calls with nobody behind them
-   (scheduled runs) are shown as System.
+   (scheduled runs, and people no longer on the team) are shown as "Automatic runs" and counted in the totals; an X-ray search is charged to whoever started it.
    Cost per hire = cost / hires. Return = revenue / cost. Money in the goal currency (USD). */
 const AI_SCREEN_EST = 0.01;
 /* Exchange rates (US dollar base) from ExchangeRate-API's free daily feed, kept for 12 hours in this
@@ -3562,7 +3722,8 @@ function RecruiterAuditPage({ S, toast }) {
       .then((r) => setLogFrom(Array.isArray(r) && r[0] ? new Date(r[0].created_at).getTime() : Infinity)).catch(() => setLogFrom(Infinity));
   }, []); // eslint-disable-line
   useEffect(() => {
-    S.sb("/rest/v1/ai_usage?select=user_id,feature,cost_usd,created_at&created_at=gte." + new Date(from).toISOString() + "&created_at=lt." + new Date(to).toISOString() + "&limit=10000")
+    // Added up in the database (ai_usage_totals): reading the rows here stopped at 1,000, so a busy month was undercounted.
+    S.sb("/rest/v1/rpc/ai_usage_totals", { method: "POST", body: { p_from: new Date(from).toISOString(), p_to: new Date(to).toISOString() } })
       .then((r) => setAi(Array.isArray(r) ? r : [])).catch(() => setAi([]));
   }, [from, to]); // eslint-disable-line
   const inP = (t) => t && t >= from && t < to;
@@ -3611,8 +3772,14 @@ function RecruiterAuditPage({ S, toast }) {
     const cost = incentives + tools + adsCost + aiCost;
     return { ...r, hires: pl.length, revenue, incentives, tools, adsCost, aiCost, aiAssistant, aiScreening, oldScreens, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
   });
+  // AI with nobody on the team behind it: automatic runs (scheduled checks, outreach drafts,
+  // client leads) and anyone no longer on the team. Counted in the totals so they match the bill.
+  const teamIdSet = new Set(rows.map((r) => r.u.id));
+  const sysRows = (ai || []).filter((x) => !teamIdSet.has(x.user_id));
+  const sysAi = cv(sysRows.reduce((a, x) => a + Number(x.cost_usd || 0), 0), "USD");
+  const sysFeat = Object.entries(sysRows.reduce((m, x) => { const k = x.user_id ? "former team members" : String(x.feature || "other").replace(/_/g, " "); m[k] = (m[k] || 0) + Number(x.cost_usd || 0); return m; }, {})).sort((a, b) => b[1] - a[1]);
   const sum = (k) => data.reduce((a, x) => a + (x[k] || 0), 0);
-  const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost"), cost: sum("cost") };
+  const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost") + sysAi, cost: sum("cost") + sysAi };
   const m = (v) => { try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: cur, currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(Number(v || 0)); } catch (e) { return money(v, cur); } };
   const m2 = (v) => money2(v, cur);
   const todayYmd = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -3638,7 +3805,7 @@ function RecruiterAuditPage({ S, toast }) {
     S.saveRevenueGoal({ ...goal, toolCosts: { ...tc, apollo: Math.max(0, num(cf.apollo) || 0), brevo: Math.max(0, num(cf.brevo) || 0) }, toolCur: { apollo: cf.apolloCur || baseCur, brevo: cf.brevoCur || baseCur }, adEntries, adSpend: {} })
       .then(() => { setCostsOpen(false); toast("Costs saved"); }).catch(() => {}).finally(() => setCostsBusy(false));
   };
-  const openJobs = S.jobs.filter((j) => j.status !== "Draft").slice().sort((a, b) => (a.status === "Closed") - (b.status === "Closed") || String(a.client).localeCompare(String(b.client)));
+  const openJobs = S.jobs.filter((j) => j.status !== "Draft").slice().sort((a, b) => jobOrder(a, b) || String(a.client).localeCompare(String(b.client)));
   const sel = "rounded-lg border px-2 py-1.5 text-sm w-full min-w-0";
   const curPick = (value, onChange, label, cls) => (
     <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className={cls || "bg-transparent text-xs outline-none"} style={{ color: C.ink2 }}>
@@ -3769,6 +3936,13 @@ function RecruiterAuditPage({ S, toast }) {
                   )}
                 </React.Fragment>
               ))}
+              {sysAi > 0 && (
+                <tr style={{ borderTop: `1px solid ${C.line}` }} title={sysFeat.map(([k, v]) => k + ": " + money2(cv(v, "USD"), cur)).join(" \u00b7 ")}>
+                  <td className="py-2.5 pr-3 whitespace-nowrap"><span className="inline-flex items-center gap-1.5" style={{ color: C.ink2 }}><Bot size={14} />Automatic runs<span className="text-[11px]" style={{ color: C.ink3 }}>System</span></span></td>
+                  <td className="pr-3 text-xs" style={{ color: C.ink3 }}>{sysFeat.slice(0, 2).map(([k]) => k).join(", ")}</td><td className="pr-3">–</td><td className="pr-3">–</td><td className="pr-3">–</td><td className="pr-3">–</td><td className="pr-3">–</td>
+                  <td className="pr-3">{m2(sysAi)}</td><td className="pr-3 font-medium">{m2(sysAi)}</td><td className="pr-3">–</td><td className="pr-3">–</td>
+                </tr>
+              )}
               {data.length > 0 && (
                 <tr className="font-medium" style={{ borderTop: `2px solid ${C.line}` }}>
                   <td className="py-2.5">Total</td><td></td><td>{tot.hires}</td><td>{m(tot.revenue)}</td><td>{m(tot.incentives)}</td><td>{m2(tot.tools)}</td><td>{m2(tot.adsCost)}</td><td>{m2(tot.aiCost)}</td><td>{m2(tot.cost)}</td><td>{tot.hires ? m(tot.cost / tot.hires) : "–"}</td><td>{tot.cost ? (Math.round((tot.revenue / tot.cost) * 10) / 10) + "×" : "–"}</td>
@@ -3915,7 +4089,9 @@ function OverviewRecruiter({ S }) {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
           const routed = linkPeople(S, (l) => l.response === "pending");
+          const gaps = setupGaps(S.me);
           return [
+            { icon: UserCheck, t: "Finish setting up your account", s: "Add " + gaps.join(", ").replace(/, ([^,]*)$/, " and $1"), tone: "warn", people: gaps.length ? [{ name: "Open My profile", sub: gaps.length + " to add", onOpen: () => S.go("myProfile") }] : [], go: "myProfile" },
             { icon: Sparkles, t: "Role matches", s: plural(matches.length, "candidate") + " match other roles", tone: "em", people: matches, go: "candidates" },
             { icon: InboxIcon, t: "Waiting on candidates", s: waiting.length + " awaiting screening answers", tone: "warn", people: waiting, go: "candidates" },
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
@@ -3924,7 +4100,7 @@ function OverviewRecruiter({ S }) {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         <PaceCard S={S} recruiterId={S.me.id} />
-        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} earnings /></div>
+        <div className="lg:col-span-2 min-w-0"><MyEngagedRoles S={S} /></div>
       </div>
     </div>
   );
@@ -3953,10 +4129,15 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   };
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
+  const [blindOpen, setBlindOpen] = useState(false);
+  // Blind resumes waiting: made but not checked, or needed by someone who qualifies for a role.
+  const blindWaiting = S.role === "recruiter" ? 0 : data.filter((c) => !c.isDraft && c.cv && ((c.blind && !c.blind.checkedAt) || (!c.blind && (c.status === "Active file" || (c.jobLinks || []).some((l) => ["Perfect fit", "Good fit"].includes(l.ai && l.ai.verdict)))))).length;
   const [recF, setRecF] = useState([]);
   const [minAi, setMinAi] = useState(0);
   const [roleF, setRoleF] = useState([]);
   const [sourceF, setSourceF] = useState([]);
+  const [countryF, setCountryF] = useState([]);
+  const [jobF, setJobF] = useState([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const gq = (S.query || "").toLowerCase();
@@ -3969,8 +4150,9 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
     (tab === "All" || c.status === tab) && hit(c, q.toLowerCase()) && hit(c, gq) &&
     (!recF.length || recF.includes(c.recruiter)) && c.ai >= minAi &&
     (!roleF.length || roleF.includes(c.role)) && (!sourceF.length || sourceF.includes(c.source)) &&
+    (!countryF.length || countryF.includes(candidateCountry(c) || "_none")) && (!jobF.length || (c.jobLinks || []).some((l) => jobF.includes(l.jobId))) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
-  const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, !!dateFrom, !!dateTo].filter(Boolean).length;
+  const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, countryF.length > 0, jobF.length > 0, !!dateFrom, !!dateTo].filter(Boolean).length;
   const onTab = data.filter((c) => tab === "All" || c.status === tab);   // filter options come from what's on this tab
   const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
@@ -3979,19 +4161,23 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
         <SectionTitle size="text-3xl md:text-4xl" live={[{ n: data.filter((c) => Date.now() - c.createdAt < 7 * 864e5).length, label: "added this week", tone: "em" }, { n: data.filter((c) => c.status === "Interview").length, label: "in interview", tone: "info" }, { n: data.filter((c) => c.status === "Offer").length, label: "at offer", tone: "em" }]} title={scope === "recruiter" ? "Your candidate bench" : "All candidates"} sub={scope === "recruiter" ? "Every applicant you have sourced, and active file candidates ready to reuse." : `${data.length} candidates across every recruiter, client, and source.`} />
         <div className="flex gap-2.5">
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates-" + new Date().toLocaleDateString("en-CA") + ".csv", filtered.map((c) => flat(c, S.jobs))) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
+          {S.role !== "recruiter" && <Btn icon={FileText} onClick={() => setBlindOpen(true)} className="flex-1 md:flex-none justify-center">Blind resumes{blindWaiting ? " (" + blindWaiting + ")" : ""}</Btn>}
           <Btn icon={UserPlus} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
+      {blindOpen && <BlindResumesPanel open onClose={() => setBlindOpen(false)} S={S} toast={toast} />}
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <div className="flex w-full sm:w-60"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
           <FilterPill label="Recruiter" value={recF} onChange={setRecF} options={S.team.map((r) => ({ value: r.name, label: r.name, count: onTab.filter((c) => c.recruiter === r.name).length }))} />
+          <FilterPill label="Job" value={jobF} onChange={setJobF} options={S.jobs.filter((j) => j.status !== "Draft" && onTab.some((c) => (c.jobLinks || []).some((l) => l.jobId === j.id))).map((j) => ({ value: j.id, label: j.role + " \u00b7 " + j.client + (j.status !== "Open" ? " (" + j.status + ")" : ""), count: onTab.filter((c) => (c.jobLinks || []).some((l) => l.jobId === j.id)).length }))} />
+          <FilterPill label="Country" value={countryF} onChange={setCountryF} options={(() => { const n = {}; onTab.forEach((c) => { const k = candidateCountry(c) || "_none"; n[k] = (n[k] || 0) + 1; }); return Object.keys(n).sort((a, b) => (a === "_none") - (b === "_none") || a.localeCompare(b)).map((k) => ({ value: k, label: k === "_none" ? "Not known" : k, count: n[k] })); })()} />
           <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: onTab.filter((c) => c.role === r).length }))} />
           <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
           <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} />
           <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
-          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
+          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setCountryF([]); setJobF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
         </div>
         <DataTable
           rows={filtered}
@@ -5324,6 +5510,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <StatusPill status={status} />
               {candidate.recruiter && <Pill tone="neutral">Sourced by {candidate.recruiter}</Pill>}
               <span title="Whether they agreed, on their candidate page, to be presented anonymously to other employers"><Pill tone={candidate.pitchConsent ? "em" : "neutral"}>{candidate.pitchConsent ? "Open to anonymous pitches" : candidate.pitchAnswered ? "Declined pitches" : "Not asked about pitches yet"}</Pill></span>
+              {candidate.open === false && <span title="They turned 'Open to new roles' off on their candidate page, or started a new job: they aren't put forward until then, unless they turn it back on"><Pill tone="warn">{"Not open to roles" + (candidate.pausedUntil ? " until " + new Date(candidate.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "")}</Pill></span>}
               {candidate.emailOptOut && <span title="They clicked unsubscribe in one of our emails. ProNext no longer emails them; contact them another way."><Pill tone="danger">Unsubscribed from emails</Pill></span>}
             </div>
             {reassign && (
@@ -5547,6 +5734,32 @@ function blindBaseTerms(c) {
   return [name, ...name.split(/\s+/).filter((x) => x.length >= 3), c.emailAddr, c.phone, c.linkedin, c.currentCompany,
     ...(c.industries || []).map((x) => x && x.company)].filter((x) => x && String(x).trim().length >= 2);
 }
+// Reads the CV and covers only the name, address, contact details and employers (plus anything
+// typed in "Anything else to hide?"). Returns { pages: [Blob], boxes, doc }; doc is kept so "Hide
+// these too" can redraw without reading the CV again.
+async function makeBlindPages(S, candidate, more, doc, onStep) {
+  const step = onStep || (() => {});
+  if (!candidate.cv) throw new Error("There's no CV on file for " + candidate.name.split(" ")[0] + ". Upload one first.");
+  let d = doc;
+  if (!d) {
+    step("Loading the blind resume tool…");
+    const R = await loadRedact();
+    step("Downloading the CV…");
+    const blob = await S.downloadResume(candidate.cv);
+    step("Reading the CV…");
+    d = await R.prepare(blob, candidate.cvName || candidate.cv);
+    step("Finding the name, contact details and employers…");
+    let ai = [];
+    try { const r = await S.aiScreen("blind_terms", { candidateId: candidate.id, text: d.text }); ai = r.terms || []; } catch (e) { /* the name, contacts and employers on file are still covered */ }
+    d.terms = [...blindBaseTerms(candidate), ...(d.nameGuess ? [d.nameGuess, ...d.nameGuess.split(/\s+/).filter((x) => x.length >= 3)] : []), ...ai];
+  }
+  step("Covering the details…");
+  const out = await d.render([...d.terms, ...(more || [])], (i, n) => step("Covering page " + i + " of " + n + "…"));
+  return { ...out, doc: d };
+}
+
+// One candidate's blind resume, made (or redone) and checked by eye before saving. Saved on the
+// candidate, so every client link and pitch reuses it. A lead offer (link.offerId) keeps its own.
 function BlindResumeModal({ open, onClose, link, job, candidate, S, toast }) {
   const [step, setStep] = useState("");
   const [err, setErr] = useState("");
@@ -5555,46 +5768,38 @@ function BlindResumeModal({ open, onClose, link, job, candidate, S, toast }) {
   const [extra, setExtra] = useState("");
   const [saving, setSaving] = useState(false);
   const docRef = React.useRef(null);
-  const termsRef = React.useRef([]);
+  const staff = S.role === "admin" || S.role === "recops";
+  const forOffer = !!(link && link.offerId);
+  const first = candidate.name.split(" ")[0];
   const clearPages = () => setPages((old) => { old.forEach((p) => URL.revokeObjectURL(p.url)); return []; });
   const draw = async () => {
-    const d = docRef.current; if (!d) return;
     const more = extra.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
-    setStep("Covering the details…");
-    const out = await d.render([...termsRef.current, ...more], (i, n) => setStep("Covering page " + i + " of " + n + "…"));
+    const out = await makeBlindPages(S, candidate, more, docRef.current, setStep);
+    docRef.current = out.doc;
     clearPages();
     setPages(out.pages.map((b) => ({ blob: b, url: URL.createObjectURL(b) })));
     setBoxes(out.boxes); setStep("");
   };
   const start = async () => {
     setErr(""); clearPages(); setBoxes(0);
-    try {
-      if (!candidate.cv) throw new Error("There's no CV on file for " + candidate.name.split(" ")[0] + ". Upload one first.");
-      setStep("Loading the blind resume tool…");
-      const R = await loadRedact();
-      setStep("Downloading the CV…");
-      const blob = await S.downloadResume(candidate.cv);
-      setStep("Reading the CV…");
-      if (docRef.current) docRef.current.dispose();
-      docRef.current = await R.prepare(blob, candidate.cvName || candidate.cv);
-      setStep("Finding names and employers…");
-      let ai = [];
-      try { const r = await S.aiScreen("blind_terms", { candidateId: candidate.id, text: docRef.current.text }); ai = r.terms || []; } catch (e) { /* the name, contacts and employers on file are still covered */ }
-      termsRef.current = [...blindBaseTerms(candidate), ...(docRef.current.nameGuess ? [docRef.current.nameGuess, ...docRef.current.nameGuess.split(/\s+/).filter((x) => x.length >= 3)] : []), ...ai];
-      await draw();
-    } catch (e) { setErr(e.message || "That didn't work."); setStep(""); }
+    if (docRef.current) { docRef.current.dispose(); docRef.current = null; }
+    try { await draw(); } catch (e) { setErr(e.message || "That didn't work."); setStep(""); }
   };
   React.useEffect(() => { if (open) start(); else { clearPages(); if (docRef.current) { docRef.current.dispose(); docRef.current = null; } } }, [open]); // eslint-disable-line
   const save = async () => {
     setSaving(true);
-    try { await S.saveBlindResume(link, candidate, job, pages.map((p) => p.blob)); toast("Blind resume saved. " + job.client + " sees it on their link."); onClose(); }
+    try {
+      if (forOffer) { await S.saveBlindResume(link, candidate, job, pages.map((p) => p.blob)); toast("Blind resume saved. " + job.client + " sees it on their link."); }
+      else { await S.saveCandidateBlind(candidate, pages.map((p) => p.blob), { checked: staff }); toast(staff ? "Blind resume saved and checked. Every client link and pitch for " + first + " uses it." : "Blind resume saved. Rec Ops will check it before it goes into any pitch."); }
+      onClose();
+    }
     catch (e) { setErr(e.message); }
     setSaving(false);
   };
   return (
-    <Modal open={open} onClose={onClose} title={"Blind resume for " + job.client} wide>
+    <Modal open={open} onClose={onClose} title={forOffer ? "Blind resume for " + job.client : "Blind resume: " + candidate.name} wide>
       <div className="flex flex-col gap-3">
-        <div className="text-sm" style={{ color: C.ink2 }}>{candidate.name.split(" ")[0]}'s own CV with the name, contact details, address, links, photos and every employer blacked out. Check every page: anything still readable here, {job.client} will see.</div>
+        <div className="text-sm" style={{ color: C.ink2 }}>{first}'s own CV with only the name, address, contact details and employer names blacked out. Everything else stays readable. Check every page: anything still readable here, clients will see.{forOffer ? "" : " It's saved once and reused for every client link and pitch."}</div>
         {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{err}</div>}
         {step && <div className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}><InlineDots /> {step}</div>}
         {pages.length > 0 && (
@@ -5607,10 +5812,109 @@ function BlindResumeModal({ open, onClose, link, job, candidate, S, toast }) {
             <textarea id="blind-extra" rows={2} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Words or names, separated by commas" className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} />
             <div className="flex flex-wrap gap-2 justify-end">
               <Btn onClick={() => draw().catch((e) => setErr(e.message))} disabled={!!step || saving || !extra.trim()}>Hide these too</Btn>
-              <Btn kind="primary" onClick={save} disabled={!!step || saving}>{saving ? "Saving…" : "Save blind resume"}</Btn>
+              <Btn kind="primary" onClick={save} disabled={!!step || saving}>{saving ? "Saving…" : staff && !forOffer ? "Looks right: save" : "Save blind resume"}</Btn>
             </div>
           </>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+// Rec Ops / Admin: blind resumes for everyone who needs one, in bulk, then checked one by one.
+//   Needs one   has a CV and qualifies for a role (Perfect or Good fit on a company card) or is on
+//               the Active file, and has no blind resume yet
+//   To check    made (in bulk, or by their recruiter) but nobody has checked it yet
+//   Ready       checked; client links and pitches use these
+function BlindResumesPanel({ open, onClose, S, toast }) {
+  const [tab, setTab] = useState("need");
+  const [picked, setPicked] = useState([]);
+  const [run, setRun] = useState(null); // { i, n, name, step, failed: [] }
+  const [checkFor, setCheckFor] = useState(null);
+  const [viewFor, setViewFor] = useState(null);
+  const qualifies = (c) => c.status === "Active file" || (c.jobLinks || []).some((l) => ["Perfect fit", "Good fit"].includes(l.ai && l.ai.verdict) && l.response !== "declined");
+  const live = S.cands.filter((c) => !c.isDraft && c.cv);
+  const need = live.filter((c) => !c.blind && qualifies(c));
+  const toCheck = live.filter((c) => c.blind && !c.blind.checkedAt);
+  const ready = live.filter((c) => c.blind && c.blind.checkedAt);
+  const rows = tab === "need" ? need : tab === "check" ? toCheck : ready;
+  const why = (c) => { const l = (c.jobLinks || []).find((x) => ["Perfect fit", "Good fit"].includes(x.ai && x.ai.verdict)); const j = l && S.jobs.find((x) => x.id === l.jobId); return j ? l.ai.verdict + " for " + j.role : c.status === "Active file" ? "Active file" : ""; };
+  const makeAll = async () => {
+    const list = need.filter((c) => picked.includes(c.id));
+    const failed = [];
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      setRun({ i: i + 1, n: list.length, name: c.name, step: "", failed });
+      try {
+        const out = await makeBlindPages(S, c, [], null, (st) => setRun((r) => r && { ...r, step: st }));
+        await S.saveCandidateBlind(c, out.pages, { checked: false, quiet: true });
+        out.doc.dispose();
+      } catch (e) { failed.push(c.name + ": " + (e.message || "didn't work")); }
+    }
+    setRun(null); setPicked([]); S.reload();
+    toast("Made " + plural(list.length - failed.length, "blind resume") + ". Check each one before it's used." + (failed.length ? " " + failed.length + " didn't work: " + failed.join("; ") : ""));
+    setTab("check");
+  };
+  const allPicked = need.length > 0 && need.every((c) => picked.includes(c.id));
+  return (
+    <Modal open={open} onClose={run ? () => {} : onClose} title="Blind resumes" wide>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>One blind resume per candidate, made once and reused for every client link and pitch. Only the name, address, contact details and employer names are hidden. Make them in bulk, then check each one by eye.</div>
+        <Tabs tabs={[{ key: "need", label: "Needs one " + need.length }, { key: "check", label: "To check " + toCheck.length }, { key: "ready", label: "Ready " + ready.length }]} active={tab} setActive={(t) => { if (!run) setTab(t); }} />
+        {run && (
+          <div className="rounded-xl px-3.5 py-3 text-sm" style={{ background: C.emTint, color: C.emText }}>
+            <div className="font-medium">Making {run.i} of {run.n}: {run.name}</div>
+            <div className="flex items-center gap-2 mt-1"><InlineDots /> {run.step || "Starting…"}</div>
+            <div className="text-xs mt-1">Keep this window open until it finishes.</div>
+          </div>
+        )}
+        {tab === "need" && need.length > 0 && !run && (
+          <div className="flex flex-wrap items-center gap-2 justify-between">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allPicked} onChange={() => setPicked(allPicked ? [] : need.map((c) => c.id))} /> Select all</label>
+            <Btn kind="primary" disabled={!picked.length} onClick={makeAll}>{picked.length ? "Make " + plural(picked.length, "blind resume") : "Pick candidates"}</Btn>
+          </div>
+        )}
+        <div className="flex flex-col rounded-xl overflow-y-auto" style={{ maxHeight: "50vh", border: `1px solid ${C.line}` }}>
+          {!rows.length && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>{tab === "need" ? "Everyone who qualifies has a blind resume." : tab === "check" ? "Nothing waiting for a check." : "No checked blind resumes yet."}</div>}
+          {rows.map((c, i) => (
+            <div key={c.id} className="flex items-center gap-3 px-3.5 py-2.5" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              {tab === "need" && <input type="checkbox" aria-label={"Pick " + c.name} disabled={!!run} checked={picked.includes(c.id)} onChange={() => setPicked((p) => (p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id]))} />}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{c.name}</div>
+                <div className="text-xs truncate" style={{ color: C.ink2 }}>{tab === "need" ? why(c) : (c.blind.pages + " page" + (c.blind.pages === 1 ? "" : "s") + ", made " + ago(c.blind.at) + (c.blind.by ? " by " + c.blind.by : "") + (c.blind.checkedAt ? " · checked by " + (c.blind.checkedBy || "Rec Ops") + " " + ago(c.blind.checkedAt) : ""))}</div>
+              </div>
+              {tab === "check" && <Btn kind="primary" className="!py-1.5 !px-3 text-xs" disabled={!!run} onClick={() => setViewFor(c)}>Check</Btn>}
+              {tab !== "need" && <Btn className="!py-1.5 !px-3 text-xs" disabled={!!run} onClick={() => setCheckFor(c)}>Redo</Btn>}
+              {tab === "ready" && <Btn className="!py-1.5 !px-3 text-xs" disabled={!!run} onClick={() => setViewFor(c)}>View</Btn>}
+            </div>
+          ))}
+        </div>
+      </div>
+      {checkFor && <BlindResumeModal open onClose={() => setCheckFor(null)} candidate={checkFor} S={S} toast={toast} />}
+      {viewFor && <BlindCheckModal candidate={viewFor} S={S} toast={toast} onClose={() => setViewFor(null)} onRedo={() => { const c = viewFor; setViewFor(null); setCheckFor(c); }} />}
+    </Modal>
+  );
+}
+
+// The saved pages of a candidate's blind resume: "Looks right" marks it checked; "Redo" makes it again.
+function BlindCheckModal({ candidate, S, toast, onClose, onRedo }) {
+  const [urls, setUrls] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const checked = !!(candidate.blind && candidate.blind.checkedAt);
+  React.useEffect(() => { S.blindPageUrls(candidate.id, candidate.blind.pages).then(setUrls).catch((e) => setErr(e.message)); }, [candidate.id]); // eslint-disable-line
+  const approve = async () => { setBusy(true); try { await S.checkCandidateBlind(candidate.id); toast("Checked. " + candidate.name.split(" ")[0] + "'s blind resume is ready for client links and pitches."); onClose(); } catch (e) { setErr(e.message); } setBusy(false); };
+  return (
+    <Modal open onClose={onClose} title={"Check blind resume: " + candidate.name} wide>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>Make sure the name, address, contact details and every employer are covered, and nothing else is.</div>
+        {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{err}</div>}
+        {!urls && !err && <div className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}><InlineDots /> Loading the pages…</div>}
+        {urls && <div className="flex flex-col gap-3 rounded-xl p-3 overflow-y-auto" style={{ background: C.neutralBg, maxHeight: "60vh" }}>{urls.map((u, i) => <img key={i} src={u} alt={"Page " + (i + 1)} className="w-full rounded-md shadow-sm" style={{ background: "#fff" }} />)}</div>}
+        <div className="flex flex-wrap gap-2 justify-end">
+          <Btn onClick={onRedo} disabled={busy}>Redo (hide more)</Btn>
+          {!checked && <Btn kind="primary" onClick={approve} disabled={busy || !urls}>{busy ? "Saving…" : "Looks right"}</Btn>}
+        </div>
       </div>
     </Modal>
   );
@@ -5641,16 +5945,18 @@ function ClientLinkBox({ link, job, candidate, S, toast }) {
           {link.clientRevealed ? "Full details revealed" + (link.clientRevealedAt ? " " + ago(link.clientRevealedAt) : "" ) : "Name, contact and current employer are hidden until you reveal them"}
           {link.clientViewedAt ? " · opened by the client" : ""}
         </div>
-        <div className="text-xs mt-1" style={{ color: link.blindPages ? C.em : C.warnFg }}>
-          {link.blindPages ? "Blind resume ready (" + link.blindPages + " page" + (link.blindPages === 1 ? "" : "s") + ", made " + ago(link.blindAt) + ")" : "No blind resume yet: until you make one, the client sees our summary."}
+        <div className="text-xs mt-1" style={{ color: link.blindPages || candidate.blind ? C.em : C.warnFg }}>
+          {link.blindPages ? "Blind resume made for this link (" + link.blindPages + " page" + (link.blindPages === 1 ? "" : "s") + ", " + ago(link.blindAt) + ")"
+            : candidate.blind ? "Using " + candidate.name.split(" ")[0] + "'s blind resume (" + candidate.blind.pages + " page" + (candidate.blind.pages === 1 ? "" : "s") + ", " + (candidate.blind.checkedAt ? "checked" : "waiting for a Rec Ops check") + ")"
+            : "No blind resume yet: until you make one, the client sees our summary."}
         </div>
       </div>
       <div className="flex gap-2 shrink-0">
-        <Btn onClick={() => setBlindOpen(true)}>{link.blindPages ? "Redo blind resume" : "Make blind resume"}</Btn>
+        <Btn onClick={() => setBlindOpen(true)}>{link.blindPages || candidate.blind ? "Redo blind resume" : "Make blind resume"}</Btn>
         <IconBtn icon={Copy} label="Copy client link" onClick={copy} className="!w-10 !h-10 !rounded-xl" />
         {canManage && !link.clientRevealed && <Btn kind="primary" disabled={busy} onClick={reveal}>{busy ? "Revealing…" : "Reveal full details"}</Btn>}
       </div>
-      {blindOpen && <BlindResumeModal open={blindOpen} onClose={() => setBlindOpen(false)} link={link} job={job} candidate={candidate} S={S} toast={toast} />}
+      {blindOpen && <BlindResumeModal open={blindOpen} onClose={() => setBlindOpen(false)} job={job} candidate={candidate} S={S} toast={toast} />}
     </div>
   );
 }
@@ -8468,7 +8774,8 @@ function ProspectEmailPreview({ S, id, version }) {
     </div>
   );
 }
-const approvedMsg = (n, held) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected." + (held ? " " + held + " not sent: their location needs checking first (Location OK on each)." : "");
+const HELD_WHY = { location: "their location needs checking first (Location OK on each)", "must-have check": "they're still being checked against the must-haves (a few minutes)", "full-profile check": "they're waiting for a full-profile check an Admin approves (Outreach > Approvals)" };
+const approvedMsg = (n, held, why) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected." + (held ? " " + held + " not sent yet: " + ((why && why.length ? why : ["location"]).map((w) => HELD_WHY[w] || w).join("; ")) + "." : "");
 const copyText = (t, toast, label) => { try { navigator.clipboard.writeText(t); toast(label || "Copied"); } catch (e) { toast("Copy failed. Select and copy it manually."); } };
 
 // Paid work (Apollo, TheirStack): an Admin confirms the cost before it runs.
@@ -8673,9 +8980,13 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
   // Held until someone confirms where they are (no location, only a country, a vague place, or a
   // location check that couldn't run). Too far away people are skipped automatically instead.
   const locHold = p.status === "found" && d.location_hold && !d.location_ok ? d.location_hold : "";
-  const canApprove = S && p.email && p.body && p.status === "found" && !locHold;
+  // Apollo people: held until they're through the must-have check, and (when a core must-have isn't
+  // shown anywhere free) until the full-profile check an Admin approves.
+  const mustsHold = p.status === "found" && p.source === "apollo" && !d.musts_v ? "Being checked against the must-haves (their public LinkedIn and Apollo profile). This takes a few minutes." : "";
+  const profileHold = p.status === "found" && d.profile_hold ? "Waiting for a full-profile check before emailing: " + ((d.core_unconfirmed || []).join(", ") || "a core must-have") + " isn't shown anywhere free. An Admin approves it in Outreach > Approvals (People Data Labs, 1 credit per profile found)." : "";
+  const canApprove = S && p.email && p.body && p.status === "found" && !locHold && !mustsHold && !profileHold;
   const locationOk = () => { setActing("loc"); S.sourcing("location_ok", { ids: [p.id] }).then(() => { toast("Location confirmed. " + (p.email ? "They can be approved now." : "")); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
-  const approveOne = () => { setActing("approve"); S.sourcing("approve_prospects", { ids: [p.id] }).then((r) => { toast(approvedMsg(r.queued)); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
+  const approveOne = () => { setActing("approve"); S.sourcing("approve_prospects", { ids: [p.id] }).then((r) => { toast(approvedMsg(r.queued, r.held, r.heldWhy)); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   const testOne = () => { setActing("test"); S.sourcing("test_email", { kind: "p", id: p.id }).then((r) => toast("Test sent to " + r.to)).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
@@ -8695,6 +9006,8 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           <ApolloNote data={d} />
+          {(mustsHold || profileHold) && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}>{mustsHold || profileHold}</div>}
+          {d.profile_checked && d.profile_checked.note && p.status === "found" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Full-profile check: {d.profile_checked.note}.</div>}
           {locHold && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}><span className="font-medium">Check location before emailing:</span> {locHold}{p.location ? " (" + p.location + ")" : ""}. Open their profile, then press Location OK if they can work from {jobLabel ? "the role's location" : "the office"}, or Skip.</div>}
           {found && (d.client_history === "past" || d.location_source === "" || d.remote_worker) && (
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -8851,6 +9164,7 @@ function RecruiterSourcingCard({ job, S, toast, engaged }) {
   const running = !!(st && st.running) || !!(req && req.started_at && !req.finished_at);
   useEffect(() => { if (!running && !waiting) return; const t = setTimeout(load, 5000); return () => clearTimeout(t); }, [st]); // eslint-disable-line
   const search = () => { setBusy("xray"); S.sourcing("xray", { jobId: job.id }).then((r) => { toast(r.message || "X-ray search started."); load(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const stop = () => { setBusy("stop"); S.sourcing("xray_stop", { jobId: job.id }).then((r) => { toast(r.message || "Search stopped."); load(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
   const connected = (p, on) => { setBusy(p.id); S.sb("/rest/v1/rpc/prospect_mark_connected", { method: "POST", body: { p_id: p.id, p_on: on } }).then(() => { toast(on ? "Marked as connected" : "Connection mark removed"); load(); }).catch((e) => S.error(e.message || "That didn't save. Try again.")).finally(() => setBusy("")); };
   const interested = (p) => { setBusy(p.id); S.sb("/rest/v1/rpc/prospect_mark_interested", { method: "POST", body: { p_id: p.id } }).then(() => { toast((p.full_name || "They").split(" ")[0] + " is interested. They'll appear in My candidates on this role in a moment."); setTimeout(() => { load(); S.reload && S.reload(); }, 4000); }).catch((e) => S.error(e.message || "That didn't save. Try again.")).finally(() => setBusy("")); };
   const list = people || [];
@@ -8863,8 +9177,8 @@ function RecruiterSourcingCard({ job, S, toast, engaged }) {
           title={!engaged ? "Engage on this role first" : job.status !== "Open" ? "This role isn't open" : ""}>{busy === "xray" ? "Starting…" : running ? "Searching…" : waiting ? "Waiting to start…" : list.length ? "X-ray search again" : "X-ray search"}</Btn>
       </div>
       {!engaged && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Engage on this role to run an X-ray search for it.</div>}
-      {running && <div className="mt-3"><XrayProgress p={st && st.progress} /></div>}
-      {waiting && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Another search is running on this role. Yours starts by itself as soon as it finishes <InlineDots /></div>}
+      {running && <div className="mt-3"><XrayProgress p={st && st.progress} /><button onClick={stop} disabled={!!busy} className="text-xs font-medium mt-1.5" style={{ color: C.warnFg }}>{busy === "stop" ? "Stopping…" : "Stop search"}</button></div>}
+      {waiting && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Another search is running on this role. Yours starts by itself as soon as it finishes <InlineDots /> <button onClick={stop} disabled={!!busy} className="text-xs font-medium ml-1" style={{ color: C.warnFg }}>{busy === "stop" ? "Cancelling…" : "Cancel"}</button></div>}
       {req && req.finished_at && !running && !waiting && <div className="text-xs mt-3" style={{ color: req.error ? C.warnFg : C.ink2 }}>{req.error ? "Your last search didn't finish: " + req.error : "Your last search " + fdate(req.finished_at) + " found " + plural(req.found || 0, "new person", "new people") + "."}</div>}
       {people === null && !err && <div className="mt-3"><SkeletonRows n={2} /></div>}
       {people && list.length === 0 && engaged && !running && !waiting && <div className="text-sm mt-3" style={{ color: C.ink3 }}>You haven't found anyone for this role yet.</div>}
@@ -8953,6 +9267,7 @@ function JobSourcingCard({ job, S, toast }) {
   const xr = row.xray || null;
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const regen = () => run("titles", () => S.aiScreen("job_titles", { jobId: job.id }).then(() => toast("Parallel titles updated")));
+  const stopXray = () => run("xstop", () => S.sourcing("xray_stop", { jobId: job.id }).then((r) => toast(r.message || "Search stopped.")));
   // One button for every outside source: the free X-ray search starts straight away; Apollo
   // (paid) still needs an Admin's approval.
   const outside = (force) => run("outside", async () => {
@@ -8966,7 +9281,7 @@ function JobSourcingCard({ job, S, toast }) {
   // People Data Labs (paid): Admins confirm the cost; anyone else's click goes to an Admin.
   const searchPdl = () => run("pdl", () => paidAction(S, toast, "search_pdl", { jobId: job.id }, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load));
   const ids = Object.keys(sel).filter((k) => sel[k]);
-  const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }));
+  const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held, r.heldWhy)); }));
   const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
   // X-ray people without an email who haven't been looked up yet (LinkedIn via Apollo, GitHub free).
   const noEmail = prospects.filter((p) => p.data && p.data.xray && !p.email && p.status === "found" && !(p.data.email_lookup || {}).apollo && (p.linkedin_url || (p.source === "github" && !(p.data.email_lookup || {}).github)));
@@ -9015,8 +9330,10 @@ function JobSourcingCard({ job, S, toast }) {
           <div className="text-sm mt-0.5">{src.pdl ? (src.pdl.error || (plural(src.pdl.kept || 0, "strong match", "strong matches") + " of " + (src.pdl.returned || 0) + " returned · " + fdate(src.pdl.at))) : "Not searched yet"}</div>
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
-          <div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
-          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts by itself in a moment <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "the search hit a problem. Search again in a few minutes.") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          <div className="flex items-center justify-between gap-2"><div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
+            {canRun && xrayRunning && <button onClick={stopXray} disabled={!!busy} className="text-xs font-medium" style={{ color: C.warnFg }} title="Stops this search. If it was already reviewing profiles, the best people it reviewed are kept.">{busy === "xstop" ? "Stopping…" : "Stop search"}</button>}</div>
+          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts by itself in a moment <InlineDots /></> : xr.state === "error" ? (xr.stopped ? xr.error : "Didn't finish: " + (xr.error || "the search hit a problem. Search again in a few minutes.")) : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          {xr && xr.state === "done" && xr.early && <div className="text-xs mt-1" style={{ color: C.warnFg }}>{xr.early}</div>}
           {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
         </div>
       </div>
@@ -9111,6 +9428,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
   const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => S.error(e.message));
   const matches = Array.isArray(l.matches) ? l.matches : [];
   const offers = Array.isArray(l.lead_offers) ? l.lead_offers : [];
+  const pitched = l.data && Array.isArray(l.data.pitched) ? l.data.pitched : [];
   const emailable = l.channel === "email" && ["new", "approved"].includes(l.status);
   const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
   const inpS = { borderColor: C.line, background: C.soft };
@@ -9138,12 +9456,31 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
           <ApolloNote data={l.data} />
           {offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
-              {matches.map((m, i) => { const c = S.cands.find((x) => x.id === m.candidate_id); return (
+              {l.status === "awaiting" && (
+                <div className="rounded-lg px-3 py-2 text-xs" style={{ background: C.warnBg, color: C.warnText }}>
+                  {l.notes || "Waiting for a checked blind resume for these candidates."} {l.company} is pitched by itself once one is ready.
+                </div>
+              )}
+              {matches.map((m, i) => { const c = S.cands.find((x) => x.id === m.candidate_id); const inPitch = pitched.includes(m.candidate_id); return (
                 <div key={i} className="rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas }}>
-                  <div className="flex items-center justify-between gap-2"><button className="font-medium truncate text-left" onClick={() => c && S.openCandidate(c.id)} style={{ color: c ? C.em : C.ink }}>{c ? c.name : "Candidate"}</button><span className="shrink-0">{m.fit}% · {m.verdict}</span></div>
+                  <div className="flex items-center justify-between gap-2">
+                    <button className="font-medium truncate text-left" onClick={() => c && S.openCandidate(c.id)} style={{ color: c ? C.em : C.ink }}>{c ? c.name : "Candidate"}</button>
+                    <span className="shrink-0 flex items-center gap-1.5">
+                      <span style={{ color: C.ink2 }}>{m.fit != null ? m.fit + "% · " : ""}{m.verdict}</span>
+                      <Pill tone={inPitch ? "em" : c && c.blind && c.blind.checkedAt ? "info" : "warn"}>{inPitch ? "In the pitch" : c && c.blind ? (c.blind.checkedAt ? "Blind resume ready" : "Blind resume to check") : "No blind resume"}</Pill>
+                    </span>
+                  </div>
                   {(m.bullets || []).length > 0 && <div className="mt-1" style={{ color: C.ink2 }}>{m.bullets.join(" · ")}</div>}
                 </div>
               ); })}
+              {pitched.length > 0 && l.client_token && (
+                <div className="flex flex-wrap items-center gap-2 text-xs mt-0.5">
+                  <span style={{ color: C.ink2 }}>{l.company} sees {pitched.length === 1 ? "this candidate's blind resume" : "these " + pitched.length + " blind resumes"} behind the email's button{l.client_viewed_at ? " (opened " + ago(l.client_viewed_at) + ")" : ""}.</span>
+                  <button onClick={() => window.open("/?t=s-" + l.client_token, "_blank")} className="font-medium" style={{ color: C.em }}>Preview their page</button>
+                  <button onClick={() => copyText(window.location.origin + "/?t=s-" + l.client_token, toast, "Link copied")} className="font-medium" style={{ color: C.em }}>Copy link</button>
+                </div>
+              )}
+              {l.interested_at && <div className="rounded-lg px-3 py-2 text-xs" style={{ background: C.emTint, color: C.emText }}>Interested {ago(l.interested_at)}. {l.contract_sent_at ? "Contract sent " + ago(l.contract_sent_at) + "." : l.contract_flagged_at ? "No contract is set up yet (Outreach > Setup), so send it yourself." : "The contract goes out on the next run."}</div>}
             </div>
           )}
           {l.status === "ignored" && l.notes && <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>{l.notes}</div>}
@@ -9246,22 +9583,15 @@ function OutreachSetup({ S, toast, status, onSaved }) {
             </select>
           </div>
           <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where to look for new clients</label>
-            <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Only for finding companies hiring now (client leads). Outside candidates for a job are always searched where that job is.</div>
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {(f.regions || []).map((k) => (
-                <span key={k} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-0.5 text-xs" style={{ background: C.canvas, border: `1px solid ${C.line}` }}>
-                  {leadPlaceLabel(k)}
-                  <button type="button" aria-label={"Remove " + leadPlaceLabel(k)} onClick={() => set("regions", (f.regions || []).filter((x) => x !== k))} className="w-5 h-5 rounded-full flex items-center justify-center" style={{ color: C.ink2 }}><X size={11} /></button>
-                </span>
-              ))}
-              {!(f.regions || []).length && <span className="text-xs" style={{ color: C.ink3 }}>None chosen: the United States, Europe and Malaysia are used.</span>}
-            </div>
-            <div className="mt-2">
-              <PickList value="" onChange={(v) => v && set("regions", [...new Set([...(f.regions || []), v])])}
-                options={LEAD_PLACE_OPTIONS.filter((o) => !(f.regions || []).includes(o.value))} placeholder="Add a country or Europe…" searchPlaceholder="Search countries"
-                className={inp} style={inpS} />
-            </div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where client leads come from</label>
+            <div className="text-xs mt-1 leading-relaxed" style={{ color: C.ink2 }}>The countries your Active file candidates live in: new roles in their own country only (remote roles are left out). Each email to a company carries up to 5 qualified candidates as blind resumes, so make and check blind resumes under Candidates &gt; Blind resumes.</div>
+          </div>
+          <div className="md:col-span-2 rounded-xl p-3.5 flex flex-col gap-2.5" style={{ background: C.canvas }}>
+            <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!(f.contract && f.contract.enabled)} onChange={(e) => set("contract", { ...(f.contract || {}), enabled: e.target.checked })} /> Send our contract automatically when a company says it's interested</label>
+            <div className="text-xs" style={{ color: C.ink3 }}>It goes from the client sender, to the hiring contact who clicked "We're interested". Until this is set up, Admins get a notice to send it themselves. You can use {"{{first_name}}"}, {"{{company}}"}, {"{{role}}"} and {"{{contract_link}}"}.</div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Subject</label><input value={(f.contract && f.contract.subject) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), subject: e.target.value })} placeholder="Next steps: our agreement for the {{role}} role" className={inp} style={inpS} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label><textarea rows={5} value={(f.contract && f.contract.body) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), body: e.target.value })} placeholder={"Hi {{first_name}},\n\nThanks for your interest in our candidates for the {{role}} role. Here's our agreement to review and sign: {{contract_link}}\n\nOnce it's signed we'll set up interviews straight away."} className={inp} style={inpS} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Link to the contract (https://, e.g. a signing link)</label><input value={(f.contract && f.contract.url) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), url: e.target.value })} placeholder="https://" className={inp} style={inpS} /></div>
           </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside ProNext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
@@ -9409,7 +9739,7 @@ function CampaignsPage({ toast, S }) {
             {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed. When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["skipped", "Skipped"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
             {pfx === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
               <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
-              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }))}>Approve {ids.length || ""}</Btn>
+              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held, r.heldWhy)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
           {tab !== "pool" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>}
@@ -9435,7 +9765,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in the places you chose for titles your candidates hold (everyone in the Active file, and anyone who agreed to be pitched) and keeps the ones where a candidate is a strong fit. You ask each candidate first: they get the role without the employer's name, say yes, and confirm their details. Then ProNext drafts an anonymous pitch to the hiring contact (by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send), and you share their blind resume.</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext pulls new postings in the countries your Active file candidates live in, for the titles they hold, leaving out remote roles, and keeps the ones where up to 5 of them are a strong fit. The hiring contact gets one email with those candidates' blind resumes behind a "View the candidates" button; when they say they're interested, the contract goes out by itself (Outreach settings).</div>
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
@@ -9468,7 +9798,7 @@ function EmailChoiceNote({ token, onChanged, onPitchYes }) {
         .then(() => { clear(); setMsg({ text: "You've been unsubscribed. We won't send you any more emails." }); }).catch(fail);
     } else if (pitch === "yes" || pitch === "no") {
       sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: pitch === "yes" } })
-        .then(() => { clear(); setMsg({ text: pitch === "yes" ? "Thanks. We'll pitch your profile anonymously for roles that fit you, and only share your details once you say yes to a specific role. Please answer the questions below so we match you well." : "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); if (pitch === "yes" && onPitchYes) onPitchYes(); }).catch(fail);
+        .then(() => { clear(); if (pitch === "yes" && onPitchYes) onPitchYes(); else setMsg({ text: "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); }).catch(fail);
     }
   }, [token]);
   if (!msg) return null;
@@ -9534,7 +9864,6 @@ const VISA_OPTIONS = {
   ZA: ["Critical Skills work visa", "General work visa", "Intra-company transfer", "Spousal visa", "Study visa"],
 };
 const EU_ISO = new Set("AT BE BG HR CY CZ DK EE FI FR DE GR HU IT LV LT LU MT NL PL PT RO SK SI ES SE NO CH IS LI".split(" "));
-const isoOf = (name) => (COUNTRY_DATA.find((x) => x.name === name) || {}).iso || "";
 const visaListFor = (country) => { const iso = isoOf(country); return (VISA_OPTIONS[iso] || (EU_ISO.has(iso) ? VISAS_EU : ["Work permit / employment visa", "Intra-company transfer", "Dependant / spouse visa", "Student visa", "Graduate / post-study visa"])).concat(["Other"]); };
 const LANGUAGE_OPTIONS = LANGUAGES.map((l) => ({ value: l, label: l }));
 const INDUSTRY_PICK = INDUSTRY_OPTIONS.map((l) => ({ value: l, label: l }));
@@ -9660,6 +9989,74 @@ const CELEBRATE_CSS = `
 .pn-rise { animation: pn-rise .5s ease-out both }
 @media (prefers-reduced-motion: reduce) { .pn-confetti { display: none } .pn-ring { animation: none; opacity: 0 } .pn-pop, .pn-rise { animation: none } .pn-draw { animation: none; stroke-dashoffset: 0 } }
 `;
+// Answers we could already see (ai-screen prefs_prefill), merged into a fresh form: only values the
+// form can show are kept, and nothing the candidate already answered is overwritten.
+function prefsWithPrefill(p, pre) {
+  if (!pre || typeof pre !== "object") return p;
+  const x = { ...p, salary: { ...p.salary } };
+  const one = (v, list) => (list.includes(v) ? v : "");
+  const keys = (pairs) => pairs.map((a) => a[0]);
+  if (!x.roles.length && Array.isArray(pre.roles)) x.roles = pre.roles.map((r) => String(r || "").trim()).filter(Boolean).slice(0, 5);
+  if (!x.seniority) x.seniority = one(pre.seniority, SENIORITY);
+  if (!x.employmentTypes.length && Array.isArray(pre.employmentTypes)) x.employmentTypes = pre.employmentTypes.filter((v) => EMPLOYMENT_TYPES.includes(v));
+  if (!(Number(x.salary.min) > 0) && pre.salary && Number(pre.salary.min) > 0) {
+    const cur = CURRENCY_OPTIONS.some((o) => o.value === pre.salary.currency) ? pre.salary.currency : x.salary.currency;
+    x.salary = { min: String(Math.round(pre.salary.min)), max: Number(pre.salary.max) > Number(pre.salary.min) ? String(Math.round(pre.salary.max)) : "", currency: cur, period: keys(PAY_PERIODS).includes(pre.salary.period) ? pre.salary.period : "year" };
+  }
+  if (!x.currentCountry && COUNTRIES.includes(pre.currentCountry)) { x.currentCountry = pre.currentCountry; if (!x.salary.currency) x.salary.currency = COUNTRY_CURRENCY[pre.currentCountry] || ""; }
+  if (!x.currentCity && pre.currentCity && x.currentCountry) x.currentCity = String(pre.currentCity);
+  if (!x.relocate) x.relocate = one(pre.relocate, keys(RELOCATE));
+  if (!x.workSetup.length && Array.isArray(pre.workSetup)) x.workSetup = pre.workSetup.filter((v) => keys(WORK_SETUPS).includes(v));
+  // Citizenship, visa and sponsorship are never filled in for them: they're always asked directly,
+  // with the follow-up questions they lead to.
+  const langs = Array.isArray(pre.languages) ? pre.languages.filter((l) => l && LANGUAGES.includes(l.language)).map((l) => ({ language: l.language, level: LANG_LEVELS.includes(l.level) ? l.level : "" })) : [];
+  if (langs.length && !x.languages.some((l) => l.level)) x.languages = langs;
+  if (!x.availability) x.availability = one(pre.availability, AVAILABILITY);
+  if (!x.industries.length && Array.isArray(pre.industries)) x.industries = pre.industries.filter((v) => INDUSTRY_OPTIONS.includes(v));
+  x.locationConfirmed = x.locationConfirmed || !!(x.currentCountry && x.currentCity);
+  return x;
+}
+// The form steps whose answer is already complete (they go on the review step instead of being asked).
+// Questions that need the candidate's own clear answer (citizenship and the visa follow-ups, and which
+// cities they'd move to) are always asked, never put on the review step, unless they're changing
+// answers they gave themselves before.
+const PREF_ALWAYS_ASK = ["citizen", "visa", "visaExpiry", "sponsorship", "cities"];
+function prefsKnownKeys(p, saved) {
+  const order = ["roles", "seniority", "employmentTypes", "salary", "location", "relocate", "cities", "workSetup", "citizen", "visa", "visaExpiry", "sponsorship", "languages", "availability", "industries"];
+  return order.filter((k) => {
+    if (!saved && PREF_ALWAYS_ASK.includes(k)) return false;
+    if (k === "cities") return saved && p.relocate && p.relocate !== "no" && p.preferredCities.length > 0;
+    if (["visa", "visaExpiry", "sponsorship"].includes(k) && p.citizen !== false) return false;
+    if (k === "visaExpiry") return saved && !PREF_CHECKS.visaExpiry(p);
+    return !PREF_CHECKS[k](p);
+  });
+}
+const PREF_LABELS = { roles: "Roles you're looking for", seniority: "Level", employmentTypes: "Type of work", salary: "Salary", location: "Where you're based", relocate: "Would you move within your country", cities: "Preferred cities", workSetup: "Remote, hybrid or on-site", citizen: "Citizen or permanent resident", visa: "Visa", visaExpiry: "Visa expiry", sponsorship: "Sponsorship needed", languages: "Languages", availability: "When you could start", industries: "Industries" };
+function prefsAnswerText(k, p) {
+  const label = (list, v) => (list.find((x) => x[0] === v) || [v, v])[1];
+  const s = p.salary || {};
+  switch (k) {
+    case "roles": return p.roles.join(", ");
+    case "seniority": return p.seniority;
+    case "employmentTypes": return p.employmentTypes.join(", ");
+    case "salary": return Number(s.min) > 0 ? (s.currency || "") + " " + Number(s.min).toLocaleString("en-US") + (Number(s.max) > Number(s.min) ? " – " + Number(s.max).toLocaleString("en-US") : "") + " " + label(PAY_PERIODS, s.period || "year") : "";
+    case "location": return [p.currentCity, p.currentCountry].filter(Boolean).join(", ");
+    case "relocate": return label(RELOCATE, p.relocate);
+    case "cities": return p.preferredCities.join(", ");
+    case "workSetup": return p.workSetup.map((v) => label(WORK_SETUPS, v)).join(", ");
+    case "citizen": return p.citizen === true ? "Yes" : p.citizen === false ? "No" : "";
+    case "visa": return p.visaType === "Other" ? p.visaOther : p.visaType;
+    case "visaExpiry": return p.visaNoExpiry ? "Doesn't expire" : p.visaExpiry;
+    case "sponsorship": return label(SPONSOR, p.sponsorship);
+    case "languages": return p.languages.filter((l) => l.language).map((l) => l.language + (l.level ? " (" + l.level + ")" : "")).join(", ");
+    case "availability": return p.availability;
+    case "industries": return p.industries.join(", ");
+    default: return "";
+  }
+}
+// The form's own choices, sent to ai-screen prefs_prefill so every value it fills in is one the form can show.
+const PREF_OPTIONS = () => ({ seniority: SENIORITY, employmentTypes: EMPLOYMENT_TYPES, availability: AVAILABILITY, workSetup: WORK_SETUPS.map((x) => x[0]), relocate: RELOCATE.map((x) => x[0]), sponsorship: SPONSOR.map((x) => x[0]), industries: INDUSTRY_OPTIONS, languages: LANGUAGES, langLevels: LANG_LEVELS });
+
 function PreferencesDone({ p, name, preview, onClose }) {
   const [burst, setBurst] = useState(1);
   useEffect(() => { const t = setTimeout(() => setBurst((n) => n + 1), 1700); return () => clearTimeout(t); }, []);
@@ -9721,8 +10118,21 @@ function QuizOption({ selected, onClick, children, hint, multi }) {
 const quizInp = "w-full rounded-2xl border px-4 py-3.5 text-[15px] outline-none bg-white";
 const quizInpS = { borderColor: C.line, borderWidth: 1.5 };
 
-function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
-  const [p, setP] = useState(() => prefsStart(initial, known));
+// prefill: answers we can already see (CV, profile, earlier answers), from ai-screen prefs_prefill.
+// They're shown on a "Here's what we have" step to check or change, and only the questions we
+// couldn't answer are asked one by one. onFinished: called after saving instead of the
+// celebration screen (the candidate page shows its own thank-you).
+// before: steps asked first, in the same look (the Send-us-your-CV page: their details and CV),
+// { steps: [{ key, title, sub, body: () => JSX, check: () => message | "" }], submitLabel, busyLabel,
+// onDone: async () => prefill }. Once they're done, onDone's prefill fills in the form.
+function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished, preview, before }) {
+  const [p, setP] = useState(() => prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill));
+  // The answers already filled in when the form opened: these go on the review step.
+  const [knownKeys, setKnownKeys] = useState(() => (before ? [] : prefsKnownKeys(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill), !!initial)));
+  const [phase, setPhase] = useState(before ? "before" : "main");
+  const [bi, setBi] = useState(0);
+  const inBefore = phase === "before";
+  const [edit, setEdit] = useState(null); // a step opened from the review step to change it
   const [i, setI] = useState(0);
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -9737,7 +10147,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
   const knownPlace = [p.currentCity, p.currentCountry].filter(Boolean).join(", ");
 
   // The steps, in order; visa steps only for people who aren't citizens, cities only if they'd move.
-  const steps = [
+  const allSteps = [
     { key: "roles", check: "roles", title: "What roles are you looking for?", sub: "Add up to five job titles." },
     { key: "seniority", check: "seniority", title: "What level are you at?", sub: "The level you'd like your next role to be.", auto: true },
     { key: "employmentTypes", check: "employmentTypes", title: "What type of work do you want?", sub: "Choose all that apply." },
@@ -9756,32 +10166,67 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
     { key: "availability", check: "availability", title: "When could you start a new role?", auto: true },
     { key: "industries", check: "industries", title: "Which industries have you worked in?", sub: "Choose all that apply." },
   ];
-  const step = steps[Math.min(i, steps.length - 1)];
-  const msg = step.check ? PREF_CHECKS[step.check](p) : "";
-  const last = i >= steps.length - 1;
-  useEffect(() => { setTried(false); setDraft(""); setErr(""); window.scrollTo && window.scrollTo(0, 0); }, [i]);
+  // Asked one by one: only what we didn't already have (a step stays known even if a change on the
+  // review step makes new ones appear, like the visa questions after "not a citizen").
+  const review = knownKeys.length ? [{ key: "review", title: "Here's what we already have", sub: initial ? "Your job preferences. Change anything that's out of date." : before ? "Read from your CV. Change anything that's out of date or wrong." : "From your CV and your earlier answers. Change anything that's out of date or wrong." }] : [];
+  const steps = [...review, ...allSteps.filter((x) => !knownKeys.includes(x.key))];
+  const step = inBefore ? before.steps[bi] : edit ? allSteps.find((x) => x.key === edit) || steps[0] : steps[Math.min(i, steps.length - 1)];
+  const msg = inBefore ? (step.check ? step.check() : "") : step.check ? PREF_CHECKS[step.check](p) : "";
+  const last = !inBefore && !edit && i >= steps.length - 1;
+  const lastBefore = inBefore && bi >= before.steps.length - 1;
+  const offset = before ? before.steps.length : 0;
+  const total = offset + (inBefore ? Math.max(steps.length, 1) : steps.length);
+  const pos = inBefore ? bi : offset + i;
+  useEffect(() => { setTried(false); setDraft(""); setErr(""); window.scrollTo && window.scrollTo(0, 0); }, [i, edit, bi]);
+  // The before steps are done (e.g. the CV is sent): fill in what we can and carry on with the form.
+  const runBefore = async () => {
+    setBusy(true); setErr("");
+    try {
+      const pre = await before.onDone();
+      const fresh = prefsWithPrefill(prefsStart(null, known), pre);
+      setP(fresh); setKnownKeys(prefsKnownKeys(fresh, false)); setPhase("main"); setI(0);
+    } catch (e) { setErr(e.message || "That didn't go through. Please try again."); }
+    setBusy(false);
+  };
 
   const finish = async () => {
     const errs = prefsErrors(p);
-    const firstBad = steps.findIndex((s) => s.check && errs[s.check]);
-    if (firstBad >= 0) { setI(firstBad); setTimeout(() => setTried(true), 0); return; }
+    const bad = allSteps.find((x) => x.check && errs[x.check]);
+    if (bad) { const at = steps.findIndex((x) => x.key === bad.key); if (at >= 0) { setEdit(null); setI(at); } else setEdit(bad.key); setTimeout(() => setTried(true), 0); return; }
     setBusy(true); setErr("");
-    try { await onSave(prefsToSave(p)); setDone(true); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
+    try { const saved = prefsToSave(p); await onSave(saved); if (onFinished) onFinished(saved); else setDone(true); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
     setBusy(false);
   };
-  const next = () => { if (msg) { setTried(true); return; } if (last) finish(); else setI(i + 1); };
-  const back = () => { if (i > 0) setI(i - 1); else if (onClose) onClose(); };
-  // Single-choice answers move on by themselves, after a beat so the tap registers visually.
-  const pick = (k, v) => { setP((x) => ({ ...x, [k]: v })); setTimeout(() => setI((n) => Math.min(n + 1, steps.length)), 220); };
+  const next = () => {
+    if (msg) { setTried(true); return; }
+    if (inBefore) { if (lastBefore) runBefore(); else setBi(bi + 1); return; }
+    if (edit) { setEdit(null); return; } if (last) finish(); else setI(i + 1);
+  };
+  const back = () => { if (inBefore) { if (bi > 0) setBi(bi - 1); else if (onClose) onClose(); return; } if (edit) setEdit(null); else if (i > 0) setI(i - 1); else if (onClose) onClose(); };
+  // Single-choice answers move on by themselves, after a beat so the tap registers visually
+  // (back to the review step when the answer was changed from there).
+  const pick = (k, v) => { setP((x) => ({ ...x, [k]: v })); setTimeout(() => { if (edit) setEdit(null); else setI((n) => Math.min(n + 1, steps.length - 1)); }, 220); };
   useEffect(() => { if (i >= steps.length) setI(steps.length - 1); }, [steps.length]); // eslint-disable-line
 
   const addChip = (k, v, max) => { const t = String(v || "").trim(); if (t && !p[k].includes(t) && (!max || p[k].length < max)) set(k, [...p[k], t]); setDraft(""); };
   const visas = visaListFor(p.currentCountry);
   const cities = (CITY_STATE_OPTIONS[p.currentCountry] || []).map((c) => c.split(",")[0].trim()).filter((c) => c !== p.currentCity);
-  const pct = done ? 100 : Math.round((i / steps.length) * 100);
+  const pct = done ? 100 : Math.round((pos / total) * 100);
 
   const body = () => {
+    if (inBefore) return step.body();
     switch (step.key) {
+      case "review": return (
+        <div className="flex flex-col gap-2.5">
+          {knownKeys.map((k) => { const st = allSteps.find((x) => x.key === k); if (!st) return null; return (
+            <div key={k} className="rounded-2xl px-4 py-3.5 flex items-start gap-3" style={{ background: C.card, border: `1.5px solid ${C.line}` }}>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.ink3 }}>{PREF_LABELS[k] || st.title}</div>
+                <div className="text-[15px] mt-0.5" style={{ color: C.ink }}>{prefsAnswerText(k, p) || "—"}</div>
+              </div>
+              <button type="button" onClick={() => setEdit(k)} className="text-sm font-semibold shrink-0 pt-0.5" style={{ color: C.em }}>Change</button>
+            </div>); })}
+        </div>);
       case "roles": return (
         <div className="flex flex-col gap-3">
           {p.roles.length > 0 && <div className="flex flex-wrap gap-2"><Chips items={p.roles} onRemove={(r) => set("roles", p.roles.filter((x) => x !== r))} /></div>}
@@ -9868,9 +10313,9 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
     <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: C.soft, ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
       <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
-          <button type="button" onClick={done ? onClose : back} aria-label={i === 0 || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{i === 0 || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
+          <button type="button" onClick={done ? onClose : back} aria-label={(inBefore ? bi === 0 : i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(inBefore ? bi === 0 : i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
           <BrandLogo height={24} />
-          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{done ? steps.length : i + 1}/{steps.length}</span>
+          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{edit ? "Edit" : inBefore ? "Step " + (bi + 1) : (done ? total : pos + 1) + "/" + total}</span>
         </div>
         <div style={{ height: 3, background: "#ECE9E2" }}><div style={{ height: 3, width: pct + "%", background: C.em, transition: "width .3s ease" }} /></div>
       </div>
@@ -9892,7 +10337,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
         <div className="fixed bottom-0 inset-x-0 px-4 pb-5 pt-3" style={{ background: "linear-gradient(to top, #FBFAF7 70%, rgba(251,250,247,0))" }}>
           <div className="max-w-md mx-auto">
             <button type="button" onClick={next} disabled={busy} className="w-full rounded-2xl py-4 text-[15px] font-semibold" style={{ background: msg ? "#B9C7BF" : C.em, color: "#fff" }}>
-              {busy ? <>Saving <InlineDots color="#fff" /></> : last ? "Finish" : step.key === "cities" && !p.preferredCities.length ? "Skip" : "Continue"}
+              {busy ? <>{inBefore ? before.busyLabel || "Sending" : "Saving"} <InlineDots color="#fff" /></> : lastBefore ? before.submitLabel || "Continue" : inBefore ? "Continue" : edit ? "Done" : step.key === "review" ? (last ? "Looks right: finish" : "Looks right") : last ? "Finish" : step.key === "cities" && !p.preferredCities.length ? "Skip" : "Continue"}
             </button>
           </div>
         </div>
@@ -10026,50 +10471,138 @@ function PreferencesSummary({ p, staff }) {
 
 // Candidate page card. Unanswered: a short invitation that opens the quiz (it opens by itself right
 // after they click Yes, or from ?prefs=1 in the invite email). Answered: a summary they can redo.
-function PortalPreferences({ token, pitchConsent, openSignal, name }) {
+// "Help us match you" on the candidate page. Opens first when they click Yes in an email (openSignal)
+// or arrive with ?prefs=1; answers we can already see are filled in for them to check (prefill,
+// worked out once by ai-screen and cached). onThanks("finished" | "closed") tells the page to show
+// its thank-you once the form is done with. Once they've answered, their answers aren't shown here:
+// "Edit my information" emails a code (candidate-otp) and the code opens the form with them.
+function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) {
   const [state, setState] = useState(null);
   const [open, setOpen] = useState(false);
+  const [prefill, setPrefill] = useState(undefined); // undefined = not looked up yet
+  const [loadingPrefill, setLoadingPrefill] = useState(false);
+  const [editing, setEditing] = useState(null); // { session, preferences } once the code is right
+  const [askCode, setAskCode] = useState(false);
   const autoOpened = React.useRef(false);
+  const fromEmail = React.useRef(false);
   const load = () => sbFetch("/rest/v1/rpc/candidate_preferences", { method: "POST", body: { p_token: token } }).then(setState).catch(() => setState({ error: true }));
   useEffect(() => { if (token) load(); }, [token, openSignal]); // eslint-disable-line
   const wantsOpen = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("prefs") === "1";
+  const has = !!(state && (state.hasPreferences || state.preferences));
+  // Before the form opens: what we can already fill in (from the cache, else asked for now, ~20 s at most).
+  const openForm = async (st) => {
+    const cur = st || state;
+    if (!cur || prefill !== undefined) { setOpen(true); return; }
+    if (cur.prefill) { setPrefill(cur.prefill); setOpen(true); return; }
+    setLoadingPrefill(true);
+    const ask = fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefs_prefill", token, options: PREF_OPTIONS() }) })
+      .then((r) => r.json()).then((j) => (j && j.prefill) || null).catch(() => null);
+    const pre = await Promise.race([ask, new Promise((ok) => setTimeout(() => ok(null), 20000))]);
+    setPrefill(pre); setLoadingPrefill(false); setOpen(true);
+  };
   useEffect(() => {
     if (!state || state.error || autoOpened.current) return;
-    if ((wantsOpen || openSignal) && !state.preferences) { autoOpened.current = true; setOpen(true); }
+    const saved = state.hasPreferences || state.preferences;
+    if ((wantsOpen || openSignal) && !saved) { autoOpened.current = true; fromEmail.current = !!openSignal; openForm(state); }
+    else if (openSignal && saved && onThanks) { autoOpened.current = true; onThanks("finished"); }
   }, [state, openSignal]); // eslint-disable-line
+  if (loadingPrefill) return (
+    <div className="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: C.soft }} role="status">
+      <BrandLogo height={26} />
+      <div className="text-lg font-semibold mt-4" style={{ color: C.ink }}>Getting your answers ready</div>
+      <div className="text-sm max-w-xs" style={{ color: C.ink2 }}>We're filling in what we already know from your CV and earlier answers, so you only answer what's new.</div>
+      <InlineDots />
+    </div>
+  );
   if (!state || state.error) return null;
   const consent = pitchConsent || state.pitchConsent;
-  if (!consent && !wantsOpen && !state.preferences) return null;
-  const has = !!state.preferences;
-  const save = (prefs) => sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs } });
-  const close = () => {
-    setOpen(false); load();
-    try { const u = new URL(window.location.href); if (u.searchParams.get("prefs")) { u.searchParams.delete("prefs"); window.history.replaceState({}, "", u.toString()); } } catch (e) { /* fine */ }
-  };
+  const save = (prefs) => sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs, ...(editing ? { p_session: editing.session } : {}) } });
+  const clearQ = () => { try { const u = new URL(window.location.href); if (u.searchParams.get("prefs")) { u.searchParams.delete("prefs"); window.history.replaceState({}, "", u.toString()); } } catch (e) { /* fine */ } };
+  const close = () => { setOpen(false); setEditing(null); load(); clearQ(); if (fromEmail.current && onThanks) { fromEmail.current = false; onThanks("closed"); } };
+  const finished = () => { const wasEdit = !!editing; setOpen(false); setEditing(null); load(); clearQ(); fromEmail.current = false; if (onThanks) onThanks(wasEdit ? "updated" : "finished"); window.scrollTo && window.scrollTo(0, 0); };
   return (
     <>
+      <PortalOpenToggle token={token} state={state} onChanged={load} />
       {has ? (
         <Card>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-xl" style={{ ...SERIF }}>My job preferences</div>
-              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>We only recommend you for roles that fit these.</div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-xl" style={{ ...SERIF }}>My job information</div>
+              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>Saved{state.savedAt ? " " + fdate(state.savedAt) : ""}. We only put you forward for roles that fit it. To keep it private, we email you a code before showing or changing it{state.emailMasked ? " (" + state.emailMasked + ")" : ""}.</div>
             </div>
-            <IconBtn icon={Pencil} label="Edit my job preferences" onClick={() => setOpen(true)} />
+            <Btn kind="primary" icon={Pencil} onClick={() => setAskCode(true)} className="justify-center shrink-0">Edit my information</Btn>
           </div>
-          <div className="mt-3"><PreferencesSummary p={state.preferences} /></div>
         </Card>
-      ) : (
+      ) : consent || wantsOpen ? (
         <div className="rounded-2xl p-5 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4" style={{ background: C.side, color: "#fff" }}>
           <div className="flex-1">
             <div className="text-xl" style={{ ...SERIF, color: C.lime }}>Help us match you</div>
-            <div className="text-sm mt-1" style={{ color: "#C9D6CE" }}>A few quick questions so we only recommend you for roles that really fit. About two minutes.</div>
+            <div className="text-sm mt-1" style={{ color: "#C9D6CE" }}>A few quick questions so we only recommend you for roles that really fit. We've filled in what we already know.</div>
           </div>
-          <button type="button" onClick={() => setOpen(true)} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
+          <button type="button" onClick={() => openForm()} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
         </div>
-      )}
-      {open && <PreferencesQuiz initial={state.preferences} known={{ ...state, name }} onSave={save} onClose={close} />}
+      ) : null}
+      {askCode && <EditCodeModal token={token} emailMasked={state.emailMasked} onClose={() => setAskCode(false)}
+        onVerified={(session) => sbFetch("/rest/v1/rpc/candidate_preferences_edit", { method: "POST", body: { p_token: token, p_session: session } })
+          .then((d) => { setAskCode(false); setEditing({ session, preferences: d && d.preferences }); setOpen(true); })} />}
+      {open && <PreferencesQuiz key={editing ? "edit" : "new"} initial={editing ? editing.preferences : null} known={{ location: state.location, name }} prefill={editing ? null : prefill || null} onSave={save} onClose={close} onFinished={finished} />}
     </>
+  );
+}
+
+// "Open to new roles": off means we don't put them forward for a year (or until they turn it back
+// on). It goes off by itself when they start a new job through us.
+function PortalOpenToggle({ token, state, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const on = state.open !== false;
+  const flip = () => {
+    setBusy(true);
+    sbFetch("/rest/v1/rpc/candidate_set_open", { method: "POST", body: { p_token: token, p_open: !on } })
+      .then(() => onChanged && onChanged()).catch((e) => popError(e)).finally(() => setBusy(false));
+  };
+  return (
+    <Card>
+      <div className="flex items-center gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-base font-semibold">Open to new roles</div>
+          <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{on
+            ? "We'll put your profile forward, anonymously, for roles that fit you. It turns off by itself when you start a new job through us."
+            : "We won't put you forward for new roles" + (state.pausedUntil ? " until " + new Date(state.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : " for a year") + ", unless you turn this back on."}</div>
+        </div>
+        <button type="button" role="switch" aria-checked={on} aria-label="Open to new roles" disabled={busy} onClick={flip}
+          className="relative shrink-0 rounded-full" style={{ width: 52, height: 30, background: on ? C.em : C.line, transition: "background .2s", opacity: busy ? 0.6 : 1 }}>
+          <span className="absolute rounded-full bg-white" style={{ top: 3, left: on ? 25 : 3, width: 24, height: 24, transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,.2)" }} />
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+// Asks for the 6-digit code we email (candidate-otp) before their saved information is shown.
+function EditCodeModal({ token, emailMasked, onClose, onVerified }) {
+  const [sent, setSent] = useState(null); // { to } once sent
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const call = (body) => fetch(SB_URL + "/functions/v1/candidate-otp", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) })
+    .then((r) => r.json().then((j) => { if (!r.ok || j.error) throw new Error(j.error || "Something went wrong. Please try again."); return j; }));
+  const send = () => { setBusy("send"); setErr(""); call({ action: "send" }).then((j) => setSent({ to: j.to || emailMasked })).catch((e) => setErr(e.message)).finally(() => setBusy("")); };
+  useEffect(() => { send(); }, []); // eslint-disable-line
+  const verify = () => { setBusy("verify"); setErr(""); call({ action: "verify", code }).then((j) => onVerified(j.session)).catch((e) => setErr(e.message)).finally(() => setBusy("")); };
+  return (
+    <Modal open onClose={onClose} title="Check it's you">
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>{sent ? "We've emailed a 6-digit code to " + (sent.to || "your email") + ". Enter it to see and edit your information. It works for 10 minutes." : busy === "send" ? "Sending a code to " + (emailMasked || "your email") + "…" : "We'll email you a code."}</div>
+        <input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onKeyDown={(e) => { if (e.key === "Enter" && code.length === 6) verify(); }} placeholder="••••••" aria-label="6-digit code"
+          className="w-full rounded-xl border px-4 py-3 text-center text-2xl tracking-[0.5em] outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} />
+        {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+        <div className="flex flex-wrap gap-2 justify-between items-center">
+          <button type="button" onClick={send} disabled={!!busy} className="text-sm font-medium" style={{ color: C.em }}>Send a new code</button>
+          <Btn kind="primary" onClick={verify} disabled={!!busy || code.length !== 6}>{busy === "verify" ? "Checking…" : "Continue"}</Btn>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -10230,6 +10763,58 @@ function ProtectedPages({ pages, client }) {
 
 // Public page behind the blind-profile link shared with a client: /?t=<client_token>.
 // Blind until the recruiter reveals it -- same link, same token, no second link to send.
+// Client leads: the page behind the pitch's "View the candidates" button (/?t=s-<token>). Up to
+// five candidates, each as a blind resume with their selling points (no names), and "We're
+// interested", which sends our contract by itself.
+function ShortlistPage({ token }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(0);
+  const call = (action) => fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, action }) })
+    .then((r) => r.json().then((j) => { if (!r.ok || j.error) throw new Error(j.error || "This link is not valid."); return j; }));
+  React.useEffect(() => { call("shortlist").then(setD).catch((e) => setErr(e.message)); }, [token]); // eslint-disable-line
+  const interested = () => { setBusy(true); call("shortlist_interest").then(() => setD((x) => ({ ...x, interested: true }))).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  const list = (d && d.candidates) || [];
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-3xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        {err && <Card><div className="text-sm" style={{ color: C.dangerFg }}>{err === "Link not found" ? "This link is not valid any more." : err}</div></Card>}
+        {!d && !err && <div className="py-10 flex justify-center"><LogoSpinner compact label="" /></div>}
+        {d && (
+          <>
+            <Card>
+              <div className="text-xs font-semibold tracking-widest" style={{ color: C.em }}>CANDIDATES FOR YOUR ROLE</div>
+              <div className="text-2xl mt-1" style={{ ...SERIF }}>{d.role}</div>
+              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{[d.company, d.location].filter(Boolean).join(" · ")}</div>
+              <div className="text-sm mt-3" style={{ color: C.ink2 }}>{list.length === 1 ? "One candidate" : list.length + " candidates"} who fit this role, presented anonymously: names, contact details and employers are hidden until you'd like to talk to them.</div>
+              <div className="mt-4">
+                {d.interested
+                  ? <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.emText }}>Thanks! We've got your interest and will send our agreement shortly so we can set up interviews.</div>
+                  : <Btn kind="primary" disabled={busy} onClick={interested}>{busy ? "Sending…" : "We're interested"}</Btn>}
+              </div>
+            </Card>
+            {list.map((c, i) => (
+              <Card key={i}>
+                <button type="button" onClick={() => setOpen(open === i ? -1 : i)} className="w-full flex items-start justify-between gap-3 text-left">
+                  <div className="min-w-0">
+                    <div className="text-base font-semibold">Candidate {c.n}{c.verdict ? <span className="ml-2 align-middle"><Pill tone="em">{c.verdict}</Pill></span> : null}</div>
+                    {c.bullets.length > 0 && <ul className="mt-2 flex flex-col gap-1 text-sm" style={{ color: C.ink2 }}>{c.bullets.map((b, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" />{b}</li>)}</ul>}
+                  </div>
+                  <span className="text-sm font-medium shrink-0" style={{ color: C.em }}>{open === i ? "Hide CV" : "View CV"}</span>
+                </button>
+                {open === i && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
+                  : <div className="text-sm mt-3" style={{ color: C.ink3 }}>The anonymised CV isn't available right now.</div>)}
+              </Card>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ClientViewPage({ token }) {
   const [info, setInfo] = useState(null);
   const [err, setErr] = useState("");
@@ -11007,8 +11592,88 @@ function AdsPage({ role, toast, onPromote, S }) {
   );
 }
 
+// Chips that toggle on and off (specialties, regions).
+function ChipToggles({ options, value, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => { const on = value.includes(o); return (
+        <button type="button" key={o} onClick={() => onChange(on ? value.filter((x) => x !== o) : [...value, o])} aria-pressed={on}
+          className="rounded-full px-2.5 py-1 text-xs border" style={on ? { background: C.emTint, borderColor: C.em, color: C.em } : { borderColor: C.line, color: C.ink2, background: C.card }}>{on ? "\u2713 " : ""}{o}</button>
+      ); })}
+    </div>
+  );
+}
+// A recruiter's country, the roles they can close and the regions they work best in (My profile,
+// account setup, and Admins / Rec Ops on Users & permissions). f: { country, specialties, regions }.
+function RecruiterInfoFields({ f, set, self }) {
+  const [custom, setCustom] = useState("");
+  const extraSpecs = (f.specialties || []).filter((x) => !SPECIALTIES.includes(x));
+  const regionCountries = (f.regions || []).filter((r) => !WORLD_REGIONS.includes(r));
+  const field = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
+  const addCustom = () => { const v = custom.trim(); if (!v) return; if (!(f.specialties || []).some((x) => x.toLowerCase() === v.toLowerCase())) set({ ...f, specialties: [...(f.specialties || []), v.slice(0, 60)] }); setCustom(""); };
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>{self ? "Country you're based in" : "Country they're based in"}</label>
+        <div className="flex items-center gap-2">
+          <select value={f.country || ""} onChange={(e) => set({ ...f, country: e.target.value })} className={field} style={{ borderColor: C.line, background: C.soft }}>
+            <option value="">Choose a country</option>
+            {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {f.country && <Flag country={f.country} size={16} style={{ marginTop: 6 }} />}
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-medium" style={{ color: C.ink2 }}>{self ? "Roles you can close" : "Roles they can close"}</div>
+        <div className="text-xs mb-2" style={{ color: C.ink3 }}>Pick every kind of role you have a track record of filling.</div>
+        <ChipToggles options={[...SPECIALTIES, ...extraSpecs]} value={f.specialties || []} onChange={(v) => set({ ...f, specialties: v })} />
+        <div className="flex gap-2 mt-2">
+          <input value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }} placeholder="Add another (e.g. Actuarial, Pharmacy)" className="flex-1 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+          <Btn onClick={addCustom} disabled={!custom.trim()}>Add</Btn>
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-medium" style={{ color: C.ink2 }}>{self ? "Regions you work best in" : "Regions they work best in"}</div>
+        <div className="text-xs mb-2" style={{ color: C.ink3 }}>{self ? "You're emailed first when a new role opens in one of these." : "They're emailed first when a new role opens in one of these."} Pick broad regions, specific countries, or both.</div>
+        <ChipToggles options={WORLD_REGIONS} value={f.regions || []} onChange={(v) => set({ ...f, regions: v })} />
+        <select value="" onChange={(e) => e.target.value && set({ ...f, regions: [...(f.regions || []), e.target.value] })} className="mt-2 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
+          <option value="">Add a specific country</option>
+          {COUNTRIES.filter((c) => !(f.regions || []).includes(c)).map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {regionCountries.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {regionCountries.map((c) => (
+              <span key={c} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs border" style={{ borderColor: C.em, background: C.emTint, color: C.em }}>
+                <Flag country={c} size={10} />{c}
+                <button type="button" onClick={() => set({ ...f, regions: (f.regions || []).filter((x) => x !== c) })} aria-label={"Remove " + c} style={{ color: C.em }}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UsersPage({ toast, S }) {
-  const users = S.users;
+  // Admins see everyone; Rec Ops see the recruiters (country, specialties, suspend / reactivate).
+  const isAdmin = S.role === "admin";
+  const allUsers = S.users;
+  const [countryF, setCountryF] = useState("");
+  const [roleF, setRoleF] = useState("");
+  const [susUser, setSusUser] = useState(null);
+  const [susReason, setSusReason] = useState("");
+  const [susBusy, setSusBusy] = useState(false);
+  const [infoUser, setInfoUser] = useState(null);
+  const [infoF, setInfoF] = useState({ country: "", specialties: [], regions: [] });
+  const [infoBusy, setInfoBusy] = useState(false);
+  const scoped = isAdmin ? allUsers : allUsers.filter((u) => u.roleKey === "recruiter");
+  const countriesHere = Array.from(new Set(scoped.map((u) => u.country).filter(Boolean))).sort();
+  const users = scoped.filter((u) => (!countryF || (countryF === "_none" ? !u.country : u.country === countryF)) && (!roleF || u.roleKey === roleF));
+  const reactivate = (u) => S.suspendUser(u.id, false).then(() => toast(u.name + " is active again and can sign in")).catch(() => {});
+  const doSuspend = () => { setSusBusy(true); S.suspendUser(susUser.id, true, susReason.trim()).then(() => { toast(susUser.name + " is suspended"); setSusUser(null); setSusReason(""); }).catch(() => {}).finally(() => setSusBusy(false)); };
+  const openInfo = (u) => { setInfoUser(u); setInfoF({ country: u.country || "", specialties: u.specialties || [], regions: u.regions || [] }); };
+  const saveInfo = () => { setInfoBusy(true); S.setRecruiterInfo(infoUser.id, infoF).then(() => { toast("Saved " + infoUser.name + "'s details"); setInfoUser(null); }).catch(() => {}).finally(() => setInfoBusy(false)); };
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -11031,8 +11696,8 @@ function UsersPage({ toast, S }) {
   const [delBusy, setDelBusy] = useState(false);
   const [viewUser, setViewUser] = useState(null);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
-  const adminCount = users.filter((u) => u.roleKey === "admin" && u.status === "Active").length;
-  const transferCandidates = users.filter((u) => !u.isOwner && u.status === "Active");
+  const adminCount = allUsers.filter((u) => u.roleKey === "admin" && u.status === "Active").length;
+  const transferCandidates = allUsers.filter((u) => !u.isOwner && u.status === "Active");
   const openEdit = (u) => { setEditUser(u); setEditName(u.name); setEditPhone(u.phone || ""); };
   const saveEdit = () => {
     if (!editName.trim()) { toast("Enter their name"); return; }
@@ -11074,7 +11739,7 @@ function UsersPage({ toast, S }) {
   const invite = async () => {
     if (!name.trim()) { toast("Enter their name"); return; }
     if (!email.includes("@")) { toast("Enter a valid email"); return; }
-    if (users.some((u) => u.email.toLowerCase() === email.toLowerCase())) { toast("That email already has an account"); return; }
+    if (allUsers.some((u) => u.email.toLowerCase() === email.toLowerCase())) { toast("That email already has an account"); return; }
     setBusy(true);
     try {
       const j = await S.createAccount({ email, full_name: name, role: roleKey }); setName(""); setEmail(""); setOpen(false);
@@ -11099,20 +11764,40 @@ function UsersPage({ toast, S }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Users and permissions" sub="Control who can see and do what." />
-        <div className="flex gap-2">
+        <SectionTitle size="text-3xl md:text-4xl" title={isAdmin ? "Users and permissions" : "Recruiters"} sub={isAdmin ? "Control who can see and do what." : "Your recruiters: where they are, what they close, and their accounts."} />
+        {isAdmin && <div className="flex gap-2">
           {S.me.isOwner && <Btn onClick={() => setTransferOpen(true)}>Transfer ownership</Btn>}
           <Btn kind="primary" icon={UserPlus} onClick={() => setOpen(true)}>Invite user</Btn>
-        </div>
+        </div>}
       </div>
       <Card>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <select value={countryF} onChange={(e) => setCountryF(e.target.value)} aria-label="Filter by country" className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, background: C.card, color: C.ink }}>
+            <option value="">All countries</option>
+            {countriesHere.map((c) => <option key={c} value={c}>{c} ({scoped.filter((u) => u.country === c).length})</option>)}
+            <option value="_none">No country set ({scoped.filter((u) => !u.country).length})</option>
+          </select>
+          {isAdmin && <select value={roleF} onChange={(e) => setRoleF(e.target.value)} aria-label="Filter by role" className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, background: C.card, color: C.ink }}>
+            <option value="">All roles</option>
+            {ROLE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>}
+          {(countryF || roleF) && <button onClick={() => { setCountryF(""); setRoleF(""); }} className="text-xs" style={{ color: C.em }}>Clear</button>}
+          <span className="text-xs ml-auto" style={{ color: C.ink3 }}>{plural(users.length, "person", "people")}</span>
+        </div>
         <DataTable
           keyField="email"
           rows={users}
           columns={[
-            { key: "name", label: "USER", render: (u) => <button onClick={() => setViewUser(u)} className="text-left"><div className="font-medium flex items-center gap-1.5" style={{ color: C.ink }}>{u.name}{u.isOwner && <Pill tone="em">Owner</Pill>}</div><div className="text-xs" style={{ color: C.ink2 }}>{u.email}</div></button> },
+            { key: "name", label: "USER", render: (u) => <button onClick={() => isAdmin ? setViewUser(u) : openInfo(u)} className="text-left flex items-center gap-2.5"><UserAvatar u={u} size={32} tone="neutral" /><span className="min-w-0"><span className="font-medium flex items-center gap-1.5" style={{ color: C.ink }}>{u.name}{u.isOwner && <Pill tone="em">Owner</Pill>}</span><span className="block text-xs" style={{ color: C.ink2 }}>{u.email}</span></span></button> },
+            { key: "country", label: "COUNTRY", render: (u) => (
+              <div className="text-sm" style={{ maxWidth: 260 }}>
+                <div className="flex items-center gap-1.5">{u.country ? <><Flag country={u.country} />{u.country}</> : <span style={{ color: C.ink3 }}>Not set</span>}</div>
+                {u.roleKey === "recruiter" && ((u.specialties || []).length > 0 || (u.regions || []).length > 0) && <div className="text-xs mt-0.5 truncate" style={{ color: C.ink3 }} title={[(u.specialties || []).join(", "), (u.regions || []).join(", ")].filter(Boolean).join(" · ")}>{[(u.specialties || []).slice(0, 2).join(", ") + ((u.specialties || []).length > 2 ? " +" + ((u.specialties || []).length - 2) : ""), (u.regions || []).length ? "works " + (u.regions || []).slice(0, 2).join(", ") + ((u.regions || []).length > 2 ? " +" + ((u.regions || []).length - 2) : "") : ""].filter(Boolean).join(" · ")}</div>}
+              </div>
+            ) },
+            { key: "seen", label: "LAST ACTIVE", render: (u) => <span className="text-xs whitespace-nowrap" style={{ color: u.lastSeenAt && Date.now() - u.lastSeenAt > 23 * 864e5 && u.status === "Active" ? C.warnFg : C.ink2 }}>{u.lastSeenAt ? (Date.now() - u.lastSeenAt < 864e5 ? "Today" : daysAgo(u.lastSeenAt) + " ago") : "Never"}</span> },
             { key: "role", label: "ROLE", render: (u) => {
-              const editable = !u.isOwner || u.id === S.me.id;
+              const editable = isAdmin && (!u.isOwner || u.id === S.me.id);
               if (!editable) return <span className="text-sm" style={{ color: C.ink2 }}>{u.role}</span>;
               return (
                 <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={u.roleKey} disabled={roleBusyId === u.id}
@@ -11121,14 +11806,21 @@ function UsersPage({ toast, S }) {
                 </select>
               );
             } },
-            { key: "status", label: "STATUS", render: (u) => <div className="flex flex-wrap items-center gap-1.5"><StatusPill status={u.status} />{mfaOn && (mfaOn.includes(u.id) ? <span title="Two-factor authentication is on"><Pill tone="em">2FA on</Pill></span> : u.status === "Active" ? <span title="This person hasn't turned on two-factor authentication yet"><Pill tone="warn">No 2FA</Pill></span> : null)}</div> },
+            { key: "status", label: "STATUS", render: (u) => <div className="flex flex-wrap items-center gap-1.5" title={u.status === "Suspended" ? u.suspendedReason : undefined}><StatusPill status={u.status} />{mfaOn && (mfaOn.includes(u.id) ? <span title="Two-factor authentication is on"><Pill tone="em">2FA on</Pill></span> : u.status === "Active" ? <span title="This person hasn't turned on two-factor authentication yet"><Pill tone="warn">No 2FA</Pill></span> : null)}</div> },
             { key: "act", label: "", render: (u) => {
               const lastAdmin = u.roleKey === "admin" && u.status === "Active" && adminCount <= 1;
               const other = !u.isOwner;
               return (
                 <div className="flex justify-end">
-                  <RowMenu label={"Actions for " + u.name} busy={welcomeBusyId === u.id} items={[
+                  <RowMenu label={"Actions for " + u.name} busy={welcomeBusyId === u.id} items={!isAdmin ? [
+                    { label: "Recruiter details", icon: Pencil, onClick: () => openInfo(u) },
+                    { label: "Suspend", icon: PowerOff, danger: true, onClick: () => { setSusUser(u); setSusReason(""); }, hidden: !["Active", "Invited"].includes(u.status) },
+                    { label: "Reactivate", icon: Power, onClick: () => reactivate(u), hidden: u.status !== "Suspended" },
+                  ] : [
                     { label: "Edit details", icon: Pencil, onClick: () => openEdit(u) },
+                    { label: "Recruiter details", icon: Briefcase, onClick: () => openInfo(u), hidden: u.roleKey !== "recruiter" },
+                    { label: "Suspend", icon: PowerOff, danger: true, onClick: () => { setSusUser(u); setSusReason(""); }, hidden: !(u.roleKey === "recruiter" && ["Active", "Invited"].includes(u.status)) },
+                    { label: "Reactivate", icon: Power, onClick: () => reactivate(u), hidden: u.status !== "Suspended" },
                     { label: "Set password", icon: KeyRound, onClick: () => { setPwUser(u); setPwValue(""); }, hidden: !other },
                     { label: "Turn off two-factor", icon: Lock, onClick: () => resetMfa(u), hidden: !(other && mfaOn && mfaOn.includes(u.id)), title: "For someone who lost their phone: they sign in with their password and set it up again" },
                     { label: u.welcomeSentAt ? "Resend welcome email" : "Send welcome email", icon: Mail, onClick: () => resendWelcome(u), hidden: !(other && (u.status === "Active" || u.status === "Invited") && u.id !== S.me.id),
@@ -11149,6 +11841,17 @@ function UsersPage({ toast, S }) {
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label>
         <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="optional" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <Btn kind="primary" full onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Save changes"}</Btn>
+      </Modal>
+      <Modal open={!!susUser} onClose={() => !susBusy && setSusUser(null)} title={susUser ? "Suspend " + susUser.name + "?" : "Suspend"}>
+        <div className="text-sm mb-3" style={{ color: C.ink2 }}>They can't sign in until an Admin or Rec Ops reactivates the account. Their candidates, roles and history stay as they are.</div>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Reason (optional, they don't see it)</label>
+        <input value={susReason} onChange={(e) => setSusReason(e.target.value)} placeholder="e.g. Not following the submission process" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+        <Btn kind="primary" full onClick={doSuspend} disabled={susBusy}>{susBusy ? "Suspending\u2026" : "Suspend account"}</Btn>
+      </Modal>
+      <Modal open={!!infoUser} onClose={() => !infoBusy && setInfoUser(null)} title={infoUser ? infoUser.name : "Recruiter details"}>
+        {infoUser && infoUser.status === "Suspended" && <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerFg }}>Suspended{infoUser.suspendedAt ? " " + fdate(infoUser.suspendedAt) : ""}: {infoUser.suspendedReason || "no reason given"}</div>}
+        <RecruiterInfoFields f={infoF} set={setInfoF} />
+        <Btn kind="primary" full className="mt-5" onClick={saveInfo} disabled={infoBusy}>{infoBusy ? "Saving\u2026" : "Save"}</Btn>
       </Modal>
       <Modal open={!!pwUser} onClose={() => setPwUser(null)} title={pwUser ? "Set a password for " + pwUser.name : "Set password"}>
         <div className="text-sm mb-3" style={{ color: C.ink2 }}>This sets their password directly — no reset email is sent. Share it with them yourself.</div>
@@ -12297,12 +13000,66 @@ function JobDescriptionPanel({ r, detail, questions, onClose, onAnswer, onApply,
   );
 }
 
+// The questions for one role, with anything they've already answered elsewhere filled in
+// (ai-screen portal_prefill): [{ q, kind: "job" | "followup", a, from }]. null while loading;
+// falls back to the follow-up questions alone if the lookup fails.
+function usePrefilledQuestions(token, linkId, fallback) {
+  const [list, setList] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "portal_prefill", token, linkId }) })
+      .then((x) => x.json()).then((j) => { if (live) setList(Array.isArray(j && j.questions) ? j.questions : (fallback || []).map((q) => ({ q, kind: "followup", a: "", from: "" }))); })
+      .catch(() => { if (live) setList((fallback || []).map((q) => ({ q, kind: "followup", a: "", from: "" }))); });
+    return () => { live = false; };
+  }, [token, linkId]); // eslint-disable-line
+  return list;
+}
+// Answer boxes start with the saved draft, else what they answered before (marked so they can check it).
+const PrefilledNote = ({ item, value }) => item && item.a && value === item.a
+  ? <div className="text-xs" style={{ color: C.em }}>Filled in from your earlier answer{item.from ? " (" + item.from + ")" : ""}. Change it if anything's different.</div> : null;
+
+// Follow-up questions for a role they're already on, with earlier answers filled in.
+function PortalFollowups({ q, token, busy, onSend }) {
+  const pre = usePrefilledQuestions(token, q.linkId, q.questions);
+  const list = (pre || []).filter((x) => x.kind === "followup");
+  const [a, setA] = useState(null);
+  useEffect(() => { if (pre) setA(q.questions.map((text) => { const hit = list.find((x) => x.q === text); return (hit && hit.a) || ""; })); }, [pre]); // eslint-disable-line
+  const vals = a || q.questions.map(() => "");
+  const complete = q.questions.every((_, i) => (vals[i] || "").trim());
+  return (
+    <Card>
+      <div className="text-base font-semibold">{q.role}</div>
+      <div className="text-sm mb-3" style={{ color: C.ink2 }}>{q.company}</div>
+      <div className="flex flex-col gap-3">
+        {q.questions.map((text, i) => (
+          <div key={i} className="flex flex-col gap-1.5">
+            <label htmlFor={"q-" + q.linkId + "-" + i} className="text-sm font-medium">{text}</label>
+            <textarea id={"q-" + q.linkId + "-" + i} rows={3} value={vals[i] || ""} onChange={(e) => setA(vals.map((x, k) => (k === i ? e.target.value : x)))} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+            <PrefilledNote item={list.find((x) => x.q === text)} value={vals[i] || ""} />
+          </div>
+        ))}
+        <Btn kind="primary" full disabled={!!busy || !complete} onClick={() => onSend(q.questions.map((_, i) => vals[i] || ""))}>
+          {busy === "answer" + q.linkId ? <>Sending <InlineDots color="#fff" /></> : complete ? "Send answers" : "Answer every question to send"}
+        </Btn>
+      </div>
+    </Card>
+  );
+}
+
 function RoutedRoleCard({ r, q, token, recName, onDone }) {
-  const questions = (q && q.questions) || [];
+  const pre = usePrefilledQuestions(token, r.linkId, (q && q.questions) || []);
+  const questions = pre ? pre.map((x) => x.q) : [];
   const n = questions.length;
   const [detail, setDetail] = useState(null);
   const [panel, setPanel] = useState(false);
-  const [answers, setAnswers] = useState(() => readDraft(token, r.linkId, n));
+  const [answers, setAnswers] = useState([]);
+  const dKey = draftKey(token, r.linkId) + ".v2";
+  useEffect(() => {
+    if (!pre) return;
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem(dKey) || "[]"); } catch (e) { /* none */ }
+    setAnswers(pre.map((x, i) => String(saved[i] || "") || x.a || ""));
+  }, [pre]); // eslint-disable-line
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [declining, setDeclining] = useState(false);
@@ -12312,14 +13069,14 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
     const u = new URLSearchParams(window.location.search);
     if (u.get("role") === r.linkId) { if (u.get("go") === "questions" && n) setTimeout(() => goQuestions(), 300); else setPanel(true); }
   }, [r.linkId]); // eslint-disable-line
-  const setA = (i, v) => setAnswers((a) => { const next = a.map((x, k) => (k === i ? v : x)); try { localStorage.setItem(draftKey(token, r.linkId), JSON.stringify(next)); } catch (e) {} return next; });
-  const answered = answers.filter((a) => a.trim()).length;
+  const setA = (i, v) => setAnswers((a) => { const next = a.map((x, k) => (k === i ? v : x)); try { localStorage.setItem(dKey, JSON.stringify(next)); } catch (e) {} return next; });
+  const answered = answers.filter((a) => String(a || "").trim()).length;
   const complete = answered === n;
   const goQuestions = () => {
     setPanel(false);
     setTimeout(() => {
       if (qRef.current) qRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-      const first = answers.findIndex((a) => !a.trim());
+      const first = answers.findIndex((a) => !String(a || "").trim());
       const el = document.getElementById("rq-" + r.linkId + "-" + (first < 0 ? 0 : first));
       if (el) setTimeout(() => el.focus({ preventScroll: true }), 400);
     }, 50);
@@ -12334,9 +13091,13 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
   const apply = async () => {
     setBusy("apply"); setErr("");
     try {
-      if (n) await call({ action: "portal_answer", answers });
+      if (n) {
+        const jobAnswers = pre.map((x, i) => ({ ...x, a: answers[i] || "" })).filter((x) => x.kind === "job").map((x) => ({ q: x.q, a: x.a }));
+        const fu = pre.map((x, i) => (x.kind === "followup" ? answers[i] || "" : null)).filter((x) => x !== null);
+        await call({ action: "portal_answer", ...(jobAnswers.length ? { jobAnswers } : {}), answers: fu });
+      }
       await call({ action: "portal_respond", accept: true });
-      try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {}
+      try { localStorage.removeItem(dKey); localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {}
       setPanel(false);
       await onDone("You've applied for " + r.role + ". " + (recName || "Your recruiter") + " will be in touch about next steps.");
     } catch (e) { popError(e); }
@@ -12344,7 +13105,7 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
   };
   const decline = async () => {
     setBusy("decline"); setErr("");
-    try { await call({ action: "portal_respond", accept: false }); try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {} await onDone("Got it. We won't put you forward for " + r.role + "."); }
+    try { await call({ action: "portal_respond", accept: false }); try { localStorage.removeItem(dKey); localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {} await onDone("Got it. We won't put you forward for " + r.role + "."); }
     catch (e) { popError(e); }
     setBusy("");
   };
@@ -12373,6 +13134,7 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
                 <div key={i} className="flex flex-col gap-1.5">
                   <label htmlFor={"rq-" + r.linkId + "-" + i} className="text-sm font-medium">{(n > 1 ? i + 1 + ". " : "") + text}</label>
                   <textarea id={"rq-" + r.linkId + "-" + i} rows={3} value={answers[i] || ""} onChange={(e) => setA(i, e.target.value)} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={inputStyle} />
+                  <PrefilledNote item={pre && pre[i]} value={answers[i] || ""} />
                 </div>
               ))}
             </div>
@@ -12470,6 +13232,7 @@ function CandidatePortal({ data, token, onChanged }) {
   const [chat, setChat] = useState(null); // null | { startId }
   const [openApps, setOpenApps] = useState({});
   const [prefsSignal, setPrefsSignal] = useState(0); // bumps when they click Yes, to open the questions
+  const [thanks, setThanks] = useState(""); // after the "Help us match you" form that opens from Yes
   const act = async (key, body, done) => {
     setBusy(key); setErr(""); setNote("");
     try {
@@ -12512,6 +13275,9 @@ function CandidatePortal({ data, token, onChanged }) {
         <div className="mb-1"><BrandLogo height={30} /></div>
         {token && new URLSearchParams(window.location.search).get("offer") && <PortalOffer token={token} offer={new URLSearchParams(window.location.search).get("offer")} />}
         {token && <EmailChoiceNote token={token} onChanged={onChanged} onPitchYes={() => setPrefsSignal((n) => n + 1)} />}
+        {thanks && <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.em }}>{thanks === "updated" ? "Saved. Your information is up to date." : thanks === "finished"
+          ? "Thank you! You're all set. We'll put your profile forward anonymously for roles that fit what you told us. Your name and contact details stay private, and your recruiter will be in touch when an employer wants to talk."
+          : "Thanks. We'll put your profile forward anonymously for roles that fit you. Finish the few questions below when you have a minute so we match you well."}</div>}
 
         <Card>
           <div className="flex flex-col sm:flex-row items-center sm:items-center gap-4 sm:gap-5 text-center sm:text-left">
@@ -12539,7 +13305,7 @@ function CandidatePortal({ data, token, onChanged }) {
         {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
 
-        {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} name={c.name} />}
+        {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} name={c.name} onThanks={setThanks} />}
 
         {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
 
@@ -12548,27 +13314,9 @@ function CandidatePortal({ data, token, onChanged }) {
             onDone={async (msg) => { setNote(msg); if (onChanged) await onChanged(); }} />
         ))}
 
-        {c.questions.filter((q) => !c.routed.some((r) => r.linkId === q.linkId)).map((q) => {
-          const a = answers[q.linkId] || [];
-          const complete = q.questions.every((_, i) => (a[i] || "").trim());
-          return (
-            <Card key={q.linkId}>
-              <div className="text-base font-semibold">{q.role}</div>
-              <div className="text-sm mb-3" style={{ color: C.ink2 }}>{q.company}</div>
-              <div className="flex flex-col gap-3">
-                {q.questions.map((text, i) => (
-                  <div key={i} className="flex flex-col gap-1.5">
-                    <label htmlFor={"q-" + q.linkId + "-" + i} className="text-sm font-medium">{text}</label>
-                    <textarea id={"q-" + q.linkId + "-" + i} rows={3} value={a[i] || ""} onChange={(e) => setA(q.linkId, i, e.target.value)} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={inputStyle} />
-                  </div>
-                ))}
-                <Btn kind="primary" full disabled={!!busy || !complete} onClick={() => act("answer" + q.linkId, { action: "portal_answer", linkId: q.linkId, answers: q.questions.map((_, i) => a[i] || "") }, "Answers sent. Thank you!")}>
-                  {busy === "answer" + q.linkId ? <>Sending <InlineDots color="#fff" /></> : complete ? "Send answers" : "Answer every question to send"}
-                </Btn>
-              </div>
-            </Card>
-          );
-        })}
+        {c.questions.filter((q) => !c.routed.some((r) => r.linkId === q.linkId)).map((q) => (
+          <PortalFollowups key={q.linkId} q={q} token={token} busy={busy} onSend={(answers) => act("answer" + q.linkId, { action: "portal_answer", linkId: q.linkId, answers }, "Answers sent. Thank you!")} />
+        ))}
 
         <Card>
           <SectionTitle title="Your applications" sub={appliedApps.length + pastOnly.length ? "Tap a role to see where it's at." : ""} size="text-xl" />
@@ -12977,44 +13725,77 @@ function EeoNote({ agency }) {
   );
 }
 
-/* "Send us your CV" (/jobs/?join=1): for people who aren't applying to a specific job. They
-   join the Active file, the bench we check for every new role before looking outside. Lands in
-   the Inbox (marked Active file), or straight with the recruiter whose link they came through. */
+/* "Send us your CV" (/jobs/?join=1): for people who aren't applying to a specific job. It's the same
+   step-by-step "Help us match you" form as the Yes in our emails, with their details and CV as its
+   first steps. Once the CV is sent (submit-application, no job: the Active file), the rest of the
+   form is filled in from it where it can be ("Here's what we already have") and only the rest is
+   asked. Lands in the Inbox (marked Active file), or straight with the recruiter whose link they
+   came through; the answers are saved on the application (application_set_preferences). */
 function JoinPage() {
-  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", role: "", website: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
   const [cv, setCv] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  const [cvErr, setCvErr] = useState("");
   const [done, setDone] = useState(false);
+  const [answered, setAnswered] = useState(false);
+  const app = React.useRef(null); // { id, token } once the CV is sent
   const opened = React.useRef(Date.now());
-  const fileRef = React.useRef(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const pickCv = (e) => {
     const f = e.target.files && e.target.files[0]; e.target.value = "";
     if (!f) return;
-    if (!/\.(pdf|docx?)$/i.test(f.name)) { setErr("Upload your CV as a PDF or Word document."); return; }
-    if (f.size > 8 * 1024 * 1024) { setErr("Your CV can be up to 8 MB."); return; }
+    if (!/\.(pdf|docx?)$/i.test(f.name)) { setCvErr("Upload your CV as a PDF or Word document."); return; }
+    if (f.size > 8 * 1024 * 1024) { setCvErr("Your CV can be up to 8 MB."); return; }
     const r = new FileReader();
-    r.onload = () => { setCv({ name: f.name, data: String(r.result).split(",")[1] }); setErr(""); };
-    r.onerror = () => setErr("That file couldn't be read. Try another one.");
+    r.onload = () => { setCv({ name: f.name, data: String(r.result).split(",")[1] }); setCvErr(""); };
+    r.onerror = () => setCvErr("That file couldn't be read. Try another one.");
     r.readAsDataURL(f);
   };
   const okEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim());
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!form.name.trim() || !okEmail || !form.role.trim() || !cv) { setErr(!cv ? "Please attach your CV." : "Please fill in your name, a valid email and the kind of role you're looking for."); return; }
-    setBusy(true); setErr("");
-    try {
-      const payload = { ft: Date.now() - opened.current, source: "career_page", role_title: form.role.trim(), ref: PUB_REF(), name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, cv: { name: cv.name, data: cv.data } };
+  // Sends the details and CV, then reads the CV for the rest of the form (up to ~25 s).
+  const send = async () => {
+    if (!app.current) {
+      const payload = { ft: Date.now() - opened.current, source: "career_page", ref: PUB_REF(), name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, cv: { name: cv.name, data: cv.data } };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
-      setDone(true); window.scrollTo(0, 0);
-    } catch (x) { popError(x); }
-    setBusy(false);
+      if (!j.id || !j.prefsToken) { setDone(true); return null; }
+      app.current = { id: j.id, token: j.prefsToken };
+    }
+    const ask = fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefs_prefill", appId: app.current.id, appToken: app.current.token, options: PREF_OPTIONS() }) })
+      .then((x) => x.json()).then((x) => (x && x.prefill) || null).catch(() => null);
+    return Promise.race([ask, new Promise((ok) => setTimeout(() => ok(null), 25000))]);
   };
-  const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
-  const inpStyle = { borderColor: C.line, background: C.soft };
+  const savePrefs = (prefs) => sbFetch("/rest/v1/rpc/application_set_preferences", { method: "POST", body: { p_app: app.current.id, p_token: app.current.token, p_prefs: prefs } });
+  const quizInpIcon = (Icon, props) => (
+    <div className="flex items-center gap-3 rounded-2xl border px-4 bg-white" style={quizInpS}><Icon size={18} color={C.ink3} /><input {...props} className="flex-1 py-3.5 text-[15px] outline-none bg-transparent" /></div>
+  );
+  const before = {
+    submitLabel: "Send my CV", busyLabel: "Reading your CV",
+    onDone: send,
+    steps: [
+      { key: "about", title: "Let's start with you", sub: "Not seeing the right role? Join our Active file: we look here first whenever a new role comes in.",
+        check: () => (!form.name.trim() ? "Enter your name" : !okEmail ? "Enter a valid email" : form.phone.replace(/\D/g, "").length < 7 ? "Enter your phone number" : ""),
+        body: () => (
+          <div className="flex flex-col gap-3">
+            {quizInpIcon(UserRound, { autoFocus: true, value: form.name, onChange: set("name"), autoComplete: "name", placeholder: "Full name" })}
+            {quizInpIcon(Mail, { type: "email", value: form.email, onChange: set("email"), autoComplete: "email", placeholder: "Email" })}
+            {quizInpIcon(Phone, { type: "tel", value: form.phone, onChange: set("phone"), autoComplete: "tel", placeholder: "Phone number, with country code" })}
+            {quizInpIcon(ExternalLink, { value: form.linkedin, onChange: set("linkedin"), placeholder: "LinkedIn profile (optional)" })}
+            <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
+          </div>) },
+      { key: "cv", title: "Upload your CV", sub: "We'll fill in what it already tells us, so you only answer what's new.",
+        check: () => (!cv ? "Please attach your CV" : ""),
+        body: () => (
+          <div className="flex flex-col gap-3">
+            <CvDrop cv={cv} onPick={pickCv} required />
+            {cvErr && <div className="text-sm text-center" style={{ color: C.dangerFg }}>{cvErr}</div>}
+            <PrivacyNote />
+          </div>) },
+    ],
+  };
+  if (!done) return <PreferencesQuiz initial={null} known={{ name: form.name }} before={before} onSave={savePrefs}
+    onClose={() => { if (app.current) { setDone(true); window.scrollTo(0, 0); } else window.location.href = withQ(JOBS_URL(), "r", PUB_REF()); }}
+    onFinished={() => { setAnswered(true); setDone(true); window.scrollTo(0, 0); }} />;
   return (
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
@@ -13022,36 +13803,12 @@ function JoinPage() {
           <a href={withQ(JOBS_URL(), "r", PUB_REF())} aria-label="All jobs"><BrandLogo height={30} /></a>
           <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="text-sm font-medium" style={{ color: C.em }}>All jobs</a>
         </div>
-        {done ? (
-          <Card>
-            <div className="w-12 h-12 rounded-full grid place-items-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} /></div>
-            <div className="text-2xl" style={SERIF}>Thanks, you're on our list</div>
-            <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>We'll check you for every new role that fits. When one does, a recruiter will get in touch. We never share your details with an employer without asking you first.</div>
-            <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="inline-block mt-5"><Btn kind="primary">See open jobs</Btn></a>
-          </Card>
-        ) : (
-          <FormHero icon={FileText} eyebrow="JOIN OUR ACTIVE FILE" title="Send us your CV" sub="Not seeing the right role? We look here first whenever a new role comes in, and reach out when one fits you." meta={["Takes about 2 minutes", "Free, no account needed"]}>
-            <form onSubmit={submit} className="flex flex-col gap-6">
-              <FSection n={1} title="About you">
-                <FInput label="Full name" required icon={UserRound} value={form.name} onChange={set("name")} autoComplete="name" placeholder="Your name" />
-                <div className="grid sm:grid-cols-2 gap-3.5">
-                  <FInput label="Email" required icon={Mail} type="email" value={form.email} onChange={set("email")} autoComplete="email" placeholder="you@example.com" />
-                  <FInput label="Phone" icon={Phone} type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" placeholder="Optional" />
-                </div>
-                <FInput label="LinkedIn profile" icon={ExternalLink} value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" />
-              </FSection>
-              <FormDivider />
-              <FSection n={2} title="What you're looking for">
-                <FInput label="The kind of role you want" required icon={Briefcase} value={form.role} onChange={set("role")} placeholder="e.g. Customer Success Manager" />
-                <CvDrop cv={cv} onPick={pickCv} required />
-              </FSection>
-              <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
-              {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
-              <Btn kind="primary" full type="submit" disabled={busy} className="!py-3 !text-[15px]">{busy ? <>Sending <InlineDots color="#fff" /></> : "Send my CV"}</Btn>
-              <PrivacyNote />
-            </form>
-          </FormHero>
-        )}
+        <Card>
+          <div className="w-12 h-12 rounded-full grid place-items-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} /></div>
+          <div className="text-2xl" style={SERIF}>Thanks, you're on our list</div>
+          <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>{answered ? "Thanks for telling us what you're looking for. " : ""}We'll check you for every new role that fits and put your profile forward anonymously: your name and contact details stay private until an employer wants to talk to you, and a recruiter will be in touch.</div>
+          <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="inline-block mt-5"><Btn kind="primary">See open jobs</Btn></a>
+        </Card>
       </div>
     </div>
   );
@@ -13631,6 +14388,15 @@ function SignIn({ onSignedIn, notice, mfaPending }) {
   );
 }
 function AwaitingAccess({ onSignOut, status }) {
+  if (status === "Suspended") return (
+    <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
+      <div className="max-w-sm">
+        <div className="text-2xl mb-2" style={{ ...SERIF }}>Account suspended</div>
+        <div className="text-sm mb-5" style={{ color: C.ink2 }}>Your account is suspended, so you can't open ProNext right now. Nothing has been deleted. Ask your Rec Ops team to reactivate it.</div>
+        <Btn onClick={onSignOut}>Sign out</Btn>
+      </div>
+    </div>
+  );
   const off = status === "Disabled";
   return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
@@ -13732,7 +14498,7 @@ export function PublicRoot() {
   if (r.kind === "board") return <JobsBoard />;
   if (r.kind === "join") return <JoinPage />;
   if (r.kind === "outreach") return <OutreachLinkPage token={r.token} kind={r.linkKind} action={r.action} />;
-  if (r.kind === "client") return <ClientViewPage token={r.token} />;
+  if (r.kind === "client") return /^s-/.test(r.token) ? <ShortlistPage token={r.token} /> : <ClientViewPage token={r.token} />;
   if (portalToken === "preview") return <PreferencesPreviewPage />;
   if (!portalData) return <PortalSkeleton />;
   if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
@@ -13862,6 +14628,8 @@ export default function App() {
         if (f && !(await useRememberedBrowser(sess))) { store.set(null); setMfaPending({ session: sess, factorId: f.id }); setSession(null); setStatus("signedout"); return; }
       }
       const profile = (await sbFetch("/rest/v1/profiles?select=*&id=eq." + sess.uid, { token: sess.token }))[0];
+      // When they last used ProNext (recruiters unused for 30 days are suspended).
+      sbFetch("/rest/v1/rpc/touch_last_seen", { method: "POST", token: sess.token, body: {} }).catch(() => {});
       // First sign-in of a new (Invited) account: it turns on by itself, then the dashboard loads.
       if (profile && profile.status === "Invited") {
         try {
@@ -14012,7 +14780,7 @@ export default function App() {
   const role = me.roleKey;
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
-  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner, refCode: me.refCode || "", tourDoneAt: me.tourDoneAt || null };
+  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, country: me.country || "", specialties: me.specialties || [], regions: me.regions || [], roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner, refCode: me.refCode || "", tourDoneAt: me.tourDoneAt || null };
   MY_REF = me.refCode || "";
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => S.error(e.message)).finally(() => setRefreshing(false)); };
   alertRef.current.onNew = (fresh) => {
@@ -14119,7 +14887,7 @@ export default function App() {
   const updateJob = (id, patch) => {
     const j = data.jobs.find((x) => x.id === id); const p = typeof patch === "function" ? patch(j) : patch;
     const body = {}; Object.entries(JOB_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
-    setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, ...p } : x)) }));
+    setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, ...p } : x)).sort(jobOrder) }));
     return sbFetch("/rest/v1/jobs?id=eq." + id, { method: "PATCH", token: session.token, body })
       .then(() => {
         const label = j ? j.role + ", " + j.client : "";
@@ -14282,6 +15050,10 @@ export default function App() {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ email, password, full_name, role }) });
       const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "We couldn't create the account. Try again.")); logAudit("created", "user", j.id || null, full_name + " (" + role + ")"); reload(); return j;
     },
+    // Suspend / reactivate a recruiter (Admins and Rec Ops; database function set_user_suspended).
+    suspendUser: (id, suspend, reason) => call("/rest/v1/rpc/set_user_suspended", { method: "POST", body: { p_user: id, p_suspend: !!suspend, p_reason: reason || null } }),
+    // A recruiter's country, specialties and regions (Admins and Rec Ops).
+    setRecruiterInfo: (id, f) => call("/rest/v1/rpc/staff_set_recruiter_info", { method: "POST", body: { p_user: id, p_country: f.country || null, p_specialties: f.specialties || [], p_regions: f.regions || [] } }),
     disableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Disabled" } }).then(() => logAudit("disabled", "user", id, u ? u.name : "")); },
     enableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Active" } }).then(() => logAudit("enabled", "user", id, u ? u.name : "")); },
     /* Admin-only, via the profiles_admin_write policy (not the self-update path, so the anti-escalation trigger doesn't apply here).
@@ -14363,7 +15135,7 @@ export default function App() {
     setJobStatus: (id, status, hold) => { const j = data.jobs.find((x) => x.id === id);
       const body = { status, ...(status === "On hold" ? { hold_reason: (hold && hold.reason) || null, hold_until: (hold && hold.until) || null } : {}) };
       return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body }).then(() => {
-        setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status, holdReason: status === "On hold" ? body.hold_reason || "" : "", holdUntil: status === "On hold" ? body.hold_until : null } : x)) }));
+        setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status, holdReason: status === "On hold" ? body.hold_reason || "" : "", holdUntil: status === "On hold" ? body.hold_until : null } : x)).sort(jobOrder) }));
         logAudit("status changed", "job", id, (j ? j.role + ", " + j.client : "") + ": " + (j ? j.status : "?") + " → " + (status === "On hold" ? holdText({ holdReason: body.hold_reason, holdUntil: body.hold_until }) : status));
       }); },
     /* Candidate <-> job pipeline (candidate_jobs table). screeningAnswers: [{q,a}] answered by the
@@ -14482,6 +15254,36 @@ export default function App() {
       if (!r.ok) throw new Error("Couldn't download the CV (" + r.status + ")");
       return r.blob();
     },
+    /* A candidate's one blind resume: `blind-resumes` bucket at cand-<candidate id>/<n>.webp, reused by
+       every client link and pitch. Saved by Rec Ops/an Admin it counts as checked; saved by the
+       candidate's recruiter it waits for a Rec Ops/Admin check before any pitch uses it. */
+    saveCandidateBlind: async (candidate, blobs, opts) => {
+      const head = { apikey: SB_KEY, Authorization: "Bearer " + session.token };
+      const folder = "cand-" + candidate.id;
+      for (let i = 0; i < blobs.length; i++) {
+        const r = await fetch(SB_URL + "/storage/v1/object/blind-resumes/" + folder + "/" + (i + 1) + ".webp", { method: "POST", headers: { ...head, "Content-Type": "image/webp", "x-upsert": "true", "cache-control": "no-store" }, body: blobs[i] });
+        if (!r.ok) { const t = await r.text(); throw new Error("Saving page " + (i + 1) + " failed: " + t); }
+      }
+      const extra = Array.from({ length: 12 - blobs.length }, (_, k) => folder + "/" + (blobs.length + k + 1) + ".webp");
+      if (extra.length) await fetch(SB_URL + "/storage/v1/object/blind-resumes", { method: "DELETE", headers: { ...head, "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: extra }) }).catch(() => {});
+      const now = new Date().toISOString();
+      const checked = !!(opts && opts.checked) && (role === "admin" || role === "recops");
+      await sbFetch("/rest/v1/candidates?id=eq." + candidate.id, { method: "PATCH", token: session.token, body: { blind_pages: blobs.length, blind_at: now, blind_by: session.uid, blind_checked_at: checked ? now : null, blind_checked_by: checked ? session.uid : null } });
+      await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: candidate.id, title: "Blind resume made (" + blobs.length + " page" + (blobs.length === 1 ? "" : "s") + ")" + (checked ? " and checked" : ", waiting for a check"), done: true } }).catch(() => {});
+      if (!(opts && opts.quiet)) reload();
+    },
+    checkCandidateBlind: async (candidateId) => {
+      const now = new Date().toISOString();
+      await sbFetch("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", token: session.token, body: { blind_checked_at: now, blind_checked_by: session.uid } });
+      await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: candidateId, title: "Blind resume checked by " + (me.name || "Rec Ops"), done: true } }).catch(() => {});
+      reload();
+    },
+    blindPageUrls: async (candidateId, n) => {
+      const r = await fetch(SB_URL + "/storage/v1/object/sign/blind-resumes", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ expiresIn: 600, paths: Array.from({ length: n }, (_, i) => "cand-" + candidateId + "/" + (i + 1) + ".webp") }) });
+      const j = await r.json().catch(() => []);
+      if (!r.ok) throw new Error(errOf(j.message || j.error, "Couldn't open the blind resume."));
+      return (Array.isArray(j) ? j : []).map((x) => x.signedURL ? SB_URL + "/storage/v1" + x.signedURL : null).filter(Boolean);
+    },
     /* Blind resume pages: private `blind-resumes` bucket at <link id>/<n>.webp; the client link shows them. */
     saveBlindResume: async (link, candidate, job, blobs) => {
       const head = { apikey: SB_KEY, Authorization: "Bearer " + session.token };
@@ -14529,7 +15331,9 @@ export default function App() {
     /* Your own account: name/phone update straight to your profiles row, avatar via the public `avatars` bucket. */
     updateMyProfile: (patch) => {
       const body = {}; if ("name" in patch) body.full_name = patch.name; if ("phone" in patch) body.phone = patch.phone;
-      setMe((m) => ({ ...m, ...("name" in patch ? { name: patch.name } : {}), ...("phone" in patch ? { phone: patch.phone } : {}) }));
+      if ("country" in patch) body.country = patch.country || null; if ("specialties" in patch) body.specialties = patch.specialties || []; if ("regions" in patch) body.regions = patch.regions || [];
+      setMe((m) => ({ ...m, ...("name" in patch ? { name: patch.name } : {}), ...("phone" in patch ? { phone: patch.phone } : {}), ...("country" in patch ? { country: patch.country || "" } : {}),
+        ...("specialties" in patch ? { specialties: patch.specialties || [] } : {}), ...("regions" in patch ? { regions: patch.regions || [] } : {}) }));
       return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body })
         .then(reload)
         .catch((e) => { showError(e.message); reload(); throw e; });
@@ -14591,7 +15395,7 @@ export default function App() {
   else if (page === "interviews") content = <InterviewsPage toast={toast} S={S} />;
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
   else if (page === "ads") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
-  else if (page === "users") content = role === "admin" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
+  else if (page === "users") content = role === "admin" || role === "recops" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "audit") content = role === "admin" ? <RecruiterAuditPage S={S} toast={toast} /> : <OverviewRecOps S={S} />;
   else if (page === "emails") content = role === "admin" ? <EmailTrackingPage S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "settings") content = role === "admin" ? <SettingsPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
@@ -14612,6 +15416,7 @@ export default function App() {
           try { localStorage.setItem("pn.tourDone." + myMe.id, "1"); } catch (e) { /* fine */ }
           if (!me.tourDoneAt) { const at = new Date().toISOString(); setMe((m) => (m ? { ...m, tourDoneAt: at } : m)); sbFetch("/rest/v1/profiles?id=eq." + myMe.id, { method: "PATCH", token: session.token, body: { tour_done_at: at } }).catch(() => {}); }
         }} />}
+        {role === "recruiter" && !tourOpen && <SetupAccountModal S={S} toast={toast} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />

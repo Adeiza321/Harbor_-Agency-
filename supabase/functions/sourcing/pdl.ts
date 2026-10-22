@@ -17,7 +17,7 @@ export type PdlPerson = {
   id: string; name: string; first_name: string; last_name: string; title: string; company: string;
   city: string; region: string; country: string; location: string; linkedin_url: string;
   work_email: string; personal_emails: string[]; phones: string[]; skills: string[]; headline: string;
-  years: number | null; history: string; employers: string[]; contactsHidden: boolean;
+  years: number | null; history: string; employers: string[]; contactsHidden: boolean; summary: string; education: string;
 };
 
 function toPerson(d: any): PdlPerson {
@@ -25,7 +25,8 @@ function toPerson(d: any): PdlPerson {
   const history = exp.slice(0, 8).map((x: any) => {
     const t = cap(x?.title?.name), c = cap(x?.company?.name);
     const when = [x?.start_date, x?.end_date || (x?.is_primary ? "now" : "")].filter(Boolean).join("–");
-    return [t, c ? "at " + c : "", when ? "(" + when + ")" : ""].filter(Boolean).join(" ");
+    const did = String(x?.summary || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    return [t, c ? "at " + c : "", when ? "(" + when + ")" : ""].filter(Boolean).join(" ") + (did ? ": " + did : "");
   }).filter(Boolean).join("; ");
   const personal = (Array.isArray(d?.personal_emails) ? d.personal_emails : []).filter(okEmail);
   const rec = okEmail(d?.recommended_personal_email) ? [d.recommended_personal_email] : [];
@@ -40,9 +41,22 @@ function toPerson(d: any): PdlPerson {
     skills: (Array.isArray(d?.skills) ? d.skills : []).slice(0, 25),
     headline: String(d?.headline || ""), years: Number.isFinite(Number(d?.inferred_years_experience)) ? Number(d.inferred_years_experience) : null,
     history, employers: exp.map((x: any) => cap(x?.company?.name)).filter(Boolean),
+    summary: String(d?.summary || "").replace(/\s+/g, " ").trim().slice(0, 600),
+    education: (Array.isArray(d?.education) ? d.education : []).slice(0, 3).map((e: any) => [cap((e?.degrees || []).join(", ")), cap((e?.majors || []).join(", ")), cap(e?.school?.name)].filter(Boolean).join(", ")).filter(Boolean).join("; "),
     // Free plan: contact fields are booleans, not addresses.
     contactsHidden: d?.work_email === true || d?.personal_emails === true || d?.recommended_personal_email === true,
   };
+}
+
+// A person's full profile by their LinkedIn link (the must-have check's paid fallback, after an
+// Admin approves it): 1 credit per match, no match (404) is free. Unlike pdlByLinkedIn it doesn't
+// need them to have an email.
+export async function pdlProfile(profileUrl: string): Promise<PdlPerson | null> {
+  const profile = String(profileUrl || "").replace(/^https?:\/\/(www\.)?/i, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
+  if (!/linkedin\.com\/in\//i.test(profile)) return null;
+  const out: any = await call("GET", "enrich", undefined, new URLSearchParams({ profile, min_likelihood: "6" }));
+  if (!out || out.status === 404 || !out.data) return null;
+  return toPerson(out.data);
 }
 
 // The address to use: their work email first, else their best personal email.

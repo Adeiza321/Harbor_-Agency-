@@ -1,16 +1,20 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { backfillMustHaves } from "./musthaves.ts";
+import { recheckApollo } from "./musthaves.ts";
+import { stopClosedRoleSequences } from "./closed.ts";
+import { stepInactiveRecruiters } from "./accounts.ts";
+import { holdForProfileCheck, releaseProfileHold, runProfileChecks } from "./profilecheck.ts";
+import { holdReason } from "./queue.ts";
 import { aiCharge } from "./ai.ts";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
-import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers } from "./leads.ts";
-import { composeProspect, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
+import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
+import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
-import { cleanGuide, friendlyXrayError, runXrayStep, startXray, stepXrayQueue, XRAY_STALE_MS } from "./xray.ts";
+import { cleanGuide, friendlyXrayError, runXrayStep, startXray, stepXrayQueue, stopXray, XRAY_STALE_MS } from "./xray.ts";
 import { sourcedInterest, sweepSourcedInterest } from "./sourced.ts";
 import { searchEngines, searchUsage, checkEngines } from "./search.ts";
 import { autoFindEmails, draftEmails, findEmails, skipTooFar } from "./emails.ts";
@@ -121,26 +125,62 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
   }
 }
 
-// Leads waiting to be checked: a few per run, to stay within time and rate limits.
+// Leads waiting to be checked: a few per run, to stay within time and rate limits. New postings are
+// matched and pitched straight away; leads waiting for a checked blind resume are tried again.
+// Apollo people not yet through the must-have check (found before it existed, or the AI was
+// unavailable when they were found): a batch per run. Those that pass but whose core must-haves
+// aren't shown anywhere free wait for a full-profile check (profilecheck.ts).
+async function stepMusts(admin: any, s: any, max = 10, jobId?: string) {
+  const r = await recheckApollo(admin, max, jobId);
+  let held = 0;
+  for (const h of r.holdIds) held += (await holdForProfileCheck(admin, s, h.jobId, h.ids)).held;
+  return { checked: r.checked, skipped: r.skipped, held, remaining: r.remaining };
+}
+
 async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   const { data: pending } = await admin.from("leads").select("*").eq("status", "pending").order("created_at").limit(n);
   let kept = 0, pitched = 0; const errors: string[] = [];
-  // Leads where a candidate has said yes and confirmed their details: write the employer pitch now.
-  const { data: ready } = await admin.from("lead_offers").select("lead_id,leads!inner(status)").eq("status", "confirmed").eq("leads.status", "awaiting").limit(n);
-  for (const lid of [...new Set((ready || []).map((r: any) => r.lead_id))]) {
-    try {
-      const { data: l } = await admin.from("leads").select("*").eq("id", lid).single();
-      const r: any = await pitchLead(admin, l, s);
-      if (r.kept) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [lid], null, s, agencyName); }
-    } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
+  const queueIfAuto = async (l: any, r: any) => { if (r?.pitched) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [l.id], null, s, agencyName); } };
+  // Waiting for blind resumes: pitched as soon as one of their candidates' blind resumes is checked.
+  const { data: waiting } = await admin.from("leads").select("*").eq("status", "awaiting").order("updated_at").limit(n * 3);
+  for (const l of waiting || []) {
+    try { await queueIfAuto(l, await pitchLead(admin, l, s)); } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
   }
   for (const l of pending || []) {
-    try {
-      const r = await processLead(admin, l, s);
-      if (r.kept) kept++; // candidates are asked first (Outreach > Client leads); the pitch follows their yes
-    } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
+    try { const r: any = await processLead(admin, l, s); if (r.kept) kept++; await queueIfAuto(l, r); }
+    catch (e) { errors.push(errMsg(e).slice(0, 160)); }
   }
   return { processed: (pending || []).length, kept, pitched, errors };
+}
+
+// A company said it's interested (the button on the candidates page, or in the email): the contract
+// goes out by itself through the client sender (Outreach > Setup > Contract). Until a contract is
+// set up, every active Admin is told once so they can send it themselves.
+async function stepContracts(admin: any, s: any, agencyName: string) {
+  const { data: leads } = await admin.from("leads").select("*").not("interested_at", "is", null).is("contract_sent_at", null).limit(10);
+  let sent = 0, flagged = 0;
+  const c = s.contract || {};
+  for (const l of leads || []) {
+    if (c.enabled && c.subject && c.body && l.contact_email) {
+      const fill = (t: string) => String(t || "").replace(/\{\{first_name\}\}/gi, l.contact_first_name || "there").replace(/\{\{company\}\}/gi, l.company || "").replace(/\{\{role\}\}/gi, l.job_title || "")
+        .replace(/\{\{contract_link\}\}/gi, c.url || "");
+      const body = fill(c.body) + (c.url && !/\{\{contract_link\}\}/i.test(c.body) ? "\n\n" + c.url : "");
+      const { error } = await admin.from("outreach_messages").insert({ kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name, subject: fill(c.subject).slice(0, 200),
+        body: finalBody(body, l.unsub_token, "l", l.region || "OTHER", s, agencyName, "client"), approved_by: null });
+      if (!error) { await admin.from("leads").update({ contract_sent_at: new Date().toISOString(), status: l.status === "won" ? "won" : "meeting", notes: [l.notes, "Contract queued automatically " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id); sent++; }
+      continue;
+    }
+    if (l.contract_flagged_at) continue;
+    const { data: admins } = await admin.from("profiles").select("id").eq("role", "admin").eq("status", "Active");
+    for (const a of admins || []) {
+      await admin.rpc("push_update", { p_user: a.id, p_kind: "event", p_title: l.company + " is interested in your candidates for " + l.job_title,
+        p_body: (l.contact_name || "Their hiring contact") + (l.contact_email ? " (" + l.contact_email + ")" : "") + " clicked 'We're interested'. No contract is set up in Outreach > Setup yet, so send it yourself.",
+        p_link: { page: "campaigns" }, p_dedupe: "lead-interest:" + l.id }).then(() => {}, () => {});
+    }
+    await admin.from("leads").update({ contract_flagged_at: new Date().toISOString() }).eq("id", l.id);
+    flagged++;
+  }
+  return { sent, flagged };
 }
 
 // Everyone still waiting under Needs approval on open roles, with a known location, checked against
@@ -194,7 +234,11 @@ async function handle(req: Request): Promise<Response> {
         try { out.jobs = await stepJobs(admin, s, opsKey, agencyName); } catch (e) { out.jobsError = errMsg(e); }
         if (!out.jobs) { try { out.leads = await stepLeads(admin, s, agencyName, 2); } catch (e) { out.leadsError = errMsg(e); } }
         try { out.xray = await stepXrayQueue(admin, s); } catch (e) { out.xrayError = errMsg(e); }
+        try { out.musts = await stepMusts(admin, s, 10); } catch (e) { out.mustsError = errMsg(e); }
+        try { out.closedStops = await stopClosedRoleSequences(admin); } catch (e) { out.closedStopsError = errMsg(e); }
+        try { out.inactive = await stepInactiveRecruiters(admin); } catch (e) { out.inactiveError = errMsg(e); }
         try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
+        try { out.contracts = await stepContracts(admin, s, agencyName); } catch (e) { out.contractsError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
@@ -209,13 +253,15 @@ async function handle(req: Request): Promise<Response> {
       // One step of an X-ray run, in its own call (so its own time limit). Answers straight away;
       // the step works in the background and hands over to the next one when it needs to.
       if (body.action === "xray_step" && body.jobId) {
+        // The search's AI cost is charged to whoever started it (Team audit), not to "automatic runs".
+        if (charged) { const { data: xj } = await admin.from("jobs").select("xray").eq("id", String(body.jobId)).maybeSingle(); if (xj?.xray?.by) charged.userId = String(xj.xray.by); }
         const work = runXrayStep(admin, String(body.jobId), s, String(body.run || ""));
         // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
         if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;
         return json({ ok: true });
       }
       // Summary + must-have checklist for people found outside X-ray (Apollo, PDL) who don't have one yet.
-      if (body.action === "musts_backfill") return json({ ok: true, ...(await backfillMustHaves(admin, body.jobId ? String(body.jobId) : undefined, Math.min(Number(body.max) || 60, 120))) });
+      if (body.action === "musts_backfill") return json({ ok: true, ...(await stepMusts(admin, s, Math.min(Number(body.max) || 20, 40), body.jobId ? String(body.jobId) : undefined)) });
       if (body.action === "search_area" && body.jobId) {
         const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();
         if (!job) return json({ error: "Job not found" }, 404);
@@ -281,6 +327,7 @@ async function handle(req: Request): Promise<Response> {
     // the people they found through my_sourced_prospects (no emails); everything else is Rec Ops'.
     if (me.role === "recruiter") {
       const jobId = String(body.jobId || "");
+      if (action === "xray_stop") return json(await stopXray(admin, jobId, s, me));
       if (action === "xray" || action === "xray_status") {
         const { data: job } = await admin.from("jobs").select("id,status,lead_role,xray").eq("id", jobId).maybeSingle();
         if (!job) return json({ error: "We couldn't find this job. Refresh the page and try again." }, 404);
@@ -329,6 +376,7 @@ async function handle(req: Request): Promise<Response> {
         if (s.approval === "auto" && r.ids?.length && !sendBlockers(s).length) await queueProspects(admin, r.ids, null, s, agencyName);
         return r;
       }
+      if (req.kind === "pdl_profiles") return await runProfileChecks(admin, req.job_id, Array.isArray(req.payload?.ids) ? req.payload.ids : []);
       if (req.kind === "xray_emails") return await findEmails(admin, { jobId: req.job_id, ids: Array.isArray(req.payload?.ids) ? req.payload.ids : [] }, s, agencyName);
       if (req.kind === "apollo_search") {
         const r: any = await sourceExternal(admin, req.job_id, s, { force: true });
@@ -366,6 +414,11 @@ async function handle(req: Request): Promise<Response> {
       if (!body.jobId) return json({ error: "Choose a job first." }, 400);
       // Optional direction (titles, places, must-haves, companies, exclusions, exact searches).
       return json(await startXray(admin, String(body.jobId), s, me.id, cleanGuide(body.guide)));
+    }
+    // Stop a running X-ray search (one reviewing keeps the best of who it already reviewed).
+    if (action === "xray_stop") {
+      if (!body.jobId) return json({ error: "Choose a job first." }, 400);
+      return json(await stopXray(admin, String(body.jobId), s, me));
     }
 
     // People from the talent pool who fit this job (free; also checked when a job goes live).
@@ -428,6 +481,8 @@ async function handle(req: Request): Promise<Response> {
       const now = new Date().toISOString();
       if (action === "decline_request") {
         await admin.from("spend_requests").update({ status: "declined", decided_by: me.id, decided_at: now }).eq("id", req.id);
+        // Full-profile check declined: the people waiting on it can be emailed as they are.
+        if (req.kind === "pdl_profiles") await releaseProfileHold(admin, Array.isArray(req.payload?.ids) ? req.payload.ids : [], "Full-profile check declined by " + (me.full_name || "an Admin"));
         if (req.kind === "apollo_search" && req.job_id) {
           const { data: j } = await admin.from("jobs").select("sourcing").eq("id", req.job_id).maybeSingle();
           await admin.from("jobs").update({ sourcing: { ...(j?.sourcing || {}), state: "done", external: { at: now, skipped: "Declined by " + (me.full_name || "an Admin") } } }).eq("id", req.job_id);
@@ -446,8 +501,9 @@ async function handle(req: Request): Promise<Response> {
     }
 
     if (action === "approve_prospects") {
-      const { data: held } = ids.length ? await admin.from("prospects").select("id").in("id", ids).not("data->>location_hold", "is", null).is("data->>location_ok", null) : { data: [] };
-      return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName), held: (held || []).length });
+      const { data: picked } = ids.length ? await admin.from("prospects").select("id,source,status,data").in("id", ids) : { data: [] };
+      const why = (picked || []).map((p: any) => holdReason(p)).filter(Boolean) as string[];
+      return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName), held: why.length, heldWhy: [...new Set(why)] });
     }
     // "Location OK": a person checked where they are; they can be approved, and are never held again.
     if (action === "location_ok") {
@@ -510,7 +566,7 @@ async function handle(req: Request): Promise<Response> {
     if (action === "pitch_lead" && body.leadId) {
       const { data: l } = await admin.from("leads").select("*").eq("id", body.leadId).single();
       if (!l) return json({ error: "Lead not found" }, 404);
-      return json({ ok: true, ...(await pitchLead(admin, l, s)) });
+      return json(await pitchLead(admin, l, s));
     }
 
     // Won lead -> a draft job in Pronext (then it goes live like any other job).

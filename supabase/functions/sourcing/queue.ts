@@ -28,9 +28,17 @@ export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "
 
 // The pitch to a hiring manager in the house design (HTML), from the lead's drafted text.
 export function leadHtml(l: any, token: string, region: Region, s: Settings, agencyName: string, b: Brand) {
+  const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
   return clientEmail(b, { body: l.pitch_body, interestedUrl: linkFor(token, "l", "interested"), region, subject: l.pitch_subject || `Candidate for your ${l.job_title} role`,
+    viewUrl: l.client_token && n ? `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}` : "", viewCount: n,
     senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
     unsubUrl: linkFor(token, "l", "unsubscribe"), deleteUrl: linkFor(token, "l", "delete") });
+}
+
+// A client-lead pitch as plain text: the pitch, then the link to the candidates' blind resumes.
+export function leadText(l: any) {
+  const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
+  return String(l.pitch_body || "") + (l.client_token && n ? `\n\nView the ${n > 1 ? n + " candidates" : "candidate"}: ${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}\nInterested? {{INTERESTED_LINK}}` : "");
 }
 
 // Plain-text version of a client pitch, with the footer underneath (sent alongside the HTML).
@@ -132,6 +140,16 @@ export async function sendLeadTest(admin: any, leadId: string, to: string, s: Se
   return { ok: true, to };
 }
 
+// Why someone can't be emailed yet (or "" when they can): their location to confirm first, an
+// Apollo person not through the must-have check yet, or one waiting on a full-profile check.
+export function holdReason(p: any): string {
+  if (!["found", "approved"].includes(p?.status)) return "";
+  if (p.data?.location_hold && !p.data?.location_ok) return "location";
+  if (p.source === "apollo" && !p.data?.musts_v) return "must-have check";
+  if (p.data?.profile_hold) return "full-profile check";
+  return "";
+}
+
 export async function queueProspects(admin: any, ids: string[], approver: string | null, s: Settings, agencyName: string) {
   const missing = sendBlockers(s);
   if (missing.length) throw new Error("Before emailing anyone, add your " + missing.join(" and ") + " in Outreach > Setup (required by anti-spam law).");
@@ -141,7 +159,7 @@ export async function queueProspects(admin: any, ids: string[], approver: string
   const brand = await loadBrand(admin);
   for (const p of rows || []) {
     if (!p.email || !p.body) continue;
-    if (p.data?.location_hold && !p.data?.location_ok) continue;   // location to confirm first ("Location OK")
+    if (holdReason(p)) continue;   // location to confirm first ("Location OK"), or a must-have check still to come
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
     if (sup) { await admin.from("prospects").update({ status: "unsubscribed" }).eq("id", p.id); continue; }
     const mail = await composeProspect(admin, p, s, agencyName, cache, brand);
@@ -170,7 +188,7 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
     const region = (l.region as Region) || regionOf(countryCode(l.country));
     const { error } = await admin.from("outreach_messages").insert({
       kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name,
-      subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(l.pitch_body, l.unsub_token, "l", region, s, agencyName, "client"),
+      subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"),
       html: leadHtml(l, l.unsub_token, region, s, agencyName, brand), approved_by: approver,
     });
     if (error) throw new Error(error.message);
@@ -197,7 +215,9 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
     if (sup) { await admin.from("outreach_messages").update({ status: "skipped", error: "Unsubscribed" }).eq("id", m.id); continue; }
     let first = "", last = "", company = "", token = "";
     if (m.prospect_id) {
-      const { data: p } = await admin.from("prospects").select("first_name,last_name,company,unsub_token").eq("id", m.prospect_id).maybeSingle();
+      const { data: p } = await admin.from("prospects").select("first_name,last_name,company,unsub_token,status,jobs(status)").eq("id", m.prospect_id).maybeSingle();
+      // Last guard: nothing goes out for a role that has closed (closing also cancels the queue).
+      if (p?.status === "archived" || (p as any)?.jobs?.status === "Closed") { await admin.from("outreach_messages").update({ status: "skipped", error: "Role closed" }).eq("id", m.id); continue; }
       first = p?.first_name || ""; last = p?.last_name || ""; company = p?.company || ""; token = p?.unsub_token || "";
     } else if (m.lead_id) {
       const { data: l } = await admin.from("leads").select("contact_first_name,contact_name,company,unsub_token").eq("id", m.lead_id).maybeSingle();
@@ -245,7 +265,7 @@ export async function manualCompose(admin: any, kind: "p" | "l", id: string, s: 
   const { data: q } = await admin.from("outreach_messages").select("subject,body").eq("lead_id", id).eq("status", "queued").limit(1).maybeSingle();
   const region = (l.region as Region) || regionOf(countryCode(l.country));
   return { to: l.contact_email, toName: l.contact_name || "", subject: q?.subject || l.pitch_subject || `Candidate for your ${l.job_title} role`,
-    body: q?.body || finalBody(l.pitch_body, l.unsub_token, "l", region, s, agencyName, "client") };
+    body: q?.body || finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"), html: q?.html || undefined };
 }
 
 export async function markManualSent(admin: any, kind: "p" | "l", id: string) {
