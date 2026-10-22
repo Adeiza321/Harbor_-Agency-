@@ -110,8 +110,10 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, done: "deleted" });
     }
     if (action === "interested") {
+      // Interested: the contract goes out by itself on the next outreach run (sourcing stepContracts).
       if (!["replied", "meeting", "won"].includes(l.status))
         await admin.from("leads").update({ status: "replied", notes: [l.notes, "Clicked 'interested' in the email " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id);
+      await admin.from("leads").update({ interested_at: new Date().toISOString() }).eq("id", l.id).is("interested_at", null);
       return json({ ok: true, done: "interested", role: l.job_title });
     }
     return json({ error: "Unknown action" }, 400);

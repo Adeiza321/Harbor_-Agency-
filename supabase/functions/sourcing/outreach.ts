@@ -65,7 +65,8 @@ export function introOf(body: string): { paragraphs: string[]; signoff: string }
   const cut = text.search(/^\s*(here'?s the full job description|here is the full job description)/im);
   if (cut >= 0) text = text.slice(0, cut);
   text = text.split("\n").filter((l) => !/\{\{(INTERESTED_LINK|JOB_DESCRIPTION|JOB_LINK)\}\}/.test(l) && !/^\s*if it feels like a good fit/i.test(l)).join("\n");
-  const paragraphs = text.split(/\n\s*\n/).map((p) => p.replace(/\s*\n\s*/g, " ").trim()).filter(Boolean);
+  // Line breaks inside a paragraph become spaces, except before a list item ("- ..."), which keeps its own line.
+  const paragraphs = text.split(/\n\s*\n/).map((p) => p.replace(/\s*\n\s*(?![-•*]\s)/g, " ").replace(/\s*\n\s*(?=[-•*]\s)/g, "\n").trim()).filter(Boolean);
   return { paragraphs, signoff };
 }
 
@@ -195,7 +196,11 @@ function noteHtml(b: Brand, paragraphs: string[]) {
   const ps = [...paragraphs];
   const hi = ps.length && /^(hi|hello|dear)\b[^.!?]{0,40},?$/i.test(ps[0]) ? ps.shift()! : "";
   return (hi ? `<div style="font-size:20px;margin-bottom:8px;">${esc(hi)}</div>` : "") +
-    ps.map((p, i) => `<div style="font-size:15px;line-height:1.6;${i || hi ? "margin-top:12px;" : ""}">${esc(p)}</div>`).join("\n");
+    ps.map((p, i) => {
+      const parts = p.split("\n"), items = parts.filter((x) => /^[-•*]\s/.test(x)), lead = parts.filter((x) => !/^[-•*]\s/.test(x)).join(" ");
+      const list = items.length ? `<ul style="margin:8px 0 0;padding-left:20px;">${items.map((x) => `<li style="margin-top:4px;">${esc(x.replace(/^[-•*]\s+/, ""))}</li>`).join("")}</ul>` : "";
+      return `<div style="font-size:15px;line-height:1.6;${i || hi ? "margin-top:12px;" : ""}">${esc(lead)}${list}</div>`;
+    }).join("\n");
 }
 function signHtml(name: string, title: string, agency: string) {
   if (!name) return "";
@@ -212,13 +217,18 @@ export function footerHtml(b: Brand, f: { sender: string; agency: string; addres
 
 // The pitch to a hiring manager, in the same design. Its "Interested? Click here: <link>" line
 // becomes the button; the footer carries the sender details, notice and unsubscribe links.
-export function clientEmail(b: Brand, o: { body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string }) {
+// With viewUrl (client leads): "View the N candidates" opens their blind resumes; "We're interested" sits under it.
+export function clientEmail(b: Brand, o: { body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string; viewUrl?: string; viewCount?: number }) {
   const { paragraphs, signoff } = introOf(String(o.body || ""));
   const lines = paragraphs.filter((p) => !/click here|\{\{INTERESTED_LINK\}\}/i.test(p));
+  const n = o.viewCount || 0;
   const html = emailShell(b, o.subject,
     noteHtml(b, lines) +
-    button(b, o.interestedUrl, "I'm interested") +
-    `<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Or just reply to this email.</div>` +
+    (o.viewUrl
+      ? button(b, o.viewUrl, n > 1 ? `View the ${n} candidates` : "View the candidate") +
+        `<div style="font-size:14px;line-height:1.6;margin-top:14px;color:#56605A;">Want to talk to ${n > 1 ? "any of them" : "them"}? <a href="${esc(o.interestedUrl)}" style="color:${b.color};font-weight:600;">We're interested</a>, or just reply to this email.</div>`
+      : button(b, o.interestedUrl, "I'm interested") +
+        `<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Or just reply to this email.</div>`) +
     signHtml(signoff || o.senderName.split(" ")[0] || "", o.senderTitle, o.agency),
     undefined, undefined,
     footerHtml(b, { sender: [o.senderName, o.senderTitle].filter(Boolean).join(", "), agency: o.agency, address: o.address,

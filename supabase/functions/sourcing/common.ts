@@ -16,6 +16,8 @@ export type Settings = {
   footerName: string;                  // company name in footers: Agency settings' full name, else the agency name
   includePay: boolean;                 // mention the pay range in candidate outreach
   leads: { enabled: boolean; postingsPerDay: number; maxAgeDays: number };
+  // The contract sent by itself when a company says it's interested in our candidates (client leads).
+  contract: { enabled: boolean; subject: string; body: string; url: string };
   retentionDays: number;               // delete prospects nobody engaged with after this long
 };
 
@@ -50,6 +52,7 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
         maxAgeDays: num(o.leads?.maxAgeDays, 1, 1, 14),
       },
       retentionDays: num(o.retentionDays, 90, 14, 365),
+      contract: { enabled: !!o.contract?.enabled, subject: String(o.contract?.subject || "").trim().slice(0, 200), body: String(o.contract?.body || "").slice(0, 6000), url: /^https:\/\//.test(String(o.contract?.url || "")) ? String(o.contract.url).trim() : "" },
     },
   };
 }

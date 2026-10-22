@@ -4,8 +4,8 @@ import { aiCharge } from "./ai.ts";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
-import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers } from "./leads.ts";
-import { composeProspect, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
+import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
+import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
@@ -121,26 +121,52 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
   }
 }
 
-// Leads waiting to be checked: a few per run, to stay within time and rate limits.
+// Leads waiting to be checked: a few per run, to stay within time and rate limits. New postings are
+// matched and pitched straight away; leads waiting for a checked blind resume are tried again.
 async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   const { data: pending } = await admin.from("leads").select("*").eq("status", "pending").order("created_at").limit(n);
   let kept = 0, pitched = 0; const errors: string[] = [];
-  // Leads where a candidate has said yes and confirmed their details: write the employer pitch now.
-  const { data: ready } = await admin.from("lead_offers").select("lead_id,leads!inner(status)").eq("status", "confirmed").eq("leads.status", "awaiting").limit(n);
-  for (const lid of [...new Set((ready || []).map((r: any) => r.lead_id))]) {
-    try {
-      const { data: l } = await admin.from("leads").select("*").eq("id", lid).single();
-      const r: any = await pitchLead(admin, l, s);
-      if (r.kept) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [lid], null, s, agencyName); }
-    } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
+  const queueIfAuto = async (l: any, r: any) => { if (r?.pitched) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [l.id], null, s, agencyName); } };
+  // Waiting for blind resumes: pitched as soon as one of their candidates' blind resumes is checked.
+  const { data: waiting } = await admin.from("leads").select("*").eq("status", "awaiting").order("updated_at").limit(n * 3);
+  for (const l of waiting || []) {
+    try { await queueIfAuto(l, await pitchLead(admin, l, s)); } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
   }
   for (const l of pending || []) {
-    try {
-      const r = await processLead(admin, l, s);
-      if (r.kept) kept++; // candidates are asked first (Outreach > Client leads); the pitch follows their yes
-    } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
+    try { const r: any = await processLead(admin, l, s); if (r.kept) kept++; await queueIfAuto(l, r); }
+    catch (e) { errors.push(errMsg(e).slice(0, 160)); }
   }
   return { processed: (pending || []).length, kept, pitched, errors };
+}
+
+// A company said it's interested (the button on the candidates page, or in the email): the contract
+// goes out by itself through the client sender (Outreach > Setup > Contract). Until a contract is
+// set up, every active Admin is told once so they can send it themselves.
+async function stepContracts(admin: any, s: any, agencyName: string) {
+  const { data: leads } = await admin.from("leads").select("*").not("interested_at", "is", null).is("contract_sent_at", null).limit(10);
+  let sent = 0, flagged = 0;
+  const c = s.contract || {};
+  for (const l of leads || []) {
+    if (c.enabled && c.subject && c.body && l.contact_email) {
+      const fill = (t: string) => String(t || "").replace(/\{\{first_name\}\}/gi, l.contact_first_name || "there").replace(/\{\{company\}\}/gi, l.company || "").replace(/\{\{role\}\}/gi, l.job_title || "")
+        .replace(/\{\{contract_link\}\}/gi, c.url || "");
+      const body = fill(c.body) + (c.url && !/\{\{contract_link\}\}/i.test(c.body) ? "\n\n" + c.url : "");
+      const { error } = await admin.from("outreach_messages").insert({ kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name, subject: fill(c.subject).slice(0, 200),
+        body: finalBody(body, l.unsub_token, "l", l.region || "OTHER", s, agencyName, "client"), approved_by: null });
+      if (!error) { await admin.from("leads").update({ contract_sent_at: new Date().toISOString(), status: l.status === "won" ? "won" : "meeting", notes: [l.notes, "Contract queued automatically " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id); sent++; }
+      continue;
+    }
+    if (l.contract_flagged_at) continue;
+    const { data: admins } = await admin.from("profiles").select("id").eq("role", "admin").eq("status", "Active");
+    for (const a of admins || []) {
+      await admin.rpc("push_update", { p_user: a.id, p_kind: "event", p_title: l.company + " is interested in your candidates for " + l.job_title,
+        p_body: (l.contact_name || "Their hiring contact") + (l.contact_email ? " (" + l.contact_email + ")" : "") + " clicked 'We're interested'. No contract is set up in Outreach > Setup yet, so send it yourself.",
+        p_link: { page: "campaigns" }, p_dedupe: "lead-interest:" + l.id }).then(() => {}, () => {});
+    }
+    await admin.from("leads").update({ contract_flagged_at: new Date().toISOString() }).eq("id", l.id);
+    flagged++;
+  }
+  return { sent, flagged };
 }
 
 // Everyone still waiting under Needs approval on open roles, with a known location, checked against
@@ -195,6 +221,7 @@ async function handle(req: Request): Promise<Response> {
         if (!out.jobs) { try { out.leads = await stepLeads(admin, s, agencyName, 2); } catch (e) { out.leadsError = errMsg(e); } }
         try { out.xray = await stepXrayQueue(admin, s); } catch (e) { out.xrayError = errMsg(e); }
         try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
+        try { out.contracts = await stepContracts(admin, s, agencyName); } catch (e) { out.contractsError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
@@ -510,7 +537,7 @@ async function handle(req: Request): Promise<Response> {
     if (action === "pitch_lead" && body.leadId) {
       const { data: l } = await admin.from("leads").select("*").eq("id", body.leadId).single();
       if (!l) return json({ error: "Lead not found" }, 404);
-      return json({ ok: true, ...(await pitchLead(admin, l, s)) });
+      return json(await pitchLead(admin, l, s));
     }
 
     // Won lead -> a draft job in Pronext (then it goes live like any other job).

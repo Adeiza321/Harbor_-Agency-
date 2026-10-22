@@ -28,9 +28,17 @@ export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "
 
 // The pitch to a hiring manager in the house design (HTML), from the lead's drafted text.
 export function leadHtml(l: any, token: string, region: Region, s: Settings, agencyName: string, b: Brand) {
+  const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
   return clientEmail(b, { body: l.pitch_body, interestedUrl: linkFor(token, "l", "interested"), region, subject: l.pitch_subject || `Candidate for your ${l.job_title} role`,
+    viewUrl: l.client_token && n ? `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}` : "", viewCount: n,
     senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
     unsubUrl: linkFor(token, "l", "unsubscribe"), deleteUrl: linkFor(token, "l", "delete") });
+}
+
+// A client-lead pitch as plain text: the pitch, then the link to the candidates' blind resumes.
+export function leadText(l: any) {
+  const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
+  return String(l.pitch_body || "") + (l.client_token && n ? `\n\nView the ${n > 1 ? n + " candidates" : "candidate"}: ${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}\nInterested? {{INTERESTED_LINK}}` : "");
 }
 
 // Plain-text version of a client pitch, with the footer underneath (sent alongside the HTML).
@@ -170,7 +178,7 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
     const region = (l.region as Region) || regionOf(countryCode(l.country));
     const { error } = await admin.from("outreach_messages").insert({
       kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name,
-      subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(l.pitch_body, l.unsub_token, "l", region, s, agencyName, "client"),
+      subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"),
       html: leadHtml(l, l.unsub_token, region, s, agencyName, brand), approved_by: approver,
     });
     if (error) throw new Error(error.message);
@@ -245,7 +253,7 @@ export async function manualCompose(admin: any, kind: "p" | "l", id: string, s: 
   const { data: q } = await admin.from("outreach_messages").select("subject,body").eq("lead_id", id).eq("status", "queued").limit(1).maybeSingle();
   const region = (l.region as Region) || regionOf(countryCode(l.country));
   return { to: l.contact_email, toName: l.contact_name || "", subject: q?.subject || l.pitch_subject || `Candidate for your ${l.job_title} role`,
-    body: q?.body || finalBody(l.pitch_body, l.unsub_token, "l", region, s, agencyName, "client") };
+    body: q?.body || finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"), html: q?.html || undefined };
 }
 
 export async function markManualSent(admin: any, kind: "p" | "l", id: string) {

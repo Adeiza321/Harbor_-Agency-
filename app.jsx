@@ -9237,6 +9237,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
   const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => S.error(e.message));
   const matches = Array.isArray(l.matches) ? l.matches : [];
   const offers = Array.isArray(l.lead_offers) ? l.lead_offers : [];
+  const pitched = l.data && Array.isArray(l.data.pitched) ? l.data.pitched : [];
   const emailable = l.channel === "email" && ["new", "approved"].includes(l.status);
   const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
   const inpS = { borderColor: C.line, background: C.soft };
@@ -9264,12 +9265,31 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
           <ApolloNote data={l.data} />
           {offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
-              {matches.map((m, i) => { const c = S.cands.find((x) => x.id === m.candidate_id); return (
+              {l.status === "awaiting" && (
+                <div className="rounded-lg px-3 py-2 text-xs" style={{ background: C.warnBg, color: C.warnText }}>
+                  {l.notes || "Waiting for a checked blind resume for these candidates."} {l.company} is pitched by itself once one is ready.
+                </div>
+              )}
+              {matches.map((m, i) => { const c = S.cands.find((x) => x.id === m.candidate_id); const inPitch = pitched.includes(m.candidate_id); return (
                 <div key={i} className="rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas }}>
-                  <div className="flex items-center justify-between gap-2"><button className="font-medium truncate text-left" onClick={() => c && S.openCandidate(c.id)} style={{ color: c ? C.em : C.ink }}>{c ? c.name : "Candidate"}</button><span className="shrink-0">{m.fit}% · {m.verdict}</span></div>
+                  <div className="flex items-center justify-between gap-2">
+                    <button className="font-medium truncate text-left" onClick={() => c && S.openCandidate(c.id)} style={{ color: c ? C.em : C.ink }}>{c ? c.name : "Candidate"}</button>
+                    <span className="shrink-0 flex items-center gap-1.5">
+                      <span style={{ color: C.ink2 }}>{m.fit != null ? m.fit + "% · " : ""}{m.verdict}</span>
+                      <Pill tone={inPitch ? "em" : c && c.blind && c.blind.checkedAt ? "info" : "warn"}>{inPitch ? "In the pitch" : c && c.blind ? (c.blind.checkedAt ? "Blind resume ready" : "Blind resume to check") : "No blind resume"}</Pill>
+                    </span>
+                  </div>
                   {(m.bullets || []).length > 0 && <div className="mt-1" style={{ color: C.ink2 }}>{m.bullets.join(" · ")}</div>}
                 </div>
               ); })}
+              {pitched.length > 0 && l.client_token && (
+                <div className="flex flex-wrap items-center gap-2 text-xs mt-0.5">
+                  <span style={{ color: C.ink2 }}>{l.company} sees {pitched.length === 1 ? "this candidate's blind resume" : "these " + pitched.length + " blind resumes"} behind the email's button{l.client_viewed_at ? " (opened " + ago(l.client_viewed_at) + ")" : ""}.</span>
+                  <button onClick={() => window.open("/?t=s-" + l.client_token, "_blank")} className="font-medium" style={{ color: C.em }}>Preview their page</button>
+                  <button onClick={() => copyText(window.location.origin + "/?t=s-" + l.client_token, toast, "Link copied")} className="font-medium" style={{ color: C.em }}>Copy link</button>
+                </div>
+              )}
+              {l.interested_at && <div className="rounded-lg px-3 py-2 text-xs" style={{ background: C.emTint, color: C.emText }}>Interested {ago(l.interested_at)}. {l.contract_sent_at ? "Contract sent " + ago(l.contract_sent_at) + "." : l.contract_flagged_at ? "No contract is set up yet (Outreach > Setup), so send it yourself." : "The contract goes out on the next run."}</div>}
             </div>
           )}
           {l.status === "ignored" && l.notes && <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>{l.notes}</div>}
@@ -9372,22 +9392,15 @@ function OutreachSetup({ S, toast, status, onSaved }) {
             </select>
           </div>
           <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where to look for new clients</label>
-            <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Only for finding companies hiring now (client leads). Outside candidates for a job are always searched where that job is.</div>
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {(f.regions || []).map((k) => (
-                <span key={k} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1 py-0.5 text-xs" style={{ background: C.canvas, border: `1px solid ${C.line}` }}>
-                  {leadPlaceLabel(k)}
-                  <button type="button" aria-label={"Remove " + leadPlaceLabel(k)} onClick={() => set("regions", (f.regions || []).filter((x) => x !== k))} className="w-5 h-5 rounded-full flex items-center justify-center" style={{ color: C.ink2 }}><X size={11} /></button>
-                </span>
-              ))}
-              {!(f.regions || []).length && <span className="text-xs" style={{ color: C.ink3 }}>None chosen: the United States, Europe and Malaysia are used.</span>}
-            </div>
-            <div className="mt-2">
-              <PickList value="" onChange={(v) => v && set("regions", [...new Set([...(f.regions || []), v])])}
-                options={LEAD_PLACE_OPTIONS.filter((o) => !(f.regions || []).includes(o.value))} placeholder="Add a country or Europe…" searchPlaceholder="Search countries"
-                className={inp} style={inpS} />
-            </div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where client leads come from</label>
+            <div className="text-xs mt-1 leading-relaxed" style={{ color: C.ink2 }}>The countries your Active file candidates live in: new roles in their own country only (remote roles are left out). Each email to a company carries up to 5 qualified candidates as blind resumes, so make and check blind resumes under Candidates &gt; Blind resumes.</div>
+          </div>
+          <div className="md:col-span-2 rounded-xl p-3.5 flex flex-col gap-2.5" style={{ background: C.canvas }}>
+            <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!(f.contract && f.contract.enabled)} onChange={(e) => set("contract", { ...(f.contract || {}), enabled: e.target.checked })} /> Send our contract automatically when a company says it's interested</label>
+            <div className="text-xs" style={{ color: C.ink3 }}>It goes from the client sender, to the hiring contact who clicked "We're interested". Until this is set up, Admins get a notice to send it themselves. You can use {"{{first_name}}"}, {"{{company}}"}, {"{{role}}"} and {"{{contract_link}}"}.</div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Subject</label><input value={(f.contract && f.contract.subject) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), subject: e.target.value })} placeholder="Next steps: our agreement for the {{role}} role" className={inp} style={inpS} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label><textarea rows={5} value={(f.contract && f.contract.body) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), body: e.target.value })} placeholder={"Hi {{first_name}},\n\nThanks for your interest in our candidates for the {{role}} role. Here's our agreement to review and sign: {{contract_link}}\n\nOnce it's signed we'll set up interviews straight away."} className={inp} style={inpS} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Link to the contract (https://, e.g. a signing link)</label><input value={(f.contract && f.contract.url) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), url: e.target.value })} placeholder="https://" className={inp} style={inpS} /></div>
           </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside ProNext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
@@ -9561,7 +9574,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning ProNext pulls new postings in the places you chose for titles your candidates hold (everyone in the Active file, and anyone who agreed to be pitched) and keeps the ones where a candidate is a strong fit. You ask each candidate first: they get the role without the employer's name, say yes, and confirm their details. Then ProNext drafts an anonymous pitch to the hiring contact (by email when Apollo finds a verified address, otherwise a LinkedIn message for you to send), and you share their blind resume.</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext pulls new postings in the countries your Active file candidates live in, for the titles they hold, leaving out remote roles, and keeps the ones where up to 5 of them are a strong fit. The hiring contact gets one email with those candidates' blind resumes behind a "View the candidates" button; when they say they're interested, the contract goes out by itself (Outreach settings).</div>
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
@@ -10469,6 +10482,58 @@ function ProtectedPages({ pages, client }) {
 
 // Public page behind the blind-profile link shared with a client: /?t=<client_token>.
 // Blind until the recruiter reveals it -- same link, same token, no second link to send.
+// Client leads: the page behind the pitch's "View the candidates" button (/?t=s-<token>). Up to
+// five candidates, each as a blind resume with their selling points (no names), and "We're
+// interested", which sends our contract by itself.
+function ShortlistPage({ token }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(0);
+  const call = (action) => fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, action }) })
+    .then((r) => r.json().then((j) => { if (!r.ok || j.error) throw new Error(j.error || "This link is not valid."); return j; }));
+  React.useEffect(() => { call("shortlist").then(setD).catch((e) => setErr(e.message)); }, [token]); // eslint-disable-line
+  const interested = () => { setBusy(true); call("shortlist_interest").then(() => setD((x) => ({ ...x, interested: true }))).catch((e) => setErr(e.message)).finally(() => setBusy(false)); };
+  const list = (d && d.candidates) || [];
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-3xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        {err && <Card><div className="text-sm" style={{ color: C.dangerFg }}>{err === "Link not found" ? "This link is not valid any more." : err}</div></Card>}
+        {!d && !err && <div className="py-10 flex justify-center"><LogoSpinner compact label="" /></div>}
+        {d && (
+          <>
+            <Card>
+              <div className="text-xs font-semibold tracking-widest" style={{ color: C.em }}>CANDIDATES FOR YOUR ROLE</div>
+              <div className="text-2xl mt-1" style={{ ...SERIF }}>{d.role}</div>
+              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{[d.company, d.location].filter(Boolean).join(" · ")}</div>
+              <div className="text-sm mt-3" style={{ color: C.ink2 }}>{list.length === 1 ? "One candidate" : list.length + " candidates"} who fit this role, presented anonymously: names, contact details and employers are hidden until you'd like to talk to them.</div>
+              <div className="mt-4">
+                {d.interested
+                  ? <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.emText }}>Thanks! We've got your interest and will send our agreement shortly so we can set up interviews.</div>
+                  : <Btn kind="primary" disabled={busy} onClick={interested}>{busy ? "Sending…" : "We're interested"}</Btn>}
+              </div>
+            </Card>
+            {list.map((c, i) => (
+              <Card key={i}>
+                <button type="button" onClick={() => setOpen(open === i ? -1 : i)} className="w-full flex items-start justify-between gap-3 text-left">
+                  <div className="min-w-0">
+                    <div className="text-base font-semibold">Candidate {c.n}{c.verdict ? <span className="ml-2 align-middle"><Pill tone="em">{c.verdict}</Pill></span> : null}</div>
+                    {c.bullets.length > 0 && <ul className="mt-2 flex flex-col gap-1 text-sm" style={{ color: C.ink2 }}>{c.bullets.map((b, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" />{b}</li>)}</ul>}
+                  </div>
+                  <span className="text-sm font-medium shrink-0" style={{ color: C.em }}>{open === i ? "Hide CV" : "View CV"}</span>
+                </button>
+                {open === i && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
+                  : <div className="text-sm mt-3" style={{ color: C.ink3 }}>The anonymised CV isn't available right now.</div>)}
+              </Card>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ClientViewPage({ token }) {
   const [info, setInfo] = useState(null);
   const [err, setErr] = useState("");
@@ -14038,7 +14103,7 @@ export function PublicRoot() {
   if (r.kind === "board") return <JobsBoard />;
   if (r.kind === "join") return <JoinPage />;
   if (r.kind === "outreach") return <OutreachLinkPage token={r.token} kind={r.linkKind} action={r.action} />;
-  if (r.kind === "client") return <ClientViewPage token={r.token} />;
+  if (r.kind === "client") return /^s-/.test(r.token) ? <ShortlistPage token={r.token} /> : <ClientViewPage token={r.token} />;
   if (portalToken === "preview") return <PreferencesPreviewPage />;
   if (!portalData) return <PortalSkeleton />;
   if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
