@@ -371,6 +371,8 @@ function mapAll(d) {
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, photoUrl: c.photo_url || null, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     // Their one blind resume (made once, reused for every client link and pitch); checked = a Rec Ops/Admin approved it.
+    // "Open to new roles" (their candidate page): off = not put forward until open_paused_until.
+    open: c.open_to_roles !== false || (!!c.open_paused_until && new Date(c.open_paused_until).getTime() < Date.now()), pausedUntil: c.open_to_roles === false ? c.open_paused_until || null : null,
     blind: c.blind_pages ? { pages: c.blind_pages, at: c.blind_at, by: c.blind_by ? pname(c.blind_by) : "", checkedAt: c.blind_checked_at || null, checkedBy: c.blind_checked_by ? pname(c.blind_checked_by) : "" } : null,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
@@ -5331,6 +5333,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <StatusPill status={status} />
               {candidate.recruiter && <Pill tone="neutral">Sourced by {candidate.recruiter}</Pill>}
               <span title="Whether they agreed, on their candidate page, to be presented anonymously to other employers"><Pill tone={candidate.pitchConsent ? "em" : "neutral"}>{candidate.pitchConsent ? "Open to anonymous pitches" : candidate.pitchAnswered ? "Declined pitches" : "Not asked about pitches yet"}</Pill></span>
+              {candidate.open === false && <span title="They turned 'Open to new roles' off on their candidate page, or started a new job: they aren't put forward until then, unless they turn it back on"><Pill tone="warn">{"Not open to roles" + (candidate.pausedUntil ? " until " + new Date(candidate.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "")}</Pill></span>}
               {candidate.emailOptOut && <span title="They clicked unsubscribe in one of our emails. ProNext no longer emails them; contact them another way."><Pill tone="danger">Unsubscribed from emails</Pill></span>}
             </div>
             {reassign && (
@@ -9817,9 +9820,8 @@ function prefsWithPrefill(p, pre) {
   if (!x.currentCity && pre.currentCity && x.currentCountry) x.currentCity = String(pre.currentCity);
   if (!x.relocate) x.relocate = one(pre.relocate, keys(RELOCATE));
   if (!x.workSetup.length && Array.isArray(pre.workSetup)) x.workSetup = pre.workSetup.filter((v) => keys(WORK_SETUPS).includes(v));
-  if (x.citizen === null && typeof pre.citizen === "boolean") x.citizen = pre.citizen;
-  if (x.citizen === false && !x.visaType && pre.visaType) { const v = String(pre.visaType); if (visaListFor(x.currentCountry).includes(v)) x.visaType = v; else { x.visaType = "Other"; x.visaOther = v; } }
-  if (x.citizen === false && !x.sponsorship) x.sponsorship = one(pre.sponsorship, keys(SPONSOR));
+  // Citizenship, visa and sponsorship are never filled in for them: they're always asked directly,
+  // with the follow-up questions they lead to.
   const langs = Array.isArray(pre.languages) ? pre.languages.filter((l) => l && LANGUAGES.includes(l.language)).map((l) => ({ language: l.language, level: LANG_LEVELS.includes(l.level) ? l.level : "" })) : [];
   if (langs.length && !x.languages.some((l) => l.level)) x.languages = langs;
   if (!x.availability) x.availability = one(pre.availability, AVAILABILITY);
@@ -9828,9 +9830,14 @@ function prefsWithPrefill(p, pre) {
   return x;
 }
 // The form steps whose answer is already complete (they go on the review step instead of being asked).
+// Questions that need the candidate's own clear answer (citizenship and the visa follow-ups, and which
+// cities they'd move to) are always asked, never put on the review step, unless they're changing
+// answers they gave themselves before.
+const PREF_ALWAYS_ASK = ["citizen", "visa", "visaExpiry", "sponsorship", "cities"];
 function prefsKnownKeys(p, saved) {
   const order = ["roles", "seniority", "employmentTypes", "salary", "location", "relocate", "cities", "workSetup", "citizen", "visa", "visaExpiry", "sponsorship", "languages", "availability", "industries"];
   return order.filter((k) => {
+    if (!saved && PREF_ALWAYS_ASK.includes(k)) return false;
     if (k === "cities") return saved && p.relocate && p.relocate !== "no" && p.preferredCities.length > 0;
     if (["visa", "visaExpiry", "sponsorship"].includes(k) && p.citizen !== false) return false;
     if (k === "visaExpiry") return saved && !PREF_CHECKS.visaExpiry(p);
@@ -10280,21 +10287,25 @@ function PreferencesSummary({ p, staff }) {
 // "Help us match you" on the candidate page. Opens first when they click Yes in an email (openSignal)
 // or arrive with ?prefs=1; answers we can already see are filled in for them to check (prefill,
 // worked out once by ai-screen and cached). onThanks("finished" | "closed") tells the page to show
-// its thank-you once the form is done with.
+// its thank-you once the form is done with. Once they've answered, their answers aren't shown here:
+// "Edit my information" emails a code (candidate-otp) and the code opens the form with them.
 function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) {
   const [state, setState] = useState(null);
   const [open, setOpen] = useState(false);
   const [prefill, setPrefill] = useState(undefined); // undefined = not looked up yet
   const [loadingPrefill, setLoadingPrefill] = useState(false);
+  const [editing, setEditing] = useState(null); // { session, preferences } once the code is right
+  const [askCode, setAskCode] = useState(false);
   const autoOpened = React.useRef(false);
   const fromEmail = React.useRef(false);
   const load = () => sbFetch("/rest/v1/rpc/candidate_preferences", { method: "POST", body: { p_token: token } }).then(setState).catch(() => setState({ error: true }));
   useEffect(() => { if (token) load(); }, [token, openSignal]); // eslint-disable-line
   const wantsOpen = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("prefs") === "1";
-  // Before the form opens: what we can already fill in (from the cache, else asked for now, ~10 s at most).
+  const has = !!(state && (state.hasPreferences || state.preferences));
+  // Before the form opens: what we can already fill in (from the cache, else asked for now, ~20 s at most).
   const openForm = async (st) => {
     const cur = st || state;
-    if (!cur || cur.preferences || prefill !== undefined) { setOpen(true); return; }
+    if (!cur || prefill !== undefined) { setOpen(true); return; }
     if (cur.prefill) { setPrefill(cur.prefill); setOpen(true); return; }
     setLoadingPrefill(true);
     const ask = fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefs_prefill", token, options: PREF_OPTIONS() }) })
@@ -10304,8 +10315,9 @@ function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) 
   };
   useEffect(() => {
     if (!state || state.error || autoOpened.current) return;
-    if ((wantsOpen || openSignal) && !state.preferences) { autoOpened.current = true; fromEmail.current = !!openSignal; openForm(state); }
-    else if (openSignal && state.preferences && onThanks) { autoOpened.current = true; onThanks("finished"); }
+    const saved = state.hasPreferences || state.preferences;
+    if ((wantsOpen || openSignal) && !saved) { autoOpened.current = true; fromEmail.current = !!openSignal; openForm(state); }
+    else if (openSignal && saved && onThanks) { autoOpened.current = true; onThanks("finished"); }
   }, [state, openSignal]); // eslint-disable-line
   if (loadingPrefill) return (
     <div className="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: C.soft }} role="status">
@@ -10317,26 +10329,24 @@ function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) 
   );
   if (!state || state.error) return null;
   const consent = pitchConsent || state.pitchConsent;
-  if (!consent && !wantsOpen && !state.preferences) return null;
-  const has = !!state.preferences;
-  const save = (prefs) => sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs } });
+  const save = (prefs) => sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs, ...(editing ? { p_session: editing.session } : {}) } });
   const clearQ = () => { try { const u = new URL(window.location.href); if (u.searchParams.get("prefs")) { u.searchParams.delete("prefs"); window.history.replaceState({}, "", u.toString()); } } catch (e) { /* fine */ } };
-  const close = () => { setOpen(false); load(); clearQ(); if (fromEmail.current && onThanks) { fromEmail.current = false; onThanks("closed"); } };
-  const finished = () => { setOpen(false); load(); clearQ(); fromEmail.current = false; if (onThanks) onThanks("finished"); window.scrollTo && window.scrollTo(0, 0); };
+  const close = () => { setOpen(false); setEditing(null); load(); clearQ(); if (fromEmail.current && onThanks) { fromEmail.current = false; onThanks("closed"); } };
+  const finished = () => { const wasEdit = !!editing; setOpen(false); setEditing(null); load(); clearQ(); fromEmail.current = false; if (onThanks) onThanks(wasEdit ? "updated" : "finished"); window.scrollTo && window.scrollTo(0, 0); };
   return (
     <>
+      <PortalOpenToggle token={token} state={state} onChanged={load} />
       {has ? (
         <Card>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-xl" style={{ ...SERIF }}>My job preferences</div>
-              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>We only recommend you for roles that fit these.</div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-xl" style={{ ...SERIF }}>My job information</div>
+              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>Saved{state.savedAt ? " " + fdate(state.savedAt) : ""}. We only put you forward for roles that fit it. To keep it private, we email you a code before showing or changing it{state.emailMasked ? " (" + state.emailMasked + ")" : ""}.</div>
             </div>
-            <IconBtn icon={Pencil} label="Edit my job preferences" onClick={() => setOpen(true)} />
+            <Btn kind="primary" icon={Pencil} onClick={() => setAskCode(true)} className="justify-center shrink-0">Edit my information</Btn>
           </div>
-          <div className="mt-3"><PreferencesSummary p={state.preferences} /></div>
         </Card>
-      ) : (
+      ) : consent || wantsOpen ? (
         <div className="rounded-2xl p-5 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4" style={{ background: C.side, color: "#fff" }}>
           <div className="flex-1">
             <div className="text-xl" style={{ ...SERIF, color: C.lime }}>Help us match you</div>
@@ -10344,9 +10354,68 @@ function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) 
           </div>
           <button type="button" onClick={() => openForm()} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
         </div>
-      )}
-      {open && <PreferencesQuiz initial={state.preferences} known={{ ...state, name }} prefill={prefill || null} onSave={save} onClose={close} onFinished={finished} />}
+      ) : null}
+      {askCode && <EditCodeModal token={token} emailMasked={state.emailMasked} onClose={() => setAskCode(false)}
+        onVerified={(session) => sbFetch("/rest/v1/rpc/candidate_preferences_edit", { method: "POST", body: { p_token: token, p_session: session } })
+          .then((d) => { setAskCode(false); setEditing({ session, preferences: d && d.preferences }); setOpen(true); })} />}
+      {open && <PreferencesQuiz key={editing ? "edit" : "new"} initial={editing ? editing.preferences : null} known={{ location: state.location, name }} prefill={editing ? null : prefill || null} onSave={save} onClose={close} onFinished={finished} />}
     </>
+  );
+}
+
+// "Open to new roles": off means we don't put them forward for a year (or until they turn it back
+// on). It goes off by itself when they start a new job through us.
+function PortalOpenToggle({ token, state, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const on = state.open !== false;
+  const flip = () => {
+    setBusy(true);
+    sbFetch("/rest/v1/rpc/candidate_set_open", { method: "POST", body: { p_token: token, p_open: !on } })
+      .then(() => onChanged && onChanged()).catch((e) => popError(e)).finally(() => setBusy(false));
+  };
+  return (
+    <Card>
+      <div className="flex items-center gap-4">
+        <div className="flex-1 min-w-0">
+          <div className="text-base font-semibold">Open to new roles</div>
+          <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{on
+            ? "We'll put your profile forward, anonymously, for roles that fit you. It turns off by itself when you start a new job through us."
+            : "We won't put you forward for new roles" + (state.pausedUntil ? " until " + new Date(state.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : " for a year") + ", unless you turn this back on."}</div>
+        </div>
+        <button type="button" role="switch" aria-checked={on} aria-label="Open to new roles" disabled={busy} onClick={flip}
+          className="relative shrink-0 rounded-full" style={{ width: 52, height: 30, background: on ? C.em : C.line, transition: "background .2s", opacity: busy ? 0.6 : 1 }}>
+          <span className="absolute rounded-full bg-white" style={{ top: 3, left: on ? 25 : 3, width: 24, height: 24, transition: "left .2s", boxShadow: "0 1px 3px rgba(0,0,0,.2)" }} />
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+// Asks for the 6-digit code we email (candidate-otp) before their saved information is shown.
+function EditCodeModal({ token, emailMasked, onClose, onVerified }) {
+  const [sent, setSent] = useState(null); // { to } once sent
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const call = (body) => fetch(SB_URL + "/functions/v1/candidate-otp", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, ...body }) })
+    .then((r) => r.json().then((j) => { if (!r.ok || j.error) throw new Error(j.error || "Something went wrong. Please try again."); return j; }));
+  const send = () => { setBusy("send"); setErr(""); call({ action: "send" }).then((j) => setSent({ to: j.to || emailMasked })).catch((e) => setErr(e.message)).finally(() => setBusy("")); };
+  useEffect(() => { send(); }, []); // eslint-disable-line
+  const verify = () => { setBusy("verify"); setErr(""); call({ action: "verify", code }).then((j) => onVerified(j.session)).catch((e) => setErr(e.message)).finally(() => setBusy("")); };
+  return (
+    <Modal open onClose={onClose} title="Check it's you">
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>{sent ? "We've emailed a 6-digit code to " + (sent.to || "your email") + ". Enter it to see and edit your information. It works for 10 minutes." : busy === "send" ? "Sending a code to " + (emailMasked || "your email") + "…" : "We'll email you a code."}</div>
+        <input autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          onKeyDown={(e) => { if (e.key === "Enter" && code.length === 6) verify(); }} placeholder="••••••" aria-label="6-digit code"
+          className="w-full rounded-xl border px-4 py-3 text-center text-2xl tracking-[0.5em] outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} />
+        {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
+        <div className="flex flex-wrap gap-2 justify-between items-center">
+          <button type="button" onClick={send} disabled={!!busy} className="text-sm font-medium" style={{ color: C.em }}>Send a new code</button>
+          <Btn kind="primary" onClick={verify} disabled={!!busy || code.length !== 6}>{busy === "verify" ? "Checking…" : "Continue"}</Btn>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -12901,7 +12970,7 @@ function CandidatePortal({ data, token, onChanged }) {
         <div className="mb-1"><BrandLogo height={30} /></div>
         {token && new URLSearchParams(window.location.search).get("offer") && <PortalOffer token={token} offer={new URLSearchParams(window.location.search).get("offer")} />}
         {token && <EmailChoiceNote token={token} onChanged={onChanged} onPitchYes={() => setPrefsSignal((n) => n + 1)} />}
-        {thanks && <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.em }}>{thanks === "finished"
+        {thanks && <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.em }}>{thanks === "updated" ? "Saved. Your information is up to date." : thanks === "finished"
           ? "Thank you! You're all set. We'll put your profile forward anonymously for roles that fit what you told us. Your name and contact details stay private, and your recruiter will be in touch when an employer wants to talk."
           : "Thanks. We'll put your profile forward anonymously for roles that fit you. Finish the few questions below when you have a minute so we match you well."}</div>}
 
@@ -13400,12 +13469,12 @@ function JoinPage() {
     onDone: send,
     steps: [
       { key: "about", title: "Let's start with you", sub: "Not seeing the right role? Join our Active file: we look here first whenever a new role comes in.",
-        check: () => (!form.name.trim() ? "Enter your name" : !okEmail ? "Enter a valid email" : ""),
+        check: () => (!form.name.trim() ? "Enter your name" : !okEmail ? "Enter a valid email" : form.phone.replace(/\D/g, "").length < 7 ? "Enter your phone number" : ""),
         body: () => (
           <div className="flex flex-col gap-3">
             {quizInpIcon(UserRound, { autoFocus: true, value: form.name, onChange: set("name"), autoComplete: "name", placeholder: "Full name" })}
             {quizInpIcon(Mail, { type: "email", value: form.email, onChange: set("email"), autoComplete: "email", placeholder: "Email" })}
-            {quizInpIcon(Phone, { type: "tel", value: form.phone, onChange: set("phone"), autoComplete: "tel", placeholder: "Phone (optional)" })}
+            {quizInpIcon(Phone, { type: "tel", value: form.phone, onChange: set("phone"), autoComplete: "tel", placeholder: "Phone number, with country code" })}
             {quizInpIcon(ExternalLink, { value: form.linkedin, onChange: set("linkedin"), placeholder: "LinkedIn profile (optional)" })}
             <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
           </div>) },

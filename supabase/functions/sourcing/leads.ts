@@ -26,10 +26,12 @@ export const MAX_PER_PITCH = 5;
 // Who we pitch: the Active file (not drafts, with a CV), and the country each one lives in.
 export async function pitchableCandidates(admin: any) {
   const { data } = await admin.from("candidates")
-    .select("id,name,status,email,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,cv_path,blind_pages,blind_checked_at,candidate_jobs(stage,candidate_response)")
+    .select("id,name,status,email,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
     .eq("is_draft", false).eq("status", "Active file");
-  return (data || []).filter((c: any) => !isBusy(c) && (c.resume_path || c.cv_path) && candTitles(c).length && candCountry(c));
+  return (data || []).filter((c: any) => isOpen(c) && !isBusy(c) && (c.resume_path || c.cv_path) && candTitles(c).length && candCountry(c));
 }
+// "Open to new roles" on their candidate page: off means not for a year, unless they turn it back on.
+export const isOpen = (c: any) => c?.open_to_roles !== false || (!!c?.open_paused_until && Date.parse(c.open_paused_until) < Date.now());
 // The country a candidate lives in, as a code: from their job preferences, else the end of their location.
 export function candCountry(c: any): string {
   const p = c?.preferences;

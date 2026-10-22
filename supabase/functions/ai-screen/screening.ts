@@ -457,7 +457,7 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
   let jobTitles: string[] = [job.role_title];
   try { jobTitles = await jobParallelTitles(admin, job, askAI); } catch (e) { console.error("job titles", String((e as Error)?.message || e)); }
   const { data: cands } = await admin.from("candidates")
-    .select("id,name,role_title,current_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,candidate_jobs(job_id,stage,candidate_response,fit)")
+    .select("id,name,role_title,current_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,open_to_roles,open_paused_until,candidate_jobs(job_id,stage,candidate_response,fit)")
     .eq("is_draft", false);
   // People already put forward for this job who are still in play and scored 60%+.
   const onRole = (cands || []).filter((c: any) => (c.candidate_jobs || []).some((l: any) =>
@@ -467,6 +467,8 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
     const links = c.candidate_jobs || [];
     if (links.some((l: any) => l.job_id === jobId)) return false;          // already on this job
     if (isBusy(c, links)) { busy++; return false; }                          // in an active process elsewhere
+    // Turned "Open to new roles" off (or placed): not for a year, unless they turn it back on.
+    if (c.open_to_roles === false && !(c.open_paused_until && Date.parse(c.open_paused_until) < Date.now())) return false;
     return !!(c.resume_path || c.cv_path) && c.status !== "Rejected";
   });
   let titled = 0;
