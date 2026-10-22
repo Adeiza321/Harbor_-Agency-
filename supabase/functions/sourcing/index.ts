@@ -10,7 +10,7 @@ import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./ap
 import { theirstackKey } from "./theirstack.ts";
 import { provider } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
-import { cleanGuide, friendlyXrayError, runXrayStep, startXray, stepXrayQueue, XRAY_STALE_MS } from "./xray.ts";
+import { cleanGuide, friendlyXrayError, runXrayStep, startXray, stepXrayQueue, stopXray, XRAY_STALE_MS } from "./xray.ts";
 import { sourcedInterest, sweepSourcedInterest } from "./sourced.ts";
 import { searchEngines, searchUsage, checkEngines } from "./search.ts";
 import { autoFindEmails, draftEmails, findEmails, skipTooFar } from "./emails.ts";
@@ -308,6 +308,7 @@ async function handle(req: Request): Promise<Response> {
     // the people they found through my_sourced_prospects (no emails); everything else is Rec Ops'.
     if (me.role === "recruiter") {
       const jobId = String(body.jobId || "");
+      if (action === "xray_stop") return json(await stopXray(admin, jobId, s, me));
       if (action === "xray" || action === "xray_status") {
         const { data: job } = await admin.from("jobs").select("id,status,lead_role,xray").eq("id", jobId).maybeSingle();
         if (!job) return json({ error: "We couldn't find this job. Refresh the page and try again." }, 404);
@@ -393,6 +394,11 @@ async function handle(req: Request): Promise<Response> {
       if (!body.jobId) return json({ error: "Choose a job first." }, 400);
       // Optional direction (titles, places, must-haves, companies, exclusions, exact searches).
       return json(await startXray(admin, String(body.jobId), s, me.id, cleanGuide(body.guide)));
+    }
+    // Stop a running X-ray search (one reviewing keeps the best of who it already reviewed).
+    if (action === "xray_stop") {
+      if (!body.jobId) return json({ error: "Choose a job first." }, 400);
+      return json(await stopXray(admin, String(body.jobId), s, me));
     }
 
     // People from the talent pool who fit this job (free; also checked when a job goes live).

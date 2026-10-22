@@ -8980,6 +8980,7 @@ function RecruiterSourcingCard({ job, S, toast, engaged }) {
   const running = !!(st && st.running) || !!(req && req.started_at && !req.finished_at);
   useEffect(() => { if (!running && !waiting) return; const t = setTimeout(load, 5000); return () => clearTimeout(t); }, [st]); // eslint-disable-line
   const search = () => { setBusy("xray"); S.sourcing("xray", { jobId: job.id }).then((r) => { toast(r.message || "X-ray search started."); load(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const stop = () => { setBusy("stop"); S.sourcing("xray_stop", { jobId: job.id }).then((r) => { toast(r.message || "Search stopped."); load(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
   const connected = (p, on) => { setBusy(p.id); S.sb("/rest/v1/rpc/prospect_mark_connected", { method: "POST", body: { p_id: p.id, p_on: on } }).then(() => { toast(on ? "Marked as connected" : "Connection mark removed"); load(); }).catch((e) => S.error(e.message || "That didn't save. Try again.")).finally(() => setBusy("")); };
   const interested = (p) => { setBusy(p.id); S.sb("/rest/v1/rpc/prospect_mark_interested", { method: "POST", body: { p_id: p.id } }).then(() => { toast((p.full_name || "They").split(" ")[0] + " is interested. They'll appear in My candidates on this role in a moment."); setTimeout(() => { load(); S.reload && S.reload(); }, 4000); }).catch((e) => S.error(e.message || "That didn't save. Try again.")).finally(() => setBusy("")); };
   const list = people || [];
@@ -8992,8 +8993,8 @@ function RecruiterSourcingCard({ job, S, toast, engaged }) {
           title={!engaged ? "Engage on this role first" : job.status !== "Open" ? "This role isn't open" : ""}>{busy === "xray" ? "Starting…" : running ? "Searching…" : waiting ? "Waiting to start…" : list.length ? "X-ray search again" : "X-ray search"}</Btn>
       </div>
       {!engaged && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Engage on this role to run an X-ray search for it.</div>}
-      {running && <div className="mt-3"><XrayProgress p={st && st.progress} /></div>}
-      {waiting && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Another search is running on this role. Yours starts by itself as soon as it finishes <InlineDots /></div>}
+      {running && <div className="mt-3"><XrayProgress p={st && st.progress} /><button onClick={stop} disabled={!!busy} className="text-xs font-medium mt-1.5" style={{ color: C.warnFg }}>{busy === "stop" ? "Stopping…" : "Stop search"}</button></div>}
+      {waiting && <div className="text-sm mt-3" style={{ color: C.ink2 }}>Another search is running on this role. Yours starts by itself as soon as it finishes <InlineDots /> <button onClick={stop} disabled={!!busy} className="text-xs font-medium ml-1" style={{ color: C.warnFg }}>{busy === "stop" ? "Cancelling…" : "Cancel"}</button></div>}
       {req && req.finished_at && !running && !waiting && <div className="text-xs mt-3" style={{ color: req.error ? C.warnFg : C.ink2 }}>{req.error ? "Your last search didn't finish: " + req.error : "Your last search " + fdate(req.finished_at) + " found " + plural(req.found || 0, "new person", "new people") + "."}</div>}
       {people === null && !err && <div className="mt-3"><SkeletonRows n={2} /></div>}
       {people && list.length === 0 && engaged && !running && !waiting && <div className="text-sm mt-3" style={{ color: C.ink3 }}>You haven't found anyone for this role yet.</div>}
@@ -9082,6 +9083,7 @@ function JobSourcingCard({ job, S, toast }) {
   const xr = row.xray || null;
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const regen = () => run("titles", () => S.aiScreen("job_titles", { jobId: job.id }).then(() => toast("Parallel titles updated")));
+  const stopXray = () => run("xstop", () => S.sourcing("xray_stop", { jobId: job.id }).then((r) => toast(r.message || "Search stopped.")));
   // One button for every outside source: the free X-ray search starts straight away; Apollo
   // (paid) still needs an Admin's approval.
   const outside = (force) => run("outside", async () => {
@@ -9144,8 +9146,10 @@ function JobSourcingCard({ job, S, toast }) {
           <div className="text-sm mt-0.5">{src.pdl ? (src.pdl.error || (plural(src.pdl.kept || 0, "strong match", "strong matches") + " of " + (src.pdl.returned || 0) + " returned · " + fdate(src.pdl.at))) : "Not searched yet"}</div>
         </div>
         <div className="rounded-xl px-3 py-2.5" style={{ background: C.canvas }}>
-          <div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
-          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts by itself in a moment <InlineDots /></> : xr.state === "error" ? "Didn't finish: " + (xr.error || "the search hit a problem. Search again in a few minutes.") : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          <div className="flex items-center justify-between gap-2"><div className="text-xs" style={{ color: C.ink3 }}>X-ray search (free)</div>
+            {canRun && xrayRunning && <button onClick={stopXray} disabled={!!busy} className="text-xs font-medium" style={{ color: C.warnFg }} title="Stops this search. If it was already reviewing profiles, the best people it reviewed are kept.">{busy === "xstop" ? "Stopping…" : "Stop search"}</button>}</div>
+          <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts by itself in a moment <InlineDots /></> : xr.state === "error" ? (xr.stopped ? xr.error : "Didn't finish: " + (xr.error || "the search hit a problem. Search again in a few minutes.")) : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
+          {xr && xr.state === "done" && xr.early && <div className="text-xs mt-1" style={{ color: C.warnFg }}>{xr.early}</div>}
           {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
         </div>
       </div>

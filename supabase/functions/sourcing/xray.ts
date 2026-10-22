@@ -49,6 +49,15 @@ const RECRUITER_DAILY_SEARCHES = 5;
 async function setXray(admin: any, jobId: string, xray: Record<string, unknown>) {
   await admin.from("jobs").update({ xray: { ...xray, at: new Date().toISOString() } }).eq("id", jobId);
 }
+// A running search saves only while it is still the job's current run: once it's stopped (by a
+// person or as stuck) or handed to a fresh copy, the old one's next save finds nothing to update
+// and it ends there, so a stopped search can't switch itself back on.
+class XrayStopped extends Error { constructor() { super("This search was stopped"); } }
+async function saveRun(admin: any, jobId: string, run: string, xray: Record<string, unknown>) {
+  const { data } = await admin.from("jobs").update({ xray: { ...xray, at: new Date().toISOString() } })
+    .eq("id", jobId).eq("xray->>state", "running").eq("xray->>run", run).select("id");
+  if (!data?.length) throw new XrayStopped();
+}
 
 export type XrayGuide = { notes?: string; titles?: string[]; locations?: string[]; must_have?: string[]; target_companies?: string[]; exclude?: string[]; queries?: string[] };
 // Cleans direction sent by a caller (any shape) into a small, safe XrayGuide, or null.
@@ -69,6 +78,14 @@ export function cleanGuide(g: any): XrayGuide | null {
 // where it got to on jobs.xray.cp and handing over to the next step before the server's time limit.
 // So a long review never gets cut off, and many jobs can search at the same time.
 export const XRAY_STALE_MS = 5 * 60e3;
+// Stuck searches (checked every 2 minutes by stepXrayQueue):
+//   no sign of life for 5 minutes   the step died: carried on from its last saved point (a few times)
+//   no progress for 10 minutes      still "alive" but going nowhere: also restarted from its last
+//                                   saved point, then stopped if it keeps happening
+//   running for over an hour        stopped (a normal search takes under 15 minutes)
+// A search stopped while reviewing keeps the best of the people it had already reviewed.
+const XRAY_NO_PROGRESS_MS = 10 * 60e3;
+const XRAY_MAX_RUN_MS = 60 * 60e3;
 const STEP_BUDGET_MS = 80e3;     // stop and hand over after this long in one step
 const REVIEW_BATCH = 8;          // results per AI review call
 const MAX_RESUMES = 4;           // a step that died (stale) is picked up again at most this often
@@ -115,7 +132,8 @@ export async function startXray(admin: any, jobId: string, s: Settings, by: stri
   // Each run has its own id: only steps carrying it may work on the job, so two copies of the same
   // search (a double start, a resumed step) can never run side by side and repeat the AI's work.
   const run = crypto.randomUUID();
-  await setXray(admin, jobId, { state: "running", run, by, ...(staff ? { staff: true } : {}), ...(guide ? { guide } : {}), progress: { step: "plan" } });
+  const nowIso = new Date().toISOString();
+  await setXray(admin, jobId, { state: "running", run, by, startedAt: nowIso, movedAt: nowIso, fp: "plan", ...(staff ? { staff: true } : {}), ...(guide ? { guide } : {}), progress: { step: "plan" } });
   try { await kickXray(admin, jobId, run); }
   catch (err) {
     console.error("xray start", jobId, errMsg(err));
@@ -265,28 +283,69 @@ export async function stepXrayQueue(admin: any, s: Settings) {
       await startXray(admin, j.id, s, x.by || null, x.guide || null, true); started++; continue;
     }
     if (x.state === "starting" && now - new Date(x.at || 0).getTime() > XRAY_STALE_MS) { await setXray(admin, j.id, { ...x, state: "error", error: "The search couldn't start. Search again." }); stopped++; continue; }
-    if (x.state !== "running" || now - new Date(x.at || 0).getTime() <= XRAY_STALE_MS) continue;
+    if (x.state !== "running") continue;
+    const silent = now - new Date(x.at || 0).getTime() > XRAY_STALE_MS;
+    const idle = now - new Date(x.movedAt || x.startedAt || x.at || 0).getTime() > XRAY_NO_PROGRESS_MS;
+    const tooLong = !!x.startedAt && now - new Date(x.startedAt).getTime() > XRAY_MAX_RUN_MS;
+    if (!silent && !idle && !tooLong) continue;
     const tries = Number(x.resumes || 0);
-    if (tries < MAX_RESUMES) {
-      const run = crypto.randomUUID();   // the old chain (if still alive) stops at its next step
-      await setXray(admin, j.id, { ...x, run, resumes: tries + 1 });
+    if (!tooLong && !x.wrapUp && tries < MAX_RESUMES) {
+      const run = crypto.randomUUID();   // the old chain (if still alive) stops at its next save
+      await setXray(admin, j.id, { ...x, run, resumes: tries + 1, movedAt: new Date().toISOString() });
       try { await kickXray(admin, j.id, run); resumed++; continue; } catch (_) { /* falls through to stopped */ }
     }
-    await setXray(admin, j.id, { ...x, state: "error", cp: undefined, error: "The search stopped before finishing. Search again." });
-    await finishRequest(admin, j.id, x.by || null, { error: "The search stopped before finishing. Search again." });
-    await startNextRequest(admin, j.id, s).catch(() => false);
+    const why = tooLong ? "it ran for over an hour" : idle && !silent ? "it stopped making progress" : "it kept getting cut off";
+    console.error("xray stuck", j.id, why, JSON.stringify(x.progress || {}));
+    await endXray(admin, j.id, s, x, `The search got stuck (${why}), so ProNext stopped it.`);
     stopped++;
   }
   return { stopped, started, resumed, fromRequests };
+}
+
+// Ends a running search: one that was reviewing keeps the best of the people it already reviewed
+// (a last short step saves them); otherwise it's marked as stopped with the reason.
+async function endXray(admin: any, jobId: string, s: Settings, x: any, reason: string) {
+  const reviewed = Array.isArray(x.cp?.reviewed) ? x.cp.reviewed.length : 0;
+  if (x.state === "running" && x.cp?.stage === "review" && reviewed > 0 && !x.wrapUp) {
+    const run = crypto.randomUUID();
+    await setXray(admin, jobId, { ...x, run, wrapUp: reason, movedAt: new Date().toISOString() });
+    try { await kickXray(admin, jobId, run); return "kept"; } catch (_) { /* marked as stopped below */ }
+  }
+  const { cp: _cp, run: _run, wrapUp: _w, ...rest } = x;
+  await setXray(admin, jobId, { ...rest, state: "error", error: reason, stopped: true });
+  await finishRequest(admin, jobId, x.by || null, { error: reason });
+  await startNextRequest(admin, jobId, s).catch(() => false);
+  return "stopped";
+}
+
+// "Stop search" (Rec Ops / Admins on any search, a recruiter on their own).
+export async function stopXray(admin: any, jobId: string, s: Settings, who: { id: string; role: string; full_name?: string | null }) {
+  const { data: job } = await admin.from("jobs").select("id,xray").eq("id", jobId).maybeSingle();
+  if (!job) return { ok: false, message: "This job no longer exists." };
+  const x = job.xray || {};
+  if (who.role === "recruiter") {
+    // Their search still waiting its turn behind another one: just taken off the waiting list.
+    const { data: w } = await admin.from("xray_requests").update({ finished_at: new Date().toISOString(), error: "Cancelled" })
+      .eq("job_id", jobId).eq("requested_by", who.id).is("started_at", null).is("finished_at", null).select("id");
+    if (w?.length) return { ok: true, stopped: true, message: "Your waiting search was cancelled." };
+  }
+  if (!["running", "queued", "starting"].includes(x.state)) return { ok: true, message: "No search is running for this job." };
+  if (who.role === "recruiter" && x.by !== who.id) return { ok: false, message: "Only the person who started this search, Rec Ops or an Admin can stop it." };
+  const name = String(who.full_name || "").trim().split(" ")[0] || "someone";
+  const r = await endXray(admin, jobId, s, x, `Stopped by ${name}.`);
+  return { ok: true, stopped: true, kept: r === "kept",
+    message: r === "kept" ? "Search stopped. The best people it had already reviewed are being saved now." : "Search stopped." };
 }
 
 // One step of a run (called by xray_step). Errors end the run with the reason shown on the job.
 export async function runXrayStep(admin: any, jobId: string, s: Settings, run = "") {
   try { await xrayStep(admin, jobId, s, run); }
   catch (err) {
+    if (err instanceof XrayStopped) return;   // stopped or handed to a fresh copy: nothing to do
     console.error("xray", jobId, errMsg(err));
     const { data: j } = await admin.from("jobs").select("xray").eq("id", jobId).maybeSingle();
     const x = j?.xray || {};
+    if (x.state !== "running" || (x.run && x.run !== run)) return;   // an old copy: leave the current run alone
     const msg = friendlyXrayError(err);
     await setXray(admin, jobId, { state: "error", error: msg, detail: errMsg(err).slice(0, 300), ...(x.by ? { by: x.by } : {}), ...(x.guide ? { guide: x.guide } : {}) });
     await finishRequest(admin, jobId, x.by || null, { error: msg });
@@ -305,12 +364,20 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
   // Not this run's turn (an older copy of the search): stop without doing anything.
   if (!run || (x0.run && x0.run !== run)) return;
   const staff = !!x0.staff;   // started by an Admin or Rec Ops: no daily budget, no AI call cap
-  if (!staff && (await xraySpentToday(admin)) >= XRAY_DAILY_USD()) throw new Error(budgetMsg());
+  if (!staff && !x0.wrapUp && (await xraySpentToday(admin)) >= XRAY_DAILY_USD()) throw new Error(budgetMsg());
   const guide: XrayGuide | null = x0.guide || null, by = x0.by || null, resumes = x0.resumes || 0;
   let cp: any = x0.cp || null;
-  const save = (extra: Record<string, unknown>) => setXray(admin, jobId, { state: "running", run, by, resumes, ...(staff ? { staff: true } : {}), ...(guide ? { guide } : {}), ...(cp ? { cp } : {}), ...extra });
+  const startedAt = x0.startedAt || new Date().toISOString(), wrapUp: string | null = x0.wrapUp || null;
+  // Progress, for spotting a search that's alive but going nowhere: movedAt changes only when the
+  // step or count on the progress bar moves on.
+  let fp = String(x0.fp || ""), movedAt = String(x0.movedAt || startedAt);
+  const save = (extra: Record<string, unknown>) => {
+    const p: any = extra.progress;
+    if (p) { const f = `${p.step}:${p.done ?? ""}`; if (f !== fp) { fp = f; movedAt = new Date().toISOString(); } }
+    return saveRun(admin, jobId, run, { state: "running", run, by, resumes, startedAt, movedAt, fp, ...(wrapUp ? { wrapUp } : {}), ...(staff ? { staff: true } : {}), ...(guide ? { guide } : {}), ...(cp ? { cp } : {}), ...extra });
+  };
   // Live progress for the app's progress bar: { step: plan | search | review, done, total, found }.
-  const prog = (o: Record<string, unknown>) => save({ progress: o }).catch(() => {});
+  const prog = (o: Record<string, unknown>) => save({ progress: o }).catch((e) => { if (e instanceof XrayStopped) throw e; });
   // Searched where the job is (its own country), like every other outside search.
   const area = await searchArea(admin, job, jobCountryNames(job));
   const perJob = s.xrayPerJob;
@@ -413,6 +480,7 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
     for (const r of fitsToPercent(Array.isArray(out?.people) ? out.people : [])) { const who = b[Number(r.i)]; if (who) byKey.set(who.key, r); }
   };
   for (let i = cp.next || 0; i < batches.length; i += 2) {
+    if (wrapUp) break;   // stopped: keep the best of those already reviewed
     if (i > (cp.next || 0) && Date.now() - t0 > STEP_BUDGET_MS) {
       cp = { ...cp, reviewed: [...byKey.entries()], next: i, errors: [...new Set(errors)].slice(0, 10) };
       await save({ progress: { step: "review", done: i, total: batches.length, found: list.length } });
@@ -484,6 +552,7 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
   await setXray(admin, jobId, {
     state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, byEngine, ghEmails, technical: !!cp.technical, checklist: cp.checklist || [],
     queries: cp.queries || [], usage, by, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: friendlyList(errors) } : {}),
+    ...(wrapUp ? { early: `${wrapUp} Kept the best of the ${byKey.size} of ${list.length} profiles it had reviewed.` } : {}),
   });
   await finishRequest(admin, jobId, by, { found: inserted.length });
   await startNextRequest(admin, jobId, s).catch(() => false);
