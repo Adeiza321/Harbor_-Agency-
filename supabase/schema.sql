@@ -1509,7 +1509,7 @@ alter table public.agency_settings add column if not exists idle_timeout_minutes
 -- Paid work (Apollo, TheirStack) waits here until an Admin approves it.
 create table if not exists public.spend_requests (
   id uuid primary key default gen_random_uuid(),
-  kind text not null check (kind in ('apollo_search','leads_fetch')),
+  kind text not null check (kind in ('apollo_search','leads_fetch','xray_emails','pdl_search','pdl_profiles')),
   job_id uuid references public.jobs(id) on delete cascade,
   title text not null,
   est_apollo int not null default 0,

@@ -338,6 +338,11 @@ function playChime() {
 const playAssistChime = (me) => { if (((me && me.notificationPrefs) || {}).assistSound !== false) playChime(); };
 const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "", tourDoneAt: p.tour_done_at || null });
 
+// Job lists: roles On hold, then Closed, go to the end of every list; within each group the
+// newest first (the order they're loaded in). Sort is stable, so nothing else moves.
+const JOB_STATUS_RANK = { "On hold": 1, Closed: 2 };
+function jobOrder(a, b) { return (JOB_STATUS_RANK[a.status] || 0) - (JOB_STATUS_RANK[b.status] || 0); }
+
 function mapAll(d) {
   const pm = {}; d.profiles.forEach((p) => (pm[p.id] = p));
   const pname = (id) => (pm[id] ? pm[id].full_name || pm[id].email : "");
@@ -448,6 +453,7 @@ function mapAll(d) {
   const jobViews = Object.fromEntries((Array.isArray(d.jobViews) ? d.jobViews : []).map((v) => [v.job_id, v]));
   const tasks = (Array.isArray(d.tasks) ? d.tasks : []).map((t) => ({ id: t.id, title: t.title, notes: t.notes || "", assignedTo: t.assigned_to, createdBy: t.created_by, dueOn: t.due_on || null,
     status: t.status, candidateId: t.candidate_id || null, jobId: t.job_id || null, createdAt: new Date(t.created_at).getTime(), doneAt: t.done_at ? new Date(t.done_at).getTime() : null }));
+  jobs.sort(jobOrder);
   return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears, jobViews, tasks,
     settings: { name: set.agency_name || "ProNext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
@@ -2489,7 +2495,7 @@ async function runProposal(S, p) {
     const nm = i.name || "They";
     if (i.action === "approve_email") {
       const r = await S.sourcing("approve_prospects", { ids: [i.prospect_id] });
-      if (!r.queued && r.held) throw new Error(nm + "'s location needs checking first: open them on the role's Sourcing tab and press Location OK if they can work there.");
+      if (!r.queued && r.held) throw new Error((r.heldWhy || []).includes("location") || !(r.heldWhy || []).length ? nm + "'s location needs checking first: open them on the role's Sourcing tab and press Location OK if they can work there." : nm + " can't be emailed yet: " + (r.heldWhy || []).map((w) => HELD_WHY[w] || w).join("; ") + ".");
       if (!r.queued) throw new Error(nm + " can't be emailed yet: they need an email address and a drafted email. Find their email on the role's Sourcing tab first.");
       return "Approved. " + nm + "'s email goes out with the next send.";
     }
@@ -3642,7 +3648,7 @@ function RecruiterAuditPage({ S, toast }) {
     S.saveRevenueGoal({ ...goal, toolCosts: { ...tc, apollo: Math.max(0, num(cf.apollo) || 0), brevo: Math.max(0, num(cf.brevo) || 0) }, toolCur: { apollo: cf.apolloCur || baseCur, brevo: cf.brevoCur || baseCur }, adEntries, adSpend: {} })
       .then(() => { setCostsOpen(false); toast("Costs saved"); }).catch(() => {}).finally(() => setCostsBusy(false));
   };
-  const openJobs = S.jobs.filter((j) => j.status !== "Draft").slice().sort((a, b) => (a.status === "Closed") - (b.status === "Closed") || String(a.client).localeCompare(String(b.client)));
+  const openJobs = S.jobs.filter((j) => j.status !== "Draft").slice().sort((a, b) => jobOrder(a, b) || String(a.client).localeCompare(String(b.client)));
   const sel = "rounded-lg border px-2 py-1.5 text-sm w-full min-w-0";
   const curPick = (value, onChange, label, cls) => (
     <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)} className={cls || "bg-transparent text-xs outline-none"} style={{ color: C.ink2 }}>
@@ -8597,7 +8603,8 @@ function ProspectEmailPreview({ S, id, version }) {
     </div>
   );
 }
-const approvedMsg = (n, held) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected." + (held ? " " + held + " not sent: their location needs checking first (Location OK on each)." : "");
+const HELD_WHY = { location: "their location needs checking first (Location OK on each)", "must-have check": "they're still being checked against the must-haves (a few minutes)", "full-profile check": "they're waiting for a full-profile check an Admin approves (Outreach > Approvals)" };
+const approvedMsg = (n, held, why) => (n || 0) + " email" + (n === 1 ? "" : "s") + " approved. They go out within about 10 minutes once a sender is connected." + (held ? " " + held + " not sent yet: " + ((why && why.length ? why : ["location"]).map((w) => HELD_WHY[w] || w).join("; ")) + "." : "");
 const copyText = (t, toast, label) => { try { navigator.clipboard.writeText(t); toast(label || "Copied"); } catch (e) { toast("Copy failed. Select and copy it manually."); } };
 
 // Paid work (Apollo, TheirStack): an Admin confirms the cost before it runs.
@@ -8802,9 +8809,13 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
   // Held until someone confirms where they are (no location, only a country, a vague place, or a
   // location check that couldn't run). Too far away people are skipped automatically instead.
   const locHold = p.status === "found" && d.location_hold && !d.location_ok ? d.location_hold : "";
-  const canApprove = S && p.email && p.body && p.status === "found" && !locHold;
+  // Apollo people: held until they're through the must-have check, and (when a core must-have isn't
+  // shown anywhere free) until the full-profile check an Admin approves.
+  const mustsHold = p.status === "found" && p.source === "apollo" && !d.musts_v ? "Being checked against the must-haves (their public LinkedIn and Apollo profile). This takes a few minutes." : "";
+  const profileHold = p.status === "found" && d.profile_hold ? "Waiting for a full-profile check before emailing: " + ((d.core_unconfirmed || []).join(", ") || "a core must-have") + " isn't shown anywhere free. An Admin approves it in Outreach > Approvals (People Data Labs, 1 credit per profile found)." : "";
+  const canApprove = S && p.email && p.body && p.status === "found" && !locHold && !mustsHold && !profileHold;
   const locationOk = () => { setActing("loc"); S.sourcing("location_ok", { ids: [p.id] }).then(() => { toast("Location confirmed. " + (p.email ? "They can be approved now." : "")); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
-  const approveOne = () => { setActing("approve"); S.sourcing("approve_prospects", { ids: [p.id] }).then((r) => { toast(approvedMsg(r.queued)); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
+  const approveOne = () => { setActing("approve"); S.sourcing("approve_prospects", { ids: [p.id] }).then((r) => { toast(approvedMsg(r.queued, r.held, r.heldWhy)); onChanged && onChanged(); }).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   const testOne = () => { setActing("test"); S.sourcing("test_email", { kind: "p", id: p.id }).then((r) => toast("Test sent to " + r.to)).catch((e) => S.error(e.message)).finally(() => setActing("")); };
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
@@ -8824,6 +8835,8 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {d.pool && <div className="text-xs mt-1" style={{ color: C.ink3 }}>From the talent pool{d.pool.fromRole ? " · first found for " + d.pool.fromRole : ""}{d.pool.contactedBefore ? " · emailed before" : ""}</div>}
           {p.status === "archived" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Role closed{p.archived_at ? " " + fdate(p.archived_at) : ""}. Comes back automatically when a new role fits them; kept until {new Date((p.archived_at ? new Date(p.archived_at).getTime() : Date.now()) + 365 * 864e5).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}.</div>}
           <ApolloNote data={d} />
+          {(mustsHold || profileHold) && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}>{mustsHold || profileHold}</div>}
+          {d.profile_checked && d.profile_checked.note && p.status === "found" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Full-profile check: {d.profile_checked.note}.</div>}
           {locHold && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}><span className="font-medium">Check location before emailing:</span> {locHold}{p.location ? " (" + p.location + ")" : ""}. Open their profile, then press Location OK if they can work from {jobLabel ? "the role's location" : "the office"}, or Skip.</div>}
           {found && (d.client_history === "past" || d.location_source === "" || d.remote_worker) && (
             <div className="flex flex-wrap gap-1 mt-1.5">
@@ -9097,7 +9110,7 @@ function JobSourcingCard({ job, S, toast }) {
   // People Data Labs (paid): Admins confirm the cost; anyone else's click goes to an Admin.
   const searchPdl = () => run("pdl", () => paidAction(S, toast, "search_pdl", { jobId: job.id }, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load));
   const ids = Object.keys(sel).filter((k) => sel[k]);
-  const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }));
+  const approve = () => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held, r.heldWhy)); }));
   const patchP = (id, body, msg) => S.sb("/rest/v1/prospects?id=eq." + id, { method: "PATCH", body }).then(() => { toast(msg); load(); }).catch((e) => S.error(e.message));
   // X-ray people without an email who haven't been looked up yet (LinkedIn via Apollo, GitHub free).
   const noEmail = prospects.filter((p) => p.data && p.data.xray && !p.email && p.status === "found" && !(p.data.email_lookup || {}).apollo && (p.linkedin_url || (p.source === "github" && !(p.data.email_lookup || {}).github)));
@@ -9555,7 +9568,7 @@ function CampaignsPage({ toast, S }) {
             {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed. When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["skipped", "Skipped"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
             {pfx === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
               <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
-              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }))}>Approve {ids.length || ""}</Btn>
+              <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held, r.heldWhy)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
           {tab !== "pool" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>}
@@ -14575,7 +14588,7 @@ export default function App() {
   const updateJob = (id, patch) => {
     const j = data.jobs.find((x) => x.id === id); const p = typeof patch === "function" ? patch(j) : patch;
     const body = {}; Object.entries(JOB_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
-    setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, ...p } : x)) }));
+    setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, ...p } : x)).sort(jobOrder) }));
     return sbFetch("/rest/v1/jobs?id=eq." + id, { method: "PATCH", token: session.token, body })
       .then(() => {
         const label = j ? j.role + ", " + j.client : "";
@@ -14819,7 +14832,7 @@ export default function App() {
     setJobStatus: (id, status, hold) => { const j = data.jobs.find((x) => x.id === id);
       const body = { status, ...(status === "On hold" ? { hold_reason: (hold && hold.reason) || null, hold_until: (hold && hold.until) || null } : {}) };
       return call("/rest/v1/jobs?id=eq." + id, { method: "PATCH", body }).then(() => {
-        setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status, holdReason: status === "On hold" ? body.hold_reason || "" : "", holdUntil: status === "On hold" ? body.hold_until : null } : x)) }));
+        setData((d) => ({ ...d, jobs: d.jobs.map((x) => (x.id === id ? { ...x, status, holdReason: status === "On hold" ? body.hold_reason || "" : "", holdUntil: status === "On hold" ? body.hold_until : null } : x)).sort(jobOrder) }));
         logAudit("status changed", "job", id, (j ? j.role + ", " + j.client : "") + ": " + (j ? j.status : "?") + " → " + (status === "On hold" ? holdText({ holdReason: body.hold_reason, holdUntil: body.hold_until }) : status));
       }); },
     /* Candidate <-> job pipeline (candidate_jobs table). screeningAnswers: [{q,a}] answered by the

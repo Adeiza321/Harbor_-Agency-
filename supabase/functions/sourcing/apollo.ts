@@ -53,17 +53,22 @@ export type ApolloPerson = {
   id: string; first_name: string; last_name: string; name: string; title: string; email: string; email_status: string;
   linkedin_url: string; city: string; state: string; country: string; company: string; domain: string; history: string;
   personal_emails: string[];
+  headline: string;   // their LinkedIn headline, as Apollo has it (read by the must-have check)
+
 };
 
 function toPerson(p: any): ApolloPerson | null {
   if (!p) return null;
   const hist = (Array.isArray(p.employment_history) ? p.employment_history : []).slice(0, 6)
-    .map((h: any) => `${h.title || "?"} at ${h.organization_name || "?"} (${String(h.start_date || "").slice(0, 7) || "?"} to ${h.current ? "now" : String(h.end_date || "").slice(0, 7) || "?"})`).join("; ");
+    .map((h: any) => `${h.title || "?"} at ${h.organization_name || "?"} (${String(h.start_date || "").slice(0, 7) || "?"} to ${h.current ? "now" : String(h.end_date || "").slice(0, 7) || "?"})` +
+      // What they did there, when Apollo has it: often the only place a skill or tool shows.
+      (h.description ? ": " + String(h.description).replace(/\s+/g, " ").trim().slice(0, 220) : "")).join("; ");
   return {
     id: String(p.id || ""), first_name: String(p.first_name || ""), last_name: String(p.last_name || ""), name: String(p.name || ""),
     title: String(p.title || ""), email: String(p.email || ""), email_status: String(p.email_status || ""),
     linkedin_url: String(p.linkedin_url || ""), city: String(p.city || ""), state: String(p.state || ""), country: String(p.country || ""),
     company: String(p.organization?.name || ""), domain: String(p.organization?.primary_domain || p.organization?.website_url || ""), history: hist,
+    headline: String(p.headline || "").replace(/\s+/g, " ").trim().slice(0, 220),
     personal_emails: (Array.isArray(p.personal_emails) ? p.personal_emails : []).map((e: unknown) => String(e || "").trim()).filter((e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)),
   };
 }

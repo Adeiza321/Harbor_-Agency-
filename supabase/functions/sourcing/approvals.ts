@@ -5,15 +5,18 @@
 //                  the same number of Apollo lookups for hiring contacts' emails
 //   xray_emails    emails for people the X-ray search found on LinkedIn: 1 Apollo credit per email
 //   pdl_search     outside search for one job in People Data Labs: up to pdlPerSearch credits (1 per person returned)
+//   pdl_profiles   full profiles of Apollo people whose core must-haves aren't shown anywhere free
+//                  (profilecheck.ts): 1 People Data Labs credit per profile found
 
 import type { Settings } from "./common.ts";
 
-export type Kind = "apollo_search" | "leads_fetch" | "xray_emails" | "pdl_search";
+export type Kind = "apollo_search" | "leads_fetch" | "xray_emails" | "pdl_search" | "pdl_profiles";
 
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 
 export function estimate(kind: Kind, s: Settings, count = 0): { apollo: number; theirstack: number; pdl?: number } {
   if (kind === "pdl_search") return { apollo: 0, theirstack: 0, pdl: s.pdlPerSearch };
+  if (kind === "pdl_profiles") return { apollo: 0, theirstack: 0, pdl: count };
   if (kind === "apollo_search") return { apollo: s.prospectsPerJob, theirstack: 0 };
   if (kind === "xray_emails") return { apollo: count, theirstack: 0 };
   return { apollo: s.leads.postingsPerDay, theirstack: s.leads.postingsPerDay };

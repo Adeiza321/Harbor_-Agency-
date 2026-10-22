@@ -140,6 +140,16 @@ export async function sendLeadTest(admin: any, leadId: string, to: string, s: Se
   return { ok: true, to };
 }
 
+// Why someone can't be emailed yet (or "" when they can): their location to confirm first, an
+// Apollo person not through the must-have check yet, or one waiting on a full-profile check.
+export function holdReason(p: any): string {
+  if (!["found", "approved"].includes(p?.status)) return "";
+  if (p.data?.location_hold && !p.data?.location_ok) return "location";
+  if (p.source === "apollo" && !p.data?.musts_v) return "must-have check";
+  if (p.data?.profile_hold) return "full-profile check";
+  return "";
+}
+
 export async function queueProspects(admin: any, ids: string[], approver: string | null, s: Settings, agencyName: string) {
   const missing = sendBlockers(s);
   if (missing.length) throw new Error("Before emailing anyone, add your " + missing.join(" and ") + " in Outreach > Setup (required by anti-spam law).");
@@ -149,7 +159,7 @@ export async function queueProspects(admin: any, ids: string[], approver: string
   const brand = await loadBrand(admin);
   for (const p of rows || []) {
     if (!p.email || !p.body) continue;
-    if (p.data?.location_hold && !p.data?.location_ok) continue;   // location to confirm first ("Location OK")
+    if (holdReason(p)) continue;   // location to confirm first ("Location OK"), or a must-have check still to come
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
     if (sup) { await admin.from("prospects").update({ status: "unsubscribed" }).eq("id", p.id); continue; }
     const mail = await composeProspect(admin, p, s, agencyName, cache, brand);

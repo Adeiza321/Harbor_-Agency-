@@ -1,5 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { backfillMustHaves } from "./musthaves.ts";
+import { recheckApollo } from "./musthaves.ts";
+import { holdForProfileCheck, releaseProfileHold, runProfileChecks } from "./profilecheck.ts";
+import { holdReason } from "./queue.ts";
 import { aiCharge } from "./ai.ts";
 import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
@@ -123,6 +125,16 @@ async function stepJobs(admin: any, s: any, opsKey: string, agencyName: string) 
 
 // Leads waiting to be checked: a few per run, to stay within time and rate limits. New postings are
 // matched and pitched straight away; leads waiting for a checked blind resume are tried again.
+// Apollo people not yet through the must-have check (found before it existed, or the AI was
+// unavailable when they were found): a batch per run. Those that pass but whose core must-haves
+// aren't shown anywhere free wait for a full-profile check (profilecheck.ts).
+async function stepMusts(admin: any, s: any, max = 10, jobId?: string) {
+  const r = await recheckApollo(admin, max, jobId);
+  let held = 0;
+  for (const h of r.holdIds) held += (await holdForProfileCheck(admin, s, h.jobId, h.ids)).held;
+  return { checked: r.checked, skipped: r.skipped, held, remaining: r.remaining };
+}
+
 async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   const { data: pending } = await admin.from("leads").select("*").eq("status", "pending").order("created_at").limit(n);
   let kept = 0, pitched = 0; const errors: string[] = [];
@@ -220,6 +232,7 @@ async function handle(req: Request): Promise<Response> {
         try { out.jobs = await stepJobs(admin, s, opsKey, agencyName); } catch (e) { out.jobsError = errMsg(e); }
         if (!out.jobs) { try { out.leads = await stepLeads(admin, s, agencyName, 2); } catch (e) { out.leadsError = errMsg(e); } }
         try { out.xray = await stepXrayQueue(admin, s); } catch (e) { out.xrayError = errMsg(e); }
+        try { out.musts = await stepMusts(admin, s, 10); } catch (e) { out.mustsError = errMsg(e); }
         try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
         try { out.contracts = await stepContracts(admin, s, agencyName); } catch (e) { out.contractsError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
@@ -242,7 +255,7 @@ async function handle(req: Request): Promise<Response> {
         return json({ ok: true });
       }
       // Summary + must-have checklist for people found outside X-ray (Apollo, PDL) who don't have one yet.
-      if (body.action === "musts_backfill") return json({ ok: true, ...(await backfillMustHaves(admin, body.jobId ? String(body.jobId) : undefined, Math.min(Number(body.max) || 60, 120))) });
+      if (body.action === "musts_backfill") return json({ ok: true, ...(await stepMusts(admin, s, Math.min(Number(body.max) || 20, 40), body.jobId ? String(body.jobId) : undefined)) });
       if (body.action === "search_area" && body.jobId) {
         const { data: job } = await admin.from("jobs").select("*").eq("id", String(body.jobId)).maybeSingle();
         if (!job) return json({ error: "Job not found" }, 404);
@@ -357,6 +370,7 @@ async function handle(req: Request): Promise<Response> {
         if (s.approval === "auto" && r.ids?.length && !sendBlockers(s).length) await queueProspects(admin, r.ids, null, s, agencyName);
         return r;
       }
+      if (req.kind === "pdl_profiles") return await runProfileChecks(admin, req.job_id, Array.isArray(req.payload?.ids) ? req.payload.ids : []);
       if (req.kind === "xray_emails") return await findEmails(admin, { jobId: req.job_id, ids: Array.isArray(req.payload?.ids) ? req.payload.ids : [] }, s, agencyName);
       if (req.kind === "apollo_search") {
         const r: any = await sourceExternal(admin, req.job_id, s, { force: true });
@@ -461,6 +475,8 @@ async function handle(req: Request): Promise<Response> {
       const now = new Date().toISOString();
       if (action === "decline_request") {
         await admin.from("spend_requests").update({ status: "declined", decided_by: me.id, decided_at: now }).eq("id", req.id);
+        // Full-profile check declined: the people waiting on it can be emailed as they are.
+        if (req.kind === "pdl_profiles") await releaseProfileHold(admin, Array.isArray(req.payload?.ids) ? req.payload.ids : [], "Full-profile check declined by " + (me.full_name || "an Admin"));
         if (req.kind === "apollo_search" && req.job_id) {
           const { data: j } = await admin.from("jobs").select("sourcing").eq("id", req.job_id).maybeSingle();
           await admin.from("jobs").update({ sourcing: { ...(j?.sourcing || {}), state: "done", external: { at: now, skipped: "Declined by " + (me.full_name || "an Admin") } } }).eq("id", req.job_id);
@@ -479,8 +495,9 @@ async function handle(req: Request): Promise<Response> {
     }
 
     if (action === "approve_prospects") {
-      const { data: held } = ids.length ? await admin.from("prospects").select("id").in("id", ids).not("data->>location_hold", "is", null).is("data->>location_ok", null) : { data: [] };
-      return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName), held: (held || []).length });
+      const { data: picked } = ids.length ? await admin.from("prospects").select("id,source,status,data").in("id", ids) : { data: [] };
+      const why = (picked || []).map((p: any) => holdReason(p)).filter(Boolean) as string[];
+      return json({ ok: true, queued: await queueProspects(admin, ids, me.id, s, agencyName), held: why.length, heldWhy: [...new Set(why)] });
     }
     // "Location OK": a person checked where they are; they can be approved, and are never held again.
     if (action === "location_ok") {
