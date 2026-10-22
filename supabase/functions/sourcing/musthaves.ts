@@ -47,7 +47,8 @@ export async function linkedinSnippet(admin: any, url: string, name?: string | n
   if (!pr || pr.site !== "linkedin") return null;
   const slug = decodeURIComponent(pr.key.split("/in/")[1] || "").replace(/\/+$/, "");
   const nm = clip(name, 80).replace(/"/g, ""), co = clip(company, 80).replace(/"/g, "");
-  const queries = [slug ? `site:linkedin.com/in/${slug}` : "", nm ? `site:linkedin.com/in "${nm}"${co ? ` "${co}"` : ""}` : ""].filter(Boolean);
+  // Always with their name in it: some engines (Tavily) refuse a search that is only site: terms.
+  const queries = [slug && nm ? `site:linkedin.com/in/${slug} "${nm}"` : "", nm ? `site:linkedin.com/in "${nm}"${co ? ` "${co}"` : ""}` : ""].filter(Boolean);
   for (const q of queries) {
     const r = await searchWeb(admin, q);
     const h = r.hits.find((x) => profileOf(x.url)?.key === pr.key);
