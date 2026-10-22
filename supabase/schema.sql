@@ -425,13 +425,13 @@ where id = 'resumes';
 
 create policy resumes_read on storage.objects for select to authenticated using (
   bucket_id = 'resumes' and (is_staff() or exists (
-    select 1 from public.candidates c where c.id::text = (storage.foldername(name))[1] and c.recruiter_id = auth.uid())));
+    select 1 from public.candidates c where c.id::text = (storage.foldername(objects.name))[1] and c.recruiter_id = auth.uid())));
 create policy resumes_insert on storage.objects for insert to authenticated with check (
   bucket_id = 'resumes' and (is_staff() or exists (
-    select 1 from public.candidates c where c.id::text = (storage.foldername(name))[1] and c.recruiter_id = auth.uid())));
+    select 1 from public.candidates c where c.id::text = (storage.foldername(objects.name))[1] and c.recruiter_id = auth.uid())));
 create policy resumes_update on storage.objects for update to authenticated using (
   bucket_id = 'resumes' and (is_staff() or exists (
-    select 1 from public.candidates c where c.id::text = (storage.foldername(name))[1] and c.recruiter_id = auth.uid())));
+    select 1 from public.candidates c where c.id::text = (storage.foldername(objects.name))[1] and c.recruiter_id = auth.uid())));
 create policy resumes_delete on storage.objects for delete to authenticated using (
   bucket_id = 'resumes' and is_staff());
 
