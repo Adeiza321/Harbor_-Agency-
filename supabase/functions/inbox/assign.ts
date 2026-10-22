@@ -40,6 +40,22 @@ export async function assignApplication(admin: any, app: any, rec: { id: string;
     }
   }
 
+  // Answers from the Send-us-your-CV form ("Help us match you"): theirs now, unless they've since
+  // given newer ones on their candidate page. Joining the Active file means they agreed to be put forward.
+  if (app.preferences && typeof app.preferences === "object") {
+    const { data: cur } = await admin.from("candidates").select("preferences,pitch_consent_at").eq("id", candId).single();
+    if (!cur?.preferences) {
+      const p = app.preferences, sal = p.salary || {};
+      const n = (x: unknown) => Number(x).toLocaleString("en-US");
+      const pay = sal.currency && Number(sal.min) > 0 ? sal.currency + " " + n(sal.min) + (Number(sal.max) > Number(sal.min) ? " – " + n(sal.max) : "") + " per " + (sal.period || "year") : null;
+      await admin.from("candidates").update({
+        preferences: p, preferences_at: now, pitch_consent: true, pitch_consent_at: cur?.pitch_consent_at || now,
+        ...(pay ? { pay } : {}), ...(p.availability ? { notice: p.availability } : {}),
+        ...(p.currentCity && p.currentCountry ? { location: p.currentCity + ", " + p.currentCountry } : {}),
+      }).eq("id", candId);
+    }
+  }
+
   // On the job (starts the automatic AI screening).
   let linkId: string | null = null;
   if (app.job_id) {

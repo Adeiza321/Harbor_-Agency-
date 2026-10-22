@@ -9594,7 +9594,7 @@ function EmailChoiceNote({ token, onChanged, onPitchYes }) {
         .then(() => { clear(); setMsg({ text: "You've been unsubscribed. We won't send you any more emails." }); }).catch(fail);
     } else if (pitch === "yes" || pitch === "no") {
       sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: pitch === "yes" } })
-        .then(() => { clear(); setMsg({ text: pitch === "yes" ? "Thanks. We'll pitch your profile anonymously for roles that fit you, and only share your details once you say yes to a specific role. Please answer the questions below so we match you well." : "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); if (pitch === "yes" && onPitchYes) onPitchYes(); }).catch(fail);
+        .then(() => { clear(); if (pitch === "yes" && onPitchYes) onPitchYes(); else setMsg({ text: "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); }).catch(fail);
     }
   }, [token]);
   if (!msg) return null;
@@ -9786,6 +9786,70 @@ const CELEBRATE_CSS = `
 .pn-rise { animation: pn-rise .5s ease-out both }
 @media (prefers-reduced-motion: reduce) { .pn-confetti { display: none } .pn-ring { animation: none; opacity: 0 } .pn-pop, .pn-rise { animation: none } .pn-draw { animation: none; stroke-dashoffset: 0 } }
 `;
+// Answers we could already see (ai-screen prefs_prefill), merged into a fresh form: only values the
+// form can show are kept, and nothing the candidate already answered is overwritten.
+function prefsWithPrefill(p, pre) {
+  if (!pre || typeof pre !== "object") return p;
+  const x = { ...p, salary: { ...p.salary } };
+  const one = (v, list) => (list.includes(v) ? v : "");
+  const keys = (pairs) => pairs.map((a) => a[0]);
+  if (!x.roles.length && Array.isArray(pre.roles)) x.roles = pre.roles.map((r) => String(r || "").trim()).filter(Boolean).slice(0, 5);
+  if (!x.seniority) x.seniority = one(pre.seniority, SENIORITY);
+  if (!x.employmentTypes.length && Array.isArray(pre.employmentTypes)) x.employmentTypes = pre.employmentTypes.filter((v) => EMPLOYMENT_TYPES.includes(v));
+  if (!(Number(x.salary.min) > 0) && pre.salary && Number(pre.salary.min) > 0) {
+    const cur = CURRENCY_OPTIONS.some((o) => o.value === pre.salary.currency) ? pre.salary.currency : x.salary.currency;
+    x.salary = { min: String(Math.round(pre.salary.min)), max: Number(pre.salary.max) > Number(pre.salary.min) ? String(Math.round(pre.salary.max)) : "", currency: cur, period: keys(PAY_PERIODS).includes(pre.salary.period) ? pre.salary.period : "year" };
+  }
+  if (!x.currentCountry && COUNTRIES.includes(pre.currentCountry)) { x.currentCountry = pre.currentCountry; if (!x.salary.currency) x.salary.currency = COUNTRY_CURRENCY[pre.currentCountry] || ""; }
+  if (!x.currentCity && pre.currentCity && x.currentCountry) x.currentCity = String(pre.currentCity);
+  if (!x.relocate) x.relocate = one(pre.relocate, keys(RELOCATE));
+  if (!x.workSetup.length && Array.isArray(pre.workSetup)) x.workSetup = pre.workSetup.filter((v) => keys(WORK_SETUPS).includes(v));
+  if (x.citizen === null && typeof pre.citizen === "boolean") x.citizen = pre.citizen;
+  if (x.citizen === false && !x.visaType && pre.visaType) { const v = String(pre.visaType); if (visaListFor(x.currentCountry).includes(v)) x.visaType = v; else { x.visaType = "Other"; x.visaOther = v; } }
+  if (x.citizen === false && !x.sponsorship) x.sponsorship = one(pre.sponsorship, keys(SPONSOR));
+  const langs = Array.isArray(pre.languages) ? pre.languages.filter((l) => l && LANGUAGES.includes(l.language)).map((l) => ({ language: l.language, level: LANG_LEVELS.includes(l.level) ? l.level : "" })) : [];
+  if (langs.length && !x.languages.some((l) => l.level)) x.languages = langs;
+  if (!x.availability) x.availability = one(pre.availability, AVAILABILITY);
+  if (!x.industries.length && Array.isArray(pre.industries)) x.industries = pre.industries.filter((v) => INDUSTRY_OPTIONS.includes(v));
+  x.locationConfirmed = x.locationConfirmed || !!(x.currentCountry && x.currentCity);
+  return x;
+}
+// The form steps whose answer is already complete (they go on the review step instead of being asked).
+function prefsKnownKeys(p, saved) {
+  const order = ["roles", "seniority", "employmentTypes", "salary", "location", "relocate", "cities", "workSetup", "citizen", "visa", "visaExpiry", "sponsorship", "languages", "availability", "industries"];
+  return order.filter((k) => {
+    if (k === "cities") return saved && p.relocate && p.relocate !== "no" && p.preferredCities.length > 0;
+    if (["visa", "visaExpiry", "sponsorship"].includes(k) && p.citizen !== false) return false;
+    if (k === "visaExpiry") return saved && !PREF_CHECKS.visaExpiry(p);
+    return !PREF_CHECKS[k](p);
+  });
+}
+const PREF_LABELS = { roles: "Roles you're looking for", seniority: "Level", employmentTypes: "Type of work", salary: "Salary", location: "Where you're based", relocate: "Would you move within your country", cities: "Preferred cities", workSetup: "Remote, hybrid or on-site", citizen: "Citizen or permanent resident", visa: "Visa", visaExpiry: "Visa expiry", sponsorship: "Sponsorship needed", languages: "Languages", availability: "When you could start", industries: "Industries" };
+function prefsAnswerText(k, p) {
+  const label = (list, v) => (list.find((x) => x[0] === v) || [v, v])[1];
+  const s = p.salary || {};
+  switch (k) {
+    case "roles": return p.roles.join(", ");
+    case "seniority": return p.seniority;
+    case "employmentTypes": return p.employmentTypes.join(", ");
+    case "salary": return Number(s.min) > 0 ? (s.currency || "") + " " + Number(s.min).toLocaleString("en-US") + (Number(s.max) > Number(s.min) ? " – " + Number(s.max).toLocaleString("en-US") : "") + " " + label(PAY_PERIODS, s.period || "year") : "";
+    case "location": return [p.currentCity, p.currentCountry].filter(Boolean).join(", ");
+    case "relocate": return label(RELOCATE, p.relocate);
+    case "cities": return p.preferredCities.join(", ");
+    case "workSetup": return p.workSetup.map((v) => label(WORK_SETUPS, v)).join(", ");
+    case "citizen": return p.citizen === true ? "Yes" : p.citizen === false ? "No" : "";
+    case "visa": return p.visaType === "Other" ? p.visaOther : p.visaType;
+    case "visaExpiry": return p.visaNoExpiry ? "Doesn't expire" : p.visaExpiry;
+    case "sponsorship": return label(SPONSOR, p.sponsorship);
+    case "languages": return p.languages.filter((l) => l.language).map((l) => l.language + (l.level ? " (" + l.level + ")" : "")).join(", ");
+    case "availability": return p.availability;
+    case "industries": return p.industries.join(", ");
+    default: return "";
+  }
+}
+// The form's own choices, sent to ai-screen prefs_prefill so every value it fills in is one the form can show.
+const PREF_OPTIONS = () => ({ seniority: SENIORITY, employmentTypes: EMPLOYMENT_TYPES, availability: AVAILABILITY, workSetup: WORK_SETUPS.map((x) => x[0]), relocate: RELOCATE.map((x) => x[0]), sponsorship: SPONSOR.map((x) => x[0]), industries: INDUSTRY_OPTIONS, languages: LANGUAGES, langLevels: LANG_LEVELS });
+
 function PreferencesDone({ p, name, preview, onClose }) {
   const [burst, setBurst] = useState(1);
   useEffect(() => { const t = setTimeout(() => setBurst((n) => n + 1), 1700); return () => clearTimeout(t); }, []);
@@ -9847,8 +9911,15 @@ function QuizOption({ selected, onClick, children, hint, multi }) {
 const quizInp = "w-full rounded-2xl border px-4 py-3.5 text-[15px] outline-none bg-white";
 const quizInpS = { borderColor: C.line, borderWidth: 1.5 };
 
-function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
-  const [p, setP] = useState(() => prefsStart(initial, known));
+// prefill: answers we can already see (CV, profile, earlier answers), from ai-screen prefs_prefill.
+// They're shown on a "Here's what we have" step to check or change, and only the questions we
+// couldn't answer are asked one by one. onFinished: called after saving instead of the
+// celebration screen (the candidate page shows its own thank-you).
+function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished, preview }) {
+  const [p, setP] = useState(() => prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill));
+  // The answers already filled in when the form opened: these go on the review step.
+  const [knownKeys] = useState(() => prefsKnownKeys(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill), !!initial));
+  const [edit, setEdit] = useState(null); // a step opened from the review step to change it
   const [i, setI] = useState(0);
   const [tried, setTried] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -9863,7 +9934,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
   const knownPlace = [p.currentCity, p.currentCountry].filter(Boolean).join(", ");
 
   // The steps, in order; visa steps only for people who aren't citizens, cities only if they'd move.
-  const steps = [
+  const allSteps = [
     { key: "roles", check: "roles", title: "What roles are you looking for?", sub: "Add up to five job titles." },
     { key: "seniority", check: "seniority", title: "What level are you at?", sub: "The level you'd like your next role to be.", auto: true },
     { key: "employmentTypes", check: "employmentTypes", title: "What type of work do you want?", sub: "Choose all that apply." },
@@ -9882,23 +9953,28 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
     { key: "availability", check: "availability", title: "When could you start a new role?", auto: true },
     { key: "industries", check: "industries", title: "Which industries have you worked in?", sub: "Choose all that apply." },
   ];
-  const step = steps[Math.min(i, steps.length - 1)];
+  // Asked one by one: only what we didn't already have (a step stays known even if a change on the
+  // review step makes new ones appear, like the visa questions after "not a citizen").
+  const review = knownKeys.length ? [{ key: "review", title: "Here's what we already have", sub: initial ? "Your job preferences. Change anything that's out of date." : "From your CV and your earlier answers. Change anything that's out of date or wrong." }] : [];
+  const steps = [...review, ...allSteps.filter((x) => !knownKeys.includes(x.key))];
+  const step = edit ? allSteps.find((x) => x.key === edit) || steps[0] : steps[Math.min(i, steps.length - 1)];
   const msg = step.check ? PREF_CHECKS[step.check](p) : "";
-  const last = i >= steps.length - 1;
-  useEffect(() => { setTried(false); setDraft(""); setErr(""); window.scrollTo && window.scrollTo(0, 0); }, [i]);
+  const last = !edit && i >= steps.length - 1;
+  useEffect(() => { setTried(false); setDraft(""); setErr(""); window.scrollTo && window.scrollTo(0, 0); }, [i, edit]);
 
   const finish = async () => {
     const errs = prefsErrors(p);
-    const firstBad = steps.findIndex((s) => s.check && errs[s.check]);
-    if (firstBad >= 0) { setI(firstBad); setTimeout(() => setTried(true), 0); return; }
+    const bad = allSteps.find((x) => x.check && errs[x.check]);
+    if (bad) { const at = steps.findIndex((x) => x.key === bad.key); if (at >= 0) { setEdit(null); setI(at); } else setEdit(bad.key); setTimeout(() => setTried(true), 0); return; }
     setBusy(true); setErr("");
-    try { await onSave(prefsToSave(p)); setDone(true); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
+    try { const saved = prefsToSave(p); await onSave(saved); if (onFinished) onFinished(saved); else setDone(true); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
     setBusy(false);
   };
-  const next = () => { if (msg) { setTried(true); return; } if (last) finish(); else setI(i + 1); };
-  const back = () => { if (i > 0) setI(i - 1); else if (onClose) onClose(); };
-  // Single-choice answers move on by themselves, after a beat so the tap registers visually.
-  const pick = (k, v) => { setP((x) => ({ ...x, [k]: v })); setTimeout(() => setI((n) => Math.min(n + 1, steps.length)), 220); };
+  const next = () => { if (msg) { setTried(true); return; } if (edit) { setEdit(null); return; } if (last) finish(); else setI(i + 1); };
+  const back = () => { if (edit) setEdit(null); else if (i > 0) setI(i - 1); else if (onClose) onClose(); };
+  // Single-choice answers move on by themselves, after a beat so the tap registers visually
+  // (back to the review step when the answer was changed from there).
+  const pick = (k, v) => { setP((x) => ({ ...x, [k]: v })); setTimeout(() => { if (edit) setEdit(null); else setI((n) => Math.min(n + 1, steps.length - 1)); }, 220); };
   useEffect(() => { if (i >= steps.length) setI(steps.length - 1); }, [steps.length]); // eslint-disable-line
 
   const addChip = (k, v, max) => { const t = String(v || "").trim(); if (t && !p[k].includes(t) && (!max || p[k].length < max)) set(k, [...p[k], t]); setDraft(""); };
@@ -9908,6 +9984,17 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
 
   const body = () => {
     switch (step.key) {
+      case "review": return (
+        <div className="flex flex-col gap-2.5">
+          {knownKeys.map((k) => { const st = allSteps.find((x) => x.key === k); if (!st) return null; return (
+            <div key={k} className="rounded-2xl px-4 py-3.5 flex items-start gap-3" style={{ background: C.card, border: `1.5px solid ${C.line}` }}>
+              <div className="flex-1 min-w-0">
+                <div className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.ink3 }}>{PREF_LABELS[k] || st.title}</div>
+                <div className="text-[15px] mt-0.5" style={{ color: C.ink }}>{prefsAnswerText(k, p) || "—"}</div>
+              </div>
+              <button type="button" onClick={() => setEdit(k)} className="text-sm font-semibold shrink-0 pt-0.5" style={{ color: C.em }}>Change</button>
+            </div>); })}
+        </div>);
       case "roles": return (
         <div className="flex flex-col gap-3">
           {p.roles.length > 0 && <div className="flex flex-wrap gap-2"><Chips items={p.roles} onRemove={(r) => set("roles", p.roles.filter((x) => x !== r))} /></div>}
@@ -9994,9 +10081,9 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
     <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: C.soft, ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
       <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
-          <button type="button" onClick={done ? onClose : back} aria-label={i === 0 || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{i === 0 || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
+          <button type="button" onClick={done ? onClose : back} aria-label={(i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
           <BrandLogo height={24} />
-          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{done ? steps.length : i + 1}/{steps.length}</span>
+          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{edit ? "Edit" : (done ? steps.length : i + 1) + "/" + steps.length}</span>
         </div>
         <div style={{ height: 3, background: "#ECE9E2" }}><div style={{ height: 3, width: pct + "%", background: C.em, transition: "width .3s ease" }} /></div>
       </div>
@@ -10018,7 +10105,7 @@ function PreferencesQuiz({ initial, known, onSave, onClose, preview }) {
         <div className="fixed bottom-0 inset-x-0 px-4 pb-5 pt-3" style={{ background: "linear-gradient(to top, #FBFAF7 70%, rgba(251,250,247,0))" }}>
           <div className="max-w-md mx-auto">
             <button type="button" onClick={next} disabled={busy} className="w-full rounded-2xl py-4 text-[15px] font-semibold" style={{ background: msg ? "#B9C7BF" : C.em, color: "#fff" }}>
-              {busy ? <>Saving <InlineDots color="#fff" /></> : last ? "Finish" : step.key === "cities" && !p.preferredCities.length ? "Skip" : "Continue"}
+              {busy ? <>Saving <InlineDots color="#fff" /></> : edit ? "Done" : step.key === "review" ? (last ? "Looks right: finish" : "Looks right") : last ? "Finish" : step.key === "cities" && !p.preferredCities.length ? "Skip" : "Continue"}
             </button>
           </div>
         </div>
@@ -10152,26 +10239,52 @@ function PreferencesSummary({ p, staff }) {
 
 // Candidate page card. Unanswered: a short invitation that opens the quiz (it opens by itself right
 // after they click Yes, or from ?prefs=1 in the invite email). Answered: a summary they can redo.
-function PortalPreferences({ token, pitchConsent, openSignal, name }) {
+// "Help us match you" on the candidate page. Opens first when they click Yes in an email (openSignal)
+// or arrive with ?prefs=1; answers we can already see are filled in for them to check (prefill,
+// worked out once by ai-screen and cached). onThanks("finished" | "closed") tells the page to show
+// its thank-you once the form is done with.
+function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) {
   const [state, setState] = useState(null);
   const [open, setOpen] = useState(false);
+  const [prefill, setPrefill] = useState(undefined); // undefined = not looked up yet
+  const [loadingPrefill, setLoadingPrefill] = useState(false);
   const autoOpened = React.useRef(false);
+  const fromEmail = React.useRef(false);
   const load = () => sbFetch("/rest/v1/rpc/candidate_preferences", { method: "POST", body: { p_token: token } }).then(setState).catch(() => setState({ error: true }));
   useEffect(() => { if (token) load(); }, [token, openSignal]); // eslint-disable-line
   const wantsOpen = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("prefs") === "1";
+  // Before the form opens: what we can already fill in (from the cache, else asked for now, ~10 s at most).
+  const openForm = async (st) => {
+    const cur = st || state;
+    if (!cur || cur.preferences || prefill !== undefined) { setOpen(true); return; }
+    if (cur.prefill) { setPrefill(cur.prefill); setOpen(true); return; }
+    setLoadingPrefill(true);
+    const ask = fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefs_prefill", token, options: PREF_OPTIONS() }) })
+      .then((r) => r.json()).then((j) => (j && j.prefill) || null).catch(() => null);
+    const pre = await Promise.race([ask, new Promise((ok) => setTimeout(() => ok(null), 20000))]);
+    setPrefill(pre); setLoadingPrefill(false); setOpen(true);
+  };
   useEffect(() => {
     if (!state || state.error || autoOpened.current) return;
-    if ((wantsOpen || openSignal) && !state.preferences) { autoOpened.current = true; setOpen(true); }
+    if ((wantsOpen || openSignal) && !state.preferences) { autoOpened.current = true; fromEmail.current = !!openSignal; openForm(state); }
+    else if (openSignal && state.preferences && onThanks) { autoOpened.current = true; onThanks("finished"); }
   }, [state, openSignal]); // eslint-disable-line
+  if (loadingPrefill) return (
+    <div className="fixed inset-0 z-[70] flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: C.soft }} role="status">
+      <BrandLogo height={26} />
+      <div className="text-lg font-semibold mt-4" style={{ color: C.ink }}>Getting your answers ready</div>
+      <div className="text-sm max-w-xs" style={{ color: C.ink2 }}>We're filling in what we already know from your CV and earlier answers, so you only answer what's new.</div>
+      <InlineDots />
+    </div>
+  );
   if (!state || state.error) return null;
   const consent = pitchConsent || state.pitchConsent;
   if (!consent && !wantsOpen && !state.preferences) return null;
   const has = !!state.preferences;
   const save = (prefs) => sbFetch("/rest/v1/rpc/candidate_set_preferences", { method: "POST", body: { p_token: token, p_prefs: prefs } });
-  const close = () => {
-    setOpen(false); load();
-    try { const u = new URL(window.location.href); if (u.searchParams.get("prefs")) { u.searchParams.delete("prefs"); window.history.replaceState({}, "", u.toString()); } } catch (e) { /* fine */ }
-  };
+  const clearQ = () => { try { const u = new URL(window.location.href); if (u.searchParams.get("prefs")) { u.searchParams.delete("prefs"); window.history.replaceState({}, "", u.toString()); } } catch (e) { /* fine */ } };
+  const close = () => { setOpen(false); load(); clearQ(); if (fromEmail.current && onThanks) { fromEmail.current = false; onThanks("closed"); } };
+  const finished = () => { setOpen(false); load(); clearQ(); fromEmail.current = false; if (onThanks) onThanks("finished"); window.scrollTo && window.scrollTo(0, 0); };
   return (
     <>
       {has ? (
@@ -10189,12 +10302,12 @@ function PortalPreferences({ token, pitchConsent, openSignal, name }) {
         <div className="rounded-2xl p-5 md:p-6 flex flex-col sm:flex-row sm:items-center gap-4" style={{ background: C.side, color: "#fff" }}>
           <div className="flex-1">
             <div className="text-xl" style={{ ...SERIF, color: C.lime }}>Help us match you</div>
-            <div className="text-sm mt-1" style={{ color: "#C9D6CE" }}>A few quick questions so we only recommend you for roles that really fit. About two minutes.</div>
+            <div className="text-sm mt-1" style={{ color: "#C9D6CE" }}>A few quick questions so we only recommend you for roles that really fit. We've filled in what we already know.</div>
           </div>
-          <button type="button" onClick={() => setOpen(true)} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
+          <button type="button" onClick={() => openForm()} className="rounded-xl px-5 py-3 text-sm font-semibold shrink-0" style={{ background: C.lime, color: C.side }}>Start</button>
         </div>
       )}
-      {open && <PreferencesQuiz initial={state.preferences} known={{ ...state, name }} onSave={save} onClose={close} />}
+      {open && <PreferencesQuiz initial={state.preferences} known={{ ...state, name }} prefill={prefill || null} onSave={save} onClose={close} onFinished={finished} />}
     </>
   );
 }
@@ -12423,12 +12536,66 @@ function JobDescriptionPanel({ r, detail, questions, onClose, onAnswer, onApply,
   );
 }
 
+// The questions for one role, with anything they've already answered elsewhere filled in
+// (ai-screen portal_prefill): [{ q, kind: "job" | "followup", a, from }]. null while loading;
+// falls back to the follow-up questions alone if the lookup fails.
+function usePrefilledQuestions(token, linkId, fallback) {
+  const [list, setList] = useState(null);
+  useEffect(() => {
+    let live = true;
+    fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "portal_prefill", token, linkId }) })
+      .then((x) => x.json()).then((j) => { if (live) setList(Array.isArray(j && j.questions) ? j.questions : (fallback || []).map((q) => ({ q, kind: "followup", a: "", from: "" }))); })
+      .catch(() => { if (live) setList((fallback || []).map((q) => ({ q, kind: "followup", a: "", from: "" }))); });
+    return () => { live = false; };
+  }, [token, linkId]); // eslint-disable-line
+  return list;
+}
+// Answer boxes start with the saved draft, else what they answered before (marked so they can check it).
+const PrefilledNote = ({ item, value }) => item && item.a && value === item.a
+  ? <div className="text-xs" style={{ color: C.em }}>Filled in from your earlier answer{item.from ? " (" + item.from + ")" : ""}. Change it if anything's different.</div> : null;
+
+// Follow-up questions for a role they're already on, with earlier answers filled in.
+function PortalFollowups({ q, token, busy, onSend }) {
+  const pre = usePrefilledQuestions(token, q.linkId, q.questions);
+  const list = (pre || []).filter((x) => x.kind === "followup");
+  const [a, setA] = useState(null);
+  useEffect(() => { if (pre) setA(q.questions.map((text) => { const hit = list.find((x) => x.q === text); return (hit && hit.a) || ""; })); }, [pre]); // eslint-disable-line
+  const vals = a || q.questions.map(() => "");
+  const complete = q.questions.every((_, i) => (vals[i] || "").trim());
+  return (
+    <Card>
+      <div className="text-base font-semibold">{q.role}</div>
+      <div className="text-sm mb-3" style={{ color: C.ink2 }}>{q.company}</div>
+      <div className="flex flex-col gap-3">
+        {q.questions.map((text, i) => (
+          <div key={i} className="flex flex-col gap-1.5">
+            <label htmlFor={"q-" + q.linkId + "-" + i} className="text-sm font-medium">{text}</label>
+            <textarea id={"q-" + q.linkId + "-" + i} rows={3} value={vals[i] || ""} onChange={(e) => setA(vals.map((x, k) => (k === i ? e.target.value : x)))} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+            <PrefilledNote item={list.find((x) => x.q === text)} value={vals[i] || ""} />
+          </div>
+        ))}
+        <Btn kind="primary" full disabled={!!busy || !complete} onClick={() => onSend(q.questions.map((_, i) => vals[i] || ""))}>
+          {busy === "answer" + q.linkId ? <>Sending <InlineDots color="#fff" /></> : complete ? "Send answers" : "Answer every question to send"}
+        </Btn>
+      </div>
+    </Card>
+  );
+}
+
 function RoutedRoleCard({ r, q, token, recName, onDone }) {
-  const questions = (q && q.questions) || [];
+  const pre = usePrefilledQuestions(token, r.linkId, (q && q.questions) || []);
+  const questions = pre ? pre.map((x) => x.q) : [];
   const n = questions.length;
   const [detail, setDetail] = useState(null);
   const [panel, setPanel] = useState(false);
-  const [answers, setAnswers] = useState(() => readDraft(token, r.linkId, n));
+  const [answers, setAnswers] = useState([]);
+  const dKey = draftKey(token, r.linkId) + ".v2";
+  useEffect(() => {
+    if (!pre) return;
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem(dKey) || "[]"); } catch (e) { /* none */ }
+    setAnswers(pre.map((x, i) => String(saved[i] || "") || x.a || ""));
+  }, [pre]); // eslint-disable-line
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
   const [declining, setDeclining] = useState(false);
@@ -12438,14 +12605,14 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
     const u = new URLSearchParams(window.location.search);
     if (u.get("role") === r.linkId) { if (u.get("go") === "questions" && n) setTimeout(() => goQuestions(), 300); else setPanel(true); }
   }, [r.linkId]); // eslint-disable-line
-  const setA = (i, v) => setAnswers((a) => { const next = a.map((x, k) => (k === i ? v : x)); try { localStorage.setItem(draftKey(token, r.linkId), JSON.stringify(next)); } catch (e) {} return next; });
-  const answered = answers.filter((a) => a.trim()).length;
+  const setA = (i, v) => setAnswers((a) => { const next = a.map((x, k) => (k === i ? v : x)); try { localStorage.setItem(dKey, JSON.stringify(next)); } catch (e) {} return next; });
+  const answered = answers.filter((a) => String(a || "").trim()).length;
   const complete = answered === n;
   const goQuestions = () => {
     setPanel(false);
     setTimeout(() => {
       if (qRef.current) qRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-      const first = answers.findIndex((a) => !a.trim());
+      const first = answers.findIndex((a) => !String(a || "").trim());
       const el = document.getElementById("rq-" + r.linkId + "-" + (first < 0 ? 0 : first));
       if (el) setTimeout(() => el.focus({ preventScroll: true }), 400);
     }, 50);
@@ -12460,9 +12627,13 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
   const apply = async () => {
     setBusy("apply"); setErr("");
     try {
-      if (n) await call({ action: "portal_answer", answers });
+      if (n) {
+        const jobAnswers = pre.map((x, i) => ({ ...x, a: answers[i] || "" })).filter((x) => x.kind === "job").map((x) => ({ q: x.q, a: x.a }));
+        const fu = pre.map((x, i) => (x.kind === "followup" ? answers[i] || "" : null)).filter((x) => x !== null);
+        await call({ action: "portal_answer", ...(jobAnswers.length ? { jobAnswers } : {}), answers: fu });
+      }
       await call({ action: "portal_respond", accept: true });
-      try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {}
+      try { localStorage.removeItem(dKey); localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {}
       setPanel(false);
       await onDone("You've applied for " + r.role + ". " + (recName || "Your recruiter") + " will be in touch about next steps.");
     } catch (e) { popError(e); }
@@ -12470,7 +12641,7 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
   };
   const decline = async () => {
     setBusy("decline"); setErr("");
-    try { await call({ action: "portal_respond", accept: false }); try { localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {} await onDone("Got it. We won't put you forward for " + r.role + "."); }
+    try { await call({ action: "portal_respond", accept: false }); try { localStorage.removeItem(dKey); localStorage.removeItem(draftKey(token, r.linkId)); } catch (e) {} await onDone("Got it. We won't put you forward for " + r.role + "."); }
     catch (e) { popError(e); }
     setBusy("");
   };
@@ -12499,6 +12670,7 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
                 <div key={i} className="flex flex-col gap-1.5">
                   <label htmlFor={"rq-" + r.linkId + "-" + i} className="text-sm font-medium">{(n > 1 ? i + 1 + ". " : "") + text}</label>
                   <textarea id={"rq-" + r.linkId + "-" + i} rows={3} value={answers[i] || ""} onChange={(e) => setA(i, e.target.value)} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={inputStyle} />
+                  <PrefilledNote item={pre && pre[i]} value={answers[i] || ""} />
                 </div>
               ))}
             </div>
@@ -12596,6 +12768,7 @@ function CandidatePortal({ data, token, onChanged }) {
   const [chat, setChat] = useState(null); // null | { startId }
   const [openApps, setOpenApps] = useState({});
   const [prefsSignal, setPrefsSignal] = useState(0); // bumps when they click Yes, to open the questions
+  const [thanks, setThanks] = useState(""); // after the "Help us match you" form that opens from Yes
   const act = async (key, body, done) => {
     setBusy(key); setErr(""); setNote("");
     try {
@@ -12638,6 +12811,9 @@ function CandidatePortal({ data, token, onChanged }) {
         <div className="mb-1"><BrandLogo height={30} /></div>
         {token && new URLSearchParams(window.location.search).get("offer") && <PortalOffer token={token} offer={new URLSearchParams(window.location.search).get("offer")} />}
         {token && <EmailChoiceNote token={token} onChanged={onChanged} onPitchYes={() => setPrefsSignal((n) => n + 1)} />}
+        {thanks && <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.em }}>{thanks === "finished"
+          ? "Thank you! You're all set. We'll put your profile forward anonymously for roles that fit what you told us. Your name and contact details stay private, and your recruiter will be in touch when an employer wants to talk."
+          : "Thanks. We'll put your profile forward anonymously for roles that fit you. Finish the few questions below when you have a minute so we match you well."}</div>}
 
         <Card>
           <div className="flex flex-col sm:flex-row items-center sm:items-center gap-4 sm:gap-5 text-center sm:text-left">
@@ -12665,7 +12841,7 @@ function CandidatePortal({ data, token, onChanged }) {
         {note && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.emTint, color: C.em }}>{note}</div>}
         {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
 
-        {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} name={c.name} />}
+        {token && <PortalPreferences token={token} pitchConsent={!!c.pitchConsent} openSignal={prefsSignal} name={c.name} onThanks={setThanks} />}
 
         {token && (c.interviews || []).length > 0 && <PortalInterviews list={c.interviews} token={token} onChanged={onChanged} />}
 
@@ -12674,27 +12850,9 @@ function CandidatePortal({ data, token, onChanged }) {
             onDone={async (msg) => { setNote(msg); if (onChanged) await onChanged(); }} />
         ))}
 
-        {c.questions.filter((q) => !c.routed.some((r) => r.linkId === q.linkId)).map((q) => {
-          const a = answers[q.linkId] || [];
-          const complete = q.questions.every((_, i) => (a[i] || "").trim());
-          return (
-            <Card key={q.linkId}>
-              <div className="text-base font-semibold">{q.role}</div>
-              <div className="text-sm mb-3" style={{ color: C.ink2 }}>{q.company}</div>
-              <div className="flex flex-col gap-3">
-                {q.questions.map((text, i) => (
-                  <div key={i} className="flex flex-col gap-1.5">
-                    <label htmlFor={"q-" + q.linkId + "-" + i} className="text-sm font-medium">{text}</label>
-                    <textarea id={"q-" + q.linkId + "-" + i} rows={3} value={a[i] || ""} onChange={(e) => setA(q.linkId, i, e.target.value)} placeholder="Your answer" className="rounded-lg border px-3 py-2.5 text-sm outline-none" style={inputStyle} />
-                  </div>
-                ))}
-                <Btn kind="primary" full disabled={!!busy || !complete} onClick={() => act("answer" + q.linkId, { action: "portal_answer", linkId: q.linkId, answers: q.questions.map((_, i) => a[i] || "") }, "Answers sent. Thank you!")}>
-                  {busy === "answer" + q.linkId ? <>Sending <InlineDots color="#fff" /></> : complete ? "Send answers" : "Answer every question to send"}
-                </Btn>
-              </div>
-            </Card>
-          );
-        })}
+        {c.questions.filter((q) => !c.routed.some((r) => r.linkId === q.linkId)).map((q) => (
+          <PortalFollowups key={q.linkId} q={q} token={token} busy={busy} onSend={(answers) => act("answer" + q.linkId, { action: "portal_answer", linkId: q.linkId, answers }, "Answers sent. Thank you!")} />
+        ))}
 
         <Card>
           <SectionTitle title="Your applications" sub={appliedApps.length + pastOnly.length ? "Tap a role to see where it's at." : ""} size="text-xl" />
@@ -13107,11 +13265,15 @@ function EeoNote({ agency }) {
    join the Active file, the bench we check for every new role before looking outside. Lands in
    the Inbox (marked Active file), or straight with the recruiter whose link they came through. */
 function JoinPage() {
-  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", role: "", website: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
   const [cv, setCv] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  // After the CV is sent: the same "Help us match you" form as the candidate page, with what their
+  // CV already shows filled in. Saved on the application (application_set_preferences).
+  const [quiz, setQuiz] = useState(null); // { id, token, prefill } | "loading"
+  const [answered, setAnswered] = useState(false);
   const opened = React.useRef(Date.now());
   const fileRef = React.useRef(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -13128,17 +13290,35 @@ function JoinPage() {
   const okEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim());
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.name.trim() || !okEmail || !form.role.trim() || !cv) { setErr(!cv ? "Please attach your CV." : "Please fill in your name, a valid email and the kind of role you're looking for."); return; }
+    if (!form.name.trim() || !okEmail || !cv) { setErr(!cv ? "Please attach your CV." : "Please fill in your name and a valid email."); return; }
     setBusy(true); setErr("");
     try {
-      const payload = { ft: Date.now() - opened.current, source: "career_page", role_title: form.role.trim(), ref: PUB_REF(), name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, cv: { name: cv.name, data: cv.data } };
+      const payload = { ft: Date.now() - opened.current, source: "career_page", ref: PUB_REF(), name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, cv: { name: cv.name, data: cv.data } };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
-      setDone(true); window.scrollTo(0, 0);
+      window.scrollTo(0, 0);
+      if (j.id && j.prefsToken) {
+        setQuiz("loading");
+        const ask = fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefs_prefill", appId: j.id, appToken: j.prefsToken, options: PREF_OPTIONS() }) })
+          .then((x) => x.json()).then((x) => (x && x.prefill) || null).catch(() => null);
+        const pre = await Promise.race([ask, new Promise((ok) => setTimeout(() => ok(null), 25000))]);
+        setQuiz({ id: j.id, token: j.prefsToken, prefill: pre });
+      } else setDone(true);
     } catch (x) { popError(x); }
     setBusy(false);
   };
+  const savePrefs = (prefs) => sbFetch("/rest/v1/rpc/application_set_preferences", { method: "POST", body: { p_app: quiz.id, p_token: quiz.token, p_prefs: prefs } });
+  if (quiz === "loading") return (
+    <div className="fixed inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: C.soft }} role="status">
+      <BrandLogo height={26} />
+      <div className="text-lg font-semibold mt-4" style={{ color: C.ink }}>Thanks, we've got your CV</div>
+      <div className="text-sm max-w-xs" style={{ color: C.ink2 }}>Now a few quick questions so we match you well. We're filling in what your CV already tells us…</div>
+      <InlineDots />
+    </div>
+  );
+  if (quiz && !done) return <PreferencesQuiz initial={null} known={{ name: form.name }} prefill={quiz.prefill} onSave={savePrefs}
+    onClose={() => { setDone(true); window.scrollTo(0, 0); }} onFinished={() => { setAnswered(true); setDone(true); window.scrollTo(0, 0); }} />;
   const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
   const inpStyle = { borderColor: C.line, background: C.soft };
   return (
@@ -13152,7 +13332,7 @@ function JoinPage() {
           <Card>
             <div className="w-12 h-12 rounded-full grid place-items-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} /></div>
             <div className="text-2xl" style={SERIF}>Thanks, you're on our list</div>
-            <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>We'll check you for every new role that fits. When one does, a recruiter will get in touch. We never share your details with an employer without asking you first.</div>
+            <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>{answered ? "Thanks for telling us what you're looking for. " : ""}We'll check you for every new role that fits and put your profile forward anonymously: your name and contact details stay private until an employer wants to talk to you, and a recruiter will be in touch.</div>
             <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="inline-block mt-5"><Btn kind="primary">See open jobs</Btn></a>
           </Card>
         ) : (
@@ -13167,9 +13347,9 @@ function JoinPage() {
                 <FInput label="LinkedIn profile" icon={ExternalLink} value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" />
               </FSection>
               <FormDivider />
-              <FSection n={2} title="What you're looking for">
-                <FInput label="The kind of role you want" required icon={Briefcase} value={form.role} onChange={set("role")} placeholder="e.g. Customer Success Manager" />
+              <FSection n={2} title="Your CV">
                 <CvDrop cv={cv} onPick={pickCv} required />
+                <div className="text-xs" style={{ color: C.ink3 }}>Next, a few quick questions about the roles you want. We fill in what your CV already shows.</div>
               </FSection>
               <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
               {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}

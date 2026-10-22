@@ -161,6 +161,9 @@ Deno.serve(async (req: Request) => {
       slug = job.link_slug || null;
       questions = Array.isArray(job.screening_questions) ? job.screening_questions.map(String) : [];
     }
+    // Send us your CV (no job): what they're looking for comes from the "Help us match you" form
+    // that opens right after; until then the application reads "Active file".
+    if (!resolvedRoleTitle && !jobId && !linkSlug) resolvedRoleTitle = "Active file";
     if (!resolvedRoleTitle) return json({ error: "Missing role" }, 400);
     // Answers to the job's own screening questions, kept as {q, a} so they survive later edits.
     const given = Array.isArray(body.answers) ? body.answers : [];
@@ -170,7 +173,7 @@ Deno.serve(async (req: Request) => {
     // platform resending the same lead) should not create a second Inbox row. The one exception:
     // someone who was referred and now applies themselves fills in the referral's row (their
     // CV, phone, answers), keeping who referred them.
-    let data: { id: string; referral_token?: string | null } | null = null;
+    let data: { id: string; referral_token?: string | null; prefs_token?: string | null } | null = null;
     let existingRow = false;
     if (resolvedJobId) {
       const { data: existing } = await admin.from("applications").select("id,source,status,resume_path").eq("job_id", resolvedJobId).ilike("email", emailPattern).limit(1);
@@ -199,7 +202,7 @@ Deno.serve(async (req: Request) => {
         via_recruiter: viaRec?.id || null,
         ip_hash: ipHash,
         status: "new",
-      }).select("id,referral_token").single();
+      }).select("id,referral_token,prefs_token").single();
       if (error) return json({ error: error.message }, 500);
       data = row;
     }
@@ -246,7 +249,8 @@ Deno.serve(async (req: Request) => {
       } catch (e) { console.error("referral email", appId, String((e as Error)?.message || e)); }
     }
 
-    return json({ ok: true, id: appId });
+    // The Send-us-your-CV page uses id + prefsToken to save the "Help us match you" answers.
+    return json({ ok: true, id: appId, ...(!resolvedJobId && !referrer && data?.prefs_token ? { prefsToken: data.prefs_token } : {}) });
   } catch (e) {
     return json({ error: String(e) }, 500);
   }
