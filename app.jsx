@@ -9928,10 +9928,16 @@ const quizInpS = { borderColor: C.line, borderWidth: 1.5 };
 // They're shown on a "Here's what we have" step to check or change, and only the questions we
 // couldn't answer are asked one by one. onFinished: called after saving instead of the
 // celebration screen (the candidate page shows its own thank-you).
-function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished, preview }) {
+// before: steps asked first, in the same look (the Send-us-your-CV page: their details and CV),
+// { steps: [{ key, title, sub, body: () => JSX, check: () => message | "" }], submitLabel, busyLabel,
+// onDone: async () => prefill }. Once they're done, onDone's prefill fills in the form.
+function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished, preview, before }) {
   const [p, setP] = useState(() => prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill));
   // The answers already filled in when the form opened: these go on the review step.
-  const [knownKeys] = useState(() => prefsKnownKeys(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill), !!initial));
+  const [knownKeys, setKnownKeys] = useState(() => (before ? [] : prefsKnownKeys(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill), !!initial)));
+  const [phase, setPhase] = useState(before ? "before" : "main");
+  const [bi, setBi] = useState(0);
+  const inBefore = phase === "before";
   const [edit, setEdit] = useState(null); // a step opened from the review step to change it
   const [i, setI] = useState(0);
   const [tried, setTried] = useState(false);
@@ -9968,12 +9974,26 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
   ];
   // Asked one by one: only what we didn't already have (a step stays known even if a change on the
   // review step makes new ones appear, like the visa questions after "not a citizen").
-  const review = knownKeys.length ? [{ key: "review", title: "Here's what we already have", sub: initial ? "Your job preferences. Change anything that's out of date." : "From your CV and your earlier answers. Change anything that's out of date or wrong." }] : [];
+  const review = knownKeys.length ? [{ key: "review", title: "Here's what we already have", sub: initial ? "Your job preferences. Change anything that's out of date." : before ? "Read from your CV. Change anything that's out of date or wrong." : "From your CV and your earlier answers. Change anything that's out of date or wrong." }] : [];
   const steps = [...review, ...allSteps.filter((x) => !knownKeys.includes(x.key))];
-  const step = edit ? allSteps.find((x) => x.key === edit) || steps[0] : steps[Math.min(i, steps.length - 1)];
-  const msg = step.check ? PREF_CHECKS[step.check](p) : "";
-  const last = !edit && i >= steps.length - 1;
-  useEffect(() => { setTried(false); setDraft(""); setErr(""); window.scrollTo && window.scrollTo(0, 0); }, [i, edit]);
+  const step = inBefore ? before.steps[bi] : edit ? allSteps.find((x) => x.key === edit) || steps[0] : steps[Math.min(i, steps.length - 1)];
+  const msg = inBefore ? (step.check ? step.check() : "") : step.check ? PREF_CHECKS[step.check](p) : "";
+  const last = !inBefore && !edit && i >= steps.length - 1;
+  const lastBefore = inBefore && bi >= before.steps.length - 1;
+  const offset = before ? before.steps.length : 0;
+  const total = offset + (inBefore ? Math.max(steps.length, 1) : steps.length);
+  const pos = inBefore ? bi : offset + i;
+  useEffect(() => { setTried(false); setDraft(""); setErr(""); window.scrollTo && window.scrollTo(0, 0); }, [i, edit, bi]);
+  // The before steps are done (e.g. the CV is sent): fill in what we can and carry on with the form.
+  const runBefore = async () => {
+    setBusy(true); setErr("");
+    try {
+      const pre = await before.onDone();
+      const fresh = prefsWithPrefill(prefsStart(null, known), pre);
+      setP(fresh); setKnownKeys(prefsKnownKeys(fresh, false)); setPhase("main"); setI(0);
+    } catch (e) { setErr(e.message || "That didn't go through. Please try again."); }
+    setBusy(false);
+  };
 
   const finish = async () => {
     const errs = prefsErrors(p);
@@ -9983,8 +10003,12 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
     try { const saved = prefsToSave(p); await onSave(saved); if (onFinished) onFinished(saved); else setDone(true); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
     setBusy(false);
   };
-  const next = () => { if (msg) { setTried(true); return; } if (edit) { setEdit(null); return; } if (last) finish(); else setI(i + 1); };
-  const back = () => { if (edit) setEdit(null); else if (i > 0) setI(i - 1); else if (onClose) onClose(); };
+  const next = () => {
+    if (msg) { setTried(true); return; }
+    if (inBefore) { if (lastBefore) runBefore(); else setBi(bi + 1); return; }
+    if (edit) { setEdit(null); return; } if (last) finish(); else setI(i + 1);
+  };
+  const back = () => { if (inBefore) { if (bi > 0) setBi(bi - 1); else if (onClose) onClose(); return; } if (edit) setEdit(null); else if (i > 0) setI(i - 1); else if (onClose) onClose(); };
   // Single-choice answers move on by themselves, after a beat so the tap registers visually
   // (back to the review step when the answer was changed from there).
   const pick = (k, v) => { setP((x) => ({ ...x, [k]: v })); setTimeout(() => { if (edit) setEdit(null); else setI((n) => Math.min(n + 1, steps.length - 1)); }, 220); };
@@ -9993,9 +10017,10 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
   const addChip = (k, v, max) => { const t = String(v || "").trim(); if (t && !p[k].includes(t) && (!max || p[k].length < max)) set(k, [...p[k], t]); setDraft(""); };
   const visas = visaListFor(p.currentCountry);
   const cities = (CITY_STATE_OPTIONS[p.currentCountry] || []).map((c) => c.split(",")[0].trim()).filter((c) => c !== p.currentCity);
-  const pct = done ? 100 : Math.round((i / steps.length) * 100);
+  const pct = done ? 100 : Math.round((pos / total) * 100);
 
   const body = () => {
+    if (inBefore) return step.body();
     switch (step.key) {
       case "review": return (
         <div className="flex flex-col gap-2.5">
@@ -10094,9 +10119,9 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
     <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: C.soft, ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
       <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
-          <button type="button" onClick={done ? onClose : back} aria-label={(i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
+          <button type="button" onClick={done ? onClose : back} aria-label={(inBefore ? bi === 0 : i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(inBefore ? bi === 0 : i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
           <BrandLogo height={24} />
-          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{edit ? "Edit" : (done ? steps.length : i + 1) + "/" + steps.length}</span>
+          <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{edit ? "Edit" : inBefore ? "Step " + (bi + 1) : (done ? total : pos + 1) + "/" + total}</span>
         </div>
         <div style={{ height: 3, background: "#ECE9E2" }}><div style={{ height: 3, width: pct + "%", background: C.em, transition: "width .3s ease" }} /></div>
       </div>
@@ -10118,7 +10143,7 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
         <div className="fixed bottom-0 inset-x-0 px-4 pb-5 pt-3" style={{ background: "linear-gradient(to top, #FBFAF7 70%, rgba(251,250,247,0))" }}>
           <div className="max-w-md mx-auto">
             <button type="button" onClick={next} disabled={busy} className="w-full rounded-2xl py-4 text-[15px] font-semibold" style={{ background: msg ? "#B9C7BF" : C.em, color: "#fff" }}>
-              {busy ? <>Saving <InlineDots color="#fff" /></> : edit ? "Done" : step.key === "review" ? (last ? "Looks right: finish" : "Looks right") : last ? "Finish" : step.key === "cities" && !p.preferredCities.length ? "Skip" : "Continue"}
+              {busy ? <>{inBefore ? before.busyLabel || "Sending" : "Saving"} <InlineDots color="#fff" /></> : lastBefore ? before.submitLabel || "Continue" : inBefore ? "Continue" : edit ? "Done" : step.key === "review" ? (last ? "Looks right: finish" : "Looks right") : last ? "Finish" : step.key === "cities" && !p.preferredCities.length ? "Skip" : "Continue"}
             </button>
           </div>
         </div>
@@ -13326,66 +13351,77 @@ function EeoNote({ agency }) {
   );
 }
 
-/* "Send us your CV" (/jobs/?join=1): for people who aren't applying to a specific job. They
-   join the Active file, the bench we check for every new role before looking outside. Lands in
-   the Inbox (marked Active file), or straight with the recruiter whose link they came through. */
+/* "Send us your CV" (/jobs/?join=1): for people who aren't applying to a specific job. It's the same
+   step-by-step "Help us match you" form as the Yes in our emails, with their details and CV as its
+   first steps. Once the CV is sent (submit-application, no job: the Active file), the rest of the
+   form is filled in from it where it can be ("Here's what we already have") and only the rest is
+   asked. Lands in the Inbox (marked Active file), or straight with the recruiter whose link they
+   came through; the answers are saved on the application (application_set_preferences). */
 function JoinPage() {
   const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", website: "" });
   const [cv, setCv] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  const [cvErr, setCvErr] = useState("");
   const [done, setDone] = useState(false);
-  // After the CV is sent: the same "Help us match you" form as the candidate page, with what their
-  // CV already shows filled in. Saved on the application (application_set_preferences).
-  const [quiz, setQuiz] = useState(null); // { id, token, prefill } | "loading"
   const [answered, setAnswered] = useState(false);
+  const app = React.useRef(null); // { id, token } once the CV is sent
   const opened = React.useRef(Date.now());
-  const fileRef = React.useRef(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const pickCv = (e) => {
     const f = e.target.files && e.target.files[0]; e.target.value = "";
     if (!f) return;
-    if (!/\.(pdf|docx?)$/i.test(f.name)) { setErr("Upload your CV as a PDF or Word document."); return; }
-    if (f.size > 8 * 1024 * 1024) { setErr("Your CV can be up to 8 MB."); return; }
+    if (!/\.(pdf|docx?)$/i.test(f.name)) { setCvErr("Upload your CV as a PDF or Word document."); return; }
+    if (f.size > 8 * 1024 * 1024) { setCvErr("Your CV can be up to 8 MB."); return; }
     const r = new FileReader();
-    r.onload = () => { setCv({ name: f.name, data: String(r.result).split(",")[1] }); setErr(""); };
-    r.onerror = () => setErr("That file couldn't be read. Try another one.");
+    r.onload = () => { setCv({ name: f.name, data: String(r.result).split(",")[1] }); setCvErr(""); };
+    r.onerror = () => setCvErr("That file couldn't be read. Try another one.");
     r.readAsDataURL(f);
   };
   const okEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim());
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!form.name.trim() || !okEmail || !cv) { setErr(!cv ? "Please attach your CV." : "Please fill in your name and a valid email."); return; }
-    setBusy(true); setErr("");
-    try {
+  // Sends the details and CV, then reads the CV for the rest of the form (up to ~25 s).
+  const send = async () => {
+    if (!app.current) {
       const payload = { ft: Date.now() - opened.current, source: "career_page", ref: PUB_REF(), name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website, cv: { name: cv.name, data: cv.data } };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(errOf(j.error, "Something went wrong. Please try again."));
-      window.scrollTo(0, 0);
-      if (j.id && j.prefsToken) {
-        setQuiz("loading");
-        const ask = fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefs_prefill", appId: j.id, appToken: j.prefsToken, options: PREF_OPTIONS() }) })
-          .then((x) => x.json()).then((x) => (x && x.prefill) || null).catch(() => null);
-        const pre = await Promise.race([ask, new Promise((ok) => setTimeout(() => ok(null), 25000))]);
-        setQuiz({ id: j.id, token: j.prefsToken, prefill: pre });
-      } else setDone(true);
-    } catch (x) { popError(x); }
-    setBusy(false);
+      if (!j.id || !j.prefsToken) { setDone(true); return null; }
+      app.current = { id: j.id, token: j.prefsToken };
+    }
+    const ask = fetch(SB_URL + "/functions/v1/ai-screen", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ action: "prefs_prefill", appId: app.current.id, appToken: app.current.token, options: PREF_OPTIONS() }) })
+      .then((x) => x.json()).then((x) => (x && x.prefill) || null).catch(() => null);
+    return Promise.race([ask, new Promise((ok) => setTimeout(() => ok(null), 25000))]);
   };
-  const savePrefs = (prefs) => sbFetch("/rest/v1/rpc/application_set_preferences", { method: "POST", body: { p_app: quiz.id, p_token: quiz.token, p_prefs: prefs } });
-  if (quiz === "loading") return (
-    <div className="fixed inset-0 flex flex-col items-center justify-center gap-3 px-6 text-center" style={{ background: C.soft }} role="status">
-      <BrandLogo height={26} />
-      <div className="text-lg font-semibold mt-4" style={{ color: C.ink }}>Thanks, we've got your CV</div>
-      <div className="text-sm max-w-xs" style={{ color: C.ink2 }}>Now a few quick questions so we match you well. We're filling in what your CV already tells us…</div>
-      <InlineDots />
-    </div>
+  const savePrefs = (prefs) => sbFetch("/rest/v1/rpc/application_set_preferences", { method: "POST", body: { p_app: app.current.id, p_token: app.current.token, p_prefs: prefs } });
+  const quizInpIcon = (Icon, props) => (
+    <div className="flex items-center gap-3 rounded-2xl border px-4 bg-white" style={quizInpS}><Icon size={18} color={C.ink3} /><input {...props} className="flex-1 py-3.5 text-[15px] outline-none bg-transparent" /></div>
   );
-  if (quiz && !done) return <PreferencesQuiz initial={null} known={{ name: form.name }} prefill={quiz.prefill} onSave={savePrefs}
-    onClose={() => { setDone(true); window.scrollTo(0, 0); }} onFinished={() => { setAnswered(true); setDone(true); window.scrollTo(0, 0); }} />;
-  const inp = "w-full mt-1.5 rounded-xl border px-3.5 py-2.5 text-[15px] outline-none";
-  const inpStyle = { borderColor: C.line, background: C.soft };
+  const before = {
+    submitLabel: "Send my CV", busyLabel: "Reading your CV",
+    onDone: send,
+    steps: [
+      { key: "about", title: "Let's start with you", sub: "Not seeing the right role? Join our Active file: we look here first whenever a new role comes in.",
+        check: () => (!form.name.trim() ? "Enter your name" : !okEmail ? "Enter a valid email" : ""),
+        body: () => (
+          <div className="flex flex-col gap-3">
+            {quizInpIcon(UserRound, { autoFocus: true, value: form.name, onChange: set("name"), autoComplete: "name", placeholder: "Full name" })}
+            {quizInpIcon(Mail, { type: "email", value: form.email, onChange: set("email"), autoComplete: "email", placeholder: "Email" })}
+            {quizInpIcon(Phone, { type: "tel", value: form.phone, onChange: set("phone"), autoComplete: "tel", placeholder: "Phone (optional)" })}
+            {quizInpIcon(ExternalLink, { value: form.linkedin, onChange: set("linkedin"), placeholder: "LinkedIn profile (optional)" })}
+            <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
+          </div>) },
+      { key: "cv", title: "Upload your CV", sub: "We'll fill in what it already tells us, so you only answer what's new.",
+        check: () => (!cv ? "Please attach your CV" : ""),
+        body: () => (
+          <div className="flex flex-col gap-3">
+            <CvDrop cv={cv} onPick={pickCv} required />
+            {cvErr && <div className="text-sm text-center" style={{ color: C.dangerFg }}>{cvErr}</div>}
+            <PrivacyNote />
+          </div>) },
+    ],
+  };
+  if (!done) return <PreferencesQuiz initial={null} known={{ name: form.name }} before={before} onSave={savePrefs}
+    onClose={() => { if (app.current) { setDone(true); window.scrollTo(0, 0); } else window.location.href = withQ(JOBS_URL(), "r", PUB_REF()); }}
+    onFinished={() => { setAnswered(true); setDone(true); window.scrollTo(0, 0); }} />;
   return (
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
@@ -13393,36 +13429,12 @@ function JoinPage() {
           <a href={withQ(JOBS_URL(), "r", PUB_REF())} aria-label="All jobs"><BrandLogo height={30} /></a>
           <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="text-sm font-medium" style={{ color: C.em }}>All jobs</a>
         </div>
-        {done ? (
-          <Card>
-            <div className="w-12 h-12 rounded-full grid place-items-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} /></div>
-            <div className="text-2xl" style={SERIF}>Thanks, you're on our list</div>
-            <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>{answered ? "Thanks for telling us what you're looking for. " : ""}We'll check you for every new role that fits and put your profile forward anonymously: your name and contact details stay private until an employer wants to talk to you, and a recruiter will be in touch.</div>
-            <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="inline-block mt-5"><Btn kind="primary">See open jobs</Btn></a>
-          </Card>
-        ) : (
-          <FormHero icon={FileText} eyebrow="JOIN OUR ACTIVE FILE" title="Send us your CV" sub="Not seeing the right role? We look here first whenever a new role comes in, and reach out when one fits you." meta={["Takes about 2 minutes", "Free, no account needed"]}>
-            <form onSubmit={submit} className="flex flex-col gap-6">
-              <FSection n={1} title="About you">
-                <FInput label="Full name" required icon={UserRound} value={form.name} onChange={set("name")} autoComplete="name" placeholder="Your name" />
-                <div className="grid sm:grid-cols-2 gap-3.5">
-                  <FInput label="Email" required icon={Mail} type="email" value={form.email} onChange={set("email")} autoComplete="email" placeholder="you@example.com" />
-                  <FInput label="Phone" icon={Phone} type="tel" value={form.phone} onChange={set("phone")} autoComplete="tel" placeholder="Optional" />
-                </div>
-                <FInput label="LinkedIn profile" icon={ExternalLink} value={form.linkedin} onChange={set("linkedin")} placeholder="linkedin.com/in/…" />
-              </FSection>
-              <FormDivider />
-              <FSection n={2} title="Your CV">
-                <CvDrop cv={cv} onPick={pickCv} required />
-                <div className="text-xs" style={{ color: C.ink3 }}>Next, a few quick questions about the roles you want. We fill in what your CV already shows.</div>
-              </FSection>
-              <input value={form.website} onChange={set("website")} tabIndex={-1} autoComplete="off" aria-hidden="true" className="hidden" />
-              {err && <div className="text-sm rounded-xl px-3.5 py-2.5" style={{ background: C.dangerBg, color: C.dangerFg }}>{err}</div>}
-              <Btn kind="primary" full type="submit" disabled={busy} className="!py-3 !text-[15px]">{busy ? <>Sending <InlineDots color="#fff" /></> : "Send my CV"}</Btn>
-              <PrivacyNote />
-            </form>
-          </FormHero>
-        )}
+        <Card>
+          <div className="w-12 h-12 rounded-full grid place-items-center mb-3" style={{ background: C.emTint }}><Check size={24} color={C.em} /></div>
+          <div className="text-2xl" style={SERIF}>Thanks, you're on our list</div>
+          <div className="text-[15px] mt-2 leading-relaxed" style={{ color: C.ink2 }}>{answered ? "Thanks for telling us what you're looking for. " : ""}We'll check you for every new role that fits and put your profile forward anonymously: your name and contact details stay private until an employer wants to talk to you, and a recruiter will be in touch.</div>
+          <a href={withQ(JOBS_URL(), "r", PUB_REF())} className="inline-block mt-5"><Btn kind="primary">See open jobs</Btn></a>
+        </Card>
       </div>
     </div>
   );
