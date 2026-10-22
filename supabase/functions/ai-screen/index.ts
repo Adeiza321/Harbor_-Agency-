@@ -647,8 +647,8 @@ async function handle(req: Request): Promise<Response> {
       if (!text.trim()) return json({ ok: true, terms: [] });
       const system = "You prepare a blind CV for a recruitment agency. From the CV text, list every word or phrase that would identify the candidate or where they worked: " +
         "the candidate's full name and any part or nickname of it, email addresses, phone numbers, street addresses and postcodes, personal websites and social media handles or links, " +
-        "and the name of EVERY employer, company, organisation, client or brand they worked for or with (write each exactly as it appears in the text, plus short forms used in it). " +
-        "Do NOT list job titles, skills, tools, degrees, schools, cities, countries or dates. Reply with STRICT JSON only: {\"terms\": string[]}";
+        "and the name of EVERY employer they worked for: each company or organisation that employed them, as a job or a contract (write each exactly as it appears in the text, plus short forms used in it). " +
+        "Do NOT list clients, customers, brands or partners they only worked with, job titles, skills, tools, degrees, schools, certifications, cities, countries or dates: those stay visible. Reply with STRICT JSON only: {\"terms\": string[]}";
       try {
         const out = await askAI(system, text, null, 900);
         const terms = (Array.isArray(out?.terms) ? out.terms : []).map((t: unknown) => String(t || "").trim()).filter((t: string) => t.length >= 2 && t.length <= 120).slice(0, 150);

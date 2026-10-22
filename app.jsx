@@ -370,6 +370,8 @@ function mapAll(d) {
     activity: ago(c.updated_at), createdAt: new Date(c.created_at).getTime(), updatedAt: c.updated_at ? new Date(c.updated_at).getTime() : new Date(c.created_at).getTime(), experience: c.experience || "-", notice: c.notice || "-", pay: c.pay || "-",
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, photoUrl: c.photo_url || null, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
+    // Their one blind resume (made once, reused for every client link and pitch); checked = a Rec Ops/Admin approved it.
+    blind: c.blind_pages ? { pages: c.blind_pages, at: c.blind_at, by: c.blind_by ? pname(c.blind_by) : "", checkedAt: c.blind_checked_at || null, checkedBy: c.blind_checked_by ? pname(c.blind_checked_by) : "" } : null,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
@@ -3953,6 +3955,9 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   };
   const [q, setQ] = useState("");
   const [tab, setTab] = useState("All");
+  const [blindOpen, setBlindOpen] = useState(false);
+  // Blind resumes waiting: made but not checked, or needed by someone who qualifies for a role.
+  const blindWaiting = S.role === "recruiter" ? 0 : data.filter((c) => !c.isDraft && c.cv && ((c.blind && !c.blind.checkedAt) || (!c.blind && (c.status === "Active file" || (c.jobLinks || []).some((l) => ["Perfect fit", "Good fit"].includes(l.ai && l.ai.verdict)))))).length;
   const [recF, setRecF] = useState([]);
   const [minAi, setMinAi] = useState(0);
   const [roleF, setRoleF] = useState([]);
@@ -3979,9 +3984,11 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
         <SectionTitle size="text-3xl md:text-4xl" live={[{ n: data.filter((c) => Date.now() - c.createdAt < 7 * 864e5).length, label: "added this week", tone: "em" }, { n: data.filter((c) => c.status === "Interview").length, label: "in interview", tone: "info" }, { n: data.filter((c) => c.status === "Offer").length, label: "at offer", tone: "em" }]} title={scope === "recruiter" ? "Your candidate bench" : "All candidates"} sub={scope === "recruiter" ? "Every applicant you have sourced, and active file candidates ready to reuse." : `${data.length} candidates across every recruiter, client, and source.`} />
         <div className="flex gap-2.5">
           <Btn icon={Download} onClick={() => toast(downloadCSV("candidates-" + new Date().toLocaleDateString("en-CA") + ".csv", filtered.map((c) => flat(c, S.jobs))) ? "Exported candidates.csv" : "Nothing to export")} className="flex-1 md:flex-none justify-center">Export</Btn>
+          {S.role !== "recruiter" && <Btn icon={FileText} onClick={() => setBlindOpen(true)} className="flex-1 md:flex-none justify-center">Blind resumes{blindWaiting ? " (" + blindWaiting + ")" : ""}</Btn>}
           <Btn icon={UserPlus} kind="dark" className="flex-1 md:flex-none justify-center" onClick={onAddCandidate}>Add candidate</Btn>
         </div>
       </div>
+      {blindOpen && <BlindResumesPanel open onClose={() => setBlindOpen(false)} S={S} toast={toast} />}
       <Card>
         <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -5547,6 +5554,32 @@ function blindBaseTerms(c) {
   return [name, ...name.split(/\s+/).filter((x) => x.length >= 3), c.emailAddr, c.phone, c.linkedin, c.currentCompany,
     ...(c.industries || []).map((x) => x && x.company)].filter((x) => x && String(x).trim().length >= 2);
 }
+// Reads the CV and covers only the name, address, contact details and employers (plus anything
+// typed in "Anything else to hide?"). Returns { pages: [Blob], boxes, doc }; doc is kept so "Hide
+// these too" can redraw without reading the CV again.
+async function makeBlindPages(S, candidate, more, doc, onStep) {
+  const step = onStep || (() => {});
+  if (!candidate.cv) throw new Error("There's no CV on file for " + candidate.name.split(" ")[0] + ". Upload one first.");
+  let d = doc;
+  if (!d) {
+    step("Loading the blind resume tool…");
+    const R = await loadRedact();
+    step("Downloading the CV…");
+    const blob = await S.downloadResume(candidate.cv);
+    step("Reading the CV…");
+    d = await R.prepare(blob, candidate.cvName || candidate.cv);
+    step("Finding the name, contact details and employers…");
+    let ai = [];
+    try { const r = await S.aiScreen("blind_terms", { candidateId: candidate.id, text: d.text }); ai = r.terms || []; } catch (e) { /* the name, contacts and employers on file are still covered */ }
+    d.terms = [...blindBaseTerms(candidate), ...(d.nameGuess ? [d.nameGuess, ...d.nameGuess.split(/\s+/).filter((x) => x.length >= 3)] : []), ...ai];
+  }
+  step("Covering the details…");
+  const out = await d.render([...d.terms, ...(more || [])], (i, n) => step("Covering page " + i + " of " + n + "…"));
+  return { ...out, doc: d };
+}
+
+// One candidate's blind resume, made (or redone) and checked by eye before saving. Saved on the
+// candidate, so every client link and pitch reuses it. A lead offer (link.offerId) keeps its own.
 function BlindResumeModal({ open, onClose, link, job, candidate, S, toast }) {
   const [step, setStep] = useState("");
   const [err, setErr] = useState("");
@@ -5555,46 +5588,38 @@ function BlindResumeModal({ open, onClose, link, job, candidate, S, toast }) {
   const [extra, setExtra] = useState("");
   const [saving, setSaving] = useState(false);
   const docRef = React.useRef(null);
-  const termsRef = React.useRef([]);
+  const staff = S.role === "admin" || S.role === "recops";
+  const forOffer = !!(link && link.offerId);
+  const first = candidate.name.split(" ")[0];
   const clearPages = () => setPages((old) => { old.forEach((p) => URL.revokeObjectURL(p.url)); return []; });
   const draw = async () => {
-    const d = docRef.current; if (!d) return;
     const more = extra.split(/[,\n]/).map((x) => x.trim()).filter(Boolean);
-    setStep("Covering the details…");
-    const out = await d.render([...termsRef.current, ...more], (i, n) => setStep("Covering page " + i + " of " + n + "…"));
+    const out = await makeBlindPages(S, candidate, more, docRef.current, setStep);
+    docRef.current = out.doc;
     clearPages();
     setPages(out.pages.map((b) => ({ blob: b, url: URL.createObjectURL(b) })));
     setBoxes(out.boxes); setStep("");
   };
   const start = async () => {
     setErr(""); clearPages(); setBoxes(0);
-    try {
-      if (!candidate.cv) throw new Error("There's no CV on file for " + candidate.name.split(" ")[0] + ". Upload one first.");
-      setStep("Loading the blind resume tool…");
-      const R = await loadRedact();
-      setStep("Downloading the CV…");
-      const blob = await S.downloadResume(candidate.cv);
-      setStep("Reading the CV…");
-      if (docRef.current) docRef.current.dispose();
-      docRef.current = await R.prepare(blob, candidate.cvName || candidate.cv);
-      setStep("Finding names and employers…");
-      let ai = [];
-      try { const r = await S.aiScreen("blind_terms", { candidateId: candidate.id, text: docRef.current.text }); ai = r.terms || []; } catch (e) { /* the name, contacts and employers on file are still covered */ }
-      termsRef.current = [...blindBaseTerms(candidate), ...(docRef.current.nameGuess ? [docRef.current.nameGuess, ...docRef.current.nameGuess.split(/\s+/).filter((x) => x.length >= 3)] : []), ...ai];
-      await draw();
-    } catch (e) { setErr(e.message || "That didn't work."); setStep(""); }
+    if (docRef.current) { docRef.current.dispose(); docRef.current = null; }
+    try { await draw(); } catch (e) { setErr(e.message || "That didn't work."); setStep(""); }
   };
   React.useEffect(() => { if (open) start(); else { clearPages(); if (docRef.current) { docRef.current.dispose(); docRef.current = null; } } }, [open]); // eslint-disable-line
   const save = async () => {
     setSaving(true);
-    try { await S.saveBlindResume(link, candidate, job, pages.map((p) => p.blob)); toast("Blind resume saved. " + job.client + " sees it on their link."); onClose(); }
+    try {
+      if (forOffer) { await S.saveBlindResume(link, candidate, job, pages.map((p) => p.blob)); toast("Blind resume saved. " + job.client + " sees it on their link."); }
+      else { await S.saveCandidateBlind(candidate, pages.map((p) => p.blob), { checked: staff }); toast(staff ? "Blind resume saved and checked. Every client link and pitch for " + first + " uses it." : "Blind resume saved. Rec Ops will check it before it goes into any pitch."); }
+      onClose();
+    }
     catch (e) { setErr(e.message); }
     setSaving(false);
   };
   return (
-    <Modal open={open} onClose={onClose} title={"Blind resume for " + job.client} wide>
+    <Modal open={open} onClose={onClose} title={forOffer ? "Blind resume for " + job.client : "Blind resume: " + candidate.name} wide>
       <div className="flex flex-col gap-3">
-        <div className="text-sm" style={{ color: C.ink2 }}>{candidate.name.split(" ")[0]}'s own CV with the name, contact details, address, links, photos and every employer blacked out. Check every page: anything still readable here, {job.client} will see.</div>
+        <div className="text-sm" style={{ color: C.ink2 }}>{first}'s own CV with only the name, address, contact details and employer names blacked out. Everything else stays readable. Check every page: anything still readable here, clients will see.{forOffer ? "" : " It's saved once and reused for every client link and pitch."}</div>
         {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{err}</div>}
         {step && <div className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}><InlineDots /> {step}</div>}
         {pages.length > 0 && (
@@ -5607,10 +5632,109 @@ function BlindResumeModal({ open, onClose, link, job, candidate, S, toast }) {
             <textarea id="blind-extra" rows={2} value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Words or names, separated by commas" className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft, color: C.ink }} />
             <div className="flex flex-wrap gap-2 justify-end">
               <Btn onClick={() => draw().catch((e) => setErr(e.message))} disabled={!!step || saving || !extra.trim()}>Hide these too</Btn>
-              <Btn kind="primary" onClick={save} disabled={!!step || saving}>{saving ? "Saving…" : "Save blind resume"}</Btn>
+              <Btn kind="primary" onClick={save} disabled={!!step || saving}>{saving ? "Saving…" : staff && !forOffer ? "Looks right: save" : "Save blind resume"}</Btn>
             </div>
           </>
         )}
+      </div>
+    </Modal>
+  );
+}
+
+// Rec Ops / Admin: blind resumes for everyone who needs one, in bulk, then checked one by one.
+//   Needs one   has a CV and qualifies for a role (Perfect or Good fit on a company card) or is on
+//               the Active file, and has no blind resume yet
+//   To check    made (in bulk, or by their recruiter) but nobody has checked it yet
+//   Ready       checked; client links and pitches use these
+function BlindResumesPanel({ open, onClose, S, toast }) {
+  const [tab, setTab] = useState("need");
+  const [picked, setPicked] = useState([]);
+  const [run, setRun] = useState(null); // { i, n, name, step, failed: [] }
+  const [checkFor, setCheckFor] = useState(null);
+  const [viewFor, setViewFor] = useState(null);
+  const qualifies = (c) => c.status === "Active file" || (c.jobLinks || []).some((l) => ["Perfect fit", "Good fit"].includes(l.ai && l.ai.verdict) && l.response !== "declined");
+  const live = S.cands.filter((c) => !c.isDraft && c.cv);
+  const need = live.filter((c) => !c.blind && qualifies(c));
+  const toCheck = live.filter((c) => c.blind && !c.blind.checkedAt);
+  const ready = live.filter((c) => c.blind && c.blind.checkedAt);
+  const rows = tab === "need" ? need : tab === "check" ? toCheck : ready;
+  const why = (c) => { const l = (c.jobLinks || []).find((x) => ["Perfect fit", "Good fit"].includes(x.ai && x.ai.verdict)); const j = l && S.jobs.find((x) => x.id === l.jobId); return j ? l.ai.verdict + " for " + j.role : c.status === "Active file" ? "Active file" : ""; };
+  const makeAll = async () => {
+    const list = need.filter((c) => picked.includes(c.id));
+    const failed = [];
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      setRun({ i: i + 1, n: list.length, name: c.name, step: "", failed });
+      try {
+        const out = await makeBlindPages(S, c, [], null, (st) => setRun((r) => r && { ...r, step: st }));
+        await S.saveCandidateBlind(c, out.pages, { checked: false, quiet: true });
+        out.doc.dispose();
+      } catch (e) { failed.push(c.name + ": " + (e.message || "didn't work")); }
+    }
+    setRun(null); setPicked([]); S.reload();
+    toast("Made " + plural(list.length - failed.length, "blind resume") + ". Check each one before it's used." + (failed.length ? " " + failed.length + " didn't work: " + failed.join("; ") : ""));
+    setTab("check");
+  };
+  const allPicked = need.length > 0 && need.every((c) => picked.includes(c.id));
+  return (
+    <Modal open={open} onClose={run ? () => {} : onClose} title="Blind resumes" wide>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>One blind resume per candidate, made once and reused for every client link and pitch. Only the name, address, contact details and employer names are hidden. Make them in bulk, then check each one by eye.</div>
+        <Tabs tabs={[{ key: "need", label: "Needs one " + need.length }, { key: "check", label: "To check " + toCheck.length }, { key: "ready", label: "Ready " + ready.length }]} active={tab} setActive={(t) => { if (!run) setTab(t); }} />
+        {run && (
+          <div className="rounded-xl px-3.5 py-3 text-sm" style={{ background: C.emTint, color: C.emText }}>
+            <div className="font-medium">Making {run.i} of {run.n}: {run.name}</div>
+            <div className="flex items-center gap-2 mt-1"><InlineDots /> {run.step || "Starting…"}</div>
+            <div className="text-xs mt-1">Keep this window open until it finishes.</div>
+          </div>
+        )}
+        {tab === "need" && need.length > 0 && !run && (
+          <div className="flex flex-wrap items-center gap-2 justify-between">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allPicked} onChange={() => setPicked(allPicked ? [] : need.map((c) => c.id))} /> Select all</label>
+            <Btn kind="primary" disabled={!picked.length} onClick={makeAll}>{picked.length ? "Make " + plural(picked.length, "blind resume") : "Pick candidates"}</Btn>
+          </div>
+        )}
+        <div className="flex flex-col rounded-xl overflow-y-auto" style={{ maxHeight: "50vh", border: `1px solid ${C.line}` }}>
+          {!rows.length && <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>{tab === "need" ? "Everyone who qualifies has a blind resume." : tab === "check" ? "Nothing waiting for a check." : "No checked blind resumes yet."}</div>}
+          {rows.map((c, i) => (
+            <div key={c.id} className="flex items-center gap-3 px-3.5 py-2.5" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              {tab === "need" && <input type="checkbox" aria-label={"Pick " + c.name} disabled={!!run} checked={picked.includes(c.id)} onChange={() => setPicked((p) => (p.includes(c.id) ? p.filter((x) => x !== c.id) : [...p, c.id]))} />}
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{c.name}</div>
+                <div className="text-xs truncate" style={{ color: C.ink2 }}>{tab === "need" ? why(c) : (c.blind.pages + " page" + (c.blind.pages === 1 ? "" : "s") + ", made " + ago(c.blind.at) + (c.blind.by ? " by " + c.blind.by : "") + (c.blind.checkedAt ? " · checked by " + (c.blind.checkedBy || "Rec Ops") + " " + ago(c.blind.checkedAt) : ""))}</div>
+              </div>
+              {tab === "check" && <Btn kind="primary" className="!py-1.5 !px-3 text-xs" disabled={!!run} onClick={() => setViewFor(c)}>Check</Btn>}
+              {tab !== "need" && <Btn className="!py-1.5 !px-3 text-xs" disabled={!!run} onClick={() => setCheckFor(c)}>Redo</Btn>}
+              {tab === "ready" && <Btn className="!py-1.5 !px-3 text-xs" disabled={!!run} onClick={() => setViewFor(c)}>View</Btn>}
+            </div>
+          ))}
+        </div>
+      </div>
+      {checkFor && <BlindResumeModal open onClose={() => setCheckFor(null)} candidate={checkFor} S={S} toast={toast} />}
+      {viewFor && <BlindCheckModal candidate={viewFor} S={S} toast={toast} onClose={() => setViewFor(null)} onRedo={() => { const c = viewFor; setViewFor(null); setCheckFor(c); }} />}
+    </Modal>
+  );
+}
+
+// The saved pages of a candidate's blind resume: "Looks right" marks it checked; "Redo" makes it again.
+function BlindCheckModal({ candidate, S, toast, onClose, onRedo }) {
+  const [urls, setUrls] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const checked = !!(candidate.blind && candidate.blind.checkedAt);
+  React.useEffect(() => { S.blindPageUrls(candidate.id, candidate.blind.pages).then(setUrls).catch((e) => setErr(e.message)); }, [candidate.id]); // eslint-disable-line
+  const approve = async () => { setBusy(true); try { await S.checkCandidateBlind(candidate.id); toast("Checked. " + candidate.name.split(" ")[0] + "'s blind resume is ready for client links and pitches."); onClose(); } catch (e) { setErr(e.message); } setBusy(false); };
+  return (
+    <Modal open onClose={onClose} title={"Check blind resume: " + candidate.name} wide>
+      <div className="flex flex-col gap-3">
+        <div className="text-sm" style={{ color: C.ink2 }}>Make sure the name, address, contact details and every employer are covered, and nothing else is.</div>
+        {err && <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{err}</div>}
+        {!urls && !err && <div className="text-sm flex items-center gap-2" style={{ color: C.ink2 }}><InlineDots /> Loading the pages…</div>}
+        {urls && <div className="flex flex-col gap-3 rounded-xl p-3 overflow-y-auto" style={{ background: C.neutralBg, maxHeight: "60vh" }}>{urls.map((u, i) => <img key={i} src={u} alt={"Page " + (i + 1)} className="w-full rounded-md shadow-sm" style={{ background: "#fff" }} />)}</div>}
+        <div className="flex flex-wrap gap-2 justify-end">
+          <Btn onClick={onRedo} disabled={busy}>Redo (hide more)</Btn>
+          {!checked && <Btn kind="primary" onClick={approve} disabled={busy || !urls}>{busy ? "Saving…" : "Looks right"}</Btn>}
+        </div>
       </div>
     </Modal>
   );
@@ -5641,16 +5765,18 @@ function ClientLinkBox({ link, job, candidate, S, toast }) {
           {link.clientRevealed ? "Full details revealed" + (link.clientRevealedAt ? " " + ago(link.clientRevealedAt) : "" ) : "Name, contact and current employer are hidden until you reveal them"}
           {link.clientViewedAt ? " · opened by the client" : ""}
         </div>
-        <div className="text-xs mt-1" style={{ color: link.blindPages ? C.em : C.warnFg }}>
-          {link.blindPages ? "Blind resume ready (" + link.blindPages + " page" + (link.blindPages === 1 ? "" : "s") + ", made " + ago(link.blindAt) + ")" : "No blind resume yet: until you make one, the client sees our summary."}
+        <div className="text-xs mt-1" style={{ color: link.blindPages || candidate.blind ? C.em : C.warnFg }}>
+          {link.blindPages ? "Blind resume made for this link (" + link.blindPages + " page" + (link.blindPages === 1 ? "" : "s") + ", " + ago(link.blindAt) + ")"
+            : candidate.blind ? "Using " + candidate.name.split(" ")[0] + "'s blind resume (" + candidate.blind.pages + " page" + (candidate.blind.pages === 1 ? "" : "s") + ", " + (candidate.blind.checkedAt ? "checked" : "waiting for a Rec Ops check") + ")"
+            : "No blind resume yet: until you make one, the client sees our summary."}
         </div>
       </div>
       <div className="flex gap-2 shrink-0">
-        <Btn onClick={() => setBlindOpen(true)}>{link.blindPages ? "Redo blind resume" : "Make blind resume"}</Btn>
+        <Btn onClick={() => setBlindOpen(true)}>{link.blindPages || candidate.blind ? "Redo blind resume" : "Make blind resume"}</Btn>
         <IconBtn icon={Copy} label="Copy client link" onClick={copy} className="!w-10 !h-10 !rounded-xl" />
         {canManage && !link.clientRevealed && <Btn kind="primary" disabled={busy} onClick={reveal}>{busy ? "Revealing…" : "Reveal full details"}</Btn>}
       </div>
-      {blindOpen && <BlindResumeModal open={blindOpen} onClose={() => setBlindOpen(false)} link={link} job={job} candidate={candidate} S={S} toast={toast} />}
+      {blindOpen && <BlindResumeModal open={blindOpen} onClose={() => setBlindOpen(false)} job={job} candidate={candidate} S={S} toast={toast} />}
     </div>
   );
 }
@@ -14481,6 +14607,36 @@ export default function App() {
       const r = await fetch(SB_URL + "/storage/v1/object/authenticated/" + bucket + "/" + path.split("/").map(encodeURIComponent).join("/"), { headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token } });
       if (!r.ok) throw new Error("Couldn't download the CV (" + r.status + ")");
       return r.blob();
+    },
+    /* A candidate's one blind resume: `blind-resumes` bucket at cand-<candidate id>/<n>.webp, reused by
+       every client link and pitch. Saved by Rec Ops/an Admin it counts as checked; saved by the
+       candidate's recruiter it waits for a Rec Ops/Admin check before any pitch uses it. */
+    saveCandidateBlind: async (candidate, blobs, opts) => {
+      const head = { apikey: SB_KEY, Authorization: "Bearer " + session.token };
+      const folder = "cand-" + candidate.id;
+      for (let i = 0; i < blobs.length; i++) {
+        const r = await fetch(SB_URL + "/storage/v1/object/blind-resumes/" + folder + "/" + (i + 1) + ".webp", { method: "POST", headers: { ...head, "Content-Type": "image/webp", "x-upsert": "true", "cache-control": "no-store" }, body: blobs[i] });
+        if (!r.ok) { const t = await r.text(); throw new Error("Saving page " + (i + 1) + " failed: " + t); }
+      }
+      const extra = Array.from({ length: 12 - blobs.length }, (_, k) => folder + "/" + (blobs.length + k + 1) + ".webp");
+      if (extra.length) await fetch(SB_URL + "/storage/v1/object/blind-resumes", { method: "DELETE", headers: { ...head, "Content-Type": "application/json" }, body: JSON.stringify({ prefixes: extra }) }).catch(() => {});
+      const now = new Date().toISOString();
+      const checked = !!(opts && opts.checked) && (role === "admin" || role === "recops");
+      await sbFetch("/rest/v1/candidates?id=eq." + candidate.id, { method: "PATCH", token: session.token, body: { blind_pages: blobs.length, blind_at: now, blind_by: session.uid, blind_checked_at: checked ? now : null, blind_checked_by: checked ? session.uid : null } });
+      await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: candidate.id, title: "Blind resume made (" + blobs.length + " page" + (blobs.length === 1 ? "" : "s") + ")" + (checked ? " and checked" : ", waiting for a check"), done: true } }).catch(() => {});
+      if (!(opts && opts.quiet)) reload();
+    },
+    checkCandidateBlind: async (candidateId) => {
+      const now = new Date().toISOString();
+      await sbFetch("/rest/v1/candidates?id=eq." + candidateId, { method: "PATCH", token: session.token, body: { blind_checked_at: now, blind_checked_by: session.uid } });
+      await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: candidateId, title: "Blind resume checked by " + (me.name || "Rec Ops"), done: true } }).catch(() => {});
+      reload();
+    },
+    blindPageUrls: async (candidateId, n) => {
+      const r = await fetch(SB_URL + "/storage/v1/object/sign/blind-resumes", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ expiresIn: 600, paths: Array.from({ length: n }, (_, i) => "cand-" + candidateId + "/" + (i + 1) + ".webp") }) });
+      const j = await r.json().catch(() => []);
+      if (!r.ok) throw new Error(errOf(j.message || j.error, "Couldn't open the blind resume."));
+      return (Array.isArray(j) ? j : []).map((x) => x.signedURL ? SB_URL + "/storage/v1" + x.signedURL : null).filter(Boolean);
     },
     /* Blind resume pages: private `blind-resumes` bucket at <link id>/<n>.webp; the client link shows them. */
     saveBlindResume: async (link, candidate, job, blobs) => {

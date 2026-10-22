@@ -26,7 +26,7 @@ Deno.serve(async (req: Request) => {
     // The blind resume: the candidate's own CV with names, contact details and employers blacked
     // out, stored as page images (no text). Short-lived links, shown in a view-only page.
     if (action === "blind") {
-      const { data: l } = await admin.from("candidate_jobs").select("id,blind_pages,blind_at,jobs(client)").eq("client_token", token).maybeSingle();
+      const { data: l } = await admin.from("candidate_jobs").select("id,candidate_id,blind_pages,blind_at,jobs(client)").eq("client_token", token).maybeSingle();
       if (!l) {
         // A blind resume sent with a pitch to an employer (a client lead): only for candidates who confirmed.
         const { data: o } = await admin.from("lead_offers").select("id,blind_pages,blind_at,status,client_viewed_at,leads(company,job_title)").eq("client_token", token).maybeSingle();
@@ -39,10 +39,15 @@ Deno.serve(async (req: Request) => {
         if (error) return json({ error: error.message }, 500);
         return json({ ok: true, client: lead.company || "", role: lead.job_title || "", pages: (signed || []).map((x: any) => x.signedUrl).filter(Boolean) });
       }
-      const n = Math.max(0, Math.min(12, Number(l.blind_pages) || 0));
+      // A blind resume made for this link, or else the candidate's own one (made once, reused everywhere).
+      let n = Math.max(0, Math.min(12, Number(l.blind_pages) || 0)), folder = l.id, at = l.blind_at;
+      if (!n) {
+        const { data: c } = await admin.from("candidates").select("blind_pages,blind_at").eq("id", l.candidate_id).maybeSingle();
+        n = Math.max(0, Math.min(12, Number(c?.blind_pages) || 0)); folder = "cand-" + l.candidate_id; at = c?.blind_at;
+      }
       if (!n) return json({ ok: true, pages: [] });
-      const v = l.blind_at ? new Date(l.blind_at).getTime() : 0;
-      const { data: signed, error } = await admin.storage.from("blind-resumes").createSignedUrls(Array.from({ length: n }, (_, i) => `${l.id}/${i + 1}.webp`), 300);
+      const v = at ? new Date(at).getTime() : 0;
+      const { data: signed, error } = await admin.storage.from("blind-resumes").createSignedUrls(Array.from({ length: n }, (_, i) => `${folder}/${i + 1}.webp`), 300);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true, client: (l as any).jobs?.client || "", pages: (signed || []).map((x: any) => x.signedUrl).filter(Boolean), v });
     }
