@@ -1,5 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { recheckApollo } from "./musthaves.ts";
+import { stopClosedRoleSequences } from "./closed.ts";
+import { stepInactiveRecruiters } from "./accounts.ts";
 import { holdForProfileCheck, releaseProfileHold, runProfileChecks } from "./profilecheck.ts";
 import { holdReason } from "./queue.ts";
 import { aiCharge } from "./ai.ts";
@@ -233,6 +235,8 @@ async function handle(req: Request): Promise<Response> {
         if (!out.jobs) { try { out.leads = await stepLeads(admin, s, agencyName, 2); } catch (e) { out.leadsError = errMsg(e); } }
         try { out.xray = await stepXrayQueue(admin, s); } catch (e) { out.xrayError = errMsg(e); }
         try { out.musts = await stepMusts(admin, s, 10); } catch (e) { out.mustsError = errMsg(e); }
+        try { out.closedStops = await stopClosedRoleSequences(admin); } catch (e) { out.closedStopsError = errMsg(e); }
+        try { out.inactive = await stepInactiveRecruiters(admin); } catch (e) { out.inactiveError = errMsg(e); }
         try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
         try { out.contracts = await stepContracts(admin, s, agencyName); } catch (e) { out.contractsError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
@@ -249,6 +253,8 @@ async function handle(req: Request): Promise<Response> {
       // One step of an X-ray run, in its own call (so its own time limit). Answers straight away;
       // the step works in the background and hands over to the next one when it needs to.
       if (body.action === "xray_step" && body.jobId) {
+        // The search's AI cost is charged to whoever started it (Team audit), not to "automatic runs".
+        if (charged) { const { data: xj } = await admin.from("jobs").select("xray").eq("id", String(body.jobId)).maybeSingle(); if (xj?.xray?.by) charged.userId = String(xj.xray.by); }
         const work = runXrayStep(admin, String(body.jobId), s, String(body.run || ""));
         // @ts-ignore EdgeRuntime is provided by Supabase Edge Functions
         if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(work); else await work;

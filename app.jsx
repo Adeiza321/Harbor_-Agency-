@@ -7,7 +7,7 @@ import {
   Phone, CheckCircle2, MoreHorizontal, UserPlus, Pencil, Info, Calendar,
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
-  KeyRound, Power, PowerOff, UserCheck, RefreshCw, Forward, Rocket, ThumbsDown, ThumbsUp, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
+  KeyRound, Power, PowerOff, UserCheck, Bot, RefreshCw, Forward, Rocket, ThumbsDown, ThumbsUp, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
   Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon, Pin, FolderPlus,
 } from "lucide-react";
 
@@ -48,7 +48,7 @@ const STATUS_TONE = {
   Open: "info", "On hold": "warn", Closed: "neutral", Offer: "em", Engaged: "em", Closing: "warn",
   Guarantee: "warn", Ready: "em", Invoiced: "info", Paid: "em", Fallout: "danger",
   Sent: "em", Scheduled: "info", Draft: "neutral", Live: "em",
-  "Pending approval": "warn", Ended: "neutral", Active: "em", Invited: "warn",
+  "Pending approval": "warn", Ended: "neutral", Active: "em", Invited: "warn", Suspended: "danger", Disabled: "neutral",
 };
 
 /* Mock data */
@@ -244,6 +244,44 @@ const gcalUrl = (job, candidateName) => "https://calendar.google.com/calendar/re
    posted and paid in their own money. Packed as "<ISO2><CUR><Name>" / "<CUR><Name>" to keep the bundle small. */
 const COUNTRY_DATA = "AFAFNAfghanistan|ALALLAlbania|DZDZDAlgeria|ADEURAndorra|AOAOAAngola|AGXCDAntigua and Barbuda|ARARSArgentina|AMAMDArmenia|AWAWGAruba|AUAUDAustralia|ATEURAustria|AZAZNAzerbaijan|BSBSDBahamas|BHBHDBahrain|BDBDTBangladesh|BBBBDBarbados|BYBYNBelarus|BEEURBelgium|BZBZDBelize|BJXOFBenin|BMBMDBermuda|BTBTNBhutan|BOBOBBolivia|BABAMBosnia and Herzegovina|BWBWPBotswana|BRBRLBrazil|VGUSDBritish Virgin Islands|BNBNDBrunei|BGEURBulgaria|BFXOFBurkina Faso|BIBIFBurundi|KHKHRCambodia|CMXAFCameroon|CACADCanada|CVCVECape Verde|KYKYDCayman Islands|CFXAFCentral African Republic|TDXAFChad|CLCLPChile|CNCNYChina|COCOPColombia|KMKMFComoros|CDCDFCongo (DRC)|CGXAFCongo (Republic)|CRCRCCosta Rica|CIXOFCôte d'Ivoire|HREURCroatia|CUCUPCuba|CWANGCuraçao|CYEURCyprus|CZCZKCzechia|DKDKKDenmark|DJDJFDjibouti|DMXCDDominica|DODOPDominican Republic|ECUSDEcuador|EGEGPEgypt|SVUSDEl Salvador|GQXAFEquatorial Guinea|ERERNEritrea|EEEUREstonia|SZSZLEswatini|ETETBEthiopia|FODKKFaroe Islands|FJFJDFiji|FIEURFinland|FREURFrance|GFEURFrench Guiana|PFXPFFrench Polynesia|GAXAFGabon|GMGMDGambia|GEGELGeorgia|DEEURGermany|GHGHSGhana|GIGIPGibraltar|GREURGreece|GLDKKGreenland|GDXCDGrenada|GPEURGuadeloupe|GUUSDGuam|GTGTQGuatemala|GGGBPGuernsey|GNGNFGuinea|GWXOFGuinea-Bissau|GYGYDGuyana|HTHTGHaiti|HNHNLHonduras|HKHKDHong Kong|HUHUFHungary|ISISKIceland|ININRIndia|IDIDRIndonesia|IRIRRIran|IQIQDIraq|IEEURIreland|IMGBPIsle of Man|ILILSIsrael|ITEURItaly|JMJMDJamaica|JPJPYJapan|JEGBPJersey|JOJODJordan|KZKZTKazakhstan|KEKESKenya|KIAUDKiribati|XKEURKosovo|KWKWDKuwait|KGKGSKyrgyzstan|LALAKLaos|LVEURLatvia|LBLBPLebanon|LSLSLLesotho|LRLRDLiberia|LYLYDLibya|LICHFLiechtenstein|LTEURLithuania|LUEURLuxembourg|MOMOPMacao|MGMGAMadagascar|MWMWKMalawi|MYMYRMalaysia|MVMVRMaldives|MLXOFMali|MTEURMalta|MHUSDMarshall Islands|MQEURMartinique|MRMRUMauritania|MUMURMauritius|YTEURMayotte|MXMXNMexico|FMUSDMicronesia|MDMDLMoldova|MCEURMonaco|MNMNTMongolia|MEEURMontenegro|MAMADMorocco|MZMZNMozambique|MMMMKMyanmar|NANADNamibia|NRAUDNauru|NPNPRNepal|NLEURNetherlands|NCXPFNew Caledonia|NZNZDNew Zealand|NINIONicaragua|NEXOFNiger|NGNGNNigeria|KPKPWNorth Korea|MKMKDNorth Macedonia|NONOKNorway|OMOMROman|PKPKRPakistan|PWUSDPalau|PSILSPalestine|PAPABPanama|PGPGKPapua New Guinea|PYPYGParaguay|PEPENPeru|PHPHPPhilippines|PLPLNPoland|PTEURPortugal|PRUSDPuerto Rico|QAQARQatar|REEURRéunion|RORONRomania|RURUBRussia|RWRWFRwanda|KNXCDSaint Kitts and Nevis|LCXCDSaint Lucia|VCXCDSaint Vincent and the Grenadines|WSWSTSamoa|SMEURSan Marino|STSTNSão Tomé and Príncipe|SASARSaudi Arabia|SNXOFSenegal|RSRSDSerbia|SCSCRSeychelles|SLSLESierra Leone|SGSGDSingapore|SKEURSlovakia|SIEURSlovenia|SBSBDSolomon Islands|SOSOSSomalia|ZAZARSouth Africa|KRKRWSouth Korea|SSSSPSouth Sudan|ESEURSpain|LKLKRSri Lanka|SDSDGSudan|SRSRDSuriname|SESEKSweden|CHCHFSwitzerland|SYSYPSyria|TWTWDTaiwan|TJTJSTajikistan|TZTZSTanzania|THTHBThailand|TLUSDTimor-Leste|TGXOFTogo|TOTOPTonga|TTTTDTrinidad and Tobago|TNTNDTunisia|TRTRYTürkiye|TMTMTTurkmenistan|TVAUDTuvalu|UGUGXUganda|UAUAHUkraine|AEAEDUnited Arab Emirates|GBGBPUnited Kingdom|USUSDUnited States|UYUYUUruguay|VIUSDUS Virgin Islands|UZUZSUzbekistan|VUVUVVanuatu|VAEURVatican City|VEVESVenezuela|VNVNDVietnam|YEYERYemen|ZMZMWZambia|ZWUSDZimbabwe".split("|").map((s) => ({ iso: s.slice(0, 2), currency: s.slice(2, 5), name: s.slice(5) }));
 const COUNTRIES = COUNTRY_DATA.map((x) => x.name);
+// Countries by name (any case, plus common short forms) to their ISO code, and a small flag image
+// (assets/flags, from the MIT-licensed flag-icons set, served with the app).
+const COUNTRY_ISO = Object.fromEntries(COUNTRY_DATA.map((x) => [x.name.toLowerCase(), x.iso]).concat([["usa", "US"], ["us", "US"], ["u.s.", "US"], ["united states of america", "US"], ["uk", "GB"], ["england", "GB"], ["scotland", "GB"], ["wales", "GB"], ["great britain", "GB"], ["uae", "AE"]]));
+const isoOf = (name) => COUNTRY_ISO[String(name || "").trim().toLowerCase()] || "";
+const COUNTRY_BY_ISO = Object.fromEntries(COUNTRY_DATA.map((x) => [x.iso, x.name]));
+function Flag({ country, size = 12, style }) {
+  const iso = isoOf(country);
+  if (!iso) return null;
+  return <img src={"/assets/flags/" + iso.toLowerCase() + ".svg"} alt={country} title={country} loading="lazy" decoding="async"
+    style={{ width: Math.round(size * 4 / 3), height: size, borderRadius: 2, objectFit: "cover", boxShadow: "0 0 0 1px rgba(0,0,0,.12)", display: "inline-block", flexShrink: 0, ...style }} />;
+}
+// Broad regions a recruiter can work best in (same names as sourcing/world_regions.ts), and the
+// kinds of roles they can close. Both are asked when a recruiter sets up their account.
+const WORLD_REGIONS = ["Africa", "Middle East", "Europe", "Asia", "North America", "Latin America & Caribbean", "Oceania"];
+const SPECIALTIES = ["Accounting & Finance", "Software Engineering", "IT & Infrastructure", "Data & Analytics", "Cybersecurity", "Product & Design", "Sales & Business Development",
+  "Marketing & Communications", "HR & Recruiting", "Customer Service", "Operations & Supply Chain", "Engineering (Mechanical, Electrical, Civil)", "Oil, Gas & Energy",
+  "Healthcare & Nursing", "Legal", "Executive & Leadership", "Admin & Office Support", "Skilled Trades", "Construction & Real Estate", "Education"];
+// A candidate's country: from their job preferences, else their location ("Tulsa, OK" and
+// "Coral Springs, Florida" are the United States).
+function candidateCountry(c) {
+  const pref = c && c.preferences && c.preferences.currentCountry;
+  if (pref && isoOf(pref)) return COUNTRY_BY_ISO[isoOf(pref)];
+  const parts = String((c && c.location) || "").split(",").map((x) => x.trim()).filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i].replace(/\s+\d[\d-]*$/, "").trim();   // "NJ 07506" -> "NJ"
+    const iso = part.length > 2 || i === parts.length - 1 ? isoOf(part) : "";
+    if (iso && !(part.length === 2 && US_STATE_TZ[part.toUpperCase()] && i > 0)) return COUNTRY_BY_ISO[iso];
+    if (/^[A-Z]{2}$/.test(part) && US_STATE_TZ[part]) return "United States";
+    if (US_STATE_NAMES[part.toLowerCase()]) return "United States";
+  }
+  return "";
+}
+// What's still missing from a recruiter's account setup (shown on their Overview until done).
+function setupGaps(u) {
+  if (!u || u.roleKey !== "recruiter") return [];
+  return [!u.phone && "your phone number", !u.avatarUrl && "a profile picture", !u.country && "your country",
+    !(u.specialties || []).length && "the roles you can close", !(u.regions || []).length && "the regions you work best in"].filter(Boolean);
+}
 const COUNTRY_CURRENCY = Object.fromEntries(COUNTRY_DATA.map((x) => [x.name, x.currency]).concat([["Remote \u2013 worldwide", ""]]));
 const CURRENCY_NAMES = Object.fromEntries("AEDUnited Arab Emirates Dirham|AFNAfghan Afghani|ALLAlbanian Lek|AMDArmenian Dram|ANGNetherlands Antillean Guilder|AOAAngolan Kwanza|ARSArgentine Peso|AUDAustralian Dollar|AWGAruban Florin|AZNAzerbaijani Manat|BAMBosnia-Herzegovina Convertible Mark|BBDBarbadian Dollar|BDTBangladeshi Taka|BHDBahraini Dinar|BIFBurundian Franc|BMDBermudan Dollar|BNDBrunei Dollar|BOBBolivian Boliviano|BRLBrazilian Real|BSDBahamian Dollar|BTNBhutanese Ngultrum|BWPBotswanan Pula|BYNBelarusian Ruble|BZDBelize Dollar|CADCanadian Dollar|CDFCongolese Franc|CHFSwiss Franc|CLPChilean Peso|CNYChinese Yuan|COPColombian Peso|CRCCosta Rican Colón|CUPCuban Peso|CVECape Verdean Escudo|CZKCzech Koruna|DJFDjiboutian Franc|DKKDanish Krone|DOPDominican Peso|DZDAlgerian Dinar|EGPEgyptian Pound|ERNEritrean Nakfa|ETBEthiopian Birr|EUREuro|FJDFijian Dollar|GBPBritish Pound|GELGeorgian Lari|GHSGhanaian Cedi|GIPGibraltar Pound|GMDGambian Dalasi|GNFGuinean Franc|GTQGuatemalan Quetzal|GYDGuyanaese Dollar|HKDHong Kong Dollar|HNLHonduran Lempira|HTGHaitian Gourde|HUFHungarian Forint|IDRIndonesian Rupiah|ILSIsraeli New Shekel|INRIndian Rupee|IQDIraqi Dinar|IRRIranian Rial|ISKIcelandic Króna|JMDJamaican Dollar|JODJordanian Dinar|JPYJapanese Yen|KESKenyan Shilling|KGSKyrgystani Som|KHRCambodian Riel|KMFComorian Franc|KPWNorth Korean Won|KRWSouth Korean Won|KWDKuwaiti Dinar|KYDCayman Islands Dollar|KZTKazakhstani Tenge|LAKLaotian Kip|LBPLebanese Pound|LKRSri Lankan Rupee|LRDLiberian Dollar|LSLLesotho Loti|LYDLibyan Dinar|MADMoroccan Dirham|MDLMoldovan Leu|MGAMalagasy Ariary|MKDMacedonian Denar|MMKMyanmar Kyat|MNTMongolian Tugrik|MOPMacanese Pataca|MRUMauritanian Ouguiya|MURMauritian Rupee|MVRMaldivian Rufiyaa|MWKMalawian Kwacha|MXNMexican Peso|MYRMalaysian Ringgit|MZNMozambican Metical|NADNamibian Dollar|NGNNigerian Naira|NIONicaraguan Córdoba|NOKNorwegian Krone|NPRNepalese Rupee|NZDNew Zealand Dollar|OMROmani Rial|PABPanamanian Balboa|PENPeruvian Sol|PGKPapua New Guinean Kina|PHPPhilippine Peso|PKRPakistani Rupee|PLNPolish Zloty|PYGParaguayan Guarani|QARQatari Riyal|RONRomanian Leu|RSDSerbian Dinar|RUBRussian Ruble|RWFRwandan Franc|SARSaudi Riyal|SBDSolomon Islands Dollar|SCRSeychellois Rupee|SDGSudanese Pound|SEKSwedish Krona|SGDSingapore Dollar|SLESierra Leonean Leone|SOSSomali Shilling|SRDSurinamese Dollar|SSPSouth Sudanese Pound|STNSão Tomé and Príncipe Dobra|SYPSyrian Pound|SZLSwazi Lilangeni|THBThai Baht|TJSTajikistani Somoni|TMTTurkmenistani Manat|TNDTunisian Dinar|TOPTongan Paʻanga|TRYTurkish Lira|TTDTrinidad and Tobago Dollar|TWDNew Taiwan Dollar|TZSTanzanian Shilling|UAHUkrainian Hryvnia|UGXUgandan Shilling|USDUS Dollar|UYUUruguayan Peso|UZSUzbekistani Som|VESVenezuelan Bolívar|VNDVietnamese Dong|VUVVanuatu Vatu|WSTSamoan Tala|XAFCentral African CFA Franc|XCDEast Caribbean Dollar|XOFWest African CFA Franc|XPFCFP Franc|YERYemeni Rial|ZARSouth African Rand|ZMWZambian Kwacha".split("|").map((s) => [s.slice(0, 3), s.slice(3)]));
 const CURRENCIES = Object.keys(CURRENCY_NAMES);
@@ -336,7 +374,7 @@ function playChime() {
 }
 // The assistant's sound, unless you turned it off (My profile > Notifications).
 const playAssistChime = (me) => { if (((me && me.notificationPrefs) || {}).assistSound !== false) playChime(); };
-const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "", tourDoneAt: p.tour_done_at || null });
+const mapUser = (p) => ({ id: p.id, name: p.full_name || p.email, role: ROLE_KEY_LABEL[p.role] || p.level, roleKey: p.role, email: p.email, status: p.status, phone: p.phone || "", avatarUrl: p.avatar_url || null, country: p.country || "", specialties: p.specialties || [], regions: p.regions || [], lastSeenAt: p.last_seen_at ? new Date(p.last_seen_at).getTime() : null, suspendedAt: p.suspended_at || null, suspendedReason: p.suspended_reason || "", notificationPrefs: { ...DEFAULT_NOTIF_PREFS, ...(p.notification_prefs || {}) }, isOwner: !!p.is_owner, welcomeSentAt: p.welcome_sent_at || null, refCode: p.ref_code || "", tourDoneAt: p.tour_done_at || null });
 
 // Job lists: roles On hold, then Closed, go to the end of every list; within each group the
 // newest first (the order they're loaded in). Sort is stable, so nothing else moves.
@@ -1024,6 +1062,16 @@ function ScoreRing({ value, size = 38 }) {
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth="3.5" strokeLinecap="round" strokeDasharray={`${(c * v) / 100} ${c}`} />
       </svg>
       <span className="text-[11px] font-semibold" style={{ fontVariantNumeric: "tabular-nums" }}>{v}</span>
+    </span>
+  );
+}
+// A team member's picture (or initials) with their country's flag at the corner.
+function UserAvatar({ u, size = 36, tone = "em" }) {
+  const init = u.init || initialsOf(u.name || "");
+  return (
+    <span className="relative inline-flex shrink-0" style={{ width: size, height: size }}>
+      <Avatar init={init} src={u.avatarUrl} tone={tone} size={size} />
+      {u.country && <span className="absolute" style={{ right: -3, bottom: -1, lineHeight: 0 }}><Flag country={u.country} size={Math.max(9, Math.round(size * 0.3))} /></span>}
     </span>
   );
 }
@@ -1900,6 +1948,8 @@ const NAV_ADMIN_EXTRA = [
   { key: "audit", label: "Team audit", icon: Trophy },
   { key: "settings", label: "Agency settings", icon: Settings },
 ];
+// Rec Ops: the recruiters on the team (Users & permissions, recruiters only: country, suspend).
+const NAV_RECOPS_EXTRA = [{ key: "users", label: "Recruiters", icon: Shield }];
 const NAV_RECRUITER = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "candidates", label: "My candidates", icon: Users },
@@ -1928,6 +1978,70 @@ const NOTIF_EVENTS = [
   { key: "jobPosted", label: "New job posted", sub: "A new role goes live." },
 ];
 
+// Where you're based (your flag shows by your picture) and, for recruiters, the roles you can close
+// and the regions you work best in (a new role there emails you first).
+function WorkProfileCard({ S, toast }) {
+  const me = S.me;
+  const rec = me.roleKey === "recruiter";
+  const [f, setF] = useState({ country: me.country || "", specialties: me.specialties || [], regions: me.regions || [] });
+  const [busy, setBusy] = useState(false);
+  const dirty = f.country !== (me.country || "") || JSON.stringify(f.specialties) !== JSON.stringify(me.specialties || []) || JSON.stringify(f.regions) !== JSON.stringify(me.regions || []);
+  const save = () => { setBusy(true); S.updateMyProfile(rec ? f : { country: f.country }).then(() => toast("Saved")).catch(() => {}).finally(() => setBusy(false)); };
+  return (
+    <Card>
+      <SectionTitle title={rec ? "Your work" : "Where you're based"} sub={rec ? "Rec Ops use this to match you to roles, and you're emailed first about new roles in your regions." : "Your country's flag shows next to your picture."} size="text-xl" />
+      <div className="mt-4">
+        {rec ? <RecruiterInfoFields f={f} set={setF} self /> : (
+          <select value={f.country} onChange={(e) => setF({ ...f, country: e.target.value })} aria-label="Country" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
+            <option value="">Choose a country</option>
+            {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+      </div>
+      <Btn kind="primary" full className="mt-5" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
+    </Card>
+  );
+}
+
+// Recruiters who haven't finished setting up their account: asked once each time they open
+// ProNext (they can do it later; it stays on their Overview until it's done).
+function SetupAccountModal({ S, toast }) {
+  const me = S.me;
+  const gaps = setupGaps(me);
+  const [open, setOpen] = useState(() => { try { return gaps.length > 0 && !sessionStorage.getItem("pn.setupLater"); } catch (e) { return gaps.length > 0; } });
+  const [f, setF] = useState({ country: me.country || "", specialties: me.specialties || [], regions: me.regions || [] });
+  const [phone, setPhone] = useState(me.phone || "");
+  const [busy, setBusy] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const fileRef = React.useRef(null);
+  if (!open || !gaps.length) return null;
+  const later = () => { try { sessionStorage.setItem("pn.setupLater", "1"); } catch (e) { /* fine */ } setOpen(false); };
+  const save = () => {
+    setBusy(true);
+    S.updateMyProfile({ ...f, phone: phone.trim() }).then(() => { toast("Account set up. Thank you!"); setOpen(false); }).catch(() => {}).finally(() => setBusy(false));
+  };
+  const onFile = (e) => { const file = e.target.files && e.target.files[0]; e.target.value = ""; if (!file || !file.type.startsWith("image/")) return; setAvatarBusy(true); S.uploadAvatar(file).then(() => toast("Profile picture added")).catch(() => {}).finally(() => setAvatarBusy(false)); };
+  return (
+    <Modal open onClose={later} title="Finish setting up your account">
+      <div className="text-sm mb-4" style={{ color: C.ink2 }}>A few details so Rec Ops can match you to the right roles, and so you hear first about new roles where you work best.</div>
+      <div className="flex items-center gap-3 mb-4">
+        <UserAvatar u={{ ...me, country: f.country }} size={56} />
+        <div>
+          <Btn onClick={() => fileRef.current && fileRef.current.click()} disabled={avatarBusy}>{avatarBusy ? "Uploading\u2026" : me.avatarUrl ? "Change picture" : "Add a profile picture"}</Btn>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />
+        </div>
+      </div>
+      <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone number</label>
+      <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+234 …" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+      <RecruiterInfoFields f={f} set={setF} self />
+      <div className="flex gap-2 mt-5">
+        <Btn onClick={later}>Later</Btn>
+        <Btn kind="primary" full onClick={save} disabled={busy}>{busy ? "Saving\u2026" : "Save"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function AccountTab({ S, toast }) {
   const me = S.me;
   const [name, setName] = useState(me.name);
@@ -1954,7 +2068,7 @@ function AccountTab({ S, toast }) {
     <Card>
       <div className="flex items-center gap-4 mb-6">
         <div className="relative">
-          <Avatar init={me.init} src={me.avatarUrl} tone="em" size={72} />
+          <UserAvatar u={me} tone="em" size={72} />
           <button onClick={pickAvatar} disabled={avatarBusy} className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center border-2" style={{ background: C.em, borderColor: "#fff" }} title="Change profile picture">
             <Pencil size={12} color="#fff" />
           </button>
@@ -2182,6 +2296,7 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       )}
       {tab === "account" && <MyWins S={S} />}
       {tab === "account" && <AccountTab S={S} toast={toast} />}
+      {tab === "account" && <WorkProfileCard S={S} toast={toast} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
       {tab === "security" && <SecurityTab S={S} toast={toast} />}
       {tab === "calendar" && <GoogleCalendarTab S={S} toast={toast} />}
@@ -2226,7 +2341,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
   const desktop = useDesktop();
   const [collapsed, setCollapsed] = useState(false);
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
-  const extra = role === "admin" ? NAV_ADMIN_EXTRA : [];
+  const extra = role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : [];
   return (
     <div className="flex-col shrink-0 h-screen sticky top-0" style={{ display: desktop ? "flex" : "none", width: collapsed ? 72 : 260, background: C.side }}>
       <div className="flex items-center gap-2.5 px-4 pt-6 pb-5">
@@ -2240,7 +2355,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
       <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
         {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <>
           <NavList items={items} page={page} setPage={setPage} dark badges={badges} />
-          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>ADMIN</div><NavList items={extra} page={page} setPage={setPage} dark badges={badges} /></>}
+          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} dark badges={badges} /></>}
         </>}
       </div>
       {!collapsed && (
@@ -2249,7 +2364,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
         </div>
       )}
       <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full shrink-0" style={{ background: page === "myProfile" ? "rgba(255,255,255,0.07)" : "transparent" }} title="My profile">
-        <Avatar init={me.init} src={me.avatarUrl} tone="em" />
+        <UserAvatar u={me} tone="em" />
         {!collapsed && (
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium text-white truncate">{me.name}</div>
@@ -2290,7 +2405,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
   const desktop = useDesktop();
   if (!open || desktop) return null;
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
-  const extra = role === "admin" ? NAV_ADMIN_EXTRA : [];
+  const extra = role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : [];
   return (
     <div className="fixed inset-0 z-50">
       <div className="absolute inset-0" style={{ background: "rgba(20,32,27,0.45)" }} onClick={onClose} />
@@ -2308,7 +2423,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
         </div>
         <div className="pt-3 mt-1" style={{ borderTop: `1px solid ${C.line}` }}>
           <button onClick={() => { setPage("myProfile"); onClose(); }} className="w-full flex items-center gap-2.5 text-left rounded-xl px-3 py-2.5">
-            <Avatar init={me.init} src={me.avatarUrl} tone="em" size={32} />
+            <UserAvatar u={me} tone="em" size={32} />
             <div className="min-w-0"><div className="text-sm font-medium truncate">{me.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{me.label}</div></div>
           </button>
           <button onClick={() => { onClose(); setTimeout(() => window.dispatchEvent(new Event("pn:tour")), 250); }} className="w-full text-left text-sm rounded-xl px-3 py-2.5" style={{ color: C.ink }}>Take the tour</button>
@@ -2326,7 +2441,7 @@ function CommandPalette({ open, onClose, S, role, setPage }) {
   React.useEffect(() => { if (open) { setQ(""); setSel(0); } }, [open]);
   if (!open) return null;
   const recent = (() => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || "[]"); } catch (e) { return []; } })();
-  const pages = [...(role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS), ...(role === "admin" ? NAV_ADMIN_EXTRA : []), { key: "myProfile", label: "My profile", icon: Users }];
+  const pages = [...(role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS), ...(role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : []), { key: "myProfile", label: "My profile", icon: Users }];
   const all = [
     ...S.cands.map((c) => ({ id: "c:" + c.id, kind: "Candidate", title: c.name, sub: [c.role, c.status].filter(Boolean).join(" · "), init: initialsOf(c.name), go: () => S.openCandidate(c.id) })),
     ...S.jobs.map((j) => ({ id: "j:" + j.id, kind: "Job", title: j.role, sub: [j.client, j.status].filter(Boolean).join(" · "), icon: Briefcase, go: () => S.openJob(j.id) })),
@@ -3422,6 +3537,41 @@ function rolePicks(S, earnings, from, to) {
     return { j, value, currency: earnings ? s.incentiveCurrency : s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
   }).filter((x) => x.j.status === "Open" || x.active > 0).sort((a, b) => b.expected - a.expected || b.value - a.value);
 }
+// A recruiter's Overview: the roles they're engaged on (their worklist), open ones first, with
+// how their own candidates are doing on each.
+function MyEngagedRoles({ S }) {
+  const mine = S.jobs.filter((j) => (j.engagedIds || []).includes(S.me.id) && j.status !== "Draft");
+  const rows = mine.map((j) => {
+    let mineOn = 0, late = 0;
+    S.cands.forEach((c) => { if (c.recruiterId !== S.me.id) return; const l = (c.jobLinks || []).find((x) => x.jobId === j.id); if (l && l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)) { mineOn++; if (["Interview", "Offer", "Placed"].includes(l.stage)) late++; } });
+    const s = suggestBilling(j, null);
+    return { j, mineOn, late, incentive: Number(s.incentive) || 0, cur: s.incentiveCurrency };
+  });
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2"><Briefcase size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Roles you're engaged on</div></div>
+        <button onClick={() => S.go("jobs")} className="text-xs" style={{ color: C.em }}>All roles</button>
+      </div>
+      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Your worklist, with your candidates on each.</div>
+      <div className="mt-3 flex flex-col">
+        {rows.length === 0 && <div className="text-sm py-3" style={{ color: C.ink3 }}>You're not engaged on any roles yet. Open Jobs and engage on one to add it here.</div>}
+        {rows.map((x, i) => (
+          <button key={x.j.id} onClick={() => S.openJob(x.j.id)} className="flex items-center gap-3 py-2.5 text-left" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium truncate">{x.j.role} <span className="font-normal" style={{ color: C.ink3 }}>· {x.j.client}</span></div>
+              <div className="text-xs truncate" style={{ color: C.ink2 }}>{x.mineOn ? plural(x.mineOn, "of your candidates", "of your candidates") + " on it" + (x.late ? ", " + x.late + " at interview or later" : "") : "None of your candidates on it yet"}</div>
+            </div>
+            <div className="text-right shrink-0 flex flex-col items-end gap-1">
+              <StatusPill status={x.j.status} />
+              {x.incentive > 0 && <div className="text-xs" style={{ color: C.ink3 }}>{money(x.incentive, x.cur)} incentive</div>}
+            </div>
+          </button>
+        ))}
+      </div>
+    </Card>
+  );
+}
 function RolePicker({ S, earnings }) {
   const pr = usePeriod("this_month");
   const picks = rolePicks(S, earnings, pr.from, pr.to).slice(0, 6);
@@ -3513,7 +3663,7 @@ function TeamToday({ S }) {
    recruiter, or split between the job's recruiters when none is named) + AI (the actual cost of every AI call, logged in ai_usage). Screening is charged to the person who put the
    candidate forward for that job (candidate_jobs.added_by); screenings from before that logging
    began are estimated at AI_SCREEN_EST each, charged the same way. Calls with nobody behind them
-   (scheduled runs) are shown as System.
+   (scheduled runs, and people no longer on the team) are shown as "Automatic runs" and counted in the totals; an X-ray search is charged to whoever started it.
    Cost per hire = cost / hires. Return = revenue / cost. Money in the goal currency (USD). */
 const AI_SCREEN_EST = 0.01;
 /* Exchange rates (US dollar base) from ExchangeRate-API's free daily feed, kept for 12 hours in this
@@ -3572,7 +3722,8 @@ function RecruiterAuditPage({ S, toast }) {
       .then((r) => setLogFrom(Array.isArray(r) && r[0] ? new Date(r[0].created_at).getTime() : Infinity)).catch(() => setLogFrom(Infinity));
   }, []); // eslint-disable-line
   useEffect(() => {
-    S.sb("/rest/v1/ai_usage?select=user_id,feature,cost_usd,created_at&created_at=gte." + new Date(from).toISOString() + "&created_at=lt." + new Date(to).toISOString() + "&limit=10000")
+    // Added up in the database (ai_usage_totals): reading the rows here stopped at 1,000, so a busy month was undercounted.
+    S.sb("/rest/v1/rpc/ai_usage_totals", { method: "POST", body: { p_from: new Date(from).toISOString(), p_to: new Date(to).toISOString() } })
       .then((r) => setAi(Array.isArray(r) ? r : [])).catch(() => setAi([]));
   }, [from, to]); // eslint-disable-line
   const inP = (t) => t && t >= from && t < to;
@@ -3621,8 +3772,14 @@ function RecruiterAuditPage({ S, toast }) {
     const cost = incentives + tools + adsCost + aiCost;
     return { ...r, hires: pl.length, revenue, incentives, tools, adsCost, aiCost, aiAssistant, aiScreening, oldScreens, cost, perHire: pl.length ? cost / pl.length : null, ret: cost ? revenue / cost : null };
   });
+  // AI with nobody on the team behind it: automatic runs (scheduled checks, outreach drafts,
+  // client leads) and anyone no longer on the team. Counted in the totals so they match the bill.
+  const teamIdSet = new Set(rows.map((r) => r.u.id));
+  const sysRows = (ai || []).filter((x) => !teamIdSet.has(x.user_id));
+  const sysAi = cv(sysRows.reduce((a, x) => a + Number(x.cost_usd || 0), 0), "USD");
+  const sysFeat = Object.entries(sysRows.reduce((m, x) => { const k = x.user_id ? "former team members" : String(x.feature || "other").replace(/_/g, " "); m[k] = (m[k] || 0) + Number(x.cost_usd || 0); return m; }, {})).sort((a, b) => b[1] - a[1]);
   const sum = (k) => data.reduce((a, x) => a + (x[k] || 0), 0);
-  const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost"), cost: sum("cost") };
+  const tot = { hires: sum("hires"), revenue: sum("revenue"), incentives: sum("incentives"), tools: sum("tools"), adsCost: sum("adsCost"), aiCost: sum("aiCost") + sysAi, cost: sum("cost") + sysAi };
   const m = (v) => { try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: cur, currencyDisplay: "narrowSymbol", maximumFractionDigits: 0 }).format(Number(v || 0)); } catch (e) { return money(v, cur); } };
   const m2 = (v) => money2(v, cur);
   const todayYmd = () => { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
@@ -3779,6 +3936,13 @@ function RecruiterAuditPage({ S, toast }) {
                   )}
                 </React.Fragment>
               ))}
+              {sysAi > 0 && (
+                <tr style={{ borderTop: `1px solid ${C.line}` }} title={sysFeat.map(([k, v]) => k + ": " + money2(cv(v, "USD"), cur)).join(" \u00b7 ")}>
+                  <td className="py-2.5 pr-3 whitespace-nowrap"><span className="inline-flex items-center gap-1.5" style={{ color: C.ink2 }}><Bot size={14} />Automatic runs<span className="text-[11px]" style={{ color: C.ink3 }}>System</span></span></td>
+                  <td className="pr-3 text-xs" style={{ color: C.ink3 }}>{sysFeat.slice(0, 2).map(([k]) => k).join(", ")}</td><td className="pr-3">–</td><td className="pr-3">–</td><td className="pr-3">–</td><td className="pr-3">–</td><td className="pr-3">–</td>
+                  <td className="pr-3">{m2(sysAi)}</td><td className="pr-3 font-medium">{m2(sysAi)}</td><td className="pr-3">–</td><td className="pr-3">–</td>
+                </tr>
+              )}
               {data.length > 0 && (
                 <tr className="font-medium" style={{ borderTop: `2px solid ${C.line}` }}>
                   <td className="py-2.5">Total</td><td></td><td>{tot.hires}</td><td>{m(tot.revenue)}</td><td>{m(tot.incentives)}</td><td>{m2(tot.tools)}</td><td>{m2(tot.adsCost)}</td><td>{m2(tot.aiCost)}</td><td>{m2(tot.cost)}</td><td>{tot.hires ? m(tot.cost / tot.hires) : "–"}</td><td>{tot.cost ? (Math.round((tot.revenue / tot.cost) * 10) / 10) + "×" : "–"}</td>
@@ -3925,7 +4089,9 @@ function OverviewRecruiter({ S }) {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
           const routed = linkPeople(S, (l) => l.response === "pending");
+          const gaps = setupGaps(S.me);
           return [
+            { icon: UserCheck, t: "Finish setting up your account", s: "Add " + gaps.join(", ").replace(/, ([^,]*)$/, " and $1"), tone: "warn", people: gaps.length ? [{ name: "Open My profile", sub: gaps.length + " to add", onOpen: () => S.go("myProfile") }] : [], go: "myProfile" },
             { icon: Sparkles, t: "Role matches", s: plural(matches.length, "candidate") + " match other roles", tone: "em", people: matches, go: "candidates" },
             { icon: InboxIcon, t: "Waiting on candidates", s: waiting.length + " awaiting screening answers", tone: "warn", people: waiting, go: "candidates" },
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
@@ -3934,7 +4100,7 @@ function OverviewRecruiter({ S }) {
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
         <PaceCard S={S} recruiterId={S.me.id} />
-        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} earnings /></div>
+        <div className="lg:col-span-2 min-w-0"><MyEngagedRoles S={S} /></div>
       </div>
     </div>
   );
@@ -3970,6 +4136,8 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   const [minAi, setMinAi] = useState(0);
   const [roleF, setRoleF] = useState([]);
   const [sourceF, setSourceF] = useState([]);
+  const [countryF, setCountryF] = useState([]);
+  const [jobF, setJobF] = useState([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const gq = (S.query || "").toLowerCase();
@@ -3982,8 +4150,9 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
     (tab === "All" || c.status === tab) && hit(c, q.toLowerCase()) && hit(c, gq) &&
     (!recF.length || recF.includes(c.recruiter)) && c.ai >= minAi &&
     (!roleF.length || roleF.includes(c.role)) && (!sourceF.length || sourceF.includes(c.source)) &&
+    (!countryF.length || countryF.includes(candidateCountry(c) || "_none")) && (!jobF.length || (c.jobLinks || []).some((l) => jobF.includes(l.jobId))) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
-  const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, !!dateFrom, !!dateTo].filter(Boolean).length;
+  const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, countryF.length > 0, jobF.length > 0, !!dateFrom, !!dateTo].filter(Boolean).length;
   const onTab = data.filter((c) => tab === "All" || c.status === tab);   // filter options come from what's on this tab
   const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
   return (
@@ -4002,11 +4171,13 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <div className="flex w-full sm:w-60"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
           <FilterPill label="Recruiter" value={recF} onChange={setRecF} options={S.team.map((r) => ({ value: r.name, label: r.name, count: onTab.filter((c) => c.recruiter === r.name).length }))} />
+          <FilterPill label="Job" value={jobF} onChange={setJobF} options={S.jobs.filter((j) => j.status !== "Draft" && onTab.some((c) => (c.jobLinks || []).some((l) => l.jobId === j.id))).map((j) => ({ value: j.id, label: j.role + " \u00b7 " + j.client + (j.status !== "Open" ? " (" + j.status + ")" : ""), count: onTab.filter((c) => (c.jobLinks || []).some((l) => l.jobId === j.id)).length }))} />
+          <FilterPill label="Country" value={countryF} onChange={setCountryF} options={(() => { const n = {}; onTab.forEach((c) => { const k = candidateCountry(c) || "_none"; n[k] = (n[k] || 0) + 1; }); return Object.keys(n).sort((a, b) => (a === "_none") - (b === "_none") || a.localeCompare(b)).map((k) => ({ value: k, label: k === "_none" ? "Not known" : k, count: n[k] })); })()} />
           <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: onTab.filter((c) => c.role === r).length }))} />
           <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
           <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} />
           <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
-          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
+          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setCountryF([]); setJobF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
         </div>
         <DataTable
           rows={filtered}
@@ -9693,7 +9864,6 @@ const VISA_OPTIONS = {
   ZA: ["Critical Skills work visa", "General work visa", "Intra-company transfer", "Spousal visa", "Study visa"],
 };
 const EU_ISO = new Set("AT BE BG HR CY CZ DK EE FI FR DE GR HU IT LV LT LU MT NL PL PT RO SK SI ES SE NO CH IS LI".split(" "));
-const isoOf = (name) => (COUNTRY_DATA.find((x) => x.name === name) || {}).iso || "";
 const visaListFor = (country) => { const iso = isoOf(country); return (VISA_OPTIONS[iso] || (EU_ISO.has(iso) ? VISAS_EU : ["Work permit / employment visa", "Intra-company transfer", "Dependant / spouse visa", "Student visa", "Graduate / post-study visa"])).concat(["Other"]); };
 const LANGUAGE_OPTIONS = LANGUAGES.map((l) => ({ value: l, label: l }));
 const INDUSTRY_PICK = INDUSTRY_OPTIONS.map((l) => ({ value: l, label: l }));
@@ -11422,8 +11592,88 @@ function AdsPage({ role, toast, onPromote, S }) {
   );
 }
 
+// Chips that toggle on and off (specialties, regions).
+function ChipToggles({ options, value, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((o) => { const on = value.includes(o); return (
+        <button type="button" key={o} onClick={() => onChange(on ? value.filter((x) => x !== o) : [...value, o])} aria-pressed={on}
+          className="rounded-full px-2.5 py-1 text-xs border" style={on ? { background: C.emTint, borderColor: C.em, color: C.em } : { borderColor: C.line, color: C.ink2, background: C.card }}>{on ? "\u2713 " : ""}{o}</button>
+      ); })}
+    </div>
+  );
+}
+// A recruiter's country, the roles they can close and the regions they work best in (My profile,
+// account setup, and Admins / Rec Ops on Users & permissions). f: { country, specialties, regions }.
+function RecruiterInfoFields({ f, set, self }) {
+  const [custom, setCustom] = useState("");
+  const extraSpecs = (f.specialties || []).filter((x) => !SPECIALTIES.includes(x));
+  const regionCountries = (f.regions || []).filter((r) => !WORLD_REGIONS.includes(r));
+  const field = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
+  const addCustom = () => { const v = custom.trim(); if (!v) return; if (!(f.specialties || []).some((x) => x.toLowerCase() === v.toLowerCase())) set({ ...f, specialties: [...(f.specialties || []), v.slice(0, 60)] }); setCustom(""); };
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>{self ? "Country you're based in" : "Country they're based in"}</label>
+        <div className="flex items-center gap-2">
+          <select value={f.country || ""} onChange={(e) => set({ ...f, country: e.target.value })} className={field} style={{ borderColor: C.line, background: C.soft }}>
+            <option value="">Choose a country</option>
+            {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {f.country && <Flag country={f.country} size={16} style={{ marginTop: 6 }} />}
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-medium" style={{ color: C.ink2 }}>{self ? "Roles you can close" : "Roles they can close"}</div>
+        <div className="text-xs mb-2" style={{ color: C.ink3 }}>Pick every kind of role you have a track record of filling.</div>
+        <ChipToggles options={[...SPECIALTIES, ...extraSpecs]} value={f.specialties || []} onChange={(v) => set({ ...f, specialties: v })} />
+        <div className="flex gap-2 mt-2">
+          <input value={custom} onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustom(); } }} placeholder="Add another (e.g. Actuarial, Pharmacy)" className="flex-1 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+          <Btn onClick={addCustom} disabled={!custom.trim()}>Add</Btn>
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-medium" style={{ color: C.ink2 }}>{self ? "Regions you work best in" : "Regions they work best in"}</div>
+        <div className="text-xs mb-2" style={{ color: C.ink3 }}>{self ? "You're emailed first when a new role opens in one of these." : "They're emailed first when a new role opens in one of these."} Pick broad regions, specific countries, or both.</div>
+        <ChipToggles options={WORLD_REGIONS} value={f.regions || []} onChange={(v) => set({ ...f, regions: v })} />
+        <select value="" onChange={(e) => e.target.value && set({ ...f, regions: [...(f.regions || []), e.target.value] })} className="mt-2 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
+          <option value="">Add a specific country</option>
+          {COUNTRIES.filter((c) => !(f.regions || []).includes(c)).map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        {regionCountries.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {regionCountries.map((c) => (
+              <span key={c} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs border" style={{ borderColor: C.em, background: C.emTint, color: C.em }}>
+                <Flag country={c} size={10} />{c}
+                <button type="button" onClick={() => set({ ...f, regions: (f.regions || []).filter((x) => x !== c) })} aria-label={"Remove " + c} style={{ color: C.em }}>×</button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UsersPage({ toast, S }) {
-  const users = S.users;
+  // Admins see everyone; Rec Ops see the recruiters (country, specialties, suspend / reactivate).
+  const isAdmin = S.role === "admin";
+  const allUsers = S.users;
+  const [countryF, setCountryF] = useState("");
+  const [roleF, setRoleF] = useState("");
+  const [susUser, setSusUser] = useState(null);
+  const [susReason, setSusReason] = useState("");
+  const [susBusy, setSusBusy] = useState(false);
+  const [infoUser, setInfoUser] = useState(null);
+  const [infoF, setInfoF] = useState({ country: "", specialties: [], regions: [] });
+  const [infoBusy, setInfoBusy] = useState(false);
+  const scoped = isAdmin ? allUsers : allUsers.filter((u) => u.roleKey === "recruiter");
+  const countriesHere = Array.from(new Set(scoped.map((u) => u.country).filter(Boolean))).sort();
+  const users = scoped.filter((u) => (!countryF || (countryF === "_none" ? !u.country : u.country === countryF)) && (!roleF || u.roleKey === roleF));
+  const reactivate = (u) => S.suspendUser(u.id, false).then(() => toast(u.name + " is active again and can sign in")).catch(() => {});
+  const doSuspend = () => { setSusBusy(true); S.suspendUser(susUser.id, true, susReason.trim()).then(() => { toast(susUser.name + " is suspended"); setSusUser(null); setSusReason(""); }).catch(() => {}).finally(() => setSusBusy(false)); };
+  const openInfo = (u) => { setInfoUser(u); setInfoF({ country: u.country || "", specialties: u.specialties || [], regions: u.regions || [] }); };
+  const saveInfo = () => { setInfoBusy(true); S.setRecruiterInfo(infoUser.id, infoF).then(() => { toast("Saved " + infoUser.name + "'s details"); setInfoUser(null); }).catch(() => {}).finally(() => setInfoBusy(false)); };
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -11446,8 +11696,8 @@ function UsersPage({ toast, S }) {
   const [delBusy, setDelBusy] = useState(false);
   const [viewUser, setViewUser] = useState(null);
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
-  const adminCount = users.filter((u) => u.roleKey === "admin" && u.status === "Active").length;
-  const transferCandidates = users.filter((u) => !u.isOwner && u.status === "Active");
+  const adminCount = allUsers.filter((u) => u.roleKey === "admin" && u.status === "Active").length;
+  const transferCandidates = allUsers.filter((u) => !u.isOwner && u.status === "Active");
   const openEdit = (u) => { setEditUser(u); setEditName(u.name); setEditPhone(u.phone || ""); };
   const saveEdit = () => {
     if (!editName.trim()) { toast("Enter their name"); return; }
@@ -11489,7 +11739,7 @@ function UsersPage({ toast, S }) {
   const invite = async () => {
     if (!name.trim()) { toast("Enter their name"); return; }
     if (!email.includes("@")) { toast("Enter a valid email"); return; }
-    if (users.some((u) => u.email.toLowerCase() === email.toLowerCase())) { toast("That email already has an account"); return; }
+    if (allUsers.some((u) => u.email.toLowerCase() === email.toLowerCase())) { toast("That email already has an account"); return; }
     setBusy(true);
     try {
       const j = await S.createAccount({ email, full_name: name, role: roleKey }); setName(""); setEmail(""); setOpen(false);
@@ -11514,20 +11764,40 @@ function UsersPage({ toast, S }) {
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-        <SectionTitle size="text-3xl md:text-4xl" title="Users and permissions" sub="Control who can see and do what." />
-        <div className="flex gap-2">
+        <SectionTitle size="text-3xl md:text-4xl" title={isAdmin ? "Users and permissions" : "Recruiters"} sub={isAdmin ? "Control who can see and do what." : "Your recruiters: where they are, what they close, and their accounts."} />
+        {isAdmin && <div className="flex gap-2">
           {S.me.isOwner && <Btn onClick={() => setTransferOpen(true)}>Transfer ownership</Btn>}
           <Btn kind="primary" icon={UserPlus} onClick={() => setOpen(true)}>Invite user</Btn>
-        </div>
+        </div>}
       </div>
       <Card>
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <select value={countryF} onChange={(e) => setCountryF(e.target.value)} aria-label="Filter by country" className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, background: C.card, color: C.ink }}>
+            <option value="">All countries</option>
+            {countriesHere.map((c) => <option key={c} value={c}>{c} ({scoped.filter((u) => u.country === c).length})</option>)}
+            <option value="_none">No country set ({scoped.filter((u) => !u.country).length})</option>
+          </select>
+          {isAdmin && <select value={roleF} onChange={(e) => setRoleF(e.target.value)} aria-label="Filter by role" className="rounded-lg border px-3 py-2 text-sm" style={{ borderColor: C.line, background: C.card, color: C.ink }}>
+            <option value="">All roles</option>
+            {ROLE_OPTIONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>}
+          {(countryF || roleF) && <button onClick={() => { setCountryF(""); setRoleF(""); }} className="text-xs" style={{ color: C.em }}>Clear</button>}
+          <span className="text-xs ml-auto" style={{ color: C.ink3 }}>{plural(users.length, "person", "people")}</span>
+        </div>
         <DataTable
           keyField="email"
           rows={users}
           columns={[
-            { key: "name", label: "USER", render: (u) => <button onClick={() => setViewUser(u)} className="text-left"><div className="font-medium flex items-center gap-1.5" style={{ color: C.ink }}>{u.name}{u.isOwner && <Pill tone="em">Owner</Pill>}</div><div className="text-xs" style={{ color: C.ink2 }}>{u.email}</div></button> },
+            { key: "name", label: "USER", render: (u) => <button onClick={() => isAdmin ? setViewUser(u) : openInfo(u)} className="text-left flex items-center gap-2.5"><UserAvatar u={u} size={32} tone="neutral" /><span className="min-w-0"><span className="font-medium flex items-center gap-1.5" style={{ color: C.ink }}>{u.name}{u.isOwner && <Pill tone="em">Owner</Pill>}</span><span className="block text-xs" style={{ color: C.ink2 }}>{u.email}</span></span></button> },
+            { key: "country", label: "COUNTRY", render: (u) => (
+              <div className="text-sm" style={{ maxWidth: 260 }}>
+                <div className="flex items-center gap-1.5">{u.country ? <><Flag country={u.country} />{u.country}</> : <span style={{ color: C.ink3 }}>Not set</span>}</div>
+                {u.roleKey === "recruiter" && ((u.specialties || []).length > 0 || (u.regions || []).length > 0) && <div className="text-xs mt-0.5 truncate" style={{ color: C.ink3 }} title={[(u.specialties || []).join(", "), (u.regions || []).join(", ")].filter(Boolean).join(" · ")}>{[(u.specialties || []).slice(0, 2).join(", ") + ((u.specialties || []).length > 2 ? " +" + ((u.specialties || []).length - 2) : ""), (u.regions || []).length ? "works " + (u.regions || []).slice(0, 2).join(", ") + ((u.regions || []).length > 2 ? " +" + ((u.regions || []).length - 2) : "") : ""].filter(Boolean).join(" · ")}</div>}
+              </div>
+            ) },
+            { key: "seen", label: "LAST ACTIVE", render: (u) => <span className="text-xs whitespace-nowrap" style={{ color: u.lastSeenAt && Date.now() - u.lastSeenAt > 23 * 864e5 && u.status === "Active" ? C.warnFg : C.ink2 }}>{u.lastSeenAt ? (Date.now() - u.lastSeenAt < 864e5 ? "Today" : daysAgo(u.lastSeenAt) + " ago") : "Never"}</span> },
             { key: "role", label: "ROLE", render: (u) => {
-              const editable = !u.isOwner || u.id === S.me.id;
+              const editable = isAdmin && (!u.isOwner || u.id === S.me.id);
               if (!editable) return <span className="text-sm" style={{ color: C.ink2 }}>{u.role}</span>;
               return (
                 <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={u.roleKey} disabled={roleBusyId === u.id}
@@ -11536,14 +11806,21 @@ function UsersPage({ toast, S }) {
                 </select>
               );
             } },
-            { key: "status", label: "STATUS", render: (u) => <div className="flex flex-wrap items-center gap-1.5"><StatusPill status={u.status} />{mfaOn && (mfaOn.includes(u.id) ? <span title="Two-factor authentication is on"><Pill tone="em">2FA on</Pill></span> : u.status === "Active" ? <span title="This person hasn't turned on two-factor authentication yet"><Pill tone="warn">No 2FA</Pill></span> : null)}</div> },
+            { key: "status", label: "STATUS", render: (u) => <div className="flex flex-wrap items-center gap-1.5" title={u.status === "Suspended" ? u.suspendedReason : undefined}><StatusPill status={u.status} />{mfaOn && (mfaOn.includes(u.id) ? <span title="Two-factor authentication is on"><Pill tone="em">2FA on</Pill></span> : u.status === "Active" ? <span title="This person hasn't turned on two-factor authentication yet"><Pill tone="warn">No 2FA</Pill></span> : null)}</div> },
             { key: "act", label: "", render: (u) => {
               const lastAdmin = u.roleKey === "admin" && u.status === "Active" && adminCount <= 1;
               const other = !u.isOwner;
               return (
                 <div className="flex justify-end">
-                  <RowMenu label={"Actions for " + u.name} busy={welcomeBusyId === u.id} items={[
+                  <RowMenu label={"Actions for " + u.name} busy={welcomeBusyId === u.id} items={!isAdmin ? [
+                    { label: "Recruiter details", icon: Pencil, onClick: () => openInfo(u) },
+                    { label: "Suspend", icon: PowerOff, danger: true, onClick: () => { setSusUser(u); setSusReason(""); }, hidden: !["Active", "Invited"].includes(u.status) },
+                    { label: "Reactivate", icon: Power, onClick: () => reactivate(u), hidden: u.status !== "Suspended" },
+                  ] : [
                     { label: "Edit details", icon: Pencil, onClick: () => openEdit(u) },
+                    { label: "Recruiter details", icon: Briefcase, onClick: () => openInfo(u), hidden: u.roleKey !== "recruiter" },
+                    { label: "Suspend", icon: PowerOff, danger: true, onClick: () => { setSusUser(u); setSusReason(""); }, hidden: !(u.roleKey === "recruiter" && ["Active", "Invited"].includes(u.status)) },
+                    { label: "Reactivate", icon: Power, onClick: () => reactivate(u), hidden: u.status !== "Suspended" },
                     { label: "Set password", icon: KeyRound, onClick: () => { setPwUser(u); setPwValue(""); }, hidden: !other },
                     { label: "Turn off two-factor", icon: Lock, onClick: () => resetMfa(u), hidden: !(other && mfaOn && mfaOn.includes(u.id)), title: "For someone who lost their phone: they sign in with their password and set it up again" },
                     { label: u.welcomeSentAt ? "Resend welcome email" : "Send welcome email", icon: Mail, onClick: () => resendWelcome(u), hidden: !(other && (u.status === "Active" || u.status === "Invited") && u.id !== S.me.id),
@@ -11564,6 +11841,17 @@ function UsersPage({ toast, S }) {
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label>
         <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="optional" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <Btn kind="primary" full onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Save changes"}</Btn>
+      </Modal>
+      <Modal open={!!susUser} onClose={() => !susBusy && setSusUser(null)} title={susUser ? "Suspend " + susUser.name + "?" : "Suspend"}>
+        <div className="text-sm mb-3" style={{ color: C.ink2 }}>They can't sign in until an Admin or Rec Ops reactivates the account. Their candidates, roles and history stay as they are.</div>
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Reason (optional, they don't see it)</label>
+        <input value={susReason} onChange={(e) => setSusReason(e.target.value)} placeholder="e.g. Not following the submission process" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+        <Btn kind="primary" full onClick={doSuspend} disabled={susBusy}>{susBusy ? "Suspending\u2026" : "Suspend account"}</Btn>
+      </Modal>
+      <Modal open={!!infoUser} onClose={() => !infoBusy && setInfoUser(null)} title={infoUser ? infoUser.name : "Recruiter details"}>
+        {infoUser && infoUser.status === "Suspended" && <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerFg }}>Suspended{infoUser.suspendedAt ? " " + fdate(infoUser.suspendedAt) : ""}: {infoUser.suspendedReason || "no reason given"}</div>}
+        <RecruiterInfoFields f={infoF} set={setInfoF} />
+        <Btn kind="primary" full className="mt-5" onClick={saveInfo} disabled={infoBusy}>{infoBusy ? "Saving\u2026" : "Save"}</Btn>
       </Modal>
       <Modal open={!!pwUser} onClose={() => setPwUser(null)} title={pwUser ? "Set a password for " + pwUser.name : "Set password"}>
         <div className="text-sm mb-3" style={{ color: C.ink2 }}>This sets their password directly — no reset email is sent. Share it with them yourself.</div>
@@ -14100,6 +14388,15 @@ function SignIn({ onSignedIn, notice, mfaPending }) {
   );
 }
 function AwaitingAccess({ onSignOut, status }) {
+  if (status === "Suspended") return (
+    <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
+      <div className="max-w-sm">
+        <div className="text-2xl mb-2" style={{ ...SERIF }}>Account suspended</div>
+        <div className="text-sm mb-5" style={{ color: C.ink2 }}>Your account is suspended, so you can't open ProNext right now. Nothing has been deleted. Ask your Rec Ops team to reactivate it.</div>
+        <Btn onClick={onSignOut}>Sign out</Btn>
+      </div>
+    </div>
+  );
   const off = status === "Disabled";
   return (
     <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}>
@@ -14331,6 +14628,8 @@ export default function App() {
         if (f && !(await useRememberedBrowser(sess))) { store.set(null); setMfaPending({ session: sess, factorId: f.id }); setSession(null); setStatus("signedout"); return; }
       }
       const profile = (await sbFetch("/rest/v1/profiles?select=*&id=eq." + sess.uid, { token: sess.token }))[0];
+      // When they last used ProNext (recruiters unused for 30 days are suspended).
+      sbFetch("/rest/v1/rpc/touch_last_seen", { method: "POST", token: sess.token, body: {} }).catch(() => {});
       // First sign-in of a new (Invited) account: it turns on by itself, then the dashboard loads.
       if (profile && profile.status === "Invited") {
         try {
@@ -14481,7 +14780,7 @@ export default function App() {
   const role = me.roleKey;
   const setPage = (p) => { setCandId(null); setPageRaw(p); };
   const setQuery = (v) => { setQueryRaw(v); if (v && page !== "candidates" && page !== "jobs") setPage("candidates"); };
-  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner, refCode: me.refCode || "", tourDoneAt: me.tourDoneAt || null };
+  const myMe = { name: me.name, label: me.role, init: initialsOf(me.name), first: me.name.split(" ")[0], id: me.id, email: me.email, phone: me.phone, avatarUrl: me.avatarUrl, country: me.country || "", specialties: me.specialties || [], regions: me.regions || [], roleKey: me.roleKey, notificationPrefs: me.notificationPrefs, isOwner: me.isOwner, refCode: me.refCode || "", tourDoneAt: me.tourDoneAt || null };
   MY_REF = me.refCode || "";
   const reload = () => { setRefreshing(true); return loadAll(session.token).then(setData).catch((e) => S.error(e.message)).finally(() => setRefreshing(false)); };
   alertRef.current.onNew = (fresh) => {
@@ -14751,6 +15050,10 @@ export default function App() {
       const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ email, password, full_name, role }) });
       const j = await r.json().catch(() => ({})); if (!r.ok || j.error) throw new Error(errOf(j.error, "We couldn't create the account. Try again.")); logAudit("created", "user", j.id || null, full_name + " (" + role + ")"); reload(); return j;
     },
+    // Suspend / reactivate a recruiter (Admins and Rec Ops; database function set_user_suspended).
+    suspendUser: (id, suspend, reason) => call("/rest/v1/rpc/set_user_suspended", { method: "POST", body: { p_user: id, p_suspend: !!suspend, p_reason: reason || null } }),
+    // A recruiter's country, specialties and regions (Admins and Rec Ops).
+    setRecruiterInfo: (id, f) => call("/rest/v1/rpc/staff_set_recruiter_info", { method: "POST", body: { p_user: id, p_country: f.country || null, p_specialties: f.specialties || [], p_regions: f.regions || [] } }),
     disableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Disabled" } }).then(() => logAudit("disabled", "user", id, u ? u.name : "")); },
     enableUser: (id) => { const u = data.users.find((x) => x.id === id); return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { status: "Active" } }).then(() => logAudit("enabled", "user", id, u ? u.name : "")); },
     /* Admin-only, via the profiles_admin_write policy (not the self-update path, so the anti-escalation trigger doesn't apply here).
@@ -15028,7 +15331,9 @@ export default function App() {
     /* Your own account: name/phone update straight to your profiles row, avatar via the public `avatars` bucket. */
     updateMyProfile: (patch) => {
       const body = {}; if ("name" in patch) body.full_name = patch.name; if ("phone" in patch) body.phone = patch.phone;
-      setMe((m) => ({ ...m, ...("name" in patch ? { name: patch.name } : {}), ...("phone" in patch ? { phone: patch.phone } : {}) }));
+      if ("country" in patch) body.country = patch.country || null; if ("specialties" in patch) body.specialties = patch.specialties || []; if ("regions" in patch) body.regions = patch.regions || [];
+      setMe((m) => ({ ...m, ...("name" in patch ? { name: patch.name } : {}), ...("phone" in patch ? { phone: patch.phone } : {}), ...("country" in patch ? { country: patch.country || "" } : {}),
+        ...("specialties" in patch ? { specialties: patch.specialties || [] } : {}), ...("regions" in patch ? { regions: patch.regions || [] } : {}) }));
       return sbFetch("/rest/v1/profiles?id=eq." + session.uid, { method: "PATCH", token: session.token, body })
         .then(reload)
         .catch((e) => { showError(e.message); reload(); throw e; });
@@ -15090,7 +15395,7 @@ export default function App() {
   else if (page === "interviews") content = <InterviewsPage toast={toast} S={S} />;
   else if (page === "billing") content = <BillingPage role={role} toast={toast} S={S} />;
   else if (page === "ads") content = <JobsPage setPage={setPage} onPromote={onPromote} S={S} onOpenJob={(id) => { setJobId(id); setPageRaw("jobDetail"); }} />;
-  else if (page === "users") content = role === "admin" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
+  else if (page === "users") content = role === "admin" || role === "recops" ? <UsersPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "audit") content = role === "admin" ? <RecruiterAuditPage S={S} toast={toast} /> : <OverviewRecOps S={S} />;
   else if (page === "emails") content = role === "admin" ? <EmailTrackingPage S={S} /> : <OverviewRecOps S={S} />;
   else if (page === "settings") content = role === "admin" ? <SettingsPage toast={toast} S={S} /> : <OverviewRecOps S={S} />;
@@ -15111,6 +15416,7 @@ export default function App() {
           try { localStorage.setItem("pn.tourDone." + myMe.id, "1"); } catch (e) { /* fine */ }
           if (!me.tourDoneAt) { const at = new Date().toISOString(); setMe((m) => (m ? { ...m, tourDoneAt: at } : m)); sbFetch("/rest/v1/profiles?id=eq." + myMe.id, { method: "PATCH", token: session.token, body: { tour_done_at: at } }).catch(() => {}); }
         }} />}
+        {role === "recruiter" && !tourOpen && <SetupAccountModal S={S} toast={toast} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />

@@ -215,7 +215,9 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
     if (sup) { await admin.from("outreach_messages").update({ status: "skipped", error: "Unsubscribed" }).eq("id", m.id); continue; }
     let first = "", last = "", company = "", token = "";
     if (m.prospect_id) {
-      const { data: p } = await admin.from("prospects").select("first_name,last_name,company,unsub_token").eq("id", m.prospect_id).maybeSingle();
+      const { data: p } = await admin.from("prospects").select("first_name,last_name,company,unsub_token,status,jobs(status)").eq("id", m.prospect_id).maybeSingle();
+      // Last guard: nothing goes out for a role that has closed (closing also cancels the queue).
+      if (p?.status === "archived" || (p as any)?.jobs?.status === "Closed") { await admin.from("outreach_messages").update({ status: "skipped", error: "Role closed" }).eq("id", m.id); continue; }
       first = p?.first_name || ""; last = p?.last_name || ""; company = p?.company || ""; token = p?.unsub_token || "";
     } else if (m.lead_id) {
       const { data: l } = await admin.from("leads").select("contact_first_name,contact_name,company,unsub_token").eq("id", m.lead_id).maybeSingle();
