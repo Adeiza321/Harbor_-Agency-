@@ -74,7 +74,8 @@ const REVIEW_BATCH = 8;          // results per AI review call
 const MAX_RESUMES = 4;           // a step that died (stale) is picked up again at most this often
 // Spending guards. A run makes at most this many AI calls (plan + reviews), and X-ray stops for the
 // day once its AI spend reaches the daily budget (XRAY_DAILY_USD secret, default $2), so a stuck or
-// repeated search can never drain the credits.
+// repeated search can never drain the credits. These apply to recruiters' and automatic searches
+// only: a search an Admin or Rec Ops starts has neither (marked staff: true on the job's xray).
 const MAX_AI_CALLS_PER_RUN = 12;
 const XRAY_DAILY_USD = () => Math.max(0, Number(Deno.env.get("XRAY_DAILY_USD") || 2));
 async function xraySpentToday(admin: any) {
@@ -90,6 +91,9 @@ export async function startXray(admin: any, jobId: string, s: Settings, by: stri
   if (!e.serper && !e.brave && !e.tavily && !e.gemini) return { ok: false, notConnected: "search", message: "No search engine is connected yet, so X-ray can't run. Ask an Admin to add a search key (Tavily, Serper, Brave or Gemini) in Supabase." };
   const { data: who } = by ? await admin.from("profiles").select("role").eq("id", by).maybeSingle() : { data: null };
   const recruiter = who?.role === "recruiter";
+  // Searches an Admin or Rec Ops starts have no daily budget and no AI call cap (recruiters' and
+  // automatic searches keep them). Their spend still shows in the AI costs.
+  const staff = who?.role === "admin" || who?.role === "recops";
   const x = job.xray || {};
   const busy = x.state === "running" && Date.now() - new Date(x.at || 0).getTime() < XRAY_STALE_MS;
   if (recruiter && !_fromQueue) {
@@ -103,7 +107,7 @@ export async function startXray(admin: any, jobId: string, s: Settings, by: stri
     if (qErr) return { ok: false, message: "We couldn't start your search. Try again in a minute." };
     if (busy) return { ok: true, queued: true, message: "Another search is running on this role. Yours starts by itself as soon as it finishes, usually within a few minutes." };
   } else if (busy) return { ok: true, running: true, message: "The X-ray search is already running for this job." };
-  if ((await xraySpentToday(admin)) >= XRAY_DAILY_USD()) {
+  if (!staff && (await xraySpentToday(admin)) >= XRAY_DAILY_USD()) {
     const msg = budgetMsg();
     await finishRequest(admin, jobId, by, { error: msg });
     return { ok: false, message: msg };
@@ -111,7 +115,7 @@ export async function startXray(admin: any, jobId: string, s: Settings, by: stri
   // Each run has its own id: only steps carrying it may work on the job, so two copies of the same
   // search (a double start, a resumed step) can never run side by side and repeat the AI's work.
   const run = crypto.randomUUID();
-  await setXray(admin, jobId, { state: "running", run, by, ...(guide ? { guide } : {}), progress: { step: "plan" } });
+  await setXray(admin, jobId, { state: "running", run, by, ...(staff ? { staff: true } : {}), ...(guide ? { guide } : {}), progress: { step: "plan" } });
   try { await kickXray(admin, jobId, run); }
   catch (err) {
     console.error("xray start", jobId, errMsg(err));
@@ -300,10 +304,11 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
   if (x0.state !== "running") return;
   // Not this run's turn (an older copy of the search): stop without doing anything.
   if (!run || (x0.run && x0.run !== run)) return;
-  if ((await xraySpentToday(admin)) >= XRAY_DAILY_USD()) throw new Error(budgetMsg());
+  const staff = !!x0.staff;   // started by an Admin or Rec Ops: no daily budget, no AI call cap
+  if (!staff && (await xraySpentToday(admin)) >= XRAY_DAILY_USD()) throw new Error(budgetMsg());
   const guide: XrayGuide | null = x0.guide || null, by = x0.by || null, resumes = x0.resumes || 0;
   let cp: any = x0.cp || null;
-  const save = (extra: Record<string, unknown>) => setXray(admin, jobId, { state: "running", run, by, resumes, ...(guide ? { guide } : {}), ...(cp ? { cp } : {}), ...extra });
+  const save = (extra: Record<string, unknown>) => setXray(admin, jobId, { state: "running", run, by, resumes, ...(staff ? { staff: true } : {}), ...(guide ? { guide } : {}), ...(cp ? { cp } : {}), ...extra });
   // Live progress for the app's progress bar: { step: plan | search | review, done, total, found }.
   const prog = (o: Record<string, unknown>) => save({ progress: o }).catch(() => {});
   // Searched where the job is (its own country), like every other outside search.
@@ -416,7 +421,7 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
     }
     // Spending guard: never more than MAX_AI_CALLS_PER_RUN AI calls for one search.
     const calls = Number(cp.aiCalls || 1);
-    if (calls >= MAX_AI_CALLS_PER_RUN) { errors.push("Stopped reviewing at the AI call limit for one search"); break; }
+    if (!staff && calls >= MAX_AI_CALLS_PER_RUN) { errors.push("Stopped reviewing at the AI call limit for one search"); break; }
     const pair = batches.slice(i, i + 2);
     cp = { ...cp, reviewed: [...byKey.entries()], next: i, aiCalls: calls + pair.length };
     await prog({ step: "review", done: i, total: batches.length, found: list.length });
