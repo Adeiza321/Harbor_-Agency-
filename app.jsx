@@ -13899,6 +13899,7 @@ function PortalChat({ token, chats, startLink, onClose }) {
               <div className="text-base font-semibold">Messages</div>
             </div>
             <div className="flex-1 overflow-y-auto">
+              {chats.length === 0 && <div className="text-sm text-center px-6 py-10" style={{ color: C.ink2 }}>No one to message just yet. Reply to our last email and we'll get back to you straight away.</div>}
               {chats.map((c) => (
                 <button key={chatKey(c)} onClick={() => setOpenKey(chatKey(c))} className="w-full text-left px-4 py-3 flex items-center gap-3" style={{ borderBottom: `1px solid ${C.line}` }}>
                   <Avatar init={initialsOf(nameOf(c))} tone="em" size={46} src={c.photo || undefined} />
