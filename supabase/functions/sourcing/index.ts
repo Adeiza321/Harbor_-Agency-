@@ -252,12 +252,6 @@ async function handle(req: Request): Promise<Response> {
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
       }
-      // One-off (removed in the next commit): delete the two test files left from testing.
-      if (body.action === "remove_test_files") {
-        const r1 = await admin.storage.from("resumes").remove(["0778ecaf-3fc8-46b3-aa67-d420ab163213/test-resume.pdf"]);
-        const r2 = await admin.storage.from("blind-resumes").remove(["cand-0778ecaf-3fc8-46b3-aa67-d420ab163213/1.webp"]);
-        return json({ ok: true, resumes: r1.error?.message || (r1.data || []).length, blind: r2.error?.message || (r2.data || []).length });
-      }
       // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, pick up stalled ones.
       if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
       // Someone a recruiter found is interested (database trigger prospects_sourced_interest).
