@@ -10,19 +10,34 @@ export type Posting = {
   hiring_team: { first_name: string; full_name: string; role: string; linkedin_url: string }[];
 };
 
+// TheirStack's free plan returns at most 25 jobs per request, so bigger asks are fetched 25 at a time.
+const PAGE = 25;
 export async function searchJobs(opts: { titles: string[]; countries: string[]; maxAgeDays: number; limit: number }): Promise<Posting[]> {
+  const want = Math.min(Math.max(opts.limit, 1), 100);
+  const out: Posting[] = [];
+  for (let page = 0; out.length < want; page++) {
+    let got: Posting[];
+    try { got = await searchPage(opts, Math.min(PAGE, want - out.length), page); }
+    catch (e) { if (page > 0 && /\b(402|403)\b/.test(String((e as Error)?.message))) break; throw e; }  // keep what we have
+    out.push(...got);
+    if (got.length < PAGE) break;                          // no more postings
+  }
+  return out;
+}
+
+async function searchPage(opts: { titles: string[]; countries: string[]; maxAgeDays: number }, limit: number, page: number): Promise<Posting[]> {
   const key = theirstackKey();
   if (!key) throw new Error("The job feed isn't connected yet (THEIRSTACK_API_KEY)");
   const res = await fetch("https://api.theirstack.com/v1/jobs/search", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: "Bearer " + key },
     body: JSON.stringify({
-      job_title_or: opts.titles.slice(0, 40),
+      job_title_or: opts.titles.slice(0, 25),
       job_country_code_or: opts.countries,
       posted_at_max_age_days: Math.max(1, opts.maxAgeDays),
       company_type: "direct_employer",            // skip other recruitment agencies
-      limit: Math.min(Math.max(opts.limit, 1), 100),
-      page: 0,
+      limit,
+      page,
     }),
   });
   const raw = await res.text().catch(() => "");
@@ -30,8 +45,10 @@ export async function searchJobs(opts: { titles: string[]; countries: string[]; 
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = {}; }
   if (!res.ok) {
     // TheirStack's reason, whatever shape it comes in (it was coming back blank as "Job feed 403: ").
-    const why = String(data?.error?.message || (typeof data?.detail === "string" ? data.detail : data?.detail ? JSON.stringify(data.detail) : "") || data?.message || raw || "").replace(/\s+/g, " ").slice(0, 200);
-    const hint = res.status === 401 || res.status === 403 ? " TheirStack refused the API key: check THEIRSTACK_API_KEY (Edge Functions > Secrets), that your plan includes API access, and that you have credits left."
+    const why = String(data?.error?.description || data?.error?.message || (typeof data?.detail === "string" ? data.detail : data?.detail ? JSON.stringify(data.detail) : "") || data?.message || raw || "").replace(/\s+/g, " ").slice(0, 240);
+    const plan = data?.error?.code === "E-020";
+    const hint = plan ? " This is a limit of TheirStack's free plan."
+      : res.status === 401 || res.status === 403 ? " TheirStack refused the API key: check THEIRSTACK_API_KEY (Edge Functions > Secrets), that your plan includes API access, and that you have credits left."
       : res.status === 402 ? " TheirStack is out of credits." : "";
     throw new Error("Job feed " + res.status + (why ? ": " + why : "") + "." + hint);
   }

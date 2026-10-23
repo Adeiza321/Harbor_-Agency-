@@ -58,7 +58,7 @@ export async function fetchLeads(admin: any, s: Settings) {
     const limit = Math.max(3, Math.round((total * list.length) / cands.length));
     let postings: any[] = [];
     try { postings = await searchJobs({ titles, countries: [cc], maxAgeDays: s.leads.maxAgeDays, limit }); }
-    catch (e) { errors.push(cc + ": " + String((e as Error)?.message || e).slice(0, 160)); if (/\b40[13]\b/.test(String((e as Error)?.message))) break; continue; }
+    catch (e) { errors.push(cc + ": " + String((e as Error)?.message || e).slice(0, 320)); const m = String((e as Error)?.message); if (/\b401\b/.test(m) || (/\b403\b/.test(m) && !/free plan/i.test(m))) break; continue; }
     fetched += postings.length;
     for (const p of postings) {
       // Roles in the candidates' own country only: remote roles are left out.
