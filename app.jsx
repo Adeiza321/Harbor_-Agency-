@@ -9499,7 +9499,10 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           <ApolloNote data={d} />
           {(mustsHold || profileHold) && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}>{mustsHold || profileHold}</div>}
           {d.profile_checked && d.profile_checked.note && p.status === "found" && <div className="text-xs mt-1" style={{ color: C.ink3 }}>Full-profile check: {d.profile_checked.note}.</div>}
-          {locHold && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}><span className="font-medium">Check location before emailing:</span> {locHold}{p.location ? " (" + p.location + ")" : ""}. Open their profile, then press Location OK if they can work from {jobLabel ? "the role's location" : "the office"}, or Skip.</div>}
+          {locHold && <div className="text-xs mt-1.5 rounded-lg px-2 py-1.5" style={{ background: C.warnBg, color: C.warnFg }}><span className="font-medium">Check location before emailing:</span> {locHold}{p.location && !d.possible_location ? " (" + p.location + ")" : ""}. Open their profile, then press Location OK if they can work from {jobLabel ? "the role's location" : "the office"}, or Skip.</div>}
+          {d.possible_location && d.possible_location.place && (
+            <div className="text-xs mt-1 flex items-center gap-1" style={{ color: C.ink2 }}><MapPin size={12} className="shrink-0" /><span><span className="font-medium">Possible location:</span> {d.possible_location.place}{d.possible_location.company ? " · from their job at " + d.possible_location.company : ""}{d.location_ok ? " · confirmed" : ""}</span></div>
+          )}
           {found && (d.client_history === "past" || d.location_source === "" || d.remote_worker) && (
             <div className="flex flex-wrap gap-1 mt-1.5">
               {d.client_history === "past" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }}>Worked at {(jobLabel || "").split(",").slice(-1)[0].trim() || "the client"} before</span>}

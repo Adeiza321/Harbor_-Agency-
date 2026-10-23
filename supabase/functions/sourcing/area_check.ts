@@ -134,3 +134,50 @@ export async function splitByArea<T>(admin: any, job: any, area: any, people: T[
   }
   return { kept, dropped };
 }
+
+// ---- A possible location from someone's recent jobs ---------------------------------------------
+// A profile's location can be missing, vague, out of date or their employer's head office. Their two
+// most recent jobs that aren't remote say where they've actually been working: the place shown for
+// that job, or the employer's own location when it's a local business with one site. Used to keep
+// people the profile location alone would drop (shown to the recruiter as a possible location to
+// double check), and to leave out people whose recent work is clearly far away.
+export type RecentJob = { company: string; title: string; place: string; basis: "shown" | "employer" | "" };
+export const cleanRecentJobs = (v: unknown): RecentJob[] => (Array.isArray(v) ? v : []).slice(0, 2).map((x: any) => ({
+  company: clip(x?.company, 100), title: clip(x?.title, 100), place: cleanLocation(x?.place),
+  basis: (["shown", "employer"].includes(String(x?.basis)) ? String(x.basis) : "") as RecentJob["basis"],
+})).filter((x) => x.company || x.place);
+
+// For people with only a work history (Apollo's "Title at Company (dates)" lines, or a snippet):
+// their two most recent non-remote jobs and where each was. One AI question per batch of 20.
+export async function inferRecentJobs(items: { key: string; text: string }[]): Promise<Map<string, RecentJob[]>> {
+  const out = new Map<string, RecentJob[]>();
+  const todo = items.filter((x) => String(x.text || "").trim());
+  const sys = "You read people's work histories and give, for each person, their two most recent jobs that are NOT remote, and where each job was. Reply with STRICT JSON only: " +
+    "{\"people\": [{\"i\": number, \"jobs\": [{\"company\": string, \"title\": string, \"place\": string, \"basis\": \"shown\" | \"employer\" | \"\"}]}]}. " +
+    "place: 'City, State/Region, Country'. basis 'shown' when the history states where that job was; 'employer' when not stated but the employer is a local business with one site you know (or the history names its town); " +
+    "'' with place '' when you can't tell (e.g. a large company with many offices and no location given). Skip jobs marked remote or work from home. Most recent first. Use real knowledge, don't guess.";
+  for (let i = 0; i < todo.length; i += 20) {
+    const batch = todo.slice(i, i + 20);
+    let res: any = null;
+    try { res = await askAI(sys, batch.map((x, n) => `${n} | ${clip(x.text, 1200)}`).join("\n"), 3000); } catch (e) { areaErrors.push("recent jobs: " + String((e as Error)?.message || e).slice(0, 160)); }
+    for (const r of Array.isArray(res?.people) ? res.people : []) { const it = batch[Number(r?.i)]; if (it) out.set(it.key, cleanRecentJobs(r.jobs)); }
+    if (res) for (const it of batch) if (!out.has(it.key)) out.set(it.key, []);
+  }
+  return out;
+}
+
+// Where their recent jobs put them, against the job's office / area: 'near' (a recent job is in the
+// area: the possible location), 'far' (every recent job with a place is clearly too far), or 'unknown'.
+export async function placeFromJobs(admin: any, job: any, area: any, jobs: RecentJob[]): Promise<{ status: "near" | "far" | "unknown"; place: string; company: string; basis: string; note: string }> {
+  const withPlace = jobs.filter((x) => x.place);
+  if (!withPlace.length) return { status: "unknown", place: "", company: "", basis: "", note: "" };
+  const map = await checkPlaces(admin, job, area, withPlace.map((x) => x.place));
+  const near = withPlace.find((x) => answerFor(map, x.place)?.inArea === "yes");
+  if (near) return { status: "near", place: near.place, company: near.company, basis: near.basis, note: "" };
+  const far = withPlace.filter((x) => answerFor(map, x.place)?.inArea === "no");
+  if (far.length === withPlace.length) return { status: "far", place: far[0].place, company: far[0].company, basis: far[0].basis, note: answerFor(map, far[0].place)?.note || "" };
+  return { status: "unknown", place: "", company: "", basis: "", note: "" };
+}
+// The words shown to the recruiter for a possible location.
+export const possibleText = (pl: { place: string; company: string; basis: string }) =>
+  `Possible location ${pl.place} (from their job${pl.company ? " at " + pl.company : ""}${pl.basis === "employer" ? ", where that employer is based" : ""}): double check where they live`;

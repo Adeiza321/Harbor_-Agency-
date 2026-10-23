@@ -20,7 +20,7 @@ import { jobBrief, searchArea } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fitsToPercent, type Settings } from "./common.ts";
 import { broadPlace, judge, reviewHead, REVIEW_SYSTEM, type Judged } from "./xray_rules.ts";
-import { splitByArea } from "./area_check.ts";
+import { cleanRecentJobs, placeFromJobs, possibleText, splitByArea } from "./area_check.ts";
 import { findGithubEmails } from "./emails.ts";
 import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
 
@@ -93,6 +93,8 @@ const MAX_RESUMES = 4;           // a step that died (stale) is picked up again 
 // day once its AI spend reaches the daily budget (XRAY_DAILY_USD secret, default $2), so a stuck or
 // repeated search can never drain the credits. These apply to recruiters' and automatic searches
 // only: a search an Admin or Rec Ops starts has neither (marked staff: true on the job's xray).
+// The lowest fit X-ray brings in (the shared rules drop under 40; 40-59 was mostly skipped by hand).
+const XRAY_MIN_FIT = 60;
 const MAX_AI_CALLS_PER_RUN = 12;
 const XRAY_DAILY_USD = () => Math.max(0, Number(Deno.env.get("XRAY_DAILY_USD") || 2));
 async function xraySpentToday(admin: any) {
@@ -503,20 +505,52 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
   //    the xray-recheck function): company pages, people at the client now, people outside the role's
   //    country or commute area, and anyone a core must-have clearly rules out are dropped; someone
   //    running their own practice in the same field is kept with a note to check.
-  const judged = list
-    .map((x) => { const r = byKey.get(x.key); return { x, r, j: r ? judge(job, x, r) : null }; })
-    .filter((k): k is { x: Person; r: any; j: Judged } => !!k.j && k.j.keep);
-  // Then the place itself, checked against the office in code (the AI review often leaves a
-  // location it can see as "unknown"): anyone clearly too far is dropped, vague places get a note.
-  let tooFar = 0;
-  let placed = judged;
+  // Stricter than the shared rules: only people worth a recruiter's time are brought in. A fit under
+  // XRAY_MIN_FIT was mostly skipped by hand later, so they're left out here.
+  const all = list.map((x) => { const r = byKey.get(x.key); return { x, r, j: r ? judge(job, x, r) : null }; })
+    .filter((k): k is { x: Person; r: any; j: Judged } => !!k.j);
+  const judged = all.filter((k) => k.j.keep && k.j.fit >= XRAY_MIN_FIT);
+  // Left out only for where their profile says they are (another country, or too far): their recent
+  // jobs get a say below, like everyone else whose profile place is too far.
+  const LOC_ONLY = /^(Based in |Outside the commute area)/;
+  const placeOnly = all.filter((k) => !k.j.keep && k.j.reasons.length === 1 && LOC_ONLY.test(k.j.reasons[0]) && Number(k.r?.fit) >= XRAY_MIN_FIT && cleanRecentJobs(k.r?.recent_jobs).some((x) => x.place));
+  // Then the place, checked against the office in code (the AI review often leaves a location it
+  // can see as "unknown"), with their two most recent non-remote jobs as a second source:
+  //   - profile place in the area                                   -> kept
+  //   - profile place too far, but a recent job is in the area      -> kept, possible location to double check
+  //   - profile place too far, recent jobs far or unknown           -> left out
+  //   - no / vague place, a recent job in the area                  -> kept, possible location to double check
+  //   - no / vague place, recent jobs clearly far                   -> left out
+  //   - no / vague place, nothing to go on                          -> kept only when a strong fit, to check
+  let tooFar = 0, vagueWeak = 0;
+  let placed: any[] = judged;
   try {
     const { kept: ok, dropped } = await splitByArea(admin, job, area, judged, (k) => k.j.location);
-    tooFar = dropped.length;
-    placed = ok.map(({ p, note, hold }) => (note ? { ...p, hold, j: { ...p.j, gaps: [note, ...p.j.gaps].slice(0, 5) } } : p));
+    const out: any[] = [];
+    for (const { p } of dropped) {
+      const pl = await placeFromJobs(admin, job, area, cleanRecentJobs(p.r?.recent_jobs));
+      if (pl.status === "near") out.push({ ...p, hold: possibleText(pl) + " (their profile says " + p.j.location + ")", possible: pl, j: { ...p.j, gaps: [possibleText(pl), ...p.j.gaps].slice(0, 5) } });
+      else tooFar++;
+    }
+    for (const p of placeOnly) {
+      const pl = await placeFromJobs(admin, job, area, cleanRecentJobs(p.r?.recent_jobs));
+      if (pl.status !== "near") continue;
+      const fit = Math.max(0, Math.min(100, Math.round(Number(p.r.fit) || 0)));
+      out.push({ ...p, hold: possibleText(pl) + " (their profile says " + (p.j.location || "somewhere else") + ")", possible: pl,
+        j: { ...p.j, keep: true, fit, verdict: "Possible fit", gaps: [possibleText(pl), ...p.j.gaps].slice(0, 5) } });
+    }
+    for (const { p, note, hold } of ok) {
+      if (!hold) { out.push(note ? { ...p, j: { ...p.j, gaps: [note, ...p.j.gaps].slice(0, 5) } } : p); continue; }
+      const pl = await placeFromJobs(admin, job, area, cleanRecentJobs(p.r?.recent_jobs));
+      if (pl.status === "near") out.push({ ...p, hold: possibleText(pl), possible: pl, j: { ...p.j, gaps: [possibleText(pl), ...p.j.gaps].slice(0, 5) } });
+      else if (pl.status === "far") tooFar++;
+      else if (p.j.fit >= 70) out.push({ ...p, hold, j: { ...p.j, gaps: [note, ...p.j.gaps].slice(0, 5) } });
+      else vagueWeak++;
+    }
+    placed = out;
   } catch (e) { errors.push("area check: " + errMsg(e).slice(0, 160)); }
   const kept = placed.sort((a, b) => b.j.fit - a.j.fit).slice(0, perJob);
-  const rows = kept.map(({ x, r, j, hold }: any) => {
+  const rows = kept.map(({ x, r, j, hold, possible }: any) => {
     const name = clip(r.name, 120) || clip(x.title.split(/\s[-–|·]\s/)[0], 120);
     const parts = name.split(/\s+/);
     return {
@@ -526,7 +560,7 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
       linkedin_url: x.site === "linkedin" ? x.key : null,
       fit: j.fit, verdict: j.verdict,
       fit_reason: clip(r.overview, 300) || null, status: "found", sourced_by: by,
-      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: j.clientHistory, location_source: j.locationSource, location_hold: hold || null, remote_worker: j.remote, own_practice: j.ownPractice, overview: clip(r.overview, 400), checklist: j.checklist, gaps: j.gaps, snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
+      data: { xray: true, profile_url: x.key, site: x.site, engine: x.engine, client_history: j.clientHistory, location_source: j.locationSource, location_hold: hold || null, recent_jobs: cleanRecentJobs(r.recent_jobs), ...(possible ? { possible_location: { place: possible.place, company: possible.company, basis: possible.basis } } : {}), remote_worker: j.remote, own_practice: j.ownPractice, overview: clip(r.overview, 400), checklist: j.checklist, gaps: j.gaps, snippet: clip(x.snippet, 500), result_title: clip(x.title, 200), query: x.query },
     };
   });
   let inserted: any[] = [];
@@ -550,11 +584,11 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
   for (const r of rows) { const k = r.source + ":" + String((r.data as any)?.engine || ""); byEngine[k] = (byEngine[k] || 0) + 1; }
   const usage = await searchUsage(admin).catch(() => ({}));
   await setXray(admin, jobId, {
-    state: "done", found: inserted.length, reviewed: byKey.size, tooFar, searched, used, bySite, byEngine, ghEmails, technical: !!cp.technical, checklist: cp.checklist || [],
+    state: "done", found: inserted.length, reviewed: byKey.size, tooFar, vagueWeak, searched, used, bySite, byEngine, ghEmails, technical: !!cp.technical, checklist: cp.checklist || [],
     queries: cp.queries || [], usage, by, ...(guide ? { guide } : {}), ...(errors.length ? { warnings: friendlyList(errors) } : {}),
     ...(wrapUp ? { early: `${wrapUp} Kept the best of the ${byKey.size} of ${list.length} profiles it had reviewed.` } : {}),
   });
   await finishRequest(admin, jobId, by, { found: inserted.length });
   await startNextRequest(admin, jobId, s).catch(() => false);
-  return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches${tooFar ? `; ${tooFar} left out for being too far from the office` : ""}).` };
+  return { ok: true, found: inserted.length, reviewed: byKey.size, searched, message: `X-ray found ${inserted.length} ${inserted.length === 1 ? "person" : "people"} worth a look (reviewed ${byKey.size} from ${searched} free searches${tooFar ? `; ${tooFar} left out for being too far from the office` : ""}${vagueWeak ? `; ${vagueWeak} left out with no location and only a possible fit` : ""}).` };
 }
