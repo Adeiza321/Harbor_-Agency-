@@ -6,7 +6,8 @@
 --   agency_settings.recruiter_agreement  { title, body, version, published, updatedAt, updatedBy }
 --                                        body placeholders: {{agency}} {{recruiter}} {{date}}
 --   recruiter_agreements                 one row per signature: the text as signed (placeholders
---                                        filled in), the typed name, when, and from which IP
+--                                        filled in), their name, the signature picture they
+--                                        uploaded, when (the timestamp shown under it), and from which IP
 --   profiles.agreement_signed_at         set by sign_recruiter_agreement only
 alter table public.agency_settings add column if not exists recruiter_agreement jsonb;
 alter table public.profiles add column if not exists agreement_signed_at timestamptz;
@@ -18,6 +19,7 @@ create table if not exists public.recruiter_agreements (
   title text not null,
   body text not null,
   signed_name text not null,
+  signature text not null check (signature ~ '^data:image/(png|jpeg);base64,' and length(signature) < 600000),
   signed_at timestamptz not null default now(),
   ip text,
   user_agent text
@@ -48,7 +50,7 @@ end $$;
 revoke all on function public.protect_profile_privileged_fields() from public, anon, authenticated;
 
 -- A recruiter signs the published agreement (the version they read; refused if it changed meanwhile).
-create or replace function public.sign_recruiter_agreement(p_name text, p_version int)
+create or replace function public.sign_recruiter_agreement(p_name text, p_version int, p_signature text)
 returns jsonb language plpgsql security definer set search_path = public as $$
 declare me record; a jsonb; agency text; body text; ip text; ua text; hdr json;
 begin
@@ -59,12 +61,13 @@ begin
   if a is null or coalesce((a->>'published')::boolean, false) = false then raise exception 'There is no agreement to sign yet'; end if;
   if coalesce((a->>'version')::int, 1) <> p_version then raise exception 'The agreement was just updated. Read the new version, then sign'; end if;
   if length(trim(coalesce(p_name, ''))) < 3 then raise exception 'Type your full name to sign'; end if;
+  if coalesce(p_signature, '') !~ '^data:image/(png|jpeg);base64,' or length(p_signature) >= 600000 then raise exception 'Upload a picture of your signature (PNG or JPG) to sign'; end if;
   body := replace(replace(replace(coalesce(a->>'body', ''), '{{agency}}', agency), '{{recruiter}}', trim(p_name)), '{{date}}', to_char(now(), 'FMDD FMMonth YYYY'));
   begin hdr := current_setting('request.headers', true)::json; exception when others then hdr := null; end;
   ip := left(split_part(coalesce(hdr->>'x-forwarded-for', hdr->>'cf-connecting-ip', ''), ',', 1), 80);
   ua := left(coalesce(hdr->>'user-agent', ''), 300);
-  insert into recruiter_agreements (user_id, version, title, body, signed_name, ip, user_agent)
-    values (me.id, coalesce((a->>'version')::int, 1), coalesce(nullif(a->>'title', ''), 'Recruiter agreement'), body, left(trim(p_name), 120), nullif(ip, ''), nullif(ua, ''));
+  insert into recruiter_agreements (user_id, version, title, body, signed_name, signature, ip, user_agent)
+    values (me.id, coalesce((a->>'version')::int, 1), coalesce(nullif(a->>'title', ''), 'Recruiter agreement'), body, left(trim(p_name), 120), p_signature, nullif(ip, ''), nullif(ua, ''));
   perform set_config('pronext.trusted', '1', true);
   update profiles set agreement_signed_at = now() where id = me.id;
   perform set_config('pronext.trusted', '', true);
@@ -72,13 +75,13 @@ begin
     values (me.id, 'signed', 'recruiter_agreement', me.id::text, 'Version ' || coalesce(a->>'version', '1') || ' as ' || left(trim(p_name), 120));
   return jsonb_build_object('ok', true, 'signedAt', now());
 end $$;
-revoke all on function public.sign_recruiter_agreement(text, int) from public, anon;
-grant execute on function public.sign_recruiter_agreement(text, int) to authenticated;
+revoke all on function public.sign_recruiter_agreement(text, int, text) from public, anon;
+grant execute on function public.sign_recruiter_agreement(text, int, text) to authenticated;
 
 -- A starting draft, unpublished, for the Agency to edit before anyone is asked to sign.
 update public.agency_settings
    set recruiter_agreement = jsonb_build_object('title', 'Independent Recruiter Agreement', 'version', 1, 'published', false,
-         'body', $draft$This Independent Recruiter Agreement (the "Agreement") is made between {{agency}} ("the Agency") and {{recruiter}} ("the Recruiter"), and takes effect on {{date}}, the date the Recruiter signs it in ProNext.
+         'body', $draft$This Independent Recruiter Agreement is made between Pronext Outsourcing Agency and {{recruiter}}. It takes effect on {{date}}, the day {{recruiter}} signs it in ProNext.
 
 ## 1. Relationship
 1.1 The Recruiter is an independent contractor, not an employee, partner or agent of the Agency. Nothing in this Agreement creates employment.
@@ -121,8 +124,8 @@ update public.agency_settings
 
 ## 10. General
 10.1 This Agreement, together with the role details shown in ProNext, is the whole agreement between the parties about this work. The Agency may update it; any update applies from when the Recruiter is told about it.
-10.2 This Agreement is governed by the laws of [COUNTRY OR STATE: Agency to fill in before publishing].
+10.2 This Agreement is governed by the laws of Lagos State, Nigeria.
 
-By signing below, the Recruiter confirms they have read and agree to this Agreement.
+By signing below, the Recruiter confirms they have read and agree to this Agreement. The Recruiter signs in ProNext by uploading their signature, which ProNext stamps with the date and time of signing.
 $draft$, 'updatedAt', now())
  where recruiter_agreement is null;

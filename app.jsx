@@ -1985,60 +1985,130 @@ const NOTIF_EVENTS = [
 const agreementToday = () => new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 const fillAgreement = (body, agency, name, date) => String(body || "").split("{{agency}}").join(agency || "the Agency").split("{{recruiter}}").join(name || "the Recruiter").split("{{date}}").join(date || agreementToday());
 const agencyLegalName = (S) => ((S.settings && S.settings.company && S.settings.company.legalName) || (S.settings && S.settings.name) || "ProNext");
+// The agreement's own type: Source Serif 4 for the text, the brand's Manrope for headings.
+const DOC_FONT = { fontFamily: '"Source Serif 4", Georgia, "Times New Roman", serif' };
 function AgreementText({ body }) {
   return (
-    <div className="text-sm" style={{ color: C.ink, lineHeight: 1.65 }}>
-      {String(body || "").split("\n").map((l, i) => /^##\s/.test(l) ? <div key={i} className="font-semibold mt-4 mb-1" style={{ ...SERIF, fontSize: 16 }}>{l.replace(/^##\s+/, "")}</div>
-        : l.trim() ? <p key={i} className="mb-2">{l}</p> : null)}
+    <div style={{ ...DOC_FONT, color: C.ink, fontSize: 15.5, lineHeight: 1.72 }}>
+      {String(body || "").split("\n").map((l, i) => /^##\s/.test(l)
+        ? <div key={i} className="mt-6 mb-2 pb-1" style={{ ...SERIF, fontSize: 15, color: C.em, borderBottom: `1px solid ${C.line}` }}>{l.replace(/^##\s+/, "")}</div>
+        : l.trim() ? <p key={i} className="mb-2.5">{l}</p> : null)}
     </div>
   );
 }
-// A signed copy, printed (the browser's print dialog also saves it as a PDF).
+// When it was signed, as the signer's clock reads it, with the time zone named.
+const signedStamp = (t) => { try { return new Date(t).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }); } catch (e) { return new Date(t).toString(); } };
+// The signature block: their uploaded signature over the line, their name, and the timestamp.
+function SignatureBlock({ src, name, at, empty }) {
+  return (
+    <div>
+      <div className="rounded-xl flex items-center justify-center overflow-hidden" style={{ height: 120, background: "#fff", border: src ? `1px solid ${C.line}` : `2px dashed ${C.line}` }}>
+        {src ? <img src={src} alt={"Signature of " + (name || "the recruiter")} style={{ maxHeight: 108, maxWidth: "92%", objectFit: "contain" }} /> : empty}
+      </div>
+      <div className="mt-2 pt-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1" style={{ borderTop: `1.5px solid ${C.ink}` }}>
+        <span style={{ ...DOC_FONT, fontSize: 15 }}>{name || "Your name"}</span>
+        <span className="text-xs" style={{ color: C.ink2 }}><Clock size={12} className="inline -mt-0.5 mr-1" />{at ? "Signed " + signedStamp(at) : "Date and time are stamped when you sign"}</span>
+      </div>
+    </div>
+  );
+}
+// A picture of their signature, made small enough to keep: at most 900 x 300 px, PNG (JPEG if that's still large).
+function signatureFromFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\/(png|jpe?g|webp|heic|heif)$/i.test(file.type || "")) { reject(new Error("Upload a picture of your signature: a PNG or JPG.")); return; }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 900 / img.width, 300 / img.height);
+      const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      let out = c.toDataURL("image/png");
+      if (out.length > 450000) out = c.toDataURL("image/jpeg", 0.85);
+      resolve(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That picture couldn't be opened. Try a PNG or JPG.")); };
+    img.src = url;
+  });
+}
+// A signed copy, printed on the agency's letterhead (the print dialog also saves it as a PDF).
 function printAgreement(a) {
-  const esc = (t) => String(t || "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const esc = (t) => String(t || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const o = window.location.origin;
   const body = String(a.body || "").split("\n").map((l) => /^##\s/.test(l) ? "<h3>" + esc(l.replace(/^##\s+/, "")) + "</h3>" : l.trim() ? "<p>" + esc(l) + "</p>" : "").join("");
-  const html = "<!doctype html><html><head><meta charset='utf-8'><title>" + esc(a.title) + "</title><style>body{font:14px/1.6 Georgia,serif;max-width:720px;margin:40px auto;color:#14201B}h1{font-size:24px}h3{font-size:16px;margin:20px 0 4px}.sig{margin-top:32px;padding-top:12px;border-top:1px solid #ccc;font-family:Arial,sans-serif;font-size:13px}</style></head><body>" +
-    "<h1>" + esc(a.title) + "</h1>" + body + "<div class='sig'>Signed by <b>" + esc(a.signed_name) + "</b> on " + esc(new Date(a.signed_at).toLocaleString("en-GB", { dateStyle: "long", timeStyle: "short" })) + " (version " + esc(a.version) + ")" + (a.ip ? ", from IP " + esc(a.ip) : "") + "</div></body></html>";
+  const html = "<!doctype html><html><head><meta charset='utf-8'><title>" + esc(a.title) + " - " + esc(a.signed_name) + "</title><style>" +
+    "@font-face{font-family:'Source Serif 4';font-weight:200 900;src:url('" + o + "/assets/fonts/source-serif-4-latin-wght-normal.woff2') format('woff2')}" +
+    "@font-face{font-family:'Manrope';font-weight:200 1000;src:url('" + o + "/assets/fonts/manrope-latin-wght-normal.woff2') format('woff2')}" +
+    "@page{size:A4;margin:16mm 18mm}body{font:11.5pt/1.65 'Source Serif 4',Georgia,serif;color:#14201B;margin:0}" +
+    ".head{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:3px solid #1F6F54;margin-bottom:22px}.head img{height:30px}.head span{font:600 9pt Manrope,Arial,sans-serif;letter-spacing:.12em;color:#1F6F54;text-transform:uppercase}" +
+    "h1{font:800 21pt/1.2 Manrope,Arial,sans-serif;letter-spacing:-.02em;margin:0 0 14px}h3{font:700 11.5pt Manrope,Arial,sans-serif;color:#1F6F54;margin:18px 0 4px;padding-bottom:3px;border-bottom:1px solid #E6E1D6}p{margin:0 0 7px}" +
+    ".sig{margin-top:30px;page-break-inside:avoid;width:62%}.sig img{max-height:90px;max-width:100%;display:block}.sig .line{border-top:1.5px solid #14201B;margin-top:4px;padding-top:5px;font-size:11pt}.sig .meta{font:8.5pt/1.5 Manrope,Arial,sans-serif;color:#56605A;margin-top:3px}" +
+    "</style></head><body><div class='head'><img src='" + o + LOGO_SRC + "' alt='ProNext'><span>Recruiter agreement</span></div>" +
+    "<h1>" + esc(a.title) + "</h1>" + body +
+    "<div class='sig'>" + (a.signature ? "<img src='" + esc(a.signature) + "' alt='Signature'>" : "") + "<div class='line'>" + esc(a.signed_name) + "</div>" +
+    "<div class='meta'>Signed " + esc(signedStamp(a.signed_at)) + " &middot; version " + esc(a.version) + (a.ip ? " &middot; IP " + esc(a.ip) : "") + "</div></div></body></html>";
   const f = document.createElement("iframe");
   f.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
   document.body.appendChild(f);
   f.contentDocument.open(); f.contentDocument.write(html); f.contentDocument.close();
-  setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { /* fine */ } setTimeout(() => f.remove(), 1500); }, 250);
+  setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { /* fine */ } setTimeout(() => f.remove(), 2000); }, 600);
 }
-// Shown to a recruiter who hasn't signed the published agreement, before anything else in ProNext.
+// The pop-up a recruiter who hasn't signed the published agreement sees over ProNext: the agreement
+// on the agency's letterhead, then their signature (a picture they upload), stamped with the date
+// and time when they sign. It can't be closed; ProNext behind it can't be used until they sign.
 function AgreementGate({ S, agreement, onSigned, onSignOut }) {
   const [name, setName] = useState(S.me.name || "");
+  const [sig, setSig] = useState("");
   const [agree, setAgree] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const fileRef = React.useRef(null);
   const text = fillAgreement(agreement.body, agencyLegalName(S), name.trim() || S.me.name);
+  const pick = (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return; setErr(""); signatureFromFile(f).then(setSig).catch((x) => setErr(x.message)); };
   const sign = () => {
-    if (name.trim().length < 3) { setErr("Type your full name to sign."); return; }
+    if (name.trim().length < 3) { setErr("Type your full name."); return; }
+    if (!sig) { setErr("Upload a picture of your signature in the signature space."); return; }
     if (!agree) { setErr("Tick the box to confirm you've read and agree to the agreement."); return; }
     setBusy(true); setErr("");
-    S.signAgreement(name.trim(), agreement.version || 1).then(() => onSigned && onSigned()).catch((e) => setErr(e.message || "That didn't go through. Try again.")).finally(() => setBusy(false));
+    S.signAgreement(name.trim(), agreement.version || 1, sig).then(() => onSigned && onSigned()).catch((e) => setErr(e.message || "That didn't go through. Try again.")).finally(() => setBusy(false));
   };
   return (
-    <div className="min-h-screen p-4 md:p-8" style={{ background: C.canvas, color: C.ink }}>
-      <div className="max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-6"><BrandLogo height={26} chip /><button onClick={onSignOut} className="text-sm" style={{ color: C.ink2 }}>Sign out</button></div>
-        <div className="text-xs font-semibold tracking-widest" style={{ color: C.ink3 }}>BEFORE YOU START</div>
-        <h1 className="text-3xl md:text-4xl mt-1" style={{ ...SERIF }}>{agreement.title || "Recruiter agreement"}</h1>
-        <div className="text-sm mt-2 mb-5" style={{ color: C.ink2 }}>Please read the agreement between you and {agencyLegalName(S)}, then sign it to open ProNext. A copy stays in My profile.</div>
-        <Card>
-          <div className="overflow-y-auto pr-2" style={{ maxHeight: "55vh" }} tabIndex={0} aria-label="Agreement text"><AgreementText body={text} /></div>
-        </Card>
-        <Card>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }} htmlFor="agree-name">Type your full name to sign</label>
-          <input id="agree-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 outline-none" style={{ borderColor: C.line, background: C.soft, ...SERIF, fontSize: 20 }} />
-          <label className="flex items-start gap-2.5 mt-4 text-sm cursor-pointer">
-            <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-1" />
-            <span>I've read the {agreement.title || "recruiter agreement"} and agree to it. Typing my name above is my signature.</span>
-          </label>
-          {err && <div className="text-sm mt-3" style={{ color: C.dangerFg }}>{err}</div>}
-          <Btn kind="primary" full className="mt-4" onClick={sign} disabled={busy}>{busy ? <>Signing <InlineDots color="#fff" /></> : "Sign and continue"}</Btn>
-          <div className="text-xs mt-2" style={{ color: C.ink3 }}>We record your typed name, the date and time, and your IP address with the signed copy.</div>
-        </Card>
+    <div className="fixed inset-0 flex items-center justify-center p-0 md:p-6" style={{ zIndex: 90 }} role="dialog" aria-modal="true" aria-labelledby="agree-title">
+      <div className="absolute inset-0" style={{ background: "rgba(18,36,29,0.62)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)" }} />
+      <div className="relative w-full md:max-w-3xl flex flex-col md:rounded-2xl overflow-hidden" style={{ background: C.card, height: "100%", maxHeight: "100vh", boxShadow: "0 24px 64px rgba(0,0,0,.35)" }}>
+        <div className="px-5 md:px-7 pt-5 pb-4 shrink-0" style={{ background: C.side }}>
+          <div className="flex items-center justify-between gap-3">
+            <BrandLogo height={24} chip />
+            <button onClick={onSignOut} className="text-xs" style={{ color: "#A9BBB1" }}>Sign out</button>
+          </div>
+          <div className="text-[11px] font-semibold tracking-widest mt-4" style={{ color: C.lime }}>BEFORE YOU START</div>
+          <h1 id="agree-title" className="text-2xl md:text-3xl text-white mt-0.5" style={{ ...SERIF }}>{agreement.title || "Recruiter agreement"}</h1>
+          <div className="text-sm mt-1" style={{ color: "#C9D6CF" }}>Read the agreement with {agencyLegalName(S)}, then sign below with a picture of your signature.</div>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 md:px-8 py-5" tabIndex={0} aria-label="Agreement text">
+          <AgreementText body={text} />
+          <div className="mt-6 rounded-2xl p-4 md:p-5" style={{ background: C.canvas }}>
+            <div className="text-[11px] font-semibold tracking-widest mb-3" style={{ color: C.ink3 }}>SIGNED BY THE RECRUITER</div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }} htmlFor="agree-name">Full name</label>
+            <input id="agree-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" className="w-full mt-1 mb-3 rounded-lg border px-3.5 py-2.5 outline-none" style={{ borderColor: C.line, background: C.card, ...DOC_FONT, fontSize: 16 }} />
+            <div className="text-xs font-medium mb-1" style={{ color: C.ink2 }}>Signature</div>
+            <SignatureBlock src={sig} name={name.trim()} empty={
+              <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="flex flex-col items-center gap-1.5 text-sm" style={{ color: C.em }}>
+                <Upload size={20} /><span className="font-medium">Upload your signature</span><span className="text-xs" style={{ color: C.ink3 }}>A photo or scan of it on white paper (PNG or JPG)</span>
+              </button>} />
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,image/heic" capture="environment" className="hidden" onChange={pick} />
+            {sig && <button type="button" onClick={() => fileRef.current && fileRef.current.click()} className="text-xs font-medium mt-2" style={{ color: C.em }}>Change signature</button>}
+            <label className="flex items-start gap-2.5 mt-4 text-sm cursor-pointer">
+              <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} className="mt-1" />
+              <span>I've read the {agreement.title || "recruiter agreement"} and agree to it.</span>
+            </label>
+          </div>
+        </div>
+        <div className="shrink-0 px-5 md:px-8 py-4" style={{ borderTop: `1px solid ${C.line}`, background: C.card }}>
+          {err && <div className="text-sm mb-2" style={{ color: C.dangerFg }}>{err}</div>}
+          <Btn kind="primary" full onClick={sign} disabled={busy}>{busy ? <>Signing <InlineDots color="#fff" /></> : "Sign the agreement"}</Btn>
+          <div className="text-xs mt-2 text-center" style={{ color: C.ink3 }}>Your signature is stamped with the date and time you sign. The signed copy, your name and your IP address are kept with your account.</div>
+        </div>
       </div>
     </div>
   );
@@ -2052,11 +2122,10 @@ function MyAgreementCard({ S }) {
   if (!a) return null;
   return (
     <Card>
-      <SectionTitle title="Your recruiter agreement" sub={"Signed as " + a.signed_name + " on " + fdate(a.signed_at) + "."} size="text-xl" />
+      <SectionTitle title="Your recruiter agreement" sub={"Signed " + signedStamp(a.signed_at) + "."} size="text-xl" />
       <div className="flex gap-2 mt-3"><Btn onClick={() => setOpen(true)}>View</Btn><Btn onClick={() => printAgreement(a)}>Print or save as PDF</Btn></div>
-      <Modal open={open} onClose={() => setOpen(false)} title={a.title}>
-        <div className="overflow-y-auto pr-2" style={{ maxHeight: "60vh" }}><AgreementText body={a.body} /></div>
-        <div className="text-xs mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}`, color: C.ink3 }}>Signed by {a.signed_name}, {new Date(a.signed_at).toLocaleString("en-GB", { dateStyle: "long", timeStyle: "short" })} (version {a.version})</div>
+      <Modal open={open} onClose={() => setOpen(false)} title={a.title} wide>
+        <div className="overflow-y-auto pr-2" style={{ maxHeight: "60vh" }}><AgreementText body={a.body} /><div className="mt-5"><SignatureBlock src={a.signature} name={a.signed_name} at={a.signed_at} /></div></div>
       </Modal>
     </Card>
   );
@@ -2114,20 +2183,19 @@ function AgreementSettingsTab({ S, toast }) {
           {recruiters.map((u, i) => { const a = latest(u.id); return (
             <div key={u.id} className="flex items-center gap-3 py-2.5" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
               <UserAvatar u={u} size={30} tone="neutral" />
-              <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{u.name}</div><div className="text-xs" style={{ color: C.ink3 }}>{a ? "Signed as " + a.signed_name + " on " + fdate(a.signed_at) + " (version " + a.version + ")" : sigs === null ? "Checking\u2026" : "Not signed yet"}</div></div>
+              <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{u.name}</div><div className="text-xs" style={{ color: C.ink3 }}>{a ? "Signed " + signedStamp(a.signed_at) + " (version " + a.version + ")" : sigs === null ? "Checking\u2026" : "Not signed yet"}</div></div>
               {a ? <button onClick={() => setView(a)} className="text-xs font-medium" style={{ color: C.em }}>View</button> : <Pill tone="warn">Not signed</Pill>}
             </div>
           ); })}
         </div>
       </Card>
-      <Modal open={preview} onClose={() => setPreview(false)} title={title || "Recruiter agreement"}>
+      <Modal open={preview} onClose={() => setPreview(false)} title={title || "Recruiter agreement"} wide>
         <div className="text-xs mb-3" style={{ color: C.ink3 }}>As a recruiter called "Ada Example" would see it today.</div>
         <div className="overflow-y-auto pr-2" style={{ maxHeight: "60vh" }}><AgreementText body={fillAgreement(body, agencyLegalName(S), "Ada Example")} /></div>
       </Modal>
-      <Modal open={!!view} onClose={() => setView(null)} title={view ? view.title : ""}>
+      <Modal open={!!view} onClose={() => setView(null)} title={view ? view.title : ""} wide>
         {view && <>
-          <div className="overflow-y-auto pr-2" style={{ maxHeight: "60vh" }}><AgreementText body={view.body} /></div>
-          <div className="text-xs mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}`, color: C.ink3 }}>Signed by {view.signed_name}, {new Date(view.signed_at).toLocaleString("en-GB", { dateStyle: "long", timeStyle: "short" })} (version {view.version}){view.ip ? ", IP " + view.ip : ""}</div>
+          <div className="overflow-y-auto pr-2" style={{ maxHeight: "60vh" }}><AgreementText body={view.body} /><div className="mt-5"><SignatureBlock src={view.signature} name={view.signed_name} at={view.signed_at} /></div><div className="text-xs mt-2" style={{ color: C.ink3 }}>Version {view.version}{view.ip ? " · IP " + view.ip : ""}</div></div>
           <Btn className="mt-3" onClick={() => printAgreement(view)}>Print or save as PDF</Btn>
         </>}
       </Modal>
@@ -15240,7 +15308,7 @@ export default function App() {
     },
     // Recruiter agreement: a recruiter signs the published version (sign_recruiter_agreement); Admins
     // edit and publish it (agency_settings.recruiter_agreement); signed copies in recruiter_agreements.
-    signAgreement: (name, version) => sbFetch("/rest/v1/rpc/sign_recruiter_agreement", { method: "POST", token: session.token, body: { p_name: name, p_version: version } })
+    signAgreement: (name, version, signature) => sbFetch("/rest/v1/rpc/sign_recruiter_agreement", { method: "POST", token: session.token, body: { p_name: name, p_version: version, p_signature: signature } })
       .then((j) => { setMe((m) => ({ ...m, agreementSignedAt: (j && j.signedAt) || new Date().toISOString() })); return j; }),
     signedAgreements: (userId) => sbFetch("/rest/v1/recruiter_agreements?select=*&order=signed_at.desc" + (userId ? "&user_id=eq." + userId : ""), { token: session.token }),
     saveAgreement: (a) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { recruiter_agreement: a } }).then(() => logAudit("updated", "agency_settings", "1", "Recruiter agreement" + (a.published ? " (published)" : " (draft)"))),
@@ -15597,13 +15665,14 @@ export default function App() {
   else if (page === "myProfile") content = <MyProfilePage key={profileTab} initialTab={profileTab} S={S} toast={toast} onBack={() => setPage("overview")} />;
   else content = <OverviewRecOps S={S} />;
 
-  // Recruiters sign the published recruiter agreement before anything else.
+  // Recruiters sign the published recruiter agreement before anything else: a pop-up over ProNext,
+  // which can't be used behind it (inert) until they sign.
   const agreement = data.settings && data.settings.recruiterAgreement;
-  if (role === "recruiter" && agreement && agreement.published && !me.agreementSignedAt)
-    return <AgreementGate S={S} agreement={agreement} onSigned={() => toast("Signed. Welcome to ProNext! Your copy is in My profile.")} onSignOut={signOut} />;
+  const needAgreement = !!(role === "recruiter" && agreement && agreement.published && !me.agreementSignedAt);
 
-  return (
-    <div className="flex min-h-screen" style={{ background: C.canvas, color: C.ink }}>
+  return (<>
+    {needAgreement && <AgreementGate S={S} agreement={agreement} onSigned={() => toast("Signed. Welcome to ProNext! Your copy is in My profile.")} onSignOut={signOut} />}
+    <div className="flex min-h-screen" style={{ background: C.canvas, color: C.ink }} {...(needAgreement ? { inert: "", "aria-hidden": "true" } : {})}>
       <TopProgressBar show={refreshing} />
       <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
       <div className="flex-1 min-w-0">
@@ -15611,12 +15680,12 @@ export default function App() {
         {data.aiDownSince && role === "admin" && <AiPausedBanner since={data.aiDownSince} admin />}
         {role === "recruiter" && page !== "myProfile" && <TwoFactorNudge S={S} />}
         {rerouteAsk && <RerouteAsk ask={rerouteAsk} onDone={(v) => { rerouteAsk.resolve(v); setRerouteAsk(null); }} />}
-        {tourOpen && <ProductTour role={role} first={myMe.first} onClose={() => {
+        {tourOpen && !needAgreement && <ProductTour role={role} first={myMe.first} onClose={() => {
           setTourOpen(false);
           try { localStorage.setItem("pn.tourDone." + myMe.id, "1"); } catch (e) { /* fine */ }
           if (!me.tourDoneAt) { const at = new Date().toISOString(); setMe((m) => (m ? { ...m, tourDoneAt: at } : m)); sbFetch("/rest/v1/profiles?id=eq." + myMe.id, { method: "PATCH", token: session.token, body: { tour_done_at: at } }).catch(() => {}); }
         }} />}
-        {role === "recruiter" && !tourOpen && <SetupAccountModal S={S} toast={toast} />}
+        {role === "recruiter" && !tourOpen && !needAgreement && <SetupAccountModal S={S} toast={toast} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
       <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
@@ -15634,5 +15703,5 @@ export default function App() {
         <div className="flex gap-2 justify-end"><Btn onClick={() => signOut()}>Sign out now</Btn><Btn kind="primary" onClick={() => { idleStore.touch(Date.now()); setIdleLeft(null); }}>Stay signed in</Btn></div>
       </Modal>
     </div>
-  );
+  </>);
 }
