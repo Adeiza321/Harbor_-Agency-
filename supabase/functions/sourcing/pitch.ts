@@ -130,7 +130,7 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
     "bullets: 3 selling points for the hiring manager, each under 15 words, anonymous. " +
     "requirements: how THIS ROLE meets what the CANDIDATE is looking for, one item each for: 'Role', 'Level', 'Location', 'Work setup', 'Employment type', 'Pay' (only when both sides are known). theirs: what they want; role: what this job offers; " +
     "status 'met' when the role clearly gives them what they want, 'discuss' when it doesn't clearly or isn't stated (negotiable, talked through). Leave out an item only when neither side is known. " +
-    "questions: up to 2 short, friendly questions about 'discuss' items only. [] when none. NEVER name the employer anywhere.";
+    "questions: up to 2 short, friendly questions about the 'discuss' items in requirements only (role, level, location, work setup, employment type, pay); never about the job description's requirements (those are asked in confirm) and never repeating a confirm question. [] when none. NEVER name the employer anywhere.";
   const list = items.map((x, i) => `${i + 1}. ${x.item} (${x.required ? "required" : "nice to have"})`).join("\n");
   const text = `${cv.text}Job: ${lead.job_title}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${role.workSetup ? "\nWork setup: " + role.workSetup : ""}${role.employmentType ? "\nEmployment type: " + role.employmentType : ""}\nWhat the job is: ${role.summary}\n\n` +
     `Employer's industry: ${role.industry || "unknown"}\n\nRequirements from the job description:\n${list}\n\nCandidate profile: ${anonSummary(c)}\n${lookingFor(c)}`;
@@ -165,12 +165,21 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
     requirements: (Array.isArray(out?.requirements) ? out.requirements : []).slice(0, 6).map((q: any) => ({
       item: clip(q?.item, 30), theirs: hideEmployer(clip(q?.theirs, 90), lead), role: hideEmployer(clip(q?.role, 90), lead), status: q?.status === "met" ? "met" : "discuss" as "met" | "discuss",
     })).filter((q: any) => q.item),
-    questions: (Array.isArray(out?.questions) ? out.questions : []).slice(0, 2).map((q: unknown) => hideEmployer(clip(q, 240), lead)).filter(Boolean),
+    // Never the same thing twice: a question that overlaps a yes/no confirm question is dropped.
+    questions: (Array.isArray(out?.questions) ? out.questions : []).slice(0, 2).map((q: unknown) => hideEmployer(clip(q, 240), lead))
+      .filter((q: string) => q && !confirm.some((cq) => overlap(q, cq.item) >= 2)),
   };
   a.out = notMet.length ? "Doesn't meet: " + notMet.join("; ")
     : notShown.length > MAX_TO_CONFIRM ? `Their CV doesn't show ${notShown.length} of the ${req.length} requirements`
     : met.length < notShown.length ? "Their CV shows too few of the requirements" : "";
   return a;
+}
+
+// How many meaningful words two texts share (to spot a repeated question).
+function overlap(a: string, b: string) {
+  const words = (t: string) => new Set(t.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3 && !["experience", "with", "your", "have", "about", "tell", "hands"].includes(w)));
+  const wb = words(b);
+  return [...words(a)].filter((w) => wb.has(w)).length;
 }
 
 // Every candidate against the job description (one CV read each).
