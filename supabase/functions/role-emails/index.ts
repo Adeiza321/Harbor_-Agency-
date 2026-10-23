@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { loadBrand, emailShell, button, esc, sendBrevo } from "./brand.ts";
-import { countryCode } from "../sourcing/regions.ts";
+import { countryCode, locationCountry } from "../sourcing/regions.ts";
 import { regionMatch } from "../sourcing/world_regions.ts";
 
 // Role emails to recruiters, sent by the database (triggers on jobs and job_recruiters) with the
@@ -134,7 +134,7 @@ Deno.serve(async (req: Request) => {
     // A new role in a region a recruiter works best in (My profile): their own version, first in
     // their inbox with the region named.
     const newRole = to === "Open" && (!from || from === "Draft");
-    const code = countryCode(j.country) || countryCode(String(j.location || "").split(",").pop());
+    const code = countryCode(j.country) || locationCountry(j.location);
     let sent = 0, special = 0;
     for (const u of (people || []).filter(wants)) {
       const hit = newRole ? regionMatch(u.regions, code, String(j.country || "")) : "";

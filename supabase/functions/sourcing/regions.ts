@@ -31,7 +31,7 @@ Object.assign(NAME_TO_CODE, { "czechia": "CZ", "turkey": "TR", "türkiye": "TR",
 export function countryCode(v: unknown): string {
   const s = String(v || "").trim();
   if (!s) return "";
-  if (/^[A-Za-z]{2}$/.test(s)) return s.toUpperCase();
+  if (/^[A-Za-z]{2}$/.test(s)) return COUNTRY_NAMES[s.toUpperCase()] ? s.toUpperCase() : "";
   return NAME_TO_CODE[s.toLowerCase()] || "";
 }
 
@@ -56,15 +56,40 @@ export function jobCountryNames(job: any): string[] {
   return c && COUNTRY_NAMES[c] ? [COUNTRY_NAMES[c]] : [];
 }
 
-// A job's location as a country code: from jobs.country, or the end of jobs.location.
+// A job's location as a country code: from jobs.country, or its location.
 const US_STATES = new Set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split(" "));
+const US_STATE_NAMES = new Set(["alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut", "delaware", "florida", "hawaii", "idaho", "illinois",
+  "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada",
+  "new hampshire", "new jersey", "new mexico", "new york", "north carolina", "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
+  "south dakota", "tennessee", "texas", "utah", "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming", "district of columbia", "washington dc", "d.c."]);
+// Canadian provinces (NL and PE are left out: they're also the Netherlands and Peru).
+const CA_PROVINCES = new Set("AB BC MB NB NS NT NU ON QC SK YT".split(" "));
+const CA_PROVINCE_NAMES = new Set(["alberta", "british columbia", "manitoba", "new brunswick", "newfoundland", "newfoundland and labrador", "nova scotia", "ontario", "quebec", "québec",
+  "saskatchewan", "prince edward island", "yukon", "northwest territories", "nunavut"]);
+// The country a free-text location is in, as a code: "Austin, TX 78701" -> US, "Toronto, ON" -> CA,
+// "Lagos, Nigeria" -> NG. A two-letter code after a city is a US state or Canadian province when it is
+// one ("Los Angeles, CA" is California, not Canada); only otherwise is it read as a country code.
+export function locationCountry(loc: unknown): string {
+  const parts = String(loc || "").split(",").map((x) => x.replace(/\([^)]*\)/g, "").replace(/\s+\d[\d-]*$/, "").trim()).filter(Boolean); // "NJ 07506" -> "NJ", "(Remote)" dropped
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i], up = part.toUpperCase(), low = part.toLowerCase();
+    if (/^[A-Za-z]{2}$/.test(part)) {
+      if (i > 0 && US_STATES.has(up)) return "US";
+      if (i > 0 && CA_PROVINCES.has(up)) return "CA";
+      if (i === parts.length - 1 && (COUNTRY_NAMES[up] || NAME_TO_CODE[low])) return COUNTRY_NAMES[up] ? up : NAME_TO_CODE[low];
+      if (US_STATES.has(up)) return "US";
+      continue;
+    }
+    if (US_STATE_NAMES.has(low) && i > 0) return "US";
+    if (CA_PROVINCE_NAMES.has(low)) return "CA";
+    const k = NAME_TO_CODE[low];
+    if (k) return k;
+    if (US_STATE_NAMES.has(low)) return "US";
+  }
+  return "";
+}
 export function jobCountryCode(job: any): string {
-  const c = countryCode(job?.country);
-  if (c) return c;
-  const loc = String(job?.location || "");
-  const last = loc.split(",").map((x) => x.trim()).filter(Boolean).pop() || "";
-  if (US_STATES.has(last.toUpperCase())) return "US";
-  return countryCode(last);
+  return countryCode(job?.country) || locationCountry(job?.location);
 }
 
 export type Footer = { senderName: string; agencyName: string; businessAddress: string; unsubUrl: string; deleteUrl: string };
