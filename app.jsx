@@ -10058,6 +10058,7 @@ function LeadContacts({ l, S, toast, onChanged }) {
         </div>
       ))}
       {!live.length && d.contacts_checked_at && <div className="mt-1" style={{ color: C.warnFg }}>The pitch waits until a contact is added.</div>}
+      {d.contacts_error && <div className="mt-1" style={{ color: C.ink3 }}>Lookup problem: {d.contacts_error}</div>}
       {adding && (
         <div className="mt-2 flex flex-wrap gap-2 items-center">
           <input placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={inp + " w-36"} style={{ borderColor: C.line, background: C.soft }} />
