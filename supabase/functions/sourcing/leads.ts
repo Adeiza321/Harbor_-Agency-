@@ -15,7 +15,7 @@
 import { askAI } from "./ai.ts";
 import { searchJobs, theirstackKey } from "./theirstack.ts";
 import { apolloKey, matchByName } from "./apollo.ts";
-import { countryCode, regionOf } from "./regions.ts";
+import { countryCode, locationCountry, regionOf } from "./regions.ts";
 import { emailHash } from "./send.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 import { portalBase } from "./queue.ts";
@@ -36,9 +36,7 @@ export const isOpen = (c: any) => c?.open_to_roles !== false || (!!c?.open_pause
 export function candCountry(c: any): string {
   const p = c?.preferences;
   if (p && p.currentCountry) { const k = countryCode(p.currentCountry); if (k) return k; }
-  const parts = String(c?.location || "").split(",").map((x) => x.trim()).filter(Boolean);
-  for (let i = parts.length - 1; i >= 0; i--) { const k = countryCode(parts[i]); if (k && (i === parts.length - 1 || parts[i].length > 2)) return k; }
-  return "";
+  return locationCountry(c?.location);
 }
 export const blindReady = (c: any) => !!(c?.blind_pages && c?.blind_checked_at);
 
