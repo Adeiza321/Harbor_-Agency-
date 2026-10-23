@@ -837,7 +837,10 @@ function AttentionList({ title, items, S, extra }) {
   const [open, setOpen] = useState(null);
   // Only show rows that actually have something in them — an item with 0 people is nothing to
   // act on, so it's just clutter here.
-  const rows = items.filter((r) => (r.people || []).length > 0);
+  const [all, setAll] = useState(false);
+  const LIMIT = 5;
+  const rows = items.filter((r) => (r.people || []).length > 0).sort((a, b) => (URGENCY_ORDER[a.tone] ?? 3) - (URGENCY_ORDER[b.tone] ?? 3));
+  const shown = all ? rows : rows.slice(0, LIMIT);
   return (
     <Card>
       <SectionTitle title={title} />
@@ -846,7 +849,7 @@ function AttentionList({ title, items, S, extra }) {
         <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>Nothing needs attention right now.</div>
       ) : (
       <div className="mt-3 flex flex-col">
-        {rows.slice().sort((a, b) => (URGENCY_ORDER[a.tone] ?? 3) - (URGENCY_ORDER[b.tone] ?? 3)).map((r, i) => {
+        {shown.map((r, i) => {
           const people = r.people || [];
           const click = () => {
             if (people.length === 1 && people[0].onOpen) return people[0].onOpen();
@@ -877,6 +880,11 @@ function AttentionList({ title, items, S, extra }) {
             </div>
           );
         })}
+        {rows.length > LIMIT && (
+          <button type="button" onClick={() => { setAll(!all); setOpen(null); }} className="text-sm font-medium self-start mt-1" style={{ color: C.em }}>
+            {all ? "Show less" : "Show " + (rows.length - LIMIT) + " more"}
+          </button>
+        )}
       </div>
       )}
     </Card>
@@ -886,6 +894,76 @@ const daysAgo = (t) => { const d = Math.floor((Date.now() - t) / 864e5); return 
 const plural = (n, one, many) => n + " " + (n === 1 ? one : many || one + "s");
 const jobName = (S, jobId) => { const j = S.jobs.find((x) => x.id === jobId); return j ? j.client : ""; };
 const linkPeople = (S, pred) => S.cands.flatMap((c) => (c.jobLinks || []).filter((l) => pred(l, c)).map((l) => ({ id: c.id, name: c.name, sub: jobName(S, l.jobId) })));
+
+/* Needs attention: everything still waiting on someone, beyond the day-to-day pipeline. Some of it
+   is only known after a request (two-factor, signatures waiting for the Agency, spend approvals), so
+   it's loaded once when the dashboard opens. */
+function useAttentionChecks(S) {
+  const [mfaOff, setMfaOff] = useState(false);
+  const [toCountersign, setToCountersign] = useState([]);
+  const [spend, setSpend] = useState([]);
+  useEffect(() => {
+    let live = true;
+    S.mfaListFactors().then((f) => live && setMfaOff(!(f || []).some((x) => x.status === "verified"))).catch(() => {});
+    if (S.role === "admin") {
+      S.signedAgreements().then((r) => live && setToCountersign((r || []).filter((x) => !x.agency_signed_at))).catch(() => {});
+      S.sourcing("list_requests", {}).then((d) => live && setSpend(((d && d.requests) || []).filter((x) => x.status === "pending"))).catch(() => {});
+    }
+    return () => { live = false; };
+  }, [S.me.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  return { mfaOff, toCountersign, spend };
+}
+const listAnd = (xs) => xs.join(", ").replace(/, ([^,]*)$/, " and $1");
+// Opens a page on one of its tabs (the page reads ?tab= when it opens).
+const goTab = (S, page, tab) => { try { const u = new URL(window.location.href); u.searchParams.set("tab", tab); window.history.replaceState(window.history.state, "", u); } catch (e) { /* the page opens on its first tab */ } S.go(page); };
+const takeTabParam = (allowed, fallback) => { const t = new URLSearchParams(window.location.search).get("tab"); return allowed.includes(t) ? t : fallback; };
+const clearTabParam = () => { try { const u = new URL(window.location.href); if (u.searchParams.has("tab")) { u.searchParams.delete("tab"); window.history.replaceState(window.history.state, "", u); } } catch (e) { /* fine */ } };
+// Your own: account setup, two-factor and your to-dos that are due.
+function myAttentionItems(S, checks) {
+  const me = S.me;
+  const gaps = me.roleKey === "recruiter" ? setupGaps(me) : [!me.phone && "your phone number", !me.avatarUrl && "a profile picture"].filter(Boolean);
+  const today = ymdToday();
+  const due = (S.tasks || []).filter((t) => t.assignedTo === me.id && t.status === "open" && t.dueOn && t.dueOn <= today)
+    .sort((a, b) => (a.dueOn < b.dueOn ? -1 : 1))
+    .map((t) => ({ name: t.title, sub: t.dueOn < today ? "overdue" : "due today", onOpen: t.candidateId ? () => S.openCandidate(t.candidateId) : () => S.go("todo") }));
+  const overdue = due.filter((t) => t.sub === "overdue").length;
+  return [
+    { icon: UserCheck, t: me.roleKey === "recruiter" ? "Finish setting up your account" : "Complete your profile", s: "Add " + listAnd(gaps), tone: "warn",
+      people: gaps.length ? [{ name: "Open My profile", sub: plural(gaps.length, "thing") + " to add", onOpen: () => S.goProfile("account") }] : [], go: "myProfile" },
+    { icon: KeyRound, t: "Turn on two-factor authentication", s: "Keeps candidates' details safe if your password leaks", tone: "warn",
+      people: checks.mfaOff ? [{ name: "Open Security", onOpen: () => S.goProfile("security") }] : [] },
+    { icon: ListTodo, t: "To-dos due", s: !overdue ? due.length + " due today" : overdue === due.length ? overdue + " overdue" : due.length + " due, " + overdue + " overdue", tone: overdue ? "danger" : "warn", people: due, go: "todo" },
+  ];
+}
+// The team's (Admins and Rec Ops): agreements, recruiter accounts, approvals and blind resumes.
+function teamAttentionItems(S, checks) {
+  const admin = S.role === "admin";
+  const recruiters = (S.users || []).filter((u) => u.roleKey === "recruiter");
+  const active = recruiters.filter((u) => u.status === "Active");
+  const a = S.settings && S.settings.recruiterAgreement;
+  const toAgreement = () => (admin ? goTab(S, "settings", "agreement") : S.go("users"));
+  const unsigned = a && a.published ? active.filter((u) => !u.agreementSignedAt).map((u) => ({ name: u.name, sub: u.lastSeenAt ? "seen " + daysAgo(u.lastSeenAt) + (daysAgo(u.lastSeenAt) === "today" ? "" : " ago") : "not signed in yet", onOpen: toAgreement })) : [];
+  const nameOf = (id) => ((S.users || []).find((u) => u.id === id) || {}).name || "A recruiter";
+  const countersign = (checks.toCountersign || []).filter((x) => recruiters.some((u) => u.id === x.user_id && u.agreementSignedAt))
+    .map((x) => ({ name: x.signed_name || nameOf(x.user_id), sub: "signed " + daysAgo(new Date(x.signed_at).getTime()) + (daysAgo(new Date(x.signed_at).getTime()) === "today" ? "" : " ago"), onOpen: () => goTab(S, "settings", "agreement") }));
+  const incomplete = active.filter((u) => setupGaps(u).length).map((u) => ({ name: u.name, sub: plural(setupGaps(u).length, "thing") + " missing", onOpen: () => S.go("users") }));
+  const quiet = active.filter((u) => u.lastSeenAt && Date.now() - u.lastSeenAt > 23 * 864e5)
+    .map((u) => ({ name: u.name, sub: "suspended at 30 days, last seen " + daysAgo(u.lastSeenAt) + " ago", onOpen: () => S.go("users") }));
+  const suspended = recruiters.filter((u) => u.status === "Suspended").map((u) => ({ name: u.name, sub: u.suspendedReason ? u.suspendedReason.replace(/^Suspended /, "") : "suspended", onOpen: () => S.go("users") }));
+  const spend = (checks.spend || []).map((r) => ({ name: r.title || "Spend request", sub: r.cost_text || "", onOpen: () => goTab(S, "campaigns", "approvals") }));
+  const blind = (S.cands || []).filter((c) => !c.isDraft && c.blind && !c.blind.checkedAt).map((c) => ({ id: c.id, name: c.name, sub: "made by " + (c.blind.by || "someone") }));
+  return [
+    ...(admin ? [
+      { icon: ClipboardPen, t: "Agreements to countersign", s: plural(countersign.length, "recruiter") + " signed, waiting for the Agency's signature", tone: "warn", people: countersign, go: "settings" },
+      { icon: BadgeCheck, t: "Spend to approve", s: plural(spend.length, "request") + " waiting for an Admin", tone: "warn", people: spend, go: "campaigns" },
+    ] : []),
+    { icon: ScanSearch, t: "Blind resumes to check", s: plural(blind.length, "resume") + " made, not checked yet", tone: "em", people: blind, go: "candidates" },
+    { icon: Moon, t: "Recruiters about to be suspended", s: plural(quiet.length, "recruiter") + " not seen for over 3 weeks", tone: "warn", people: quiet, go: "users" },
+    { icon: FileText, t: "Agreement not signed", s: plural(unsigned.length, "recruiter") + " can't use ProNext until they sign", tone: "info", people: unsigned, go: admin ? "settings" : "users" },
+    { icon: UserRound, t: "Recruiter profiles incomplete", s: plural(incomplete.length, "recruiter") + " still setting up", tone: "info", people: incomplete, go: "users" },
+    { icon: Ban, t: "Suspended recruiters", s: plural(suspended.length, "account") + " waiting to be reactivated or left suspended", tone: "info", people: suspended, go: "users" },
+  ];
+}
 
 /* Recruiter performance for one month or one year: four bars per recruiter, all drawn from the
    same cohort — every candidate a recruiter lined up (linked to a job) in the period. Submitted,
@@ -4317,6 +4395,7 @@ function RecruiterAuditPage({ S, toast }) {
 
 const PERIOD_VS = { Daily: "yesterday", Weekly: "last week", Monthly: "last month", Yearly: "last year" };
 function OverviewRecOps({ S }) {
+  const checks = useAttentionChecks(S);
   const [period, setPeriod] = useState("Monthly");
   const st = statsOf(S);
   const monthLabel = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
@@ -4371,6 +4450,8 @@ function OverviewRecOps({ S }) {
           const guarantee = S.placements.filter((p) => p.status === "Guarantee").map((p) => ({ id: p.candidateId || null, name: p.name, sub: p.guarantee }));
           const toBill = awaitingBilling(S).map((c) => ({ id: c.id, name: c.name, sub: c.status, onOpen: () => S.startBilling(c.id) }));
           return [
+            ...myAttentionItems(S, checks),
+            ...teamAttentionItems(S, checks),
             { icon: CreditCard, t: "Waiting to be billed", s: plural(toBill.length, "candidate") + " placed or hired, not billed yet", tone: "warn", people: toBill, go: "billing" },
             { icon: Sparkles, t: "Screening questions to approve", s: plural(drafts.length, "candidate") + " waiting", tone: "em", people: drafts, go: "candidates" },
             { icon: Clock, t: "Awaiting review", s: plural(review.length, "candidate") + " in review", tone: "warn", people: review, go: "candidates" },
@@ -4428,6 +4509,7 @@ function WelcomeBack({ S, mine }) {
 }
 
 function OverviewRecruiter({ S }) {
+  const checks = useAttentionChecks(S);
   const st = statsOf(S, S.me.id);
   return (
     <div className="flex flex-col gap-5 md:gap-6">
@@ -4444,13 +4526,12 @@ function OverviewRecruiter({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
-        <AttentionList title="Your next steps" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
+        <AttentionList title="Needs attention" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
           const routed = linkPeople(S, (l) => l.response === "pending");
-          const gaps = setupGaps(S.me);
           return [
-            { icon: UserCheck, t: "Finish setting up your account", s: "Add " + gaps.join(", ").replace(/, ([^,]*)$/, " and $1"), tone: "warn", people: gaps.length ? [{ name: "Open My profile", sub: gaps.length + " to add", onOpen: () => S.go("myProfile") }] : [], go: "myProfile" },
+            ...myAttentionItems(S, checks),
             { icon: Sparkles, t: "Role matches", s: plural(matches.length, "candidate") + " match other roles", tone: "em", people: matches, go: "candidates" },
             { icon: InboxIcon, t: "Waiting on candidates", s: waiting.length + " awaiting screening answers", tone: "warn", people: waiting, go: "candidates" },
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
@@ -9983,7 +10064,8 @@ function OutreachSetup({ S, toast, status, onSaved }) {
 }
 
 function CampaignsPage({ toast, S }) {
-  const [tab, setTab] = useState(() => (new URLSearchParams(window.location.search).get("tab") === "approvals" ? "approvals" : "candidates"));
+  const [tab, setTab] = useState(() => takeTabParam(["approvals"], "candidates"));
+  useEffect(clearTabParam, []);
   const [confirm, setConfirm] = useState(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [status, setStatus] = useState(null);
@@ -12875,7 +12957,8 @@ function AuditLogTab({ S }) {
 }
 
 function SettingsPage({ toast, S }) {
-  const [tab, setTab] = useState("agency");
+  const [tab, setTab] = useState(() => takeTabParam(["agency", "privacy", "agreement", "integrations", "audit"], "agency"));
+  useEffect(clearTabParam, []);
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <SectionTitle size="text-3xl md:text-4xl" title="Agency settings" sub="Defaults that apply across the whole agency." />
@@ -15792,7 +15875,7 @@ export default function App() {
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} onCmd={() => setCmdOpen(true)} />
         {data.aiDownSince && role === "admin" && <AiPausedBanner since={data.aiDownSince} admin />}
-        {role === "recruiter" && page !== "myProfile" && <TwoFactorNudge S={S} />}
+        {role === "recruiter" && page !== "myProfile" && page !== "overview" && <TwoFactorNudge S={S} />}
         {rerouteAsk && <RerouteAsk ask={rerouteAsk} onDone={(v) => { rerouteAsk.resolve(v); setRerouteAsk(null); }} />}
         {tourOpen && !needAgreement && <ProductTour role={role} first={myMe.first} onClose={() => {
           setTourOpen(false);
