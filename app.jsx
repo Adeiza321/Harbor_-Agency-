@@ -185,15 +185,35 @@ const curSymbol = (cur) => { try { return new Intl.NumberFormat(undefined, { sty
 /* Suggests a client fee + recruiter incentive for a placement, from the job's
    billing/incentive settings and (for a % fee) the candidate's salary. Both
    figures are only a starting point — always editable before saving. */
+// A job's pay over a year or a month, whatever period it's quoted in (an hourly rate counts 40 hours
+// a week, the same as contract payouts). A percentage fee billed once is a share of a year's pay; a
+// percentage fee billed monthly is a share of a month's pay.
+const PAY_PER_YEAR = { Hourly: 2080, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
+const payOver = (job, per, pay) => { const p = Number(pay) || Number(job.maxPay) || Number(job.minPay) || 0; const y = p * (PAY_PER_YEAR[job.salaryPeriod] || 1); return per === "month" ? y / 12 : y; };
 function suggestBilling(job, candidatePay) {
   if (!job) return { fee: "", feeCurrency: "NGN", incentive: "", incentiveCurrency: "NGN" };
-  const salary = num(candidatePay) || job.maxPay || job.minPay || 0;
+  // The candidate's pay, when given, is taken to be in the same period as the job's.
+  const salary = payOver(job, job.billingFrequency === "Monthly" ? "month" : "year", num(candidatePay) || null);
   const fee = job.billingType === "flat" ? (job.billingAmount || 0) : Math.round((salary * (job.billingAmount || 0)) / 100);
   const feeCurrency = job.billingType === "flat" ? (job.billingCurrency || "NGN") : (job.currency || "NGN");
   const incentive = job.incentiveType === "flat" ? (job.incentiveAmount || 0) : Math.round((fee * (job.incentiveAmount || 0)) / 100);
   const incentiveCurrency = job.incentiveType === "flat" ? (job.incentiveCurrency || "NGN") : feeCurrency;
   return { fee: fee || "", feeCurrency, incentive: incentive || "", incentiveCurrency };
 }
+// What a recruiter earns on a role, in money, for the role page, their Overview and role emails:
+// { amount, currency, monthly, months, upTo (pay is a range), basis, missing (no fee or incentive set) }.
+function recruiterEarning(job) {
+  if (!job) return null;
+  const s = suggestBilling(job, null);
+  const pctIncentive = job.incentiveType !== "flat";
+  const missing = !job.incentiveAmount || (pctIncentive && !s.fee);
+  const monthly = job.incentiveFrequency === "Monthly" || (pctIncentive && job.billingFrequency === "Monthly");
+  const months = monthly ? (job.incentiveMonths || job.billingMonths || CONTRACT_DEFAULT_MONTHS) : null;
+  const upTo = pctIncentive && job.billingType !== "flat" && job.minPay && job.maxPay && Number(job.minPay) < Number(job.maxPay);
+  return { amount: Number(s.incentive) || 0, currency: s.incentiveCurrency, monthly, months, upTo, missing,
+    basis: pctIncentive && job.incentiveAmount ? job.incentiveAmount + "% of the client fee" : "" };
+}
+const earningText = (e) => !e || e.missing || !e.amount ? "" : (e.upTo ? "Up to " : "") + money(e.amount, e.currency) + (e.monthly ? " a month" + (e.months ? " for " + e.months + " months" : "") : "");
 /* Resume formats the AI reads (see supabase/functions/ai-screen/resume.ts). */
 const RESUME_ACCEPT = ".pdf,.doc,.docx,.odt,.rtf,.txt,.jpg,.jpeg,.png,.webp,.heic,.heif";
 const RESUME_TYPES = { pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", odt: "application/vnd.oasis.opendocument.text", rtf: "application/rtf", txt: "text/plain", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heif" };
@@ -2119,10 +2139,18 @@ function MyAgreementCard({ S }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { S.signedAgreements(S.me.id).then((r) => setRows(r || [])).catch(() => setRows([])); }, [S.me.agreementSignedAt]); // eslint-disable-line
   const a = rows && rows[0];
-  if (!a) return null;
+  if (!a && !S.me.agreementSignedAt) return null;
+  if (!a) return (
+    <Card>
+      <SectionTitle title="Your recruiter agreement" sub={rows === null ? "Loading your signed copy\u2026" : "You signed it " + signedStamp(S.me.agreementSignedAt) + ", but your copy couldn't be loaded just now. Refresh the page to try again."} size="text-xl" />
+    </Card>
+  );
   return (
     <Card>
-      <SectionTitle title="Your recruiter agreement" sub={"Signed " + signedStamp(a.signed_at) + "."} size="text-xl" />
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.emTint }}><FileText size={18} color={C.em} /></div>
+        <SectionTitle title="Your recruiter agreement" sub={"Signed " + signedStamp(a.signed_at) + ". Your copy, with your signature, is kept here."} size="text-xl" />
+      </div>
       <div className="flex gap-2 mt-3"><Btn onClick={() => setOpen(true)}>View</Btn><Btn onClick={() => printAgreement(a)}>Print or save as PDF</Btn></div>
       <Modal open={open} onClose={() => setOpen(false)} title={a.title} wide>
         <div className="overflow-y-auto pr-2" style={{ maxHeight: "60vh" }}><AgreementText body={a.body} /><div className="mt-5"><SignatureBlock src={a.signature} name={a.signed_name} at={a.signed_at} /></div></div>
@@ -2541,6 +2569,7 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
       <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }, { key: "calendar", label: "Calendar" }]} active={tab} setActive={setTab} />
+      {tab === "account" && S.me.roleKey === "recruiter" && <MyAgreementCard S={S} />}
       {tab === "account" && <AppearanceCard />}
       {tab === "account" && (
         <div className="rounded-2xl border p-5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ background: C.card, borderColor: C.line }}>
@@ -2551,7 +2580,6 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       {tab === "account" && <MyWins S={S} />}
       {tab === "account" && <AccountTab S={S} toast={toast} />}
       {tab === "account" && <WorkProfileCard S={S} toast={toast} />}
-      {tab === "account" && S.me.roleKey === "recruiter" && <MyAgreementCard S={S} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
       {tab === "security" && <SecurityTab S={S} toast={toast} />}
       {tab === "calendar" && <GoogleCalendarTab S={S} toast={toast} />}
@@ -3799,8 +3827,7 @@ function MyEngagedRoles({ S }) {
   const rows = mine.map((j) => {
     let mineOn = 0, late = 0;
     S.cands.forEach((c) => { if (c.recruiterId !== S.me.id) return; const l = (c.jobLinks || []).find((x) => x.jobId === j.id); if (l && l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)) { mineOn++; if (["Interview", "Offer", "Placed"].includes(l.stage)) late++; } });
-    const s = suggestBilling(j, null);
-    return { j, mineOn, late, incentive: Number(s.incentive) || 0, cur: s.incentiveCurrency };
+    return { j, mineOn, late, earn: earningText(recruiterEarning(j)) };
   });
   return (
     <Card>
@@ -3819,7 +3846,7 @@ function MyEngagedRoles({ S }) {
             </div>
             <div className="text-right shrink-0 flex flex-col items-end gap-1">
               <StatusPill status={x.j.status} />
-              {x.incentive > 0 && <div className="text-xs" style={{ color: C.ink3 }}>{money(x.incentive, x.cur)} incentive</div>}
+              <div className="text-xs" style={{ color: C.ink3 }}>{x.earn ? "You earn " + x.earn.charAt(0).toLowerCase() + x.earn.slice(1) : "Incentive not set yet"}</div>
             </div>
           </button>
         ))}
@@ -7656,7 +7683,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         {job.seo && (job.seo.keywords || []).length > 0 && (
           <div className="mb-4"><div className="text-xs mb-1.5" style={{ color: C.ink3 }}>Search keywords</div><div className="flex flex-wrap gap-1.5">{job.seo.keywords.map((k) => <Pill key={k} tone="neutral">{k}</Pill>)}</div></div>
         )}
-        {(job.billingAmount || job.incentiveAmount) && (
+        {(job.billingAmount || job.incentiveAmount || S.role === "recruiter") && (
           <div className="grid grid-cols-2 gap-4 mb-4 pt-4 text-sm" style={{ borderTop: `1px solid ${C.line}` }}>
             {S.role !== "recruiter" && (
               <div>
@@ -7667,8 +7694,11 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             )}
             <div>
               <div className="text-xs" style={{ color: C.ink3 }}>{S.role === "recruiter" ? "Your incentive" : "Recruiter incentive"}</div>
-              <div className="font-medium mt-0.5">{job.incentiveAmount ? (job.incentiveType === "flat" ? money(job.incentiveAmount, job.incentiveCurrency) : job.incentiveAmount + "% of the client fee") : "Not set"}</div>
-              {job.incentiveAmount && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{job.incentiveFrequency === "Monthly" ? "Monthly" + (job.incentiveMonths ? ", for " + job.incentiveMonths + " month" + (job.incentiveMonths === 1 ? "" : "s") : "") : "One-off, on placement"}</div>}
+              {(() => { const e = recruiterEarning(job); const t = earningText(e); return <>
+                <div className="font-medium mt-0.5">{t || (e && e.missing ? "Not set yet" : job.incentiveAmount + "% of the client fee")}</div>
+                {t && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{[e.basis, e.monthly ? "paid monthly" : "one-off, on placement", e.upTo ? "depends on the hire's pay" : ""].filter(Boolean).join(" · ")}</div>}
+                {e && e.missing && S.role !== "recruiter" && <div className="text-xs mt-0.5" style={{ color: C.warnFg }}>{!job.incentiveAmount ? "Add the recruiter incentive (Edit job)" : "Add the client fee or the role's pay (Edit job), so recruiters see what they'd earn"}</div>}
+              </>; })()}
             </div>
           </div>
         )}
@@ -7832,6 +7862,9 @@ function jobHealth(j, S) {
 // One job as a card: where its candidates are (a bar from added → submitted → interview → offer),
 // how long it's been open, who's on it, and its health (open jobs only).
 function JobCard({ j, S, mine, onOpen, onShare, row }) {
+  // Recruiters see what they'd earn on each role, in money.
+  const earn = S.role === "recruiter" ? earningText(recruiterEarning(j)) : "";
+  const earnLine = earn ? <div className="text-xs font-medium truncate mt-0.5" style={{ color: C.em }}>You earn {earn.charAt(0).toLowerCase() + earn.slice(1)}</div> : null;
   const links = S.cands.flatMap((c) => (c.jobLinks || []).filter((l) => l.jobId === j.id && l.response !== "declined"));
   const live = links.filter((l) => !["Rejected", "Withdrawn"].includes(l.stage));
   const n = { added: live.length, submitted: live.filter((l) => l.submittedAt || ["Submitted", "Interview", "Offer", "Placed"].includes(l.stage)).length,
@@ -7848,6 +7881,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
       <div className="min-w-0 flex-1 basis-full md:basis-0">
         <div className="flex items-center gap-2"><span className="font-medium truncate" title={j.role}>{j.role}</span><span className="md:hidden ml-auto shrink-0">{tag}</span></div>
         <div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div>
+        {earnLine}
       </div>
       <div className="w-full md:w-56 shrink-0">
         {bar("mb-1")}
@@ -7861,7 +7895,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
   return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift relative rounded-2xl border p-4 cursor-pointer flex flex-col" style={{ borderColor: C.line, background: C.card }}>
       <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0"><div className="font-medium truncate" title={j.role}>{j.role}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div></div>
+        <div className="flex-1 min-w-0"><div className="font-medium truncate" title={j.role}>{j.role}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div>{earnLine}</div>
         {h.key ? <span title={h.why}><Pill tone={h.tone}>{h.label}</Pill></span> : <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>}
       </div>
       <div className="flex h-2 rounded-full overflow-hidden mt-4 mb-1.5" style={{ background: C.neutralBg }} aria-hidden="true">
