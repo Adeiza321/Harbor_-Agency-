@@ -73,7 +73,7 @@ export function broadPlace(loc: string): boolean {
 export const REVIEW_SYSTEM = "You are a recruitment researcher reviewing search-engine results for people's public profiles (LinkedIn and technical sites) against one job. " +
   "You only see each result's title line and short snippet, not the full profile. Reply with STRICT JSON only: " +
   "{\"people\": [{\"i\": number, \"name\": string, \"headline\": string, \"company\": string, \"location\": string, \"in_area\": \"yes\" | \"no\" | \"unknown\", \"area_note\": string, " +
-  "\"client_history\": \"current\" | \"past\" | \"none\", \"company_page\": boolean, \"own_practice\": boolean, \"own_practice_same_field\": boolean, \"remote\": boolean, \"overview\": string, " +
+  "\"client_history\": \"current\" | \"past\" | \"none\", \"company_page\": boolean, \"own_practice\": boolean, \"own_practice_same_field\": boolean, \"remote\": boolean, \"recent_jobs\": [{\"company\": string, \"title\": string, \"place\": string, \"basis\": \"shown\" | \"employer\" | \"\"}], \"overview\": string, " +
   "\"checklist\": [{\"item\": string, \"status\": \"met\" | \"unconfirmed\" | \"not met\", \"evidence\": string}], \"gaps\": string[], \"fit\": number, \"verdict\": \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"why\": string}]}, one entry per person. " +
   "name, headline (their current title) and company (current employer) come ONLY from the result ('' when not shown). " +
   "location: where they live or work NOW: the 'Location:' part of a LinkedIn snippet, or the place shown next to their current role. Never a past job's city, a school, or an employer's head office; '' when not shown. " +
@@ -86,6 +86,8 @@ export const REVIEW_SYSTEM = "You are a recruitment researcher reviewing search-
   "own_practice_same_field: true when that business is in the same profession or trade as the job (e.g. a CPA running an accounting practice for a CPA job, a self-employed electrician for an electrician job). " +
   "Running their own practice in the same field is relevant experience and is NOT a reason for 'Not a fit'. " +
   "remote: true when the result shows they work remotely (a remote role, 'Remote', 'remotely', work from home) or work for an employer in another country than where they live; otherwise false. " +
+  "recent_jobs: their two most recent jobs shown in the result that are NOT remote (current first), each with where it was: place 'City, State/Region, Country' when the result shows it (basis 'shown'), " +
+  "or the employer's own town when it is a local business with one site you know (basis 'employer'); place '' and basis '' when you can't tell (e.g. a big company with many offices). [] when no job is shown. " +
   "overview: 1 to 2 short sentences on what the result shows about them that matters for this job. " +
   "checklist: exactly the job's checklist items given, in the same order and wording. 'met' only when the result clearly shows it. 'not met' ONLY when the result states something that contradicts it " +
   "(based somewhere else, a different field, clearly more junior or senior, or explicitly lacking it). Information that is simply not in the snippet is ALWAYS 'unconfirmed', never 'not met': " +

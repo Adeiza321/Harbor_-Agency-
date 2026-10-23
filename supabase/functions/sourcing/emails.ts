@@ -20,7 +20,7 @@ import { draftFromTemplate } from "./template.ts";
 import { askAI } from "./ai.ts";
 import { apolloKey, bestEmail, matchByLinkedIn } from "./apollo.ts";
 import { jobBrief, searchArea } from "./prospects.ts";
-import { splitByArea } from "./area_check.ts";
+import { cleanRecentJobs, inferRecentJobs, placeFromJobs, possibleText, splitByArea } from "./area_check.ts";
 import { broadPlace, cleanLocation } from "./xray_rules.ts";
 import { countryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { contactoutByLinkedIn, contactoutKey } from "./contactout.ts";
@@ -106,12 +106,29 @@ export async function skipTooFar(admin: any, people: { id: string; job_id: strin
     if (!job || /remote/i.test(String(job.work_setup || "")) && !/hybrid/i.test(String(job.work_setup || "")) && !job.country) continue;
     const area = await searchArea(admin, job, jobCountryNames(job)).catch(() => null);
     const { kept, dropped } = await splitByArea(admin, job, area, list, (p) => p.location || "");
+    // Their two most recent non-remote jobs, for anyone the profile place would skip or hold: kept
+    // from the X-ray review, else worked out once from their work history (then stored).
+    const needIds = [...dropped.map((d) => d.p.id), ...kept.filter((k) => k.hold).map((k) => (k.p as any).id)];
+    const { data: curRows } = needIds.length ? await admin.from("prospects").select("id,data,title,company").in("id", needIds) : { data: [] };
+    const curData = new Map<string, any>((curRows || []).map((r: any) => [r.id, r]));
+    const ask = (curRows || []).filter((r: any) => !Array.isArray(r.data?.recent_jobs) && !r.data?.location_ok)
+      .map((r: any) => ({ key: r.id, text: [r.title && r.company ? `${r.title} at ${r.company} (now)` : "", r.data?.headline, r.data?.history, r.data?.snippet].filter(Boolean).join("\n") }));
+    const inferred = ask.length && !dry ? await inferRecentJobs(ask).catch(() => new Map()) : new Map();
+    const jobsOf = (id: string) => inferred.has(id) ? inferred.get(id) : cleanRecentJobs(curData.get(id)?.data?.recent_jobs);
     for (const { p, why } of dropped) {
+      const cur = curData.get(p.id);
+      if (cur?.data?.location_ok) continue;
+      const pl = await placeFromJobs(admin, job, area, jobsOf(p.id) || []);
+      if (pl.status === "near") {
+        // The profile says somewhere far, but they've recently worked in the area: held to double check.
+        if (dry) continue;
+        await admin.from("prospects").update({ data: { ...(cur?.data || {}), recent_jobs: jobsOf(p.id) || [], location_hold: possibleText(pl) + " (their profile says " + (p.location || "somewhere else") + ")",
+          possible_location: { place: pl.place, company: pl.company, basis: pl.basis } } }).eq("id", p.id);
+        continue;
+      }
       report.push({ id: p.id, location: String(p.location || ""), why });
       if (dry) { out.push(p.id); continue; }
-      const { data: cur } = await admin.from("prospects").select("data").eq("id", p.id).maybeSingle();
-      if (cur?.data?.location_ok) continue;
-      await admin.from("prospects").update({ status: "rejected", data: { ...(cur?.data || {}), location_hold: null, skipped: { reason: why, by: "location check", at: new Date().toISOString() } } })
+      await admin.from("prospects").update({ status: "rejected", data: { ...(cur?.data || {}), recent_jobs: jobsOf(p.id) || [], location_hold: null, skipped: { reason: why + (pl.status === "far" ? "; recent job at " + (pl.company || "?") + " is far too (" + pl.place + ")" : ""), by: "location check", at: new Date().toISOString() } } })
         .eq("id", p.id).in("status", ["found", "approved"]);
       out.push(p.id);
     }
@@ -120,10 +137,19 @@ export async function skipTooFar(admin: any, people: { id: string; job_id: strin
     const { data: cur } = ids.length ? await admin.from("prospects").select("id,data").in("id", ids) : { data: [] };
     const curOf = new Map((cur || []).map((r: any) => [r.id, r.data || {}]));
     for (const k of kept) {
-      const d: any = curOf.get((k.p as any).id) || {};
-      const hold = d.location_ok ? null : (k.hold || null);
-      if ((d.location_hold || null) === hold) continue;
-      await admin.from("prospects").update({ data: { ...d, location_hold: hold } }).eq("id", (k.p as any).id);
+      const id = (k.p as any).id;
+      const d: any = curOf.get(id) || {};
+      let hold = d.location_ok ? null : (k.hold || null);
+      let extra: any = {};
+      // Vague or missing place: a recent job in the area becomes the possible location to check.
+      if (hold) {
+        const rj = jobsOf(id) || [];
+        if (inferred.has(id)) extra.recent_jobs = rj;
+        const pl = d.possible_location ? { status: "near", ...d.possible_location } : await placeFromJobs(admin, job, area, rj);
+        if (pl.status === "near") { hold = possibleText(pl as any); extra.possible_location = { place: (pl as any).place, company: (pl as any).company, basis: (pl as any).basis }; }
+      }
+      if ((d.location_hold || null) === hold && !Object.keys(extra).length) continue;
+      await admin.from("prospects").update({ data: { ...d, ...extra, location_hold: hold } }).eq("id", id);
     }
   }
   if (dry) (out as any).report = report;
