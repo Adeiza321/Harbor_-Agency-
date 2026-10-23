@@ -42,10 +42,12 @@ Deno.serve(async (req: Request) => {
   try {
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     const body = await req.json().catch(() => ({}));
-    const token = String(body.token || "");
+    // A client pitch goes to several people at a company, each with their own link:
+    // <lead token>~<contact token>.
+    const [token, contactToken = ""] = String(body.token || "").split("~");
     const kind = body.kind === "l" ? "l" : "p";
     const action = String(body.action || "info");
-    if (!/^[0-9a-f]{32}$/.test(token)) return json({ error: "This link isn't valid. Check you used the whole link from the email." }, 400);
+    if (!/^[0-9a-f]{32}$/.test(token) || (contactToken && !/^[0-9a-f]{16}$/.test(contactToken))) return json({ error: "This link isn't valid. Check you used the whole link from the email." }, 400);
 
     const suppress = async (email: string, reason: string) => {
       if (email) await admin.from("outreach_suppressions").upsert({ email_norm: await emailHash(email), reason }, { onConflict: "email_norm" });
@@ -96,23 +98,41 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Unknown action" }, 400);
     }
 
-    const { data: l } = await admin.from("leads").select("id,job_title,company,contact_first_name,contact_email,status,notes").eq("unsub_token", token).maybeSingle();
+    const { data: l } = await admin.from("leads").select("id,job_title,company,contact_first_name,contact_email,status,notes,data").eq("unsub_token", token).maybeSingle();
     if (!l) return json({ ok: true, gone: true });
-    if (action === "info") return json({ ok: true, kind, firstName: l.contact_first_name, role: l.job_title, company: l.company, status: l.status });
-    if (action === "unsubscribe") {
-      await suppress(l.contact_email || "", "unsubscribed");
-      await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id);
-      return json({ ok: true, done: "unsubscribed" });
-    }
-    if (action === "delete") {
-      await suppress(l.contact_email || "", "deleted on request");
-      await admin.from("leads").update({ status: "unsubscribed", contact_name: null, contact_first_name: null, contact_role: null, contact_linkedin: null, contact_email: null, contact_email_status: null }).eq("id", l.id);
-      return json({ ok: true, done: "deleted" });
+    // Whose link this is: one of the lead's contacts, or (older links) the lead's single contact.
+    const contacts: any[] = Array.isArray(l.data?.contacts) ? l.data.contacts : [];
+    const who = contactToken ? contacts.find((c) => c?.token === contactToken) : null;
+    if (contactToken && !who) return json({ ok: true, gone: true });
+    const email = who ? String(who.email || "") : l.contact_email || "";
+    const firstName = who ? who.first_name || "" : l.contact_first_name;
+    const saveContacts = (list: any[]) => admin.from("leads").update({ data: { ...(l.data || {}), contacts: list } }).eq("id", l.id);
+    if (action === "info") return json({ ok: true, kind, firstName, role: l.job_title, company: l.company, status: l.status });
+    if (action === "unsubscribe" || action === "delete") {
+      await suppress(email, action === "delete" ? "deleted on request" : "unsubscribed");
+      if (who) {
+        // Just this person; the lead carries on with the others.
+        const list = action === "delete" ? contacts.filter((c) => c.token !== contactToken) : contacts.map((c) => c.token === contactToken ? { ...c, unsubscribed: true } : c);
+        await saveContacts(list);
+        const left = list.filter((c) => c?.email && !c.unsubscribed && !c.removed);
+        if (!left.length) await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id);
+        if (String(l.contact_email || "").toLowerCase() === email.toLowerCase()) {
+          const m = left[0];
+          await admin.from("leads").update({ contact_name: m?.name || null, contact_first_name: m?.first_name || null, contact_role: m ? (m.title || m.role) : null, contact_linkedin: m?.linkedin || null, contact_email: m?.email || null }).eq("id", l.id);
+        }
+      } else if (action === "delete") {
+        await admin.from("leads").update({ status: "unsubscribed", contact_name: null, contact_first_name: null, contact_role: null, contact_linkedin: null, contact_email: null, contact_email_status: null }).eq("id", l.id);
+      } else {
+        await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id);
+      }
+      return json({ ok: true, done: action === "delete" ? "deleted" : "unsubscribed" });
     }
     if (action === "interested") {
-      // Interested: the contract goes out by itself on the next outreach run (sourcing stepContracts).
+      // Interested: the contract goes out by itself on the next outreach run (sourcing stepContracts),
+      // to whoever clicked.
       if (!["replied", "meeting", "won"].includes(l.status))
-        await admin.from("leads").update({ status: "replied", notes: [l.notes, "Clicked 'interested' in the email " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id);
+        await admin.from("leads").update({ status: "replied", notes: [l.notes, "Clicked 'interested' in the email" + (who ? " (" + (who.name || who.email) + ")" : "") + " " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id);
+      if (who && !l.data?.interested_by) await admin.from("leads").update({ data: { ...(l.data || {}), interested_by: { email: who.email, name: who.name || "", first_name: who.first_name || "", token: who.token } } }).eq("id", l.id);
       await admin.from("leads").update({ interested_at: new Date().toISOString() }).eq("id", l.id).is("interested_at", null);
       return json({ ok: true, done: "interested", role: l.job_title });
     }

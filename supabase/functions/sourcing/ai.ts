@@ -50,7 +50,8 @@ export async function noteAiHealth(down: boolean, reason = "") {
   } catch (_) { /* never let this break the caller */ }
 }
 
-export async function askAI(system: string, text: string, maxTokens = 4000): Promise<any> {
+// text: the message, or content blocks (a resume as a PDF document or image, then the text).
+export async function askAI(system: string, text: string | any[], maxTokens = 4000): Promise<any> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) throw new Error("AI is not configured: add an ANTHROPIC_API_KEY secret.");
   const payload = JSON.stringify({ model: MODEL(), max_tokens: Math.max(maxTokens, 2000), temperature: 0, system, messages: [{ role: "user", content: text }] });

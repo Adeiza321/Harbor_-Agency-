@@ -19,7 +19,9 @@
 // through or take them off. Each candidate has their own status (lead_offers), so a pitch can go
 // with some candidates and not others.
 
-import { askAI } from "./ai.ts";
+import { askAI, isAiPaused } from "./ai.ts";
+import { prepareResume } from "../ai-screen/resume.ts";
+import { jdContacts, type Contact } from "./contacts.ts";
 import { anonSummary, scrub, type Settings } from "./common.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
 import { portalBase } from "./queue.ts";
@@ -27,8 +29,6 @@ import { portalBase } from "./queue.ts";
 export const REMIND_AFTER_MS = 2 * 864e5;
 export const PENDING = ["draft", "notified", "reminded", "no_email", "acknowledged"];
 export const OUT = ["withdrawn", "removed"];
-// The bar: only someone the employer is unlikely to find better than.
-export const MIN_PITCH_FIT = 80;
 
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
@@ -47,61 +47,147 @@ export function lookingFor(c: any): string {
   ].filter(Boolean).join(" | ");
 }
 
+export type JdItem = { item: string; required: boolean };
+// How one candidate stands on one item from the job description: met (the CV shows it), not_met
+// (the CV clearly shows they don't have it), not_shown (the CV doesn't say; we ask them), and
+// confirmed (they told us yes).
+export type JdCheck = JdItem & { status: "met" | "not_met" | "not_shown" | "confirmed"; evidence: string; info?: boolean };
 export type Assessed = {
-  n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[]; musts: { item: string; evidence: string }[];
+  n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[]; musts: { item: string; evidence: string; bonus?: boolean }[];
   notMet: string[]; requirements: { item: string; theirs: string; role: string; status: "met" | "discuss" }[]; questions: string[];
+  jd: JdCheck[]; confirm: { item: string; q: string }[]; out: string;
 };
-export type RoleFacts = { summary: string; industry: string; workSetup: string; employmentType: string; seniority: string };
+export type RoleFacts = { summary: string; industry: string; workSetup: string; employmentType: string; seniority: string; hmTitles: string[] };
 
-// One AI question per lead: the role (anonymised) and, for each candidate, the fit, what the
-// posting needs that they clearly lack, how the role meets what they want, and questions to ask.
-export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: RoleFacts; results: Assessed[] }> {
-  const sys = "You are a senior recruiter at an agency deciding which of our candidates to put forward for an employer's job posting. The bar is very high: " +
-    "only someone who is a very strong fit and that the employer is unlikely to find better than. Reply with STRICT JSON only: " +
-    "{\"role\": {\"summary\": string, \"industry\": string, \"work_setup\": \"On-site\" | \"Hybrid\" | \"Remote\" | \"\", \"employment_type\": \"Full-time\" | \"Part-time\" | \"Contract\" | \"Temporary\" | \"\", \"seniority\": string}, " +
-    "\"results\": [{\"n\": number, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"must_haves_not_met\": string[], \"must_haves_met\": [{\"item\": string, \"evidence\": string}], \"reason\": string, \"why_role\": string, \"bullets\": string[], " +
-    "\"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": string[]}]}. " +
-    "role.summary: two short sentences on what the job is, for the candidate. NEVER name the employer, its brands, website or anything that identifies it ('a growing manufacturer', 'a regional bank'). " +
-    "role.industry: the employer's industry in a few words (from the industry given, or the employer and description), e.g. 'Manufacturing (industrial equipment)'. " +
-    "INDUSTRY MATTERS A LOT: employers want people who know their industry. A candidate is a 'Perfect fit' or 'Good fit' only when they have worked in the employer's industry or a closely related one; " +
-    "without that they are at most a 'Possible fit', however good the rest. When they have it, include it in must_haves_met (item 'Industry experience', evidence e.g. '6 years in manufacturing'). " +
-    "fit: a percentage 0-100 for how well their experience fits this posting. verdict: 'Perfect fit' or 'Good fit' only when they're a very strong match on experience, skills, seniority and industry. " +
-    "must_haves_met: the posting's main requirements (up to 6) that the candidate clearly meets, each with a few words of evidence for the hiring manager (anonymous: no names, no employer names; e.g. item 'CPA licence', evidence 'Licensed CPA, 8 years'). " +
-    "must_haves_not_met: the posting's real requirements (licences, years, specific experience) that their profile clearly does NOT meet; [] when none. Missing information is not 'not met'. " +
-    "reason: one short sentence on why they fit the employer. why_role: two short sentences to the candidate ('you') on why this role is a great match for THEM: what it gives them that they're looking for (the work, the step up, the setup, the location, the pay). Warm, specific, honest; never name the employer. " +
-    "bullets: 3 selling points for the hiring manager, each under 15 words, anonymous (no names, no employer names). " +
-    "requirements: how THIS ROLE meets what the CANDIDATE is looking for, one item each for: 'Role' (the roles they want or their current title vs this job), 'Level', 'Location' (where they live, or cities they'd move to, vs where the job is), " +
-    "'Work setup', 'Employment type', 'Pay' (only when both their expectation and the job's pay are known). theirs: what they want, in a few words. role: what this job offers, in a few words. " +
-    "status 'met' when the role clearly gives them what they want; 'discuss' when it doesn't clearly, or isn't stated (these are negotiable, so they're talked through, not ruled out). Leave out an item only when neither side is known. " +
-    "questions: up to 3 short, friendly questions we should ask the candidate before putting them forward: about 'discuss' items, or anything the employer will want confirmed. Never name the employer. [] when none.";
-  const posting = `Job: ${lead.job_title}${lead.data?.industry ? "\nEmployer industry: " + lead.data.industry : ""}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${lead.data?.remote ? "\nRemote" : ""}\nEmployer (never mention it): ${lead.company}\nDescription:\n${String(lead.description || "").slice(0, 4000)}`;
-  const list = cands.map((c: any, i: number) => `n=${i} | ${anonSummary(c)} | ${lookingFor(c)}`).join("\n");
-  const out = await askAI(sys, posting + "\n\nCandidates:\n" + list, 4000);
-  const r = out?.role || {};
-  const role: RoleFacts = { summary: scrub(clip(r.summary, 400), []), industry: hideEmployer(clip(r.industry, 80), lead), workSetup: clip(r.work_setup, 20), employmentType: clip(r.employment_type, 20), seniority: clip(r.seniority, 40) };
-  const results: Assessed[] = (Array.isArray(out?.results) ? out.results : []).map((x: any) => ({
-    n: Number(x?.n), fit: Math.max(0, Math.min(100, Math.round(Number(x?.fit) > 0 && Number(x?.fit) <= 10 ? Number(x.fit) * 10 : Number(x?.fit) || 0))),
-    verdict: ["Perfect fit", "Good fit", "Possible fit", "Not a fit"].includes(x?.verdict) ? x.verdict : "Possible fit",
-    reason: clip(x?.reason, 300), whyRole: clip(x?.why_role, 400),
-    musts: (Array.isArray(x?.must_haves_met) ? x.must_haves_met : []).slice(0, 6).map((q: any) => ({ item: clip(q?.item, 80), evidence: clip(q?.evidence, 120) })).filter((q: any) => q.item),
-    bullets: (Array.isArray(x?.bullets) ? x.bullets : []).slice(0, 3).map((b: unknown) => clip(b, 140)),
-    notMet: (Array.isArray(x?.must_haves_not_met) ? x.must_haves_not_met : []).map((b: unknown) => clip(b, 120)).filter(Boolean),
-    requirements: (Array.isArray(x?.requirements) ? x.requirements : []).slice(0, 6).map((q: any) => ({
-      item: clip(q?.item, 30), theirs: clip(q?.theirs, 90), role: clip(q?.role, 90), status: q?.status === "met" ? "met" : "discuss" as "met" | "discuss",
-    })).filter((q: any) => q.item),
-    questions: (Array.isArray(x?.questions) ? x.questions : []).slice(0, 3).map((q: unknown) => clip(q, 240)).filter(Boolean),
-  }));
-  // The employer's name never reaches the candidate.
-  const hide = (t: string) => hideEmployer(t, lead);
-  role.summary = hide(role.summary);
-  for (const a of results) {
-    a.requirements = a.requirements.map((q) => ({ ...q, theirs: hide(q.theirs), role: hide(q.role) }));
-    a.questions = a.questions.map(hide);
-    a.whyRole = hide(a.whyRole);
-  }
-  return { role, results };
+// Too much the CV doesn't show to put someone forward, even after asking.
+export const MAX_TO_CONFIRM = 3;
+
+// The candidate's CV for the AI: the stored file (PDF as a document, photos as an image, Word and
+// text files as text), the same way screening reads it.
+async function cvContent(admin: any, c: any): Promise<{ blocks: any[]; text: string; why?: string }> {
+  const path = c.resume_path || c.cv_path;
+  if (!path) return { blocks: [], text: "", why: "No CV on file" };
+  const { data: file, error } = await admin.storage.from(c.resume_path ? "resumes" : "cvs").download(path);
+  if (error || !file) return { blocks: [], text: "", why: "Couldn't read their CV" };
+  const r = await prepareResume(new Uint8Array(await file.arrayBuffer()), (c.resume_path && c.resume_name) || path);
+  const input = r.input;
+  if (!input) return { blocks: [], text: "", why: r.why || "Couldn't read their CV" };
+  if (input.kind === "pdf") return { blocks: [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: input.data } }], text: "" };
+  if (input.kind === "image" && ["image/jpeg", "image/png", "image/webp"].includes(input.mime)) return { blocks: [{ type: "image", source: { type: "base64", media_type: input.mime, data: input.data } }], text: "" };
+  if (input.kind === "text") return { blocks: [], text: "Candidate's CV (text from their file):\n\"\"\"\n" + input.text.slice(0, 30000) + "\n\"\"\"\n\n" };
+  return { blocks: [], text: "", why: "Their CV is a photo format the AI can't read (upload it as PDF)" };
 }
-export const strongEnough = (a: Assessed) => ["Perfect fit", "Good fit"].includes(a.verdict) && a.fit >= MIN_PITCH_FIT && !a.notMet.length;
+
+// Step 1, once per lead: what the job description asks for, exactly as written (nothing assumed),
+// split into required and nice to have, plus the role facts and the titles the hiring manager
+// likely has (for finding them on Apollo).
+export async function readJobDescription(lead: any): Promise<{ role: RoleFacts; items: JdItem[]; contacts: Contact[] }> {
+  const sys = "You read an employer's job description and pull out exactly what it asks of candidates. Reply with STRICT JSON only: " +
+    "{\"role\": {\"summary\": string, \"industry\": string, \"work_setup\": \"On-site\" | \"Hybrid\" | \"Remote\" | \"\", \"employment_type\": \"Full-time\" | \"Part-time\" | \"Contract\" | \"Temporary\" | \"\", \"seniority\": string}, " +
+    "\"requirements\": [{\"item\": string, \"required\": boolean}], \"hiring_manager_titles\": string[], \"contacts\": [{\"name\": string, \"title\": string, \"email\": string}]}. " +
+    "requirements: every qualification, requirement, skill, licence, certification, degree, years of experience, industry experience, tool, system, language or work authorisation the description asks candidates to have, " +
+    "wherever it appears (headings like Requirements, Qualifications, What you'll bring, Must have, About you, Skills, Experience, Preferred, Nice to have, Bonus, or any sentence that reads like one). " +
+    "Write each one as the description puts it, under 12 words, one per item (keep 'or' alternatives together, e.g. 'CPA or CMA'). " +
+    "NEVER add anything the description doesn't say and never infer requirements from the job title or what is usual for the role. " +
+    "Leave out duties (what the person will do), benefits, and personal traits a CV can't show (e.g. 'team player', 'detail-oriented', 'strong communication skills', 'self-starter'). " +
+    "required=false when the description says preferred, ideally, a plus, a bonus, nice to have, desirable or similar; otherwise true. Up to 15 items; [] if the description lists none. " +
+    "role.summary: two short sentences on what the job is, for the candidate. NEVER name the employer, its brands, website or anything that identifies it ('a growing manufacturer'). " +
+    "role.industry: the employer's industry in a few words (from the industry given, or the employer and description). " +
+    "hiring_manager_titles: 3 to 6 job titles the person this role reports to would have (e.g. for a Senior Accountant: 'Controller', 'Finance Manager', 'Head of Finance', 'CFO'); if the description says who it reports to, put that first. " +
+    "contacts: anyone the description gives an email address for (e.g. 'send your CV to Jane Doe, HR Manager, jane@acme.com', or 'careers@acme.com'), with the email exactly as written; [] if none.";
+  const posting = `Job: ${lead.job_title}${lead.data?.industry ? "\nEmployer industry: " + lead.data.industry : ""}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${lead.data?.remote ? "\nRemote" : ""}\nEmployer (never mention it): ${lead.company}\nDescription:\n${String(lead.description || "").slice(0, 6000)}`;
+  const out = await askAI(sys, posting, 2500);
+  const r = out?.role || {};
+  const role: RoleFacts = {
+    summary: hideEmployer(scrub(clip(r.summary, 400), []), lead), industry: hideEmployer(clip(r.industry, 80), lead), workSetup: clip(r.work_setup, 20),
+    employmentType: clip(r.employment_type, 20), seniority: clip(r.seniority, 40),
+    hmTitles: (Array.isArray(out?.hiring_manager_titles) ? out.hiring_manager_titles : []).map((t: unknown) => clip(t, 60)).filter(Boolean).slice(0, 6),
+  };
+  const seen = new Set<string>();
+  const items: JdItem[] = (Array.isArray(out?.requirements) ? out.requirements : []).map((x: any) => ({ item: hideEmployer(clip(x?.item, 100), lead), required: x?.required !== false }))
+    .filter((x: JdItem) => x.item && !seen.has(x.item.toLowerCase()) && seen.add(x.item.toLowerCase())).slice(0, 15);
+  return { role, items, contacts: jdContacts(String(lead.description || ""), out?.contacts) };
+}
+
+// Step 2, per candidate, reading their CV: each item met / not met / not shown, plus how the role
+// meets what THEY want, and the questions to ask them first (a yes/no question for each required
+// item their CV doesn't show). The decision itself is made here, not by the AI: anything required
+// they don't have takes them out; required items decide the fit; nice-to-haves they meet are a bonus.
+async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdItem[], c: any, n: number): Promise<Assessed> {
+  const base: Assessed = { n, fit: 0, verdict: "Not a fit", reason: "", whyRole: "", bullets: [], musts: [], notMet: [], requirements: [], questions: [], jd: [], confirm: [], out: "" };
+  const cv = await cvContent(admin, c);
+  if (cv.why) return { ...base, out: cv.why };
+  const sys = "You are a senior recruiter checking one candidate against an employer's job description, strictly from the evidence. Their CV is attached; a profile summary and what they're looking for follow. " +
+    "Reply with STRICT JSON only: {\"checks\": [{\"n\": number, \"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}], \"confirm\": [{\"n\": number, \"q\": string}], " +
+    "\"industry\": {\"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}, " +
+    "\"reason\": string, \"why_role\": string, \"bullets\": string[], \"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": string[]}. " +
+    "industry: whether they have worked in the employer's industry (given below) or a closely related one: 'met' with evidence (e.g. '5 years in manufacturing'), 'not_met' when their CV shows only other industries, 'not_shown' when unclear. This is information only. " +
+    "checks: one for EVERY numbered requirement. 'met' only when the CV (or profile) clearly shows it; equivalent wording counts (e.g. 'ACA chartered accountant' for 'professional accounting qualification', 6 years for '5+ years'). " +
+    "'not_met' only when the CV clearly shows they don't have it (e.g. 3 years in total where 5+ are required, a different licence where only one specific licence is accepted). " +
+    "'not_shown' when the CV simply doesn't say. Never assume, never infer from the job title. evidence: a few words from the CV for a hiring manager, anonymous (no names of people or employers), e.g. 'Licensed CPA since 2016', '7 years in manufacturing'; for not_shown ''. " +
+    "confirm: for each REQUIRED requirement that is not_shown, one short friendly yes/no question to the candidate ('you'), e.g. 'Do you have hands-on experience with NetSuite?'. " +
+    "reason: one short sentence on why they fit the employer. why_role: two short sentences to the candidate ('you') on why this role is a great match for THEM (the work, the step up, the setup, the location, the pay). Warm, specific, honest. " +
+    "bullets: 3 selling points for the hiring manager, each under 15 words, anonymous. " +
+    "requirements: how THIS ROLE meets what the CANDIDATE is looking for, one item each for: 'Role', 'Level', 'Location', 'Work setup', 'Employment type', 'Pay' (only when both sides are known). theirs: what they want; role: what this job offers; " +
+    "status 'met' when the role clearly gives them what they want, 'discuss' when it doesn't clearly or isn't stated (negotiable, talked through). Leave out an item only when neither side is known. " +
+    "questions: up to 2 short, friendly questions about 'discuss' items only. [] when none. NEVER name the employer anywhere.";
+  const list = items.map((x, i) => `${i + 1}. ${x.item} (${x.required ? "required" : "nice to have"})`).join("\n");
+  const text = `${cv.text}Job: ${lead.job_title}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${role.workSetup ? "\nWork setup: " + role.workSetup : ""}${role.employmentType ? "\nEmployment type: " + role.employmentType : ""}\nWhat the job is: ${role.summary}\n\n` +
+    `Employer's industry: ${role.industry || "unknown"}\n\nRequirements from the job description:\n${list}\n\nCandidate profile: ${anonSummary(c)}\n${lookingFor(c)}`;
+  const out = await askAI(sys, cv.blocks.length ? [...cv.blocks, { type: "text", text }] : text, 3000);
+  const byN = new Map<number, any>();
+  for (const x of Array.isArray(out?.checks) ? out.checks : []) byN.set(Number(x?.n), x);
+  const jd: JdCheck[] = items.map((it, i) => {
+    const x = byN.get(i + 1);
+    const status = ["met", "not_met", "not_shown"].includes(x?.status) ? x.status : "not_shown";
+    return { ...it, status, evidence: status === "met" ? scrub(clip(x?.evidence, 120), [c]) : "" };
+  });
+  // Industry: always noted, never deciding (unless the job description itself asks for it, when it's
+  // one of the requirements above).
+  const ind = out?.industry || {};
+  if (role.industry) jd.push({ item: "Industry: " + role.industry, required: false, info: true, status: ["met", "not_met"].includes(ind.status) ? ind.status : "not_shown", evidence: ind.status === "met" ? scrub(clip(ind.evidence, 120), [c]) : "" } as JdCheck);
+  const asks = new Map<number, string>();
+  for (const q of Array.isArray(out?.confirm) ? out.confirm : []) asks.set(Number(q?.n), hideEmployer(clip(q?.q, 200), lead));
+  const req = jd.filter((x) => x.required);
+  const met = req.filter((x) => x.status === "met");
+  const notMet = req.filter((x) => x.status === "not_met").map((x) => x.item);
+  const notShown = req.filter((x) => x.status === "not_shown");
+  const confirm = notShown.map((x) => ({ item: x.item, q: asks.get(items.indexOf(items.find((y) => y.item === x.item)!) + 1) || `Do you have this: ${x.item}?` }));
+  const a: Assessed = {
+    ...base, jd, notMet, confirm,
+    fit: req.length ? Math.round(100 * met.length / req.length) : 0,
+    verdict: notMet.length ? "Not a fit" : !notShown.length ? "Perfect fit" : "Good fit",
+    reason: hideEmployer(scrub(clip(out?.reason, 300), [c]), lead), whyRole: hideEmployer(clip(out?.why_role, 400), lead),
+    bullets: (Array.isArray(out?.bullets) ? out.bullets : []).slice(0, 3).map((b: unknown) => scrub(clip(b, 140), [c])),
+    musts: [...met.map((x) => ({ item: x.item, evidence: x.evidence })), ...jd.filter((x) => !x.required && !x.info && x.status === "met").map((x) => ({ item: x.item, evidence: x.evidence, bonus: true })),
+      // Industry experience shows to the client too, unless the job description already asked for it.
+      ...jd.filter((x) => x.info && x.status === "met" && !items.some((y) => /industry|sector/i.test(y.item))).map((x) => ({ item: "Industry experience", evidence: x.evidence, bonus: true }))],
+    requirements: (Array.isArray(out?.requirements) ? out.requirements : []).slice(0, 6).map((q: any) => ({
+      item: clip(q?.item, 30), theirs: hideEmployer(clip(q?.theirs, 90), lead), role: hideEmployer(clip(q?.role, 90), lead), status: q?.status === "met" ? "met" : "discuss" as "met" | "discuss",
+    })).filter((q: any) => q.item),
+    questions: (Array.isArray(out?.questions) ? out.questions : []).slice(0, 2).map((q: unknown) => hideEmployer(clip(q, 240), lead)).filter(Boolean),
+  };
+  a.out = notMet.length ? "Doesn't meet: " + notMet.join("; ")
+    : notShown.length > MAX_TO_CONFIRM ? `Their CV doesn't show ${notShown.length} of the ${req.length} requirements`
+    : met.length < notShown.length ? "Their CV shows too few of the requirements" : "";
+  return a;
+}
+
+// Every candidate against the job description (one CV read each).
+export async function assessForPitch(admin: any, lead: any, cands: any[]): Promise<{ role: RoleFacts; items: JdItem[]; contacts: Contact[]; results: Assessed[] }> {
+  const { role, items, contacts } = await readJobDescription(lead);
+  if (!items.some((x) => x.required)) return { role, items, contacts, results: [] };
+  const results: Assessed[] = [];
+  for (let i = 0; i < cands.length; i += 3) {
+    const part = await Promise.all(cands.slice(i, i + 3).map((c, k) => checkCandidate(admin, lead, role, items, c, i + k).catch((e) => {
+      if (isAiPaused(e)) throw e;
+      return { n: i + k, fit: 0, verdict: "Not a fit", reason: "", whyRole: "", bullets: [], musts: [], notMet: [], requirements: [], questions: [], jd: [], confirm: [], out: "The check failed: " + String((e as Error)?.message || e).slice(0, 120) } as Assessed;
+    })));
+    results.push(...part);
+  }
+  return { role, items, contacts, results };
+}
+export const strongEnough = (a: Assessed) => !a.out && a.jd.length > 0 && !a.notMet.length;
 
 export function hideEmployer(t: string, lead: any): string {
   let s = String(t || "");

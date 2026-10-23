@@ -52,7 +52,7 @@ Deno.serve(async (req: Request) => {
         const t = await termsFor(admin, l.company);
         const { agreement } = await shortlistFor(admin, l);
         if (agreement) return json({ ok: true, title: agreement.title, body: agreement.body, signed: agreement, fee: feeLine(t) });
-        return json({ ok: true, title: t.title, body: fillTerms(t, { client: String(l.company || "the Client").toUpperCase(), clientAddress: "", date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) }),
+        return json({ ok: true, title: t.title, body: fillTerms(t, { client: String(l.company || "the Client").toUpperCase(), clientAddress: "", companyNo: "[company number]", date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) }),
           fee: feeLine(t), company: l.company || "", email: l.contact_email || "", name: l.contact_name || "" });
       }
       if (action === "sign") {

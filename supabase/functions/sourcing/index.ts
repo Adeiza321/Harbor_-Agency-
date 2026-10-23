@@ -11,6 +11,7 @@ import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
 import { notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
+import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
@@ -165,12 +166,15 @@ async function stepContracts(admin: any, s: any, agencyName: string) {
   let sent = 0, flagged = 0;
   const c = s.contract || {};
   for (const l of leads || []) {
-    if (c.enabled && c.subject && c.body && l.contact_email) {
-      const fill = (t: string) => String(t || "").replace(/\{\{first_name\}\}/gi, l.contact_first_name || "there").replace(/\{\{company\}\}/gi, l.company || "").replace(/\{\{role\}\}/gi, l.job_title || "")
+    // To whoever clicked "interested" (each contact has their own link), else the lead's contact.
+    const ib = l.data?.interested_by;
+    const toEmail = ib?.email || l.contact_email, toName = ib ? ib.name : l.contact_name, toFirst = ib ? ib.first_name : l.contact_first_name;
+    if (c.enabled && c.subject && c.body && toEmail) {
+      const fill = (t: string) => String(t || "").replace(/\{\{first_name\}\}/gi, toFirst || "there").replace(/\{\{company\}\}/gi, l.company || "").replace(/\{\{role\}\}/gi, l.job_title || "")
         .replace(/\{\{contract_link\}\}/gi, c.url || "");
       const body = fill(c.body) + (c.url && !/\{\{contract_link\}\}/i.test(c.body) ? "\n\n" + c.url : "");
-      const { error } = await admin.from("outreach_messages").insert({ kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name, subject: fill(c.subject).slice(0, 200),
-        body: finalBody(body, l.unsub_token, "l", l.region || "OTHER", s, agencyName, "client"), approved_by: null });
+      const { error } = await admin.from("outreach_messages").insert({ kind: "client", lead_id: l.id, to_email: toEmail, to_name: toName, subject: fill(c.subject).slice(0, 200),
+        body: finalBody(body, ib?.token ? `${l.unsub_token}~${ib.token}` : l.unsub_token, "l", l.region || "OTHER", s, agencyName, "client"), approved_by: null });
       if (!error) { await admin.from("leads").update({ contract_sent_at: new Date().toISOString(), status: l.status === "won" ? "won" : "meeting", notes: [l.notes, "Contract queued automatically " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id); sent++; }
       continue;
     }
@@ -581,6 +585,11 @@ async function handle(req: Request): Promise<Response> {
       if (!l) return json({ error: "Lead not found" }, 404);
       // force: send now with the candidates who are ready, without waiting for the rest.
       return json(await pitchLead(admin, l, s, body.force === true));
+    }
+    // A lead's contacts: find on Apollo again, add by hand, make main, take off.
+    if (action === "lead_contacts" && body.leadId) {
+      if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
+      return json(await leadContactsAction(admin, String(body.leadId), String(body.op || ""), body));
     }
     // Candidate first: one candidate on a pitch. push = ready without waiting; withdraw / remove =
     // off this pitch; remind = the reminder email now.

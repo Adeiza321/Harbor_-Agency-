@@ -8,7 +8,16 @@ import { emailHash, provider, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
 import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceShort, sourceText, templateEmail } from "./outreach.ts";
 import { isTemplateBody, templateParts } from "./template.ts";
-import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
+import { esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
+import { greet, liveContacts } from "./contacts.ts";
+
+// Everyone a client pitch goes to, each with their own email: the lead's contacts, or (older leads)
+// its single contact. Each has their own links (the lead's token ~ theirs).
+export function pitchRecipients(l: any): { email: string; name: string; first: string; token: string; role: string }[] {
+  const list = liveContacts(l);
+  if (list.length) return list.map((c) => ({ email: c.email, name: c.name || "", first: c.first_name || "", token: `${l.unsub_token}~${c.token}`, role: c.title || c.role || "" }));
+  return l.contact_email ? [{ email: l.contact_email, name: l.contact_name || "", first: l.contact_first_name || "", token: l.unsub_token, role: l.contact_role || "" }] : [];
+}
 
 // "City, Country" without repeating a country the location already names (same as the app's jobPlace).
 const COUNTRY_ALIASES: Record<string, string[]> = { "United States": ["usa", "us", "u.s.", "united states of america"], "United Kingdom": ["uk", "u.k.", "england", "scotland", "wales", "great britain"], "United Arab Emirates": ["uae"] };
@@ -33,7 +42,7 @@ export function pitchCands(l: any, viewUrl: string) {
   const ms: any[] = Array.isArray(l.matches) ? l.matches : [];
   return ids.map((id, i) => {
     const m = ms.find((x) => x.candidate_id === id) || {};
-    const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => x.item + (x.evidence ? ": " + x.evidence : "")) : (m.bullets || [])).slice(0, 6);
+    const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => (x.bonus ? "Nice to have: " : "") + x.item + (x.evidence ? ": " + x.evidence : "")) : (m.bullets || [])).slice(0, 8);
     return { n: i + 1, verdict: m.verdict || "", musts, url: viewUrl ? viewUrl + "&c=" + (i + 1) : "" };
   });
 }
@@ -149,7 +158,10 @@ export async function sendLeadTest(admin: any, leadId: string, to: string, s: Se
   if (!l.pitch_body) throw new Error("This lead has no drafted email yet");
   const b = await loadBrand(admin);
   const region = (l.region as Region) || regionOf(countryCode(l.country));
-  const html = leadHtml(l, "test-preview", region, s, agencyName, b);
+  const to_ = pitchRecipients(l);
+  const r0 = to_[0];
+  const who = to_.length ? `This would go as ${to_.length === 1 ? "one email" : to_.length + " separate emails"}: ${to_.map((r) => `${esc(r.name || r.email)} &lt;${esc(r.email)}&gt;${r.role ? " (" + esc(r.role) + ")" : ""}`).join(", ")}. This copy is ${esc(r0.name || r0.email)}'s.` : "No contact yet: add one on the lead before it can be sent.";
+  const html = leadHtml(r0 ? { ...l, pitch_body: greet(l.pitch_body, { first_name: r0.first }) } : l, "test-preview", region, s, agencyName, b).replace(/(<body[^>]*>)/i, `$1<div style="font-family:Arial,sans-serif;font-size:13px;background:#FFF6E0;color:#6B4E00;padding:10px 14px;">${who}</div>`);
   const ok = await sendBrevo(b, { email: to }, "[TEST] " + (l.pitch_subject || `Candidate for your ${l.job_title} role`), html);
   if (!ok) throw new Error("Brevo didn't accept the test email");
   return { ok: true, to };
@@ -197,16 +209,24 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
   let queued = 0;
   const brand = await loadBrand(admin);
   for (const l of rows || []) {
-    if (!l.contact_email || !l.pitch_body) continue;
-    const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(l.contact_email)).maybeSingle();
-    if (sup) { await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id); continue; }
+    const recipients = pitchRecipients(l);
+    if (!recipients.length || !l.pitch_body) continue;
     const region = (l.region as Region) || regionOf(countryCode(l.country));
-    const { error } = await admin.from("outreach_messages").insert({
-      kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name,
-      subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"),
-      html: leadHtml(l, l.unsub_token, region, s, agencyName, brand), approved_by: approver,
-    });
-    if (error) throw new Error(error.message);
+    // One email per contact, each greeted by name with their own unsubscribe link.
+    let n = 0;
+    for (const r of recipients) {
+      const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(r.email)).maybeSingle();
+      if (sup) continue;
+      const lr = { ...l, pitch_body: greet(l.pitch_body, { first_name: r.first }) };
+      const { error } = await admin.from("outreach_messages").insert({
+        kind: "client", lead_id: l.id, to_email: r.email, to_name: r.name || null,
+        subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(leadText(lr), r.token, "l", region, s, agencyName, "client"),
+        html: leadHtml(lr, r.token, region, s, agencyName, brand), approved_by: approver,
+      });
+      if (error) throw new Error(error.message);
+      n++;
+    }
+    if (!n) { await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id); continue; }
     await admin.from("leads").update({ status: "queued" }).eq("id", l.id);
     // Candidate first: the candidates in it are now with the client (Submitted on the lead's role).
     const pitched: string[] = Array.isArray(l.data?.pitched) ? l.data.pitched.map(String) : [];
@@ -244,8 +264,10 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
       if (p?.status === "archived" || (p as any)?.jobs?.status === "Closed") { await admin.from("outreach_messages").update({ status: "skipped", error: "Role closed" }).eq("id", m.id); continue; }
       first = p?.first_name || ""; last = p?.last_name || ""; company = p?.company || ""; token = p?.unsub_token || "";
     } else if (m.lead_id) {
-      const { data: l } = await admin.from("leads").select("contact_first_name,contact_name,company,unsub_token").eq("id", m.lead_id).maybeSingle();
-      first = l?.contact_first_name || ""; last = String(l?.contact_name || "").split(" ").slice(1).join(" "); company = l?.company || ""; token = l?.unsub_token || "";
+      const { data: l } = await admin.from("leads").select("contact_first_name,contact_name,contact_email,contact_role,company,unsub_token,data").eq("id", m.lead_id).maybeSingle();
+      // This email's own contact (each contact gets their own email and links).
+      const r = l ? pitchRecipients(l).find((x) => x.email.toLowerCase() === String(m.to_email || "").toLowerCase()) : null;
+      first = r?.first || ""; last = String(r?.name || "").split(" ").slice(1).join(" "); company = l?.company || ""; token = r?.token || l?.unsub_token || "";
     }
     try {
       const r = await sendMail({ kind: m.kind, to: m.to_email, toName: m.to_name || "", firstName: first, lastName: last, company, subject: m.subject, body: m.body, html: m.html || undefined,
@@ -282,14 +304,23 @@ export async function manualCompose(admin: any, kind: "p" | "l", id: string, s: 
   }
   const { data: l } = await admin.from("leads").select("*").eq("id", id).maybeSingle();
   if (!l) throw new Error("Not found");
-  if (!l.contact_email) throw new Error("No email address for this contact");
+  const recipients = pitchRecipients(l);
+  if (!recipients.length) throw new Error("No contact with an email address on this lead yet");
   if (["unsubscribed", "lost", "ignored"].includes(l.status)) throw new Error("This contact shouldn't be emailed");
-  const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(l.contact_email)).maybeSingle();
-  if (sup) { await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id); throw new Error("They've unsubscribed, so they can't be emailed"); }
-  const { data: q } = await admin.from("outreach_messages").select("subject,body").eq("lead_id", id).eq("status", "queued").limit(1).maybeSingle();
   const region = (l.region as Region) || regionOf(countryCode(l.country));
-  return { to: l.contact_email, toName: l.contact_name || "", subject: q?.subject || l.pitch_subject || `Candidate for your ${l.job_title} role`,
-    body: q?.body || finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"), html: q?.html || undefined };
+  const { data: queued } = await admin.from("outreach_messages").select("to_email,subject,body,html").eq("lead_id", id).eq("status", "queued");
+  // One email per contact.
+  const emails: any[] = [];
+  for (const r of recipients) {
+    const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(r.email)).maybeSingle();
+    if (sup) continue;
+    const q = (queued || []).find((x: any) => String(x.to_email).toLowerCase() === r.email.toLowerCase());
+    const lr = { ...l, pitch_body: greet(l.pitch_body, { first_name: r.first }) };
+    emails.push({ to: r.email, toName: r.name, role: r.role, subject: q?.subject || l.pitch_subject || `Candidate for your ${l.job_title} role`,
+      body: q?.body || finalBody(leadText(lr), r.token, "l", region, s, agencyName, "client"), html: q?.html || undefined });
+  }
+  if (!emails.length) { await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id); throw new Error("Everyone on this lead has unsubscribed"); }
+  return { ...emails[0], emails };
 }
 
 export async function markManualSent(admin: any, kind: "p" | "l", id: string) {

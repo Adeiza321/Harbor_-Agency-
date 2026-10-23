@@ -9374,9 +9374,13 @@ function ApprovalsPanel({ S, toast, onChanged }) {
 // "Send it myself": until an outreach sender is connected, open the finished email (links, sender
 // details and unsubscribe included) in the recruiter's own mailbox, then record it as sent.
 function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
-  const [mail, setMail] = useState(null);
+  const [all, setMail] = useState(null);
+  // A client pitch goes to each contact as their own email: one tab each.
+  const [idx, setIdx] = useState(0);
+  const many = all && Array.isArray(all.emails) && all.emails.length > 1;
+  const mail = all ? (many ? all.emails[Math.min(idx, all.emails.length - 1)] : all) : null;
   const [busy, setBusy] = useState(false);
-  const open = () => { setBusy(true); S.sourcing("manual_compose", { kind, id }).then(setMail).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  const open = () => { setBusy(true); S.sourcing("manual_compose", { kind, id }).then((m) => { setIdx(0); setMail(m); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
   // Opened from a ⋮ menu: the parent bumps openKey.
   React.useEffect(() => { if (openKey) open(); }, [openKey]); // eslint-disable-line
   const done = () => { setBusy(true); S.sourcing("manual_sent", { kind, id }).then(() => { setMail(null); toast("Marked as sent"); onDone && onDone(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
@@ -9390,10 +9394,18 @@ function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
   return (
     <>
       {!noButton && <Btn icon={Send} onClick={open} disabled={busy}>{busy && !mail ? "Preparing…" : label || "Send it myself"}</Btn>}
-      <Modal open={!!mail} onClose={() => setMail(null)} title="Send it from your own email">
+      <Modal open={!!mail} onClose={() => setMail(null)} title={many ? "Send these " + all.emails.length + " emails from your own email" : "Send it from your own email"}>
         {mail && (
           <div className="flex flex-col gap-3">
-            <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
+            <div className="text-sm" style={{ color: C.ink2 }}>Open {many ? "each one" : "it"} in your mailbox and press send there. Then come back and click <b>{many ? "I've sent them" : "I've sent it"}</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
+            {many && (
+              <div className="flex flex-wrap gap-1.5">
+                {all.emails.map((e, i) => (
+                  <button key={e.to} type="button" onClick={() => setIdx(i)} aria-pressed={i === idx} className="rounded-lg border px-3 py-1.5 text-xs font-medium"
+                    style={{ borderColor: i === idx ? C.em : C.line, background: i === idx ? C.emTint : C.card, color: i === idx ? C.emText : C.ink }}>{i + 1}. {e.toName || e.to}{e.role ? " · " + e.role : ""}</button>
+                ))}
+              </div>
+            )}
             <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <IconBtn icon={Copy} label="Copy address" size="xs" bare tone="em" className="align-middle" onClick={() => copyText(mail.to, toast, "Address copied")} /></div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <IconBtn icon={Copy} label="Copy subject" size="xs" bare tone="em" className="align-middle" onClick={() => copyText(mail.subject, toast, "Subject copied")} /></div>
             <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
@@ -9405,7 +9417,7 @@ function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
               {kind === "p" && <Btn onClick={sendTest} disabled={testing}>{testing ? "Sending…" : "Email me a test"}</Btn>}
             </div>
             {mail.body.length > 6000 && <div className="text-xs" style={{ color: C.warnFg }}>This email is long, so some mail apps may cut it short when opening. If that happens, use the copy button and paste it in.</div>}
-            <div className="pt-3 flex justify-end" style={{ borderTop: `1px solid ${C.line}` }}><Btn kind="primary" onClick={done} disabled={busy}>{busy ? "Saving…" : "I've sent it"}</Btn></div>
+            <div className="pt-3 flex justify-end" style={{ borderTop: `1px solid ${C.line}` }}><Btn kind="primary" onClick={done} disabled={busy}>{busy ? "Saving…" : many ? "I've sent them" : "I've sent it"}</Btn></div>
           </div>
         )}
       </Modal>
@@ -10006,6 +10018,100 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
     </Modal>
   );
 }
+// Who the pitch goes to, each their own email: anyone named in the job description, the job's
+// poster, Talent Acquisition, the hiring manager and the CEO (ContactOut first, Apollo as backup,
+// work emails only). Rec Ops / an Admin can look again, add someone by hand, or take someone off.
+function LeadContacts({ l, S, toast, onChanged }) {
+  const [busy, setBusy] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ name: "", email: "", title: "" });
+  const staff = S && (S.role === "admin" || S.role === "recops");
+  const d = l.data || {};
+  const list = (Array.isArray(d.contacts) ? d.contacts : []).filter((c) => c && !c.removed);
+  const live = list.filter((c) => !c.unsubscribed);
+  const run = (key, body, after) => { setBusy(key); S.sourcing("lead_contacts", { leadId: l.id, ...body }).then((r) => { toast((r && r.message) || "Saved"); after && after(); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const locked = ["queued", "contacted", "replied", "meeting", "won", "lost", "unsubscribed"].includes(l.status);
+  const inp = "rounded-lg border px-2.5 py-1.5 text-xs outline-none min-w-0";
+  // Older leads: the single contact from the posting.
+  if (!list.length && l.contact_email && !d.contacts_checked_at) return (
+    <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name || l.contact_email}</span>{l.contact_role ? ", " + l.contact_role : ""} · {l.contact_email}</div>
+  );
+  return (
+    <div className="text-xs mt-1.5 rounded-lg px-2.5 py-2" style={{ background: C.canvas }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-semibold" style={{ color: C.ink }}>Contacts</span>
+        <span style={{ color: C.ink3 }}>{live.length ? (live.length === 1 ? "gets the pitch" : "each gets their own email") : d.contacts_checked_at ? "no one found" + (d.contacts_tried && d.contacts_tried.length ? " (looked for: " + d.contacts_tried.join(", ") + ")" : "") : "looked up when the pitch is written (ContactOut, then Apollo)"}</span>
+        {staff && !locked && <span className="ml-auto flex gap-3">
+          <button type="button" disabled={!!busy} onClick={() => run("find", { op: "find" })} className="font-medium" style={{ color: C.em }}>{busy === "find" ? "Looking…" : d.contacts_checked_at ? "Look again" : "Find contacts"}</button>
+          <button type="button" onClick={() => setAdding((a) => !a)} className="font-medium" style={{ color: C.em }}>{adding ? "Cancel" : "Add a contact"}</button>
+        </span>}
+      </div>
+      {list.map((c, i) => (
+        <div key={c.email} className="flex items-center gap-2 flex-wrap mt-1.5" style={{ opacity: c.unsubscribed ? 0.6 : 1 }}>
+          <Pill tone={c.unsubscribed ? "neutral" : "em"}>{c.role}</Pill>
+          <span className="font-medium" style={{ color: C.ink }}>{c.name || c.email}</span>
+          <span style={{ color: C.ink2 }}>{[c.title, c.name ? c.email : ""].filter(Boolean).join(" · ")}</span>
+          {c.source && <span style={{ color: C.ink3 }}>via {c.source}</span>}
+          {c.unsubscribed && <span className="font-medium" style={{ color: C.warnFg }}>Unsubscribed</span>}
+          {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn</a>}
+          {staff && !locked && <button type="button" disabled={!!busy} onClick={() => run("r" + i, { op: "remove", index: i })} className="ml-auto" style={{ color: C.ink3 }}>Take off</button>}
+        </div>
+      ))}
+      {!live.length && d.contacts_checked_at && <div className="mt-1" style={{ color: C.warnFg }}>The pitch waits until a contact is added.</div>}
+      {adding && (
+        <div className="mt-2 flex flex-wrap gap-2 items-center">
+          <input placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={inp + " w-36"} style={{ borderColor: C.line, background: C.soft }} />
+          <input placeholder="Work email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={inp + " w-48"} style={{ borderColor: C.line, background: C.soft }} />
+          <input placeholder="Job title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp + " w-36"} style={{ borderColor: C.line, background: C.soft }} />
+          <Btn kind="primary" disabled={!!busy || !f.email.trim()} onClick={() => run("add", { op: "add", ...f }, () => { setAdding(false); setF({ name: "", email: "", title: "" }); })} className="!py-1.5 !px-3 text-xs">{busy === "add" ? "Adding…" : "Add"}</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// What the job description asks for and where one candidate stands on each, from their CV:
+// required items decide (met / to confirm / confirmed / not met); nice-to-haves they meet are a bonus.
+const JD_STATE = { met: ["✓", "Met"], confirmed: ["✓", "Confirmed by them"], not_shown: ["?", "Not on their CV: asked to confirm"], not_met: ["✗", "Not met"] };
+function JdCheckList({ checks, open, onToggle }) {
+  const list = Array.isArray(checks) ? checks : [];
+  if (!list.length) return null;
+  const req = list.filter((x) => x.required !== false), nice = list.filter((x) => x.required === false && !x.info), info = list.filter((x) => x.info);
+  const ok = req.filter((x) => x.status === "met" || x.status === "confirmed").length;
+  const ask = req.filter((x) => x.status === "not_shown").length;
+  const bonus = nice.filter((x) => x.status === "met").length;
+  const color = (st) => (st === "met" || st === "confirmed" ? C.em : st === "not_met" ? C.dangerFg : C.warnFg);
+  const row = (x, i) => (
+    <div key={i} className="grid grid-cols-[16px_1fr_auto] gap-x-2 py-1.5" style={{ borderTop: "1px solid " + C.line }}>
+      <span className="font-bold" style={{ color: x.info && x.status !== "met" ? C.ink3 : color(x.status) }}>{x.info && x.status !== "met" ? "·" : (JD_STATE[x.status] || JD_STATE.not_shown)[0]}</span>
+      <span>{x.item}{x.evidence && <span style={{ color: C.ink2 }}> · {x.evidence}</span>}</span>
+      <span className="text-[11px] whitespace-nowrap" style={{ color: x.info && x.status !== "met" ? C.ink3 : color(x.status) }}>{x.info ? (x.status === "met" ? "Worked in it" : x.status === "not_met" ? "Other industries" : "Not clear") : x.required === false && x.status !== "met" ? "Not shown" : (JD_STATE[x.status] || JD_STATE.not_shown)[1]}</span>
+    </div>
+  );
+  return (
+    <div className="mt-2 rounded-lg" style={{ background: C.card, border: "1px solid " + C.line }}>
+      <button type="button" aria-expanded={open} onClick={onToggle} className="w-full flex items-center gap-2 px-2.5 py-2 text-left flex-wrap">
+        <span className="font-semibold" style={{ color: C.ink }}>Job description check</span>
+        <span className="font-semibold" style={{ color: C.em }}>✓ {ok} of {req.length} required</span>
+        {ask > 0 && <span className="font-semibold" style={{ color: C.warnFg }}>{ask} to confirm</span>}
+        {nice.length > 0 && <span style={{ color: C.ink2 }}>· {bonus} of {nice.length} nice-to-haves</span>}
+        {info.map((x, i) => <span key={i} style={{ color: x.status === "met" ? C.em : C.ink3 }}>· {x.item}{x.status === "met" ? " ✓" : ""}</span>)}
+        <ChevronDown size={14} color={C.ink2} className="ml-auto shrink-0" style={{ transform: open ? "rotate(180deg)" : "none" }} />
+      </button>
+      {open && (
+        <div className="px-2.5 pb-2.5">
+          <div className="text-[11px] pb-1" style={{ color: C.ink3 }}>Required, from the job description</div>
+          {req.map(row)}
+          {nice.length > 0 && <div className="text-[11px] pt-2 pb-1" style={{ color: C.ink3 }}>Nice to have (a bonus, doesn't decide)</div>}
+          {nice.map(row)}
+          {info.length > 0 && <div className="text-[11px] pt-2 pb-1" style={{ color: C.ink3 }}>Industry (information only, unless the job description asks for it)</div>}
+          {info.map((x, i) => row(x, "i" + i))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState({});
@@ -10026,7 +10132,8 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
         const c = S.cands.find((x) => x.id === o.candidate_id);
         const [label, tone] = o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : PITCH_STATE[o.status];
         const reqs = Array.isArray(o.requirements) ? o.requirements : [];
-        const qs = (Array.isArray(o.questions) ? o.questions : []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+        const rawQs = (Array.isArray(o.questions) ? o.questions : []).filter((q) => (typeof q === "string" ? q : q && q.q));
+        const qs = rawQs.map((q) => (typeof q === "string" ? q : q.q));
         const ans = Array.isArray(o.answers) ? o.answers : [];
         const live = !["withdrawn", "removed", "pitched"].includes(o.status);
         const first = c ? c.name.split(" ")[0] : "them";
@@ -10043,6 +10150,7 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
             </div>
             {o.reason && <div className="mt-1" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For the client: </span>{o.reason}</div>}
             {o.why_role && <div className="mt-0.5" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For {first}: </span>{o.why_role}</div>}
+            <JdCheckList checks={o.jd_check} open={!!open[o.id + "jd"]} onToggle={() => setOpen({ ...open, [o.id + "jd"]: !open[o.id + "jd"] })} />
             {reqs.length > 0 && (() => {
               const met = reqs.filter((q) => q.status === "met").length, discuss = reqs.length - met;
               return (
@@ -10068,7 +10176,7 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
                         <div className="mt-2 pt-2 flex flex-col gap-1.5" style={{ borderTop: "1px solid " + C.line }}>
                           {qs.map((q, i) => (
                             <div key={i} className="flex items-start gap-2">
-                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
+                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}{rawQs[i] && rawQs[i].confirm && <span className="ml-1 font-semibold" style={{ color: C.warnFg }}>(confirms a requirement)</span>}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
                               {staff && !ans.length && live && <button type="button" disabled={!!busy} onClick={() => run(o.id + "q" + i, "offer_question_remove", { offerId: o.id, index: i }, "Question removed")} className="shrink-0 inline-flex items-center gap-1" style={{ color: C.ink3 }} title="Remove this question: they won't be asked it"><X size={12} />Remove</button>}
                             </div>
                           ))}
@@ -10131,9 +10239,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
               </select>
             </div>
           </div>
-          <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>
-            {l.contact_name ? <>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name}</span>{l.contact_role ? ", " + l.contact_role : ""}{l.contact_email ? " · " + l.contact_email : ""}</> : "No hiring contact listed on the posting."}
-          </div>
+          <LeadContacts l={l} S={S} toast={toast} onChanged={onChanged} />
           <ApolloNote data={l.data} />
           {offers.some(isPitchOffer) ? <LeadPitchCandidates l={l} offers={offers.filter(isPitchOffer)} S={S} toast={toast} onChanged={onChanged} /> : offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
@@ -10447,7 +10553,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. The hiring contact then gets one email with the ready candidates' blind resumes behind a "View the candidates" button; when they say they're interested, the contract goes out by itself (Outreach settings).</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on ContactOut or Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</div>
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
@@ -11478,7 +11584,7 @@ function ClientPitchPage({ token }) {
   const [open, setOpen] = useState(() => Math.max(0, (Number(q.get("c")) || 1) - 1));
   const [gate, setGate] = useState(null);       // index of the candidate whose blind resume was just opened (pop-up)
   const [terms, setTerms] = useState(null);      // the agreement pop-up
-  const [f, setF] = useState({ name: "", title: "", company: "", address: "", email: "", authorised: false });
+  const [f, setF] = useState({ name: "", title: "", company: "", companyNo: "", website: "", address: "", email: "", authorised: false });
   const [busy, setBusy] = useState("");
   const [tl, setTl] = useState("");
   const [tlDone, setTlDone] = useState(false);
@@ -11492,7 +11598,7 @@ function ClientPitchPage({ token }) {
   const sign = () => { setBusy("sign"); clientCall(token, "sign", f).then(() => { setTerms(null); return load(); }).catch((e) => popError(e)).finally(() => setBusy("")); };
   const fullResume = (n) => { setBusy("cv" + n); clientCall(token, "resume", { n }).then((r) => window.open(r.url, "_blank", "noopener")).catch((e) => popError(e)).finally(() => setBusy("")); };
   const sendTl = () => { setBusy("tl"); clientCall(token, "timeline", { text: tl }).then(() => setTlDone(true)).catch((e) => popError(e)).finally(() => setBusy("")); };
-  const okToSign = f.name.trim().length > 2 && f.title.trim() && f.company.trim() && f.address.trim().length > 7 && /@/.test(f.email) && f.authorised;
+  const okToSign = f.name.trim().length > 2 && f.title.trim() && f.company.trim() && f.companyNo.trim().length > 2 && f.address.trim().length > 7 && /@/.test(f.email) && f.authorised;
   const field = (k, label, ph, area) => (
     <label className="flex flex-col gap-1"><span className="text-xs font-medium" style={{ color: C.ink2 }}>{label}</span>
       {area ? <textarea rows={2} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={ph} className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
@@ -11558,7 +11664,7 @@ function ClientPitchPage({ token }) {
                 {(c.musts || []).length > 0 && (
                   <div className="mt-3">
                     <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>MUST-HAVES {signed && c.name ? c.name.split(" ")[0].toUpperCase() : "THEY"} MEET{signed && c.name ? "S" : ""}</div>
-                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span><b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}</ul>
+                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span>{m.bonus && <span className="text-xs font-semibold mr-1" style={{ color: C.ink3 }}>Nice to have:</span>}<b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}</ul>
                   </div>
                 )}
                 {open === i && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
@@ -11584,7 +11690,7 @@ function ClientPitchPage({ token }) {
         <Modal open onClose={() => setTerms(null)} title={terms.title} wide>
           <div className="flex flex-col gap-4">
             <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>Fee only when you hire: {terms.fee}. No charge to review or interview.</div>
-            <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 340 }}><AgreementText body={String(terms.body || "").replace("[company address]", f.address.trim() || "[company address]")} /></div>
+            <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 340 }}><AgreementText body={String(terms.body || "").replace("[company address]", f.address.trim() || "[company address]").replace("[company number]", f.companyNo.trim() || "[company number]")} /></div>
             {terms.signed ? (
               <div className="grid sm:grid-cols-2 gap-4">
                 <TypedSignature party="FOR THE AGENCY" name={terms.signed.agency_signer_name} title={terms.signed.agency_signer_title} at={terms.signed.agency_signed_at} />
@@ -11597,6 +11703,10 @@ function ClientPitchPage({ token }) {
                   {field("title", "Job title", "e.g. Head of Finance")}
                   {field("company", "Company", "")}
                   {field("email", "Work email", "")}
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {field("companyNo", "Company number", "Company registration number")}
+                  {field("website", "Company website (optional)", "https://")}
                 </div>
                 {field("address", "Company address", "Street, city, state, country", true)}
                 <TypedSignature party="FOR THE CLIENT" name={f.name} title={f.title} device={deviceOf(navigator.userAgent)} />
@@ -13460,7 +13570,7 @@ function ClientTermsTab({ toast, S }) {
         {!poc.bookingUrl && <div className="text-xs mt-2" style={{ color: C.warnFg }}>No booking link yet: clients are asked to reply to arrange a call instead.</div>}
       </Card>
       <Card>
-        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_address}} {{agency_address}} {{date}} {{fee}} {{discount}}." />
+        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_company_no}} {{client_address}} {{agency_address}} {{date}} {{fee}} {{discount}}." />
         <div className="grid sm:grid-cols-3 gap-3 mt-3">
           <label className="text-xs font-medium sm:col-span-1" style={{ color: C.ink2 }}>Title<input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp} style={inpS} /></label>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Fee (% of annual gross salary)<input type="number" min="0" step="0.5" value={f.feePct} onChange={(e) => setF({ ...f, feePct: e.target.value })} className={inp} style={inpS} /></label>
@@ -13489,7 +13599,7 @@ function ClientTermsTab({ toast, S }) {
             <TypedSignature party="FOR THE AGENCY" name={view.agency_signer_name} title={view.agency_signer_title} at={view.agency_signed_at} />
             <TypedSignature party="FOR THE CLIENT" name={view.signer_name} title={view.signer_title} at={view.signed_at} ip={view.ip} device={deviceOf(view.user_agent)} />
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink3 }}>Company address: {view.company_address} · {view.signer_email}</div>
+          <div className="text-xs mt-3" style={{ color: C.ink3 }}>Company address: {view.company_address} · {view.signer_email}{view.company_number ? " · Company number " + view.company_number : ""}{view.website ? " · " + view.website : ""}</div>
         </Modal>
       )}
     </div>
@@ -14185,6 +14295,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
   const [d, setD] = useState(initial);
   const [busy, setBusy] = useState("");
   const [answers, setAnswers] = useState([]);
+  const [yn, setYn] = useState([]);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
   const call = (fn, body) => sbFetch("/rest/v1/rpc/" + fn, { method: "POST", body: { p_token: token, p_offer: offer, ...(body || {}) } });
   const reload = () => call("candidate_pitch").then((j) => j && setD(j));
@@ -14192,7 +14303,9 @@ function PortalPitch({ token, offer, initial, onDone }) {
   // Acknowledged with nothing to answer, or answers sent: back to their profile.
   const finish = (msg) => onDone && onDone(msg);
   const ack = () => { setBusy("ack"); call("candidate_pitch_ack").then((r) => (r && r.needsAnswers ? reload() : finish("ack"))).catch((e) => popError(e)).finally(() => setBusy("")); };
-  const answer = () => { setBusy("ans"); call("candidate_pitch_answer", { p_answers: questionsList().map((_, i) => (answers[i] || "").trim()) }).then(() => finish("answers")).catch((e) => popError(e)).finally(() => setBusy("")); };
+  // A yes/no question confirms a requirement their CV doesn't show: "Yes" / "No", plus any detail.
+  const answerText = (i) => { const q = rawQuestions()[i]; const t = (answers[i] || "").trim(); return q && q.confirm ? (yn[i] ? yn[i] + (t ? " - " + t : "") : "") : t; };
+  const answer = () => { setBusy("ans"); call("candidate_pitch_answer", { p_answers: questionsList().map((_, i) => answerText(i)) }).then(() => finish("answers")).catch((e) => popError(e)).finally(() => setBusy("")); };
   // From the email: Acknowledge counts straight away; Withdraw asks them to confirm first.
   React.useEffect(() => {
     const r = new URLSearchParams(window.location.search).get("r");
@@ -14200,7 +14313,8 @@ function PortalPitch({ token, offer, initial, onDone }) {
     if (r === "withdraw" && !["withdrawn", "removed"].includes(initial.status)) setConfirmWithdraw(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const role = d.role || {}, facts = d.facts || {};
-  const questionsList = () => (d.questions || []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+  const rawQuestions = () => (d.questions || []).filter((q) => (typeof q === "string" ? q : q && q.q));
+  const questionsList = () => rawQuestions().map((q) => (typeof q === "string" ? q : q.q));
   const questions = questionsList();
   const waiting = ["notified", "reminded", "no_email"].includes(d.status);
   const needsAnswers = d.status === "acknowledged" && questions.length > 0 && !d.answers;
@@ -14263,16 +14377,31 @@ function PortalPitch({ token, offer, initial, onDone }) {
       {needsAnswers && (
         <div className="mt-4 flex flex-col gap-3">
           <div className="text-sm font-medium">Thanks for acknowledging. {questions.length === 1 ? "One quick question" : "A few quick questions"} before we put you forward:</div>
-          {questions.map((q, i) => (
+          {questions.map((q, i) => { const confirm = rawQuestions()[i] && rawQuestions()[i].confirm; const setA = (v) => { const a = answers.slice(); a[i] = v; setAnswers(a); }; return confirm ? (
+            <div key={i} className="flex flex-col gap-1.5">
+              <span className="text-sm">{q}</span>
+              <div className="flex gap-2">
+                {["Yes", "No"].map((v) => (
+                  <button key={v} type="button" onClick={() => { const a = yn.slice(); a[i] = v; setYn(a); }} aria-pressed={yn[i] === v}
+                    className="rounded-lg border px-4 py-1.5 text-sm font-medium" style={{ borderColor: yn[i] === v ? C.em : C.line, background: yn[i] === v ? C.emTint : C.card, color: yn[i] === v ? C.emText : C.ink }}>{v}</button>
+                ))}
+              </div>
+              {yn[i] && <input value={answers[i] || ""} onChange={(e) => setA(e.target.value)} placeholder="Anything to add? (optional)"
+                className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />}
+            </div>
+          ) : (
             <label key={i} className="flex flex-col gap-1">
               <span className="text-sm">{q}</span>
-              <textarea rows={2} value={answers[i] || ""} onChange={(e) => { const a = answers.slice(); a[i] = e.target.value; setAnswers(a); }}
+              <textarea rows={2} value={answers[i] || ""} onChange={(e) => setA(e.target.value)}
                 className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
             </label>
-          ))}
-          <div><Btn kind="primary" disabled={!!busy || questions.some((_, i) => !(answers[i] || "").trim())} onClick={answer}>{busy === "ans" ? "Sending…" : "Send my answers"}</Btn></div>
+          ); })}
+          <div><Btn kind="primary" disabled={!!busy || questions.some((_, i) => !answerText(i))} onClick={answer}>{busy === "ans" ? "Sending…" : "Send my answers"}</Btn></div>
           <div className="text-xs" style={{ color: C.ink3 }}>Your answers go to your recruiter.</div>
         </div>
+      )}
+      {d.status === "acknowledged" && d.answers && (
+        <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.canvas, color: C.ink }}>Thanks for your answers. Your recruiter will look at them and be in touch before anything goes to the employer.</div>
       )}
       {["ready", "pitched"].includes(d.status) && !needsAnswers && (
         <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.emTint, color: C.emText }}>Thanks, you're all set. We'll put your profile forward anonymously and let you know as soon as the employer comes back. Any questions, just reply to our email or message us below.</div>
