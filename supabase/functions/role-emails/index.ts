@@ -43,9 +43,28 @@ function money(n: number | null, cur: string) {
   if (n == null) return "";
   try { return new Intl.NumberFormat("en-US", { style: "currency", currency: cur || "USD", maximumFractionDigits: 0 }).format(n); } catch { return `${n} ${cur || ""}`.trim(); }
 }
+// What the recruiter earns, in money (same sums as the app's recruiterEarning): a percentage fee
+// billed once is a share of a year's pay, billed monthly a share of a month's pay (an hourly rate
+// counts 40 hours a week); a percentage incentive is a share of that fee.
+const PAY_PER_YEAR: Record<string, number> = { Hourly: 2080, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
+function earning(j: any) {
+  if (!j.incentive_amount) return "";
+  const monthlyBill = j.billing_frequency === "Monthly";
+  const pay = (Number(j.max_pay) || Number(j.min_pay) || 0) * (PAY_PER_YEAR[j.salary_period || "Yearly"] || 1) / (monthlyBill ? 12 : 1);
+  const flatFee = j.billing_type === "flat";
+  const fee = flatFee ? Number(j.billing_amount) || 0 : Math.round(pay * (Number(j.billing_amount) || 0) / 100);
+  const pct = j.incentive_type !== "flat";
+  const amount = pct ? Math.round(fee * Number(j.incentive_amount) / 100) : Number(j.incentive_amount);
+  const cur = pct ? (flatFee ? j.billing_currency : j.currency) || "USD" : j.incentive_currency || j.currency || "USD";
+  if (!amount) return pct ? j.incentive_amount + "% of the client fee" : "";
+  const monthly = j.incentive_frequency === "Monthly" || (pct && monthlyBill);
+  const months = monthly ? (j.incentive_months || j.billing_months || 6) : 0;
+  const upTo = pct && !flatFee && j.min_pay && j.max_pay && Number(j.min_pay) < Number(j.max_pay);
+  return (upTo ? "up to " : "") + money(amount, cur) + (monthly ? " a month" + (months ? " for " + months + " months" : "") : "");
+}
 function facts(j: any) {
   const pay = j.min_pay || j.max_pay ? [money(j.min_pay, j.currency), money(j.max_pay, j.currency)].filter(Boolean).join(" – ") + (j.salary_period ? " " + String(j.salary_period).toLowerCase() : "") : "";
-  const cut = j.incentive_amount ? (j.incentive_type === "percent" ? j.incentive_amount + "%" : money(j.incentive_amount, j.incentive_currency || j.currency)) : "";
+  const cut0 = earning(j), cut = cut0 ? cut0.charAt(0).toUpperCase() + cut0.slice(1) : "";
   const rows = [
     ["Location", [j.location, j.work_setup].filter(Boolean).join(" · ")],
     ["Type", j.employment_type || ""],
@@ -68,7 +87,7 @@ Deno.serve(async (req: Request) => {
     if (!["status", "worklist"].includes(String(body.kind || "status"))) return json(await activity(admin, body));
     const jobId = String(body.jobId || "");
     if (!/^[0-9a-f-]{36}$/i.test(jobId)) return json({ error: "No job" }, 400);
-    const { data: j } = await admin.from("jobs").select("id,role_title,client,status,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,incentive_type,incentive_amount,incentive_currency,headcount,hold_reason").eq("id", jobId).maybeSingle();
+    const { data: j } = await admin.from("jobs").select("id,role_title,client,status,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,incentive_type,incentive_amount,incentive_currency,incentive_frequency,incentive_months,billing_type,billing_amount,billing_currency,billing_frequency,billing_months,headcount,hold_reason").eq("id", jobId).maybeSingle();
     if (!j) return json({ ok: true, skipped: "job not found" });
     const brand = await loadBrand(admin);
     const role = j.role_title + (j.client ? " at " + j.client : "");
