@@ -12,6 +12,7 @@
     "html2canvas-pro": "^1.5.8",
     "pdfjs-dist": "^4.10.38",
     "preact": "^10.24.3",
+    "qrcode-generator": "^1.4.4",
     "tailwindcss": "^3.4.19",
     "tesseract.js": "^5.1.1"
   }
