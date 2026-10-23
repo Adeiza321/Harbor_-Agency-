@@ -418,7 +418,7 @@ export async function removeQuestion(admin: any, me: { id: string; name: string 
 }
 
 // Rec Ops / Admin actions on one candidate of a pitch.
-export async function offerAction(admin: any, me: { id: string; name: string }, offerId: string, action: "send" | "push" | "withdraw" | "remove" | "remind") {
+export async function offerAction(admin: any, me: { id: string; name: string }, offerId: string, action: "send" | "push" | "withdraw" | "remove" | "remind" | "restore") {
   const { data: o } = await admin.from("lead_offers").select("*").eq("id", offerId).maybeSingle();
   if (!o) throw new Error("Not found");
   const { data: lead } = await admin.from("leads").select("job_title").eq("id", o.lead_id).maybeSingle();
@@ -441,6 +441,21 @@ export async function offerAction(admin: any, me: { id: string; name: string }, 
     await admin.from("lead_offers").update({ status: "ready", ready_at: now, note: "Put through by " + (me.name || "Rec Ops") }).eq("id", o.id);
     await tl("Put through for the pitch for " + role + " without waiting");
     return { ok: true, message: "Ready for the pitch" };
+  }
+  // Put back someone we took off (by mistake): where they were before, on the lead's role again.
+  // Someone who withdrew themselves isn't put back: that was their choice.
+  if (action === "restore") {
+    if (!OUT.includes(o.status)) throw new Error("They're still being considered");
+    if (o.status === "withdrawn" && o.withdrawn_by === "candidate") throw new Error("They withdrew themselves, so they can't be put back from here. Message them first");
+    const nq = Array.isArray(o.questions) ? o.questions.length : 0;
+    const answered = Array.isArray(o.answers) && o.answers.length > 0;
+    const back = o.acknowledged_at ? (answered || !nq ? "ready" : "acknowledged") : o.notified_at ? "notified" : "draft";
+    await admin.from("lead_offers").update({ status: back, removed_at: null, removed_by: null, withdrawn_at: null, withdrawn_by: null, note: "Put back by " + (me.name || "Rec Ops"), ...(back === "ready" && !o.ready_at ? { ready_at: now } : {}) }).eq("id", o.id);
+    if (o.candidate_job_id) await admin.from("candidate_jobs").update({ stage: "In review" }).eq("id", o.candidate_job_id).eq("stage", "Withdrawn");
+    // A lead let go because everyone was off it is back to asking its candidates.
+    await admin.from("leads").update({ status: "awaiting", notes: null }).eq("id", o.lead_id).eq("status", "ignored");
+    await tl("Put back into consideration for " + role);
+    return { ok: true, message: "Put back into consideration" };
   }
   if (OUT.includes(o.status)) return { ok: true, message: "Already off this pitch" };
   await admin.from("lead_offers").update(action === "withdraw"

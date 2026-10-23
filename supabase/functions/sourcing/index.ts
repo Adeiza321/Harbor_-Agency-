@@ -586,7 +586,7 @@ async function handle(req: Request): Promise<Response> {
     }
     // Candidate first: one candidate on a pitch. push = ready without waiting; withdraw / remove =
     // off this pitch; remind = the reminder email now.
-    if (["offer_send", "offer_push", "offer_withdraw", "offer_remove", "offer_remind", "offer_question_remove", "offer_question_add", "offer_preview", "offer_update"].includes(action) && body.offerId) {
+    if (["offer_send", "offer_push", "offer_withdraw", "offer_remove", "offer_remind", "offer_restore", "offer_question_remove", "offer_question_add", "offer_preview", "offer_update"].includes(action) && body.offerId) {
       if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
       if (action === "offer_preview") return json(await previewOffer(admin, String(body.offerId), body.reminder === true));
       if (action === "offer_question_add") return json(await addQuestion(admin, String(body.offerId), body.q, body.yesno === true));

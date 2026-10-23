@@ -9962,6 +9962,31 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
 const PITCH_STATE = { draft: ["Email to review", "warn"], notified: ["Told, waiting to acknowledge", "warn"], reminded: ["Reminded, still waiting", "warn"], no_email: ["Couldn't be emailed", "danger"],
   acknowledged: ["Acknowledged, answering questions", "info"], ready: ["Ready for the pitch", "em"], pitched: ["In the pitch", "em"], withdrawn: ["Withdrew", "neutral"], removed: ["Removed from consideration", "neutral"] };
 const isPitchOffer = (o) => !!PITCH_STATE[o.status];
+const OFF_PITCH = ["withdrawn", "removed"];
+// One candidate on the Removed tab: who, the role and company, when and by whom, and "Put back"
+// (not for someone who withdrew themselves).
+function RemovedOfferRow({ o, l, S, toast, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const c = S.cands.find((x) => x.id === o.candidate_id);
+  const self = o.status === "withdrawn" && o.withdrawn_by === "candidate";
+  const label = o.status === "removed" ? "Removed from consideration" : self ? "Withdrew" : "Withdrawn by us";
+  const at = o.removed_at || o.withdrawn_at;
+  const staff = S.role === "admin" || S.role === "recops";
+  const restore = () => { setBusy(true); S.sourcing("offer_restore", { offerId: o.id }).then((r) => { toast((r && r.message) || "Put back"); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  return (
+    <div className="rounded-xl border px-3 py-2.5 flex items-center justify-between gap-3 flex-wrap" style={{ borderColor: C.line }}>
+      <div className="min-w-0">
+        <button type="button" className="font-medium text-sm truncate text-left" style={{ color: c ? C.em : C.ink }} onClick={() => c && S.openCandidate(c.id)}>{c ? c.name : "Candidate"}</button>
+        <div className="text-xs" style={{ color: C.ink2 }}>{[l.job_title, l.company, l.location].filter(Boolean).join(" · ")}</div>
+        <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{[o.fit != null ? o.fit + "% fit" : "", at ? fdate(at) : "", o.note || ""].filter(Boolean).join(" · ")}</div>
+      </div>
+      <div className="flex items-center gap-3 shrink-0">
+        <Pill tone="neutral">{label}</Pill>
+        {staff && !self && <Btn disabled={busy} onClick={restore} className="!py-1.5 !px-3 text-xs">{busy ? "Putting back…" : "Put back"}</Btn>}
+      </div>
+    </div>
+  );
+}
 // Review a candidate's pitch email before it goes (nothing is sent automatically): the real email,
 // with "why it suits you" and the questions editable; Send emails it (or the reminder).
 function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged }) {
@@ -10272,7 +10297,11 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
   const dirty = ["pitch_subject", "pitch_body", "linkedin_message", "notes"].some((k) => f[k] !== (l[k] || ""));
   const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => S.error(e.message));
   const matches = Array.isArray(l.matches) ? l.matches : [];
-  const offers = Array.isArray(l.lead_offers) ? l.lead_offers : [];
+  const allOffers = Array.isArray(l.lead_offers) ? l.lead_offers : [];
+  // Anyone taken off (or who withdrew) moves to the Removed tab, out of the role's list.
+  const offers = allOffers.filter((o) => !(isPitchOffer(o) && OFF_PITCH.includes(o.status)));
+  const offN = allOffers.length - offers.length;
+  const hadPitch = allOffers.some(isPitchOffer);
   const pitched = l.data && Array.isArray(l.data.pitched) ? l.data.pitched : [];
   const emailable = l.channel === "email" && ["new", "approved"].includes(l.status);
   const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
@@ -10299,7 +10328,8 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
               </select>
             </div>
           </div>
-          {!expanded && <LeadCandidateRows l={l} offers={offers} matches={matches} S={S} onOpen={() => setExpanded(true)} />}
+          {!expanded && <LeadCandidateRows l={l} offers={offers} matches={hadPitch ? [] : matches} S={S} onOpen={() => setExpanded(true)} />}
+          {offN > 0 && <div className="text-xs mt-1.5 pl-6" style={{ color: C.ink3 }}>{offN === 1 ? "1 candidate" : offN + " candidates"} removed or withdrew (Removed tab)</div>}
           {expanded && <>
           <div className="pl-6">
             <div className="min-w-0">
@@ -10313,7 +10343,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
           </div>
           <LeadContacts l={l} S={S} toast={toast} onChanged={onChanged} />
           <ApolloNote data={l.data} />
-          {offers.some(isPitchOffer) ? <LeadPitchCandidates l={l} offers={offers.filter(isPitchOffer)} S={S} toast={toast} onChanged={onChanged} /> : offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
+          {hadPitch ? (offers.some(isPitchOffer) && <LeadPitchCandidates l={l} offers={offers.filter(isPitchOffer)} S={S} toast={toast} onChanged={onChanged} />) : offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
               {l.status === "awaiting" && (
                 <div className="rounded-lg px-3 py-2 text-xs" style={{ background: C.warnBg, color: C.warnText }}>
@@ -10516,7 +10546,7 @@ function CampaignsPage({ toast, S }) {
   const ids = Object.keys(sel).filter((k) => sel[k]);
   const run = (key, fn) => { setBusy(key); return fn().catch((e) => S.error(e.message)).finally(() => { setBusy(""); load(); }); };
   const pGroups = { found: ["found"], sending: ["approved", "queued"], contacted: ["contacted"], interested: ["interested", "converted"], closed: ["not_interested", "unsubscribed", "bounced"], skipped: ["rejected"], pool: ["archived"] };
-  const lGroups = { awaiting: ["awaiting"], new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
+  const lGroups = { awaiting: ["awaiting"], new: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], active: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"], removed: [] };
   const low = (v) => String(v || "").toLowerCase();
   // Role = the job title, across clients (e.g. every "Senior Accountant" role); Job = one job.
   const roleOf = (id) => { const j = S.jobs.find((x) => x.id === id); return j ? String(j.role || "").trim() : ""; };
@@ -10546,8 +10576,11 @@ function CampaignsPage({ toast, S }) {
   const pfx = tab === "pool" ? "pool" : pf;
   const pList = pAll.filter((p) => pGroups[pfx].includes(p.status));
   const lList = lAll.filter((l) => lGroups[lf].includes(l.status));
+  // Candidates taken off a pitch (or who withdrew), across every role: their own tab.
+  const removedRows = lAll.flatMap((l) => (Array.isArray(l.lead_offers) ? l.lead_offers : []).filter((o) => isPitchOffer(o) && OFF_PITCH.includes(o.status)).map((o) => ({ o, l })))
+    .sort((a, b) => String(b.o.removed_at || b.o.withdrawn_at || "").localeCompare(String(a.o.removed_at || a.o.withdrawn_at || "")));
   const cnt = (list, g) => (list || []).filter((x) => g.includes(x.status)).length;
-  const curList = tab === "leads" ? lList : pList;
+  const curList = tab === "leads" ? (lf === "removed" ? removedRows : lList) : pList;
   const pages = Math.max(1, Math.ceil(curList.length / size));
   const curPage = Math.min(page, pages);
   const pageOf = (list) => list.slice((curPage - 1) * size, curPage * size);
@@ -10620,7 +10653,7 @@ function CampaignsPage({ toast, S }) {
       {tab === "leads" && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <Tabs tabs={[["awaiting", "Asking candidates"], ["new", "Ready to pitch"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(lAll, lGroups[k]) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
+            <Tabs tabs={[["awaiting", "Asking candidates"], ["new", "Ready to pitch"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"], ["removed", "Removed"]].map(([k, label]) => ({ key: k, label: label + " " + (k === "removed" ? removedRows.length : cnt(lAll, lGroups[k])) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
             <div className="flex gap-2 shrink-0 flex-wrap">
               {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
               {pendingLeads > 0 && <Btn disabled={!!busy} onClick={() => run("process", () => S.sourcing("process_leads", {}).then((r) => toast("Checked " + (r.processed || 0) + ", kept " + (r.kept || 0))))}>{busy === "process" ? "Checking…" : "Check " + pendingLeads + " waiting"}</Btn>}
@@ -10629,15 +10662,19 @@ function CampaignsPage({ toast, S }) {
           </div>
           <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on ContactOut or Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</div>
           {filterBar}
-          {lList.length > 0 && <div className="flex justify-end gap-3 mt-3 text-xs">
+          {lf === "removed" && <div className="flex flex-col gap-2 mt-3">
+            {leads == null ? <SkeletonRows n={3} /> : removedRows.length ? pageOf(removedRows).map(({ o, l }) => <RemovedOfferRow key={o.id} o={o} l={l} S={S} toast={toast} onChanged={load} />)
+              : <EmptyState title={ql || nFilters ? "No one matches your search or filters" : "No one has been removed"} text="Candidates taken off a role, or who withdrew, are listed here with the role they were on." />}
+          </div>}
+          {lf !== "removed" && lList.length > 0 && <div className="flex justify-end gap-3 mt-3 text-xs">
             <button type="button" onClick={() => setExpandAll((x) => ({ v: true, n: x.n + 1 }))} className="font-medium" style={{ color: C.em }}>Expand all</button>
             <button type="button" onClick={() => setExpandAll((x) => ({ v: false, n: x.n + 1 }))} className="font-medium" style={{ color: C.em }}>Collapse all</button>
           </div>}
-          <div className="flex flex-col gap-2 mt-2">
+          {lf !== "removed" && <div className="flex flex-col gap-2 mt-2">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
               <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} expandAll={expandAll} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
             )) : <EmptyState title={ql || nFilters ? "No leads match your search or filters" : "No client leads here yet"} text={ql || nFilters ? "Try removing a filter or searching for something else." : "Hiring managers whose new job posts fit your candidates appear here."} />}
-          </div>
+          </div>}
           {pager}
         </Card>
       )}
