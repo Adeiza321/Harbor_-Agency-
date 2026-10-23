@@ -9,9 +9,9 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
-import { notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
+import { assessForPitch, notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
-import { leadContactsAction } from "./contacts.ts";
+import { contactFields, findCompanyContacts, leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
@@ -259,6 +259,26 @@ async function handle(req: Request): Promise<Response> {
         if (body.offerId) out.candidate = await notifyOffer(admin, String(body.offerId));
         if (body.to) out.client = await sendLeadTest(admin, String(body.leadId), String(body.to), s, agencyName).catch((e) => ({ error: errMsg(e) }));
         return json({ ok: true, ...out });
+      }
+      // TEST ONLY (remove after testing): screen the TEST lead against one "Sani Test" candidate with
+      // the real job-description check and contact lookup, without touching real candidates.
+      if (body.action === "test_screen" && body.leadId && body.candidateId) {
+        const { data: l } = await admin.from("leads").select("*").eq("id", String(body.leadId)).single();
+        const { data: c } = await admin.from("candidates").select("id,name,status,email,pay,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,resume_name,cv_path").eq("id", String(body.candidateId)).single();
+        if (!l || !/\(TEST\)/.test(l.job_title || "") || !c || !/^Sani Test/.test(c.name || "")) return json({ error: "Test lead and test candidate only" }, 400);
+        const { role, items, contacts: named, results } = await assessForPitch(admin, l, [c]);
+        const a = results[0];
+        if (!a) return json({ ok: false, why: "No requirements found in the job description", items });
+        const data: any = { ...(l.data || {}), role, jd: items, jd_contacts: named, pitched: [c.id] };
+        delete data.contacts_checked_at;
+        const found = await findCompanyContacts(admin, { ...l, data }, role.hmTitles);
+        const questions = [...a.confirm.map((q) => ({ q: q.q, confirm: q.item })), ...a.questions.map((q) => ({ q }))].slice(0, 5);
+        const match = { candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: a.reason, bullets: a.bullets, requirements: a.requirements, why_role: a.whyRole, musts: a.musts, jd: a.jd, questions };
+        await admin.from("leads").update({ status: "awaiting", matches: [match], interested_at: null, contract_sent_at: null,
+          data: { ...data, contacts: found.contacts, contacts_checked_at: new Date().toISOString(), contacts_tried: found.tried }, ...contactFields(found.contacts) }).eq("id", l.id);
+        await admin.from("lead_offers").update({ status: "draft", fit: a.fit, verdict: a.verdict, reason: a.reason, bullets: a.bullets, requirements: a.requirements, questions, why_role: a.whyRole,
+          client_musts: a.musts, jd_check: a.jd, answers: null, acknowledged_at: null, responded_at: null, ready_at: null, pitched_at: null, notified_at: null, note: null }).eq("lead_id", l.id).eq("candidate_id", c.id);
+        return json({ ok: true, out: a.out, fit: a.fit, verdict: a.verdict, jd: a.jd, questions, contacts: found.contacts, tried: found.tried, error: found.error || null });
       }
       // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, pick up stalled ones.
       if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
