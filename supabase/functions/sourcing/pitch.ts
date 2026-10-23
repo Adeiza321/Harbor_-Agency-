@@ -345,13 +345,17 @@ export async function previewOffer(admin: any, offerId: string, reminder = false
 
 // Edits before sending: the "why it suits you" text and the questions.
 export async function updateOffer(admin: any, offerId: string, patch: { whyRole?: unknown; questions?: unknown }) {
-  const { data: o } = await admin.from("lead_offers").select("id,status,answers").eq("id", offerId).maybeSingle();
+  const { data: o } = await admin.from("lead_offers").select("id,status,answers,questions").eq("id", offerId).maybeSingle();
   if (!o) throw new Error("Not found");
   const upd: Record<string, unknown> = {};
   if (patch.whyRole !== undefined) upd.why_role = String(patch.whyRole || "").trim().slice(0, 600) || null;
   if (Array.isArray(patch.questions)) {
     if (Array.isArray(o.answers) && o.answers.length) throw new Error("They've already answered");
-    upd.questions = patch.questions.map((q) => String((q as any)?.q ?? q ?? "").trim().slice(0, 240)).filter(Boolean).slice(0, 5).map((q) => ({ q }));
+    // Edited text keeps its place: a question that confirms a job-description requirement stays a
+    // yes/no confirmation (matched by its text, or by its position when none were added or removed).
+    const before: any[] = Array.isArray(o.questions) ? o.questions : [];
+    upd.questions = patch.questions.map((q, i) => ({ text: String((q as any)?.q ?? q ?? "").trim().slice(0, 240), was: before.find((b) => (b?.q ?? b) === String((q as any)?.q ?? q ?? "").trim()) || (patch.questions!.length === before.length ? before[i] : null) }))
+      .filter((x) => x.text).slice(0, 5).map((x) => (x.was && typeof x.was === "object" && x.was.confirm ? { q: x.text, confirm: x.was.confirm } : { q: x.text }));
   }
   if (Object.keys(upd).length) await admin.from("lead_offers").update(upd).eq("id", o.id);
   return { ok: true, message: "Saved" };

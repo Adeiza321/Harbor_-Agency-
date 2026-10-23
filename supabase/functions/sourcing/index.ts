@@ -558,8 +558,9 @@ async function handle(req: Request): Promise<Response> {
       return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
     }
     if (action === "process_leads") return json({ ok: true, ...(await stepLeads(admin, s, agencyName, 3)) });
-    // Ask candidates about matched roles (the role goes without the employer's name).
-    if (action === "offer_send") {
+    // Older flow: ask several candidates at once about matched roles (offerIds). A single pitch
+    // email (offerId, "Review and send email") is handled further down.
+    if (action === "offer_send" && Array.isArray(body.offerIds) && !body.offerId) {
       const ids = (Array.isArray(body.offerIds) ? body.offerIds : []).map(String).filter(Boolean);
       if (!ids.length) return json({ error: "Pick at least one candidate" }, 400);
       return json({ ok: true, ...(await sendOffers(admin, ids, me.id)) });
