@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import qrcode from "qrcode-generator";
 import {
   LayoutDashboard, Users, Inbox as InboxIcon, Briefcase, TrendingUp, Send,
   CreditCard, Megaphone, Search, Bell, ChevronDown, ChevronRight, ChevronLeft,
@@ -2042,6 +2043,28 @@ function SetupAccountModal({ S, toast }) {
   );
 }
 
+// The two-factor set-up QR code, drawn here from the authenticator link (otpauth://...) so it always
+// fits its box and scans. Supabase's own QR picture has a fixed size and no viewBox, so shown in a
+// smaller box it was cut off and couldn't be scanned; it's only used (made to scale) if the link is missing.
+function otpQrSrc(uri, fallback) {
+  if (uri) {
+    try { const q = qrcode(0, "M"); q.addData(uri); q.make(); return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(q.createSvgTag({ cellSize: 4, margin: 16, scalable: true })); } catch (e) { /* use Supabase's picture */ }
+  }
+  let svg = String(fallback || "");
+  if (!svg) return "";
+  const head = svg.match(/^data:image\/svg\+xml[^,]*,/i);
+  if (head) { svg = svg.slice(head[0].length); if (/^%3C/i.test(svg)) { try { svg = decodeURIComponent(svg); } catch (e) { /* as is */ } } }
+  else if (/^data:/i.test(svg)) return svg;   // a PNG or similar: shown as it is
+  const w = (svg.match(/<svg[^>]*?\swidth="([\d.]+)/i) || [])[1], h = (svg.match(/<svg[^>]*?\sheight="([\d.]+)/i) || [])[1];
+  if (w && h && !/<svg[^>]*viewBox=/i.test(svg)) svg = svg.replace(/<svg\b/i, '<svg viewBox="0 0 ' + w + " " + h + '"');
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+function OtpQr({ uri, fallback }) {
+  const src = React.useMemo(() => otpQrSrc(uri, fallback), [uri, fallback]);
+  if (!src) return null;
+  return <img src={src} alt="QR code for your authenticator app" className="rounded-lg" style={{ width: 208, height: 208, background: "#fff", imageRendering: "pixelated" }} />;
+}
+
 function AccountTab({ S, toast }) {
   const me = S.me;
   const [name, setName] = useState(me.name);
@@ -2190,7 +2213,7 @@ function SecurityTab({ S, toast }) {
   };
   const startEnroll = () => {
     setMfaBusy(true);
-    S.mfaEnroll().then((j) => setEnroll({ factorId: j.id, qr: j.totp && j.totp.qr_code, secret: j.totp && j.totp.secret })).catch((e) => S.error(e.message)).finally(() => setMfaBusy(false));
+    S.mfaEnroll().then((j) => setEnroll({ factorId: j.id, qr: j.totp && j.totp.qr_code, secret: j.totp && j.totp.secret, uri: j.totp && j.totp.uri })).catch((e) => S.error(e.message)).finally(() => setMfaBusy(false));
   };
   const confirmEnroll = () => {
     if (!/^\d{6}$/.test(code.replace(/\s+/g, ""))) { toast("Enter the 6-digit code from your authenticator app"); return; }
@@ -2236,10 +2259,17 @@ function SecurityTab({ S, toast }) {
           {enroll && (
             <div className="flex flex-col gap-3">
               <div className="text-sm" style={{ color: C.ink2 }}>1. Install an authenticator app on your phone (Google Authenticator, Microsoft Authenticator or Authy). 2. In the app, add an account and scan this QR code, or type the key under it. 3. Enter the 6-digit code the app shows.</div>
-              {enroll.qr && (/^data:/.test(enroll.qr)
-                ? <img src={enroll.qr} alt="QR code for your authenticator app" className="w-44 h-44 rounded-lg p-2" style={{ background: "#fff" }} />
-                : <div className="w-44 h-44 rounded-lg p-2 [&_svg]:w-full [&_svg]:h-full" style={{ background: "#fff" }} dangerouslySetInnerHTML={{ __html: enroll.qr }} />)}
-              {enroll.secret && <div className="text-xs font-mono rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{enroll.secret}</div>}
+              <OtpQr uri={enroll.uri} fallback={enroll.qr} />
+              {enroll.uri && <a href={enroll.uri} className="text-sm font-medium w-fit" style={{ color: C.em }}>On this phone? Tap to add it to your authenticator app</a>}
+              {enroll.secret && (
+                <div>
+                  <div className="text-xs" style={{ color: C.ink3 }}>Can't scan? Type this key into the app (account: your email, type: time-based):</div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="text-sm font-mono rounded-lg px-3 py-2 select-all break-all" style={{ background: C.canvas, color: C.ink, letterSpacing: 1 }}>{enroll.secret.replace(/(.{4})/g, "$1 ").trim()}</div>
+                    <Btn onClick={() => copyText(enroll.secret, toast, "Key copied")}>Copy</Btn>
+                  </div>
+                </div>
+              )}
               <input inputMode="numeric" autoComplete="one-time-code" maxLength={7} value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none tracking-widest" style={{ borderColor: C.line, background: C.soft }} />
               <div className="flex gap-2">
                 <Btn onClick={() => { const id = enroll.factorId; setEnroll(null); setCode(""); S.mfaUnenroll(id).catch(() => {}); }} disabled={mfaBusy}>Cancel</Btn>
@@ -15111,7 +15141,8 @@ export default function App() {
     mfaEnroll: async () => {
       const u = await sbFetch("/auth/v1/user", { token: session.token });
       for (const f of (u.factors || []).filter((x) => x.status !== "verified")) await sbFetch("/auth/v1/factors/" + f.id, { method: "DELETE", token: session.token }).catch(() => {});
-      return sbFetch("/auth/v1/factors", { method: "POST", token: session.token, body: { factor_type: "totp", friendly_name: "Authenticator app " + new Date().toISOString().slice(0, 16).replace("T", " ") } });
+      // issuer: what the authenticator app calls this account ("ProNext", not the database's address).
+      return sbFetch("/auth/v1/factors", { method: "POST", token: session.token, body: { factor_type: "totp", issuer: "ProNext", friendly_name: "Authenticator app " + new Date().toISOString().slice(0, 16).replace("T", " ") } });
     },
     mfaChallenge: (factorId) => sbFetch("/auth/v1/factors/" + factorId + "/challenge", { method: "POST", token: session.token, body: {} }),
     // A correct code also upgrades this session to the full two-factor level; keep it, so turning
