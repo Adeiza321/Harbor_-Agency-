@@ -141,7 +141,7 @@ each a "Party" and together the "Parties".
 7.3 Clause 7.2 does not apply to information that is already public through no fault of the Recruiter, or that the law requires the Recruiter to disclose.
 
 ## 8. Data protection
-8.1 The Recruiter shall handle all Candidate personal data in line with the Nigeria Data Protection Act 2023 and any other data protection law that applies.
+8.1 The Recruiter shall handle all Candidate personal data in line with every data protection law that applies to it, including the laws of the country or region where the Role is based and where the Candidate lives (for example the Nigeria Data Protection Act 2023, the UK GDPR, the EU General Data Protection Regulation, or the privacy laws of the relevant US state), and in line with the Agency's reasonable instructions.
 8.2 The Recruiter shall keep personal data secure, collect only what is needed, not copy it outside ProNext, and delete any copies they hold when the Agency asks or when this Agreement ends.
 8.3 The Recruiter shall tell the Agency without delay about any loss or misuse of Confidential Information or personal data.
 
