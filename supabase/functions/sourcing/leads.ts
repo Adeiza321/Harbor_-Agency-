@@ -2,7 +2,10 @@
 //   fetchLeads (daily, after an Admin approves the credits): candidate by candidate. For each Active
 //     file candidate, new postings in the country they live in for their own job titles (direct
 //     employers, not remote, never a company they work or worked at) -> leads found FOR that
-//     candidate. The day's postings are shared out between candidates; when there are more
+//     candidate. Location is strict: the search is narrowed to the candidate's city and state (and
+//     the cities they'd move to, if they said they'd relocate), then each posting's place is checked
+//     against where they live: only roles within about an hour's commute (or in a city they'd move
+//     to) are kept. A candidate without a known city isn't searched. The day's postings are shared out between candidates; when there are more
 //     candidates than the day allows, it works through them in turn over the following days.
 //   processLead (a few per run): the candidate it was found for, checked against the posting; kept
 //     only if they're a Good or Perfect fit. Other Active file candidates in that country with the
@@ -18,7 +21,7 @@
 import { askAI } from "./ai.ts";
 import { searchJobs, theirstackKey } from "./theirstack.ts";
 import { apolloKey, matchByName } from "./apollo.ts";
-import { countryCode, locationCountry, regionOf } from "./regions.ts";
+import { COUNTRY_NAMES, countryCode, locationCountry, placeParts, regionOf } from "./regions.ts";
 import { emailHash } from "./send.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 import { portalBase } from "./queue.ts";
@@ -43,6 +46,61 @@ export function candCountry(c: any): string {
 }
 export const blindReady = (c: any) => !!(c?.blind_pages && c?.blind_checked_at);
 
+// Where a candidate lives and where they'd work: their city and region (from their job preferences,
+// else their location), and the cities they'd move to when they said Yes or Maybe to relocating.
+export function candArea(c: any) {
+  const p = c?.preferences || {};
+  const fromPref = p.currentCity ? placeParts(p.currentCity) : { city: "", region: "" };
+  const fromLoc = placeParts(c?.location);
+  const city = fromPref.city || fromLoc.city;
+  const region = fromPref.region || (fromLoc.city.toLowerCase() === city.toLowerCase() ? fromLoc.region : "");
+  const cc = candCountry(c);
+  const moves = ["yes", "maybe"].includes(String(p.relocate || "")) ? (Array.isArray(p.preferredCities) ? p.preferredCities : []).map((x: unknown) => String(x || "").trim()).filter(Boolean).slice(0, 5) : [];
+  const home = [city, region, COUNTRY_NAMES[cc] || ""].filter(Boolean).join(", ");
+  // Search terms: the city, its state/region (wide enough to catch nearby towns; the commute check
+  // narrows it), and the cities they'd move to.
+  const places = [...new Set([city, region, ...moves.map((m: string) => placeParts(m).city || m)].filter((x) => x && x.length > 1))];
+  return { city, region, cc, home, moves, places };
+}
+
+// The towns within commuting distance of where a candidate lives (their city first), to narrow the
+// job search to them instead of the whole state. Falls back to the city and its state/region.
+async function commuteTowns(area: ReturnType<typeof candArea>): Promise<string[]> {
+  const sys = "You list the cities and towns within about 60 minutes' normal commute of a place. Reply with STRICT JSON only: {\"towns\": string[]}. " +
+    "Up to 12 names, the place itself first, then the biggest employment centres nearby; town or city names only (no state or country, no neighbourhoods). Use real geography.";
+  try {
+    const r = await askAI(sys, "Place: " + area.home, 600);
+    const towns = (Array.isArray(r?.towns) ? r.towns : []).map((x: unknown) => String(x || "").trim()).filter((x: string) => x.length > 1 && x.length < 60);
+    if (towns.length) return [...new Set([area.city, ...towns])].slice(0, 13);
+  } catch (e) { console.error("lead commute towns", String((e as Error)?.message || e).slice(0, 200)); }
+  return [area.city, area.region].filter(Boolean);
+}
+
+// Strict commute check: is each place within about an hour of where the candidate lives (or in or
+// next to a city they'd move to)? Only a clear yes counts. One AI question per candidate per run.
+async function nearCandidate(area: ReturnType<typeof candArea>, places: string[]): Promise<Map<string, { ok: boolean; note: string }>> {
+  const out = new Map<string, { ok: boolean; note: string }>();
+  const ask = [...new Set(places.map((x) => String(x || "").trim()).filter(Boolean))];
+  if (!ask.length) return out;
+  const sys = "You check whether job locations are close enough for a candidate to take the job without moving, or are in a city they'd move to. Be strict and use real geography. " +
+    "Reply with STRICT JSON only: {\"results\": [{\"i\": number, \"near\": \"yes\" | \"no\" | \"unsure\", \"note\": string}]}, one per place. " +
+    "yes: the job is within about 60 minutes' normal commute (car or public transport) of where the candidate lives, or in (or within about 30 minutes of) one of the cities they'd move to. " +
+    "no: farther than that (another city or metro area). unsure: the place is too vague to tell (only a state, region or country). " +
+    "note: for 'no', where it is and roughly how far from the candidate, e.g. 'Houston, about 4 h from Austin'; otherwise ''.";
+  const head = `Candidate lives in: ${area.home}\nCities they'd move to: ${area.moves.length ? area.moves.join("; ") : "none (won't relocate)"}\n\nJob locations (i | place):\n`;
+  let res: any = null;
+  for (let t = 0; t < 2 && !Array.isArray(res?.results); t++) {
+    if (t) await new Promise((r) => setTimeout(r, 3000));
+    try { res = await askAI(sys, head + ask.map((p, n) => `${n} | ${p}`).join("\n"), 2000); } catch (e) { console.error("lead commute check", String((e as Error)?.message || e).slice(0, 200)); }
+  }
+  for (const r of Array.isArray(res?.results) ? res.results : []) {
+    const p = ask[Number(r?.i)];
+    if (p) out.set(p, { ok: r.near === "yes", note: String(r.note || (r.near === "unsure" ? "Location too vague to check" : "")).slice(0, 120) });
+  }
+  for (const p of ask) if (!out.has(p)) out.set(p, { ok: false, note: res ? "Location too vague to check" : "Location check failed" });
+  return out;
+}
+
 export async function fetchLeads(admin: any, s: Settings) {
   if (!theirstackKey()) return { ok: false, notConnected: "theirstack", message: "The job feed isn't connected yet. Add the THEIRSTACK_API_KEY secret." };
   const all = await pitchableCandidates(admin);
@@ -57,11 +115,16 @@ export async function fetchLeads(admin: any, s: Settings) {
   const today = perDay >= ordered.length ? ordered : Array.from({ length: perDay }, (_, k) => ordered[(start + k) % ordered.length]);
   let fetched = 0, added = 0, remote = 0, skipped = 0;
   const errors: string[] = [], found: string[] = [];
+  let noCity = 0, far = 0;
   for (const c of today) {
-    const cc = candCountry(c);
+    const area = candArea(c);
+    const cc = area.cc;
+    // Strict location: without a city we can't tell what's near them, so they aren't searched.
+    if (!area.city) { noCity++; found.push(firstName(c) + " (no city)"); continue; }
     const titles = [...new Set(candTitles(c).map((t) => t.trim()).filter(Boolean))].slice(0, 10);
     let postings: any[] = [];
-    try { postings = await searchJobs({ titles, countries: [cc], maxAgeDays: s.leads.maxAgeDays, limit: each }); }
+    const places = [...new Set([...(await commuteTowns(area)), ...area.moves.map((m: string) => placeParts(m).city || m)])].slice(0, 20);
+    try { postings = await searchJobs({ titles, countries: [cc], places, maxAgeDays: s.leads.maxAgeDays, limit: each }); }
     catch (e) {
       const m = String((e as Error)?.message || e);
       errors.push(firstName(c) + " (" + cc + "): " + m.slice(0, 300));
@@ -71,6 +134,7 @@ export async function fetchLeads(admin: any, s: Settings) {
     fetched += postings.length;
     const employers = candEmployers(c);
     let mine = 0;
+    const near = await nearCandidate(area, postings.filter((p: any) => !p.remote).map((p: any) => p.location));
     for (const p of postings) {
       // Roles in the candidate's own country only: remote roles are left out, and never a company
       // they work or worked at.
@@ -78,11 +142,13 @@ export async function fetchLeads(admin: any, s: Settings) {
       const pc = countryCode(p.country) || cc;
       if (pc !== cc) continue;
       if (workedAt(employers, p.company)) { skipped++; continue; }
+      const nr = near.get(String(p.location || "").trim());
+      if (!nr || !nr.ok) { far++; continue; }
       const { error } = await admin.from("leads").insert({
         source: "theirstack", external_id: p.id, company: p.company, company_domain: p.domain, job_title: p.title,
         location: p.location, country: pc, region: regionOf(pc), url: p.url, posted_at: p.posted_at,
         description: p.description, salary: p.salary, status: "pending",
-        data: { hiring_team: p.hiring_team, remote: p.remote, for_candidate: c.id, for_titles: titles },
+        data: { hiring_team: p.hiring_team, remote: p.remote, for_candidate: c.id, for_titles: titles, for_area: area.home },
       });
       if (!error) { added++; mine++; }  // a posting already found (for anyone) hits the unique external_id and is skipped
     }
@@ -91,7 +157,7 @@ export async function fetchLeads(admin: any, s: Settings) {
   if (!fetched && errors.length) throw new Error(errors[0]);
   const who = today.length === all.length ? `all ${all.length} Active file candidates` : `${today.length} of ${all.length} Active file candidates (the rest on the next days)`;
   return { ok: true, fetched, added, candidates: found,
-    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
+    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${far ? " " + far + " too far from the candidate, left out." : ""}${noCity ? " " + noCity + " candidate" + (noCity === 1 ? "" : "s") + " skipped: no city on their profile." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
 }
 const firstName = (c: any) => String(c?.name || "").trim().split(/\s+/)[0] || "A candidate";
 
@@ -106,8 +172,18 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   if (forId && !target) return ignore("The candidate this role was found for is no longer free to put forward");
   const others = cands.filter((c: any) => c.id !== forId).map((c: any) => ({ c, score: titlesMatch([lead.job_title], candTitles(c)) }))
     .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score).slice(0, target ? 7 : 8).map((x: any) => x.c);
-  const pool = target ? [target, ...others] : others;
-  if (!pool.length) return ignore("No Active file candidate in " + (lead.country || "that country") + " matches this title");
+  // Others join only if the role is within commuting distance of where they live (strict, as for
+  // the candidate it was found for).
+  const near: any[] = [];
+  for (const c of others) {
+    const a = candArea(c);
+    if (!a.city) continue;
+    const m = await nearCandidate(a, [lead.location]);
+    if (m.get(String(lead.location || "").trim())?.ok) near.push(c);
+    if (near.length >= 4) break;
+  }
+  const pool = target ? [target, ...near] : near;
+  if (!pool.length) return ignore("No Active file candidate near " + (lead.location || lead.country || "there") + " matches this title");
 
   // Fit check: the posting against each candidate's anonymous profile.
   const fitSys = "You are a recruitment analyst at an agency. For each candidate, judge fit for this job posting on must-have experience, seniority, skills, industry and location/work setup. " +

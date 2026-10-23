@@ -62,6 +62,23 @@ const US_STATE_NAMES = new Set(["alabama", "alaska", "arizona", "arkansas", "cal
   "indiana", "iowa", "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan", "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada",
   "new hampshire", "new jersey", "new mexico", "new york", "north carolina", "north dakota", "ohio", "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina",
   "south dakota", "tennessee", "texas", "utah", "vermont", "virginia", "washington", "west virginia", "wisconsin", "wyoming", "district of columbia", "washington dc", "d.c."]);
+const US_STATE_BY_CODE: Record<string, string> = { AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California", CO: "Colorado", CT: "Connecticut", DE: "Delaware",
+  DC: "District of Columbia", FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois", IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana", ME: "Maine",
+  MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota", MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada", NH: "New Hampshire", NJ: "New Jersey",
+  NM: "New Mexico", NY: "New York", NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon", PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina",
+  SD: "South Dakota", TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia", WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming" };
+// Where in its country a location is: { city, region } ("Tulsa, OK" -> Tulsa, Oklahoma; "Ikeja, Lagos,
+// Nigeria" -> Ikeja, Lagos). The region is the US state's full name when there is one.
+export function placeParts(loc: unknown): { city: string; region: string } {
+  const parts = String(loc || "").split(",").map((x) => x.replace(/\([^)]*\)/g, "").replace(/\s+\d[\d-]*$/, "").trim()).filter(Boolean);
+  const isCountry = (x: string) => !!NAME_TO_CODE[x.toLowerCase()] || (/^[A-Za-z]{2,3}$/.test(x) && !US_STATE_BY_CODE[x.toUpperCase()] && !!COUNTRY_NAMES[x.toUpperCase()]);
+  while (parts.length > 1 && isCountry(parts[parts.length - 1])) parts.pop();
+  if (parts.length === 1 && isCountry(parts[0])) return { city: "", region: "" };
+  const city = parts[0] || "";
+  let region = parts.length > 1 ? parts[parts.length - 1] : "";
+  if (US_STATE_BY_CODE[region.toUpperCase()]) region = US_STATE_BY_CODE[region.toUpperCase()];
+  return { city, region: region.toLowerCase() === city.toLowerCase() ? "" : region };
+}
 // Canadian provinces (NL and PE are left out: they're also the Netherlands and Peru).
 const CA_PROVINCES = new Set("AB BC MB NB NS NT NU ON QC SK YT".split(" "));
 const CA_PROVINCE_NAMES = new Set(["alberta", "british columbia", "manitoba", "new brunswick", "newfoundland", "newfoundland and labrador", "nova scotia", "ontario", "quebec", "québec",

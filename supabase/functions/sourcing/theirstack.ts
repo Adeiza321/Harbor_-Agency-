@@ -12,7 +12,7 @@ export type Posting = {
 
 // TheirStack's free plan returns at most 25 jobs per request, so bigger asks are fetched 25 at a time.
 const PAGE = 25;
-export async function searchJobs(opts: { titles: string[]; countries: string[]; maxAgeDays: number; limit: number }): Promise<Posting[]> {
+export async function searchJobs(opts: { titles: string[]; countries: string[]; places?: string[]; maxAgeDays: number; limit: number }): Promise<Posting[]> {
   const want = Math.min(Math.max(opts.limit, 1), 100);
   const out: Posting[] = [];
   for (let page = 0; out.length < want; page++) {
@@ -25,7 +25,7 @@ export async function searchJobs(opts: { titles: string[]; countries: string[]; 
   return out;
 }
 
-async function searchPage(opts: { titles: string[]; countries: string[]; maxAgeDays: number }, limit: number, page: number): Promise<Posting[]> {
+async function searchPage(opts: { titles: string[]; countries: string[]; places?: string[]; maxAgeDays: number }, limit: number, page: number): Promise<Posting[]> {
   const key = theirstackKey();
   if (!key) throw new Error("The job feed isn't connected yet (THEIRSTACK_API_KEY)");
   const res = await fetch("https://api.theirstack.com/v1/jobs/search", {
@@ -34,6 +34,9 @@ async function searchPage(opts: { titles: string[]; countries: string[]; maxAgeD
     body: JSON.stringify({
       job_title_or: opts.titles.slice(0, 25),
       job_country_code_or: opts.countries,
+      // Only around these places (city or state names, matched against each job's normalized city and
+      // state, case-insensitive). Regex characters in the names are escaped.
+      ...(opts.places && opts.places.length ? { job_location_pattern_or: opts.places.slice(0, 20).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) } : {}),
       posted_at_max_age_days: Math.max(1, opts.maxAgeDays),
       company_type: "direct_employer",            // skip other recruitment agencies
       limit,
