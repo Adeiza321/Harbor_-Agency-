@@ -1,15 +1,14 @@
--- Client sourcing (23 Oct 2026): screening strictly by the job description, and the pitch to
--- Talent Acquisition, the hiring manager and the CEO (found on Apollo), one email with copies.
+-- Client sourcing (23 Oct 2026): screening strictly by the job description; the pitch goes to the
+-- contacts found (job description, job poster, Talent Acquisition, hiring manager, CEO), each
+-- their own email (contacts live on leads.data.contacts, each with their own link token).
 --   * lead_offers.jd_check: each requirement / qualification from the job description and where
 --     the candidate stands on it from their CV: met (with evidence), not_met, not_shown (asked to
 --     confirm) or confirmed (they said yes). Required items decide; nice-to-haves met are a bonus.
 --   * A question with "confirm" is a yes/no question about a required item their CV doesn't show.
 --     Answering yes to all of them counts them as met (on the client's list and in the fit score)
 --     and makes the candidate ready for the pitch; any "no" keeps them waiting for their recruiter.
---   * outreach_messages.cc: the people copied on a client pitch.
 
 alter table public.lead_offers add column if not exists jd_check jsonb not null default '[]';
-alter table public.outreach_messages add column if not exists cc jsonb not null default '[]';
 
 create or replace function public.candidate_pitch_answer(p_token text, p_offer text, p_answers jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$

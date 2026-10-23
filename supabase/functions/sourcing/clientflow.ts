@@ -45,7 +45,7 @@ export async function loadPoc(admin: any, region = ""): Promise<Poc> {
   return { id: u?.id || null, name, first: first(name), title: cfg.title || (u?.role === "admin" ? "Client Partner" : "Recruitment Partner"), email: u?.email || "", phone,
     photo: u?.avatar_url || null, bookingUrl: String(cfg.bookingUrl || "").trim() };
 }
-export type Terms = { title: string; body: string; version: number; feePct: number; discountPct: number; effectivePct: number; firstTime: boolean };
+export type Terms = { title: string; body: string; version: number; feePct: number; discountPct: number; effectivePct: number; firstTime: boolean; agencyCompanyNo: string };
 export async function agreementFor(admin: any, company: string) {
   const { data } = await admin.from("client_agreements").select("*").eq("company_key", companyKey(company)).order("signed_at", { ascending: false }).limit(1);
   return (data || [])[0] || null;
@@ -67,13 +67,15 @@ export async function termsFor(admin: any, company: string): Promise<Terms> {
   const feePct = Number(a.feePct) > 0 ? Number(a.feePct) : 10, discountPct = Number(a.firstTimeDiscountPct) >= 0 ? Number(a.firstTimeDiscountPct ?? 20) : 20;
   const firstTime = await isFirstTime(admin, company);
   const effectivePct = firstTime ? feePct * (1 - discountPct / 100) : feePct;
-  return { title: a.title || "Candidate Introduction Terms", body: String(a.body || ""), version: Number(a.version) || 1, feePct, discountPct, effectivePct, firstTime };
+  return { title: a.title || "Candidate Introduction Terms", body: String(a.body || ""), version: Number(a.version) || 1, feePct, discountPct, effectivePct, firstTime, agencyCompanyNo: String(a.agencyCompanyNo || "").trim() };
 }
 export function feeLine(t: Terms) {
   return `${pct(t.feePct)} of the candidate's annual gross salary` + (t.firstTime && t.discountPct ? ` (as a first-time client you get ${pct(t.discountPct)} off, so ${pct(t.effectivePct)})` : "");
 }
-export function fillTerms(t: Terms, v: { client: string; clientAddress: string; date: string }) {
-  return t.body.replaceAll("{{client}}", v.client).replaceAll("{{client_address}}", v.clientAddress || "[company address]").replaceAll("{{agency_address}}", UK_ADDRESS)
+export function fillTerms(t: Terms, v: { client: string; clientAddress: string; date: string; companyNo?: string }) {
+  return t.body.replaceAll("{{client_company_no}}", v.companyNo ? ` (company number ${v.companyNo})` : "")
+    .replaceAll("{{agency_company_no}}", t.agencyCompanyNo ? ` (company number ${t.agencyCompanyNo})` : "")
+    .replaceAll("{{client}}", v.client).replaceAll("{{client_address}}", v.clientAddress || "[company address]").replaceAll("{{agency_address}}", UK_ADDRESS)
     .replaceAll("{{date}}", v.date).replaceAll("{{fee}}", pct(t.feePct))
     .replaceAll("{{discount}}", t.firstTime && t.discountPct ? ` As a first-time client, the Client receives a ${pct(t.discountPct)} discount on the fee, so the fee is ${pct(t.effectivePct)} of that salary.` : "");
 }
@@ -122,6 +124,7 @@ export async function signForLead(admin: any, l: any, f: any, ip: string, ua: st
   const v = {
     name: clip(f?.name, 120), title: clip(f?.title, 120), company: clip(f?.company, 160) || l.company, address: String(f?.address || "").trim().slice(0, 400),
     email: clip(f?.email, 200).toLowerCase(), authorised: f?.authorised === true,
+    companyNo: clip(f?.companyNo, 40), website: clip(f?.website, 200),
   };
   if (v.name.length < 3) throw new Error("Type your full name to sign");
   if (!v.title) throw new Error("Add your job title");
@@ -135,7 +138,8 @@ export async function signForLead(admin: any, l: any, f: any, ip: string, ua: st
   const now = new Date();
   const { data: ag, error } = await admin.from("client_agreements").insert({
     company_key: companyKey(l.company), company: v.company, lead_id: l.id, version: t.version, title: t.title,
-    body: fillTerms(t, { client: v.company.toUpperCase(), clientAddress: v.address, date: longDate(now) }),
+    body: fillTerms(t, { client: v.company.toUpperCase(), clientAddress: v.address, date: longDate(now), companyNo: v.companyNo }),
+    company_number: v.companyNo || null, website: v.website || null,
     fee_pct: t.effectivePct, first_time: t.firstTime, signer_name: v.name, signer_title: v.title, signer_email: v.email, company_address: v.address,
     ip: ip.slice(0, 80) || null, user_agent: ua.slice(0, 300) || null,
     agency_signer_name: poc.name, agency_signer_title: poc.title, agency_signed_at: now.toISOString(),

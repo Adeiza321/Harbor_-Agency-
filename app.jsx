@@ -9374,9 +9374,13 @@ function ApprovalsPanel({ S, toast, onChanged }) {
 // "Send it myself": until an outreach sender is connected, open the finished email (links, sender
 // details and unsubscribe included) in the recruiter's own mailbox, then record it as sent.
 function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
-  const [mail, setMail] = useState(null);
+  const [all, setMail] = useState(null);
+  // A client pitch goes to each contact as their own email: one tab each.
+  const [idx, setIdx] = useState(0);
+  const many = all && Array.isArray(all.emails) && all.emails.length > 1;
+  const mail = all ? (many ? all.emails[Math.min(idx, all.emails.length - 1)] : all) : null;
   const [busy, setBusy] = useState(false);
-  const open = () => { setBusy(true); S.sourcing("manual_compose", { kind, id }).then(setMail).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  const open = () => { setBusy(true); S.sourcing("manual_compose", { kind, id }).then((m) => { setIdx(0); setMail(m); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
   // Opened from a ⋮ menu: the parent bumps openKey.
   React.useEffect(() => { if (openKey) open(); }, [openKey]); // eslint-disable-line
   const done = () => { setBusy(true); S.sourcing("manual_sent", { kind, id }).then(() => { setMail(null); toast("Marked as sent"); onDone && onDone(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
@@ -9390,10 +9394,18 @@ function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
   return (
     <>
       {!noButton && <Btn icon={Send} onClick={open} disabled={busy}>{busy && !mail ? "Preparing…" : label || "Send it myself"}</Btn>}
-      <Modal open={!!mail} onClose={() => setMail(null)} title="Send it from your own email">
+      <Modal open={!!mail} onClose={() => setMail(null)} title={many ? "Send these " + all.emails.length + " emails from your own email" : "Send it from your own email"}>
         {mail && (
           <div className="flex flex-col gap-3">
-            <div className="text-sm" style={{ color: C.ink2 }}>Open it in your mailbox and press send there. Then come back and click <b>I've sent it</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
+            <div className="text-sm" style={{ color: C.ink2 }}>Open {many ? "each one" : "it"} in your mailbox and press send there. Then come back and click <b>{many ? "I've sent them" : "I've sent it"}</b> so ProNext records it. The "I'm interested" and unsubscribe links still work.</div>
+            {many && (
+              <div className="flex flex-wrap gap-1.5">
+                {all.emails.map((e, i) => (
+                  <button key={e.to} type="button" onClick={() => setIdx(i)} aria-pressed={i === idx} className="rounded-lg border px-3 py-1.5 text-xs font-medium"
+                    style={{ borderColor: i === idx ? C.em : C.line, background: i === idx ? C.emTint : C.card, color: i === idx ? C.emText : C.ink }}>{i + 1}. {e.toName || e.to}{e.role ? " · " + e.role : ""}</button>
+                ))}
+              </div>
+            )}
             <div className="text-sm"><span style={{ color: C.ink3 }}>To </span>{mail.toName ? mail.toName + " · " : ""}{mail.to} <IconBtn icon={Copy} label="Copy address" size="xs" bare tone="em" className="align-middle" onClick={() => copyText(mail.to, toast, "Address copied")} /></div>
             <div className="text-sm"><span style={{ color: C.ink3 }}>Subject </span>{mail.subject} <IconBtn icon={Copy} label="Copy subject" size="xs" bare tone="em" className="align-middle" onClick={() => copyText(mail.subject, toast, "Subject copied")} /></div>
             <textarea readOnly value={mail.body} rows={10} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
@@ -9405,7 +9417,7 @@ function ManualSend({ kind, id, S, toast, onDone, label, openKey, noButton }) {
               {kind === "p" && <Btn onClick={sendTest} disabled={testing}>{testing ? "Sending…" : "Email me a test"}</Btn>}
             </div>
             {mail.body.length > 6000 && <div className="text-xs" style={{ color: C.warnFg }}>This email is long, so some mail apps may cut it short when opening. If that happens, use the copy button and paste it in.</div>}
-            <div className="pt-3 flex justify-end" style={{ borderTop: `1px solid ${C.line}` }}><Btn kind="primary" onClick={done} disabled={busy}>{busy ? "Saving…" : "I've sent it"}</Btn></div>
+            <div className="pt-3 flex justify-end" style={{ borderTop: `1px solid ${C.line}` }}><Btn kind="primary" onClick={done} disabled={busy}>{busy ? "Saving…" : many ? "I've sent them" : "I've sent it"}</Btn></div>
           </div>
         )}
       </Modal>
@@ -10006,9 +10018,9 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
     </Modal>
   );
 }
-// Who the pitch goes to: Talent Acquisition, the hiring manager and the CEO, found on Apollo at
-// the company. The first is the main recipient; the others are copied. Rec Ops / an Admin can look
-// again, add someone by hand, change who it goes to, or take someone off.
+// Who the pitch goes to, each their own email: anyone named in the job description, the job's
+// poster, Talent Acquisition, the hiring manager and the CEO (ContactOut first, Apollo as backup,
+// work emails only). Rec Ops / an Admin can look again, add someone by hand, or take someone off.
 function LeadContacts({ l, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [adding, setAdding] = useState(false);
@@ -10016,8 +10028,9 @@ function LeadContacts({ l, S, toast, onChanged }) {
   const staff = S && (S.role === "admin" || S.role === "recops");
   const d = l.data || {};
   const list = (Array.isArray(d.contacts) ? d.contacts : []).filter((c) => c && !c.removed);
+  const live = list.filter((c) => !c.unsubscribed);
   const run = (key, body, after) => { setBusy(key); S.sourcing("lead_contacts", { leadId: l.id, ...body }).then((r) => { toast((r && r.message) || "Saved"); after && after(); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
-  const locked = ["contacted", "replied", "meeting", "won", "lost", "unsubscribed"].includes(l.status);
+  const locked = ["queued", "contacted", "replied", "meeting", "won", "lost", "unsubscribed"].includes(l.status);
   const inp = "rounded-lg border px-2.5 py-1.5 text-xs outline-none min-w-0";
   // Older leads: the single contact from the posting.
   if (!list.length && l.contact_email && !d.contacts_checked_at) return (
@@ -10027,32 +10040,30 @@ function LeadContacts({ l, S, toast, onChanged }) {
     <div className="text-xs mt-1.5 rounded-lg px-2.5 py-2" style={{ background: C.canvas }}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-semibold" style={{ color: C.ink }}>Contacts</span>
-        <span style={{ color: C.ink3 }}>{list.length ? "one email: to the first, the others copied" : d.contacts_checked_at ? "no one found on Apollo" + (d.contacts_tried ? " (" + d.contacts_tried.join(", ") + ")" : "") : "looked up on Apollo when the pitch is written"}</span>
+        <span style={{ color: C.ink3 }}>{live.length ? (live.length === 1 ? "gets the pitch" : "each gets their own email") : d.contacts_checked_at ? "no one found" + (d.contacts_tried && d.contacts_tried.length ? " (looked for: " + d.contacts_tried.join(", ") + ")" : "") : "looked up when the pitch is written (ContactOut, then Apollo)"}</span>
         {staff && !locked && <span className="ml-auto flex gap-3">
-          <button type="button" disabled={!!busy} onClick={() => run("find", { op: "find" })} className="font-medium" style={{ color: C.em }}>{busy === "find" ? "Looking…" : d.contacts_checked_at ? "Look again on Apollo" : "Find on Apollo"}</button>
+          <button type="button" disabled={!!busy} onClick={() => run("find", { op: "find" })} className="font-medium" style={{ color: C.em }}>{busy === "find" ? "Looking…" : d.contacts_checked_at ? "Look again" : "Find contacts"}</button>
           <button type="button" onClick={() => setAdding((a) => !a)} className="font-medium" style={{ color: C.em }}>{adding ? "Cancel" : "Add a contact"}</button>
         </span>}
       </div>
       {list.map((c, i) => (
-        <div key={c.email} className="flex items-center gap-2 flex-wrap mt-1.5">
-          <Pill tone={i === 0 ? "em" : "neutral"}>{i === 0 ? "To" : "Cc"}</Pill>
+        <div key={c.email} className="flex items-center gap-2 flex-wrap mt-1.5" style={{ opacity: c.unsubscribed ? 0.6 : 1 }}>
+          <Pill tone={c.unsubscribed ? "neutral" : "em"}>{c.role}</Pill>
           <span className="font-medium" style={{ color: C.ink }}>{c.name || c.email}</span>
-          <span style={{ color: C.ink2 }}>{[c.title || c.role, c.email].filter(Boolean).join(" · ")}</span>
-          <span style={{ color: C.ink3 }}>{c.role && c.title ? "(" + c.role + ")" : ""}</span>
+          <span style={{ color: C.ink2 }}>{[c.title, c.name ? c.email : ""].filter(Boolean).join(" · ")}</span>
+          {c.source && <span style={{ color: C.ink3 }}>via {c.source}</span>}
+          {c.unsubscribed && <span className="font-medium" style={{ color: C.warnFg }}>Unsubscribed</span>}
           {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn</a>}
-          {staff && !locked && <span className="ml-auto flex gap-3">
-            {i > 0 && <button type="button" disabled={!!busy} onClick={() => run("m" + i, { op: "main", index: i })} style={{ color: C.em }}>Send to them</button>}
-            <button type="button" disabled={!!busy} onClick={() => run("r" + i, { op: "remove", index: i })} style={{ color: C.ink3 }}>Take off</button>
-          </span>}
+          {staff && !locked && <button type="button" disabled={!!busy} onClick={() => run("r" + i, { op: "remove", index: i })} className="ml-auto" style={{ color: C.ink3 }}>Take off</button>}
         </div>
       ))}
-      {!list.length && d.contacts_checked_at && <div className="mt-1" style={{ color: C.warnFg }}>The pitch waits until a contact is added.</div>}
+      {!live.length && d.contacts_checked_at && <div className="mt-1" style={{ color: C.warnFg }}>The pitch waits until a contact is added.</div>}
       {adding && (
         <div className="mt-2 flex flex-wrap gap-2 items-center">
           <input placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={inp + " w-36"} style={{ borderColor: C.line, background: C.soft }} />
-          <input placeholder="Email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={inp + " w-48"} style={{ borderColor: C.line, background: C.soft }} />
+          <input placeholder="Work email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={inp + " w-48"} style={{ borderColor: C.line, background: C.soft }} />
           <input placeholder="Job title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp + " w-36"} style={{ borderColor: C.line, background: C.soft }} />
-          <Btn kind="primary" disabled={!!busy || !f.email.trim()} onClick={() => run("add", { op: "add", ...f, main: !list.length }, () => { setAdding(false); setF({ name: "", email: "", title: "" }); })} className="!py-1.5 !px-3 text-xs">{busy === "add" ? "Adding…" : list.length ? "Add (copied)" : "Add"}</Btn>
+          <Btn kind="primary" disabled={!!busy || !f.email.trim()} onClick={() => run("add", { op: "add", ...f }, () => { setAdding(false); setF({ name: "", email: "", title: "" }); })} className="!py-1.5 !px-3 text-xs">{busy === "add" ? "Adding…" : "Add"}</Btn>
         </div>
       )}
     </div>
@@ -10065,16 +10076,16 @@ const JD_STATE = { met: ["✓", "Met"], confirmed: ["✓", "Confirmed by them"],
 function JdCheckList({ checks, open, onToggle }) {
   const list = Array.isArray(checks) ? checks : [];
   if (!list.length) return null;
-  const req = list.filter((x) => x.required !== false), nice = list.filter((x) => x.required === false);
+  const req = list.filter((x) => x.required !== false), nice = list.filter((x) => x.required === false && !x.info), info = list.filter((x) => x.info);
   const ok = req.filter((x) => x.status === "met" || x.status === "confirmed").length;
   const ask = req.filter((x) => x.status === "not_shown").length;
   const bonus = nice.filter((x) => x.status === "met").length;
   const color = (st) => (st === "met" || st === "confirmed" ? C.em : st === "not_met" ? C.dangerFg : C.warnFg);
   const row = (x, i) => (
     <div key={i} className="grid grid-cols-[16px_1fr_auto] gap-x-2 py-1.5" style={{ borderTop: "1px solid " + C.line }}>
-      <span className="font-bold" style={{ color: color(x.status) }}>{(JD_STATE[x.status] || JD_STATE.not_shown)[0]}</span>
+      <span className="font-bold" style={{ color: x.info && x.status !== "met" ? C.ink3 : color(x.status) }}>{x.info && x.status !== "met" ? "·" : (JD_STATE[x.status] || JD_STATE.not_shown)[0]}</span>
       <span>{x.item}{x.evidence && <span style={{ color: C.ink2 }}> · {x.evidence}</span>}</span>
-      <span className="text-[11px] whitespace-nowrap" style={{ color: color(x.status) }}>{x.required === false && x.status !== "met" ? "Not shown" : (JD_STATE[x.status] || JD_STATE.not_shown)[1]}</span>
+      <span className="text-[11px] whitespace-nowrap" style={{ color: x.info && x.status !== "met" ? C.ink3 : color(x.status) }}>{x.info ? (x.status === "met" ? "Worked in it" : x.status === "not_met" ? "Other industries" : "Not clear") : x.required === false && x.status !== "met" ? "Not shown" : (JD_STATE[x.status] || JD_STATE.not_shown)[1]}</span>
     </div>
   );
   return (
@@ -10084,6 +10095,7 @@ function JdCheckList({ checks, open, onToggle }) {
         <span className="font-semibold" style={{ color: C.em }}>✓ {ok} of {req.length} required</span>
         {ask > 0 && <span className="font-semibold" style={{ color: C.warnFg }}>{ask} to confirm</span>}
         {nice.length > 0 && <span style={{ color: C.ink2 }}>· {bonus} of {nice.length} nice-to-haves</span>}
+        {info.map((x, i) => <span key={i} style={{ color: x.status === "met" ? C.em : C.ink3 }}>· {x.item}{x.status === "met" ? " ✓" : ""}</span>)}
         <ChevronDown size={14} color={C.ink2} className="ml-auto shrink-0" style={{ transform: open ? "rotate(180deg)" : "none" }} />
       </button>
       {open && (
@@ -10092,6 +10104,8 @@ function JdCheckList({ checks, open, onToggle }) {
           {req.map(row)}
           {nice.length > 0 && <div className="text-[11px] pt-2 pb-1" style={{ color: C.ink3 }}>Nice to have (a bonus, doesn't decide)</div>}
           {nice.map(row)}
+          {info.length > 0 && <div className="text-[11px] pt-2 pb-1" style={{ color: C.ink3 }}>Industry (information only, unless the job description asks for it)</div>}
+          {info.map((x, i) => row(x, "i" + i))}
         </div>
       )}
     </div>
@@ -10539,7 +10553,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. The hiring contact then gets one email with the ready candidates' blind resumes behind a "View the candidates" button; when they say they're interested, the contract goes out by itself (Outreach settings).</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on ContactOut or Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</div>
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
@@ -11570,7 +11584,7 @@ function ClientPitchPage({ token }) {
   const [open, setOpen] = useState(() => Math.max(0, (Number(q.get("c")) || 1) - 1));
   const [gate, setGate] = useState(null);       // index of the candidate whose blind resume was just opened (pop-up)
   const [terms, setTerms] = useState(null);      // the agreement pop-up
-  const [f, setF] = useState({ name: "", title: "", company: "", address: "", email: "", authorised: false });
+  const [f, setF] = useState({ name: "", title: "", company: "", companyNo: "", website: "", address: "", email: "", authorised: false });
   const [busy, setBusy] = useState("");
   const [tl, setTl] = useState("");
   const [tlDone, setTlDone] = useState(false);
@@ -11689,6 +11703,10 @@ function ClientPitchPage({ token }) {
                   {field("title", "Job title", "e.g. Head of Finance")}
                   {field("company", "Company", "")}
                   {field("email", "Work email", "")}
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {field("companyNo", "Company number (optional)", "Registration number")}
+                  {field("website", "Company website (optional)", "https://")}
                 </div>
                 {field("address", "Company address", "Street, city, state, country", true)}
                 <TypedSignature party="FOR THE CLIENT" name={f.name} title={f.title} device={deviceOf(navigator.userAgent)} />
@@ -13520,7 +13538,7 @@ function AuditLogTab({ S }) {
 function ClientTermsTab({ toast, S }) {
   const cur = (S.settings && S.settings.clientAgreement) || { title: "Candidate Introduction Terms", body: "", version: 1, feePct: 10, firstTimeDiscountPct: 20 };
   const poc0 = (S.settings && S.settings.clientPoc) || {};
-  const [f, setF] = useState({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20 });
+  const [f, setF] = useState({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20, agencyCompanyNo: cur.agencyCompanyNo || "" });
   const [poc, setPoc] = useState({ userId: poc0.userId || "", title: poc0.title || "", bookingUrl: poc0.bookingUrl || "", us: (poc0.phones && poc0.phones.us) || "", eu: (poc0.phones && poc0.phones.eu) || "" });
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState(null);
@@ -13531,7 +13549,7 @@ function ClientTermsTab({ toast, S }) {
   const changed = f.body !== (cur.body || "") || f.title !== (cur.title || "");
   const save = () => {
     setBusy(true);
-    const a = { ...cur, title: f.title.trim() || "Candidate Introduction Terms", body: f.body, feePct: Number(f.feePct) || 10, firstTimeDiscountPct: Math.max(0, Number(f.firstTimeDiscountPct) || 0),
+    const a = { ...cur, title: f.title.trim() || "Candidate Introduction Terms", body: f.body, feePct: Number(f.feePct) || 10, firstTimeDiscountPct: Math.max(0, Number(f.firstTimeDiscountPct) || 0), agencyCompanyNo: f.agencyCompanyNo.trim(),
       version: (Number(cur.version) || 1) + (changed ? 1 : 0), updatedAt: new Date().toISOString() };
     S.saveClientTerms(a, { userId: poc.userId || null, title: poc.title.trim(), bookingUrl: poc.bookingUrl.trim(), phones: { us: poc.us.trim(), eu: poc.eu.trim() } }).then(() => toast("Saved. New signatures use these terms; signed copies don't change.")).catch(() => {}).finally(() => setBusy(false));
   };
@@ -13552,12 +13570,13 @@ function ClientTermsTab({ toast, S }) {
         {!poc.bookingUrl && <div className="text-xs mt-2" style={{ color: C.warnFg }}>No booking link yet: clients are asked to reply to arrange a call instead.</div>}
       </Card>
       <Card>
-        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_address}} {{agency_address}} {{date}} {{fee}} {{discount}}." />
+        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_company_no}} {{client_address}} {{agency_address}} {{agency_company_no}} {{date}} {{fee}} {{discount}}." />
         <div className="grid sm:grid-cols-3 gap-3 mt-3">
           <label className="text-xs font-medium sm:col-span-1" style={{ color: C.ink2 }}>Title<input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp} style={inpS} /></label>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Fee (% of annual gross salary)<input type="number" min="0" step="0.5" value={f.feePct} onChange={(e) => setF({ ...f, feePct: e.target.value })} className={inp} style={inpS} /></label>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>First-time client discount (% off the fee)<input type="number" min="0" max="100" step="1" value={f.firstTimeDiscountPct} onChange={(e) => setF({ ...f, firstTimeDiscountPct: e.target.value })} className={inp} style={inpS} /></label>
         </div>
+        <label className="text-xs font-medium block mt-3" style={{ color: C.ink2 }}>Pronext's company number (shown in the agreement)<input value={f.agencyCompanyNo} onChange={(e) => setF({ ...f, agencyCompanyNo: e.target.value })} placeholder="e.g. 12345678" className={inp + " sm:max-w-xs"} style={inpS} /></label>
         <textarea value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} rows={18} className={inp + " font-mono text-xs leading-relaxed mt-3"} style={inpS} />
         <div className="flex justify-end mt-3"><Btn kind="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</Btn></div>
       </Card>
@@ -13581,7 +13600,7 @@ function ClientTermsTab({ toast, S }) {
             <TypedSignature party="FOR THE AGENCY" name={view.agency_signer_name} title={view.agency_signer_title} at={view.agency_signed_at} />
             <TypedSignature party="FOR THE CLIENT" name={view.signer_name} title={view.signer_title} at={view.signed_at} ip={view.ip} device={deviceOf(view.user_agent)} />
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink3 }}>Company address: {view.company_address} · {view.signer_email}</div>
+          <div className="text-xs mt-3" style={{ color: C.ink3 }}>Company address: {view.company_address} · {view.signer_email}{view.company_number ? " · Company number " + view.company_number : ""}{view.website ? " · " + view.website : ""}</div>
         </Modal>
       )}
     </div>

@@ -166,12 +166,15 @@ async function stepContracts(admin: any, s: any, agencyName: string) {
   let sent = 0, flagged = 0;
   const c = s.contract || {};
   for (const l of leads || []) {
-    if (c.enabled && c.subject && c.body && l.contact_email) {
-      const fill = (t: string) => String(t || "").replace(/\{\{first_name\}\}/gi, l.contact_first_name || "there").replace(/\{\{company\}\}/gi, l.company || "").replace(/\{\{role\}\}/gi, l.job_title || "")
+    // To whoever clicked "interested" (each contact has their own link), else the lead's contact.
+    const ib = l.data?.interested_by;
+    const toEmail = ib?.email || l.contact_email, toName = ib ? ib.name : l.contact_name, toFirst = ib ? ib.first_name : l.contact_first_name;
+    if (c.enabled && c.subject && c.body && toEmail) {
+      const fill = (t: string) => String(t || "").replace(/\{\{first_name\}\}/gi, toFirst || "there").replace(/\{\{company\}\}/gi, l.company || "").replace(/\{\{role\}\}/gi, l.job_title || "")
         .replace(/\{\{contract_link\}\}/gi, c.url || "");
       const body = fill(c.body) + (c.url && !/\{\{contract_link\}\}/i.test(c.body) ? "\n\n" + c.url : "");
-      const { error } = await admin.from("outreach_messages").insert({ kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name, subject: fill(c.subject).slice(0, 200),
-        body: finalBody(body, l.unsub_token, "l", l.region || "OTHER", s, agencyName, "client"), approved_by: null });
+      const { error } = await admin.from("outreach_messages").insert({ kind: "client", lead_id: l.id, to_email: toEmail, to_name: toName, subject: fill(c.subject).slice(0, 200),
+        body: finalBody(body, ib?.token ? `${l.unsub_token}~${ib.token}` : l.unsub_token, "l", l.region || "OTHER", s, agencyName, "client"), approved_by: null });
       if (!error) { await admin.from("leads").update({ contract_sent_at: new Date().toISOString(), status: l.status === "won" ? "won" : "meeting", notes: [l.notes, "Contract queued automatically " + new Date().toISOString().slice(0, 10)].filter(Boolean).join("\n") }).eq("id", l.id); sent++; }
       continue;
     }

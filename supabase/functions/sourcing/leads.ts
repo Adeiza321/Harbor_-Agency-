@@ -21,7 +21,7 @@
 import { askAI } from "./ai.ts";
 import { assessForPitch, OUT, PENDING, strongEnough } from "./pitch.ts";
 import { searchJobs, theirstackKey } from "./theirstack.ts";
-import { contactFields, findCompanyContacts, type Contact } from "./contacts.ts";
+import { contactFields, findCompanyContacts, liveContacts, type Contact } from "./contacts.ts";
 import { COUNTRY_NAMES, countryCode, locationCountry, placeParts, regionOf } from "./regions.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 import { portalBase } from "./queue.ts";
@@ -189,8 +189,9 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   // have, nothing assumed), checked against each candidate's CV. Anything required they don't have
   // takes them out; a required item their CV doesn't show becomes a yes/no question to them, and
   // they're pitched only once they've said yes. Plus how the role meets what each of them wants.
-  const { role, items, results } = await assessForPitch(admin, lead, pool);
-  const data = { ...(lead.data || {}), role, jd: items };
+  const { role, items, contacts: named, results } = await assessForPitch(admin, lead, pool);
+  // Anyone the job description gives a work email for is kept, to be emailed with the others.
+  const data = { ...(lead.data || {}), role, jd: items, jd_contacts: named };
   if (!items.some((x) => x.required)) {
     await admin.from("leads").update({ status: "ignored", notes: "The job description doesn't list any requirements or qualifications to screen against", data }).eq("id", lead.id);
     return { ok: true, kept: false, why: "No requirements in the job description" };
@@ -273,10 +274,11 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
   const kc = ready.map((m: any) => (cs || []).find((x: any) => x.id === m.candidate_id) || { id: m.candidate_id });
   const posting = `Job: ${lead.job_title} at ${lead.company}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}\nDescription:\n${String(lead.description || "").slice(0, 3000)}`;
 
-  // Who to contact: Talent Acquisition, the hiring manager and the CEO, found on Apollo at the
-  // company (contacts.ts), looked up once per lead. One email: the first found is the main
-  // recipient, the others are copied. None found: the lead waits for a contact added by hand.
-  let contacts: Contact[] = Array.isArray(lead.data?.contacts) ? lead.data.contacts.filter((c: any) => !c.removed) : [];
+  // Who to contact (contacts.ts): anyone named in the job description, the job's poster, Talent
+  // Acquisition, the hiring manager and the CEO, from ContactOut (Apollo as backup), work emails
+  // only, looked up once per lead. Each gets their own email. None found: the lead waits for a
+  // contact added by hand.
+  let contacts: Contact[] = liveContacts(lead);
   let lookup: Record<string, unknown> | null = null;
   if (!lead.data?.contacts_checked_at) {
     const found = await findCompanyContacts(admin, lead, lead.data?.role?.hmTitles || []);
@@ -285,7 +287,7 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
   }
   const main = contacts[0] || null;
   const fields = contactFields(contacts);
-  const channel = lookup || !lead.contact_email ? fields.channel : lead.channel;
+  const channel = fields.channel;
 
   // Pitch: a short intro (the email lists each candidate with the must-haves they meet and a
   // button to their blind resume, added by the email itself) and a LinkedIn note. Never names.
@@ -302,8 +304,7 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
   await admin.from("leads").update({
     status: "new", matches: all, notes: null,
     data: { ...(lead.data || {}), ...(lookup || {}), pitched: ready.map((m: any) => m.candidate_id) },
-    // A contact added by hand stays as it is.
-    ...(lookup || !lead.contact_email ? fields : {}),
+    ...fields,
     pitch_subject: scrub(String(pitch?.subject || ""), kc).slice(0, 120), pitch_body: scrub(String(pitch?.body || ""), kc).slice(0, 3000),
     linkedin_message: scrub(String(pitch?.linkedin || ""), kc).slice(0, 300),
   }).eq("id", lead.id);
