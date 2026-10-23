@@ -1,9 +1,12 @@
 // The client machine, Active file first.
-//   fetchLeads (daily, after an Admin approves the credits): for each country our Active file
-//     candidates live in, new postings there for the titles they fit (direct employers, not
-//     remote) -> leads to check.
-//   processLead (a few per run): match the posting against the Active file candidates in that
-//     country; keep the lead only if at least one is a Good or Perfect fit (up to 5).
+//   fetchLeads (daily, after an Admin approves the credits): candidate by candidate. For each Active
+//     file candidate, new postings in the country they live in for their own job titles (direct
+//     employers, not remote, never a company they work or worked at) -> leads found FOR that
+//     candidate. The day's postings are shared out between candidates; when there are more
+//     candidates than the day allows, it works through them in turn over the following days.
+//   processLead (a few per run): the candidate it was found for, checked against the posting; kept
+//     only if they're a Good or Perfect fit. Other Active file candidates in that country with the
+//     same title are checked too and join the pitch if they fit (up to 5 in all).
 //   pitchLead: the hiring contact (the poster from the job feed, email via Apollo) and an anonymous
 //     email: up to 5 candidates, each as a blind resume behind a "View the candidates" button
 //     (/?t=s-<client_token>), only candidates whose blind resume a Rec Ops/Admin has checked. A lead
@@ -42,49 +45,68 @@ export const blindReady = (c: any) => !!(c?.blind_pages && c?.blind_checked_at);
 
 export async function fetchLeads(admin: any, s: Settings) {
   if (!theirstackKey()) return { ok: false, notConnected: "theirstack", message: "The job feed isn't connected yet. Add the THEIRSTACK_API_KEY secret." };
-  const cands = await pitchableCandidates(admin);
-  if (!cands.length) return { ok: true, fetched: 0, message: "No Active file candidates with a CV, a known job title and a known country, so there's nothing to look for yet." };
-  // One search per country our Active file lives in, biggest first, sharing the day's postings.
-  const byCountry: Record<string, any[]> = {};
-  for (const c of cands) (byCountry[candCountry(c)] ||= []).push(c);
-  const countries = Object.entries(byCountry).sort((a, b) => b[1].length - a[1].length).slice(0, 10);
+  const all = await pitchableCandidates(admin);
+  if (!all.length) return { ok: true, fetched: 0, message: "No Active file candidates with a CV, a known job title and a known country, so there's nothing to look for yet." };
+  // Share the day's postings out between candidates (at least 3 each). More candidates than that
+  // allows: a different group each day, in turn (same order every day, starting further along).
   const total = Math.max(1, s.leads.postingsPerDay);
-  let fetched = 0, added = 0, remote = 0;
-  const errors: string[] = [];
-  for (const [cc, list] of countries) {
-    const freq: Record<string, number> = {};
-    for (const c of list) for (const t of candTitles(c)) freq[t] = (freq[t] || 0) + 1;
-    const titles = Object.entries(freq).sort((a, b) => b[1] - a[1]).map(([t]) => t).slice(0, 25);
-    const limit = Math.max(3, Math.round((total * list.length) / cands.length));
+  const each = Math.max(3, Math.floor(total / all.length));
+  const perDay = Math.max(1, Math.floor(total / each));
+  const ordered = all.slice().sort((a: any, b: any) => String(a.id).localeCompare(String(b.id)));
+  const start = (Math.floor(Date.now() / 864e5) * perDay) % ordered.length;
+  const today = perDay >= ordered.length ? ordered : Array.from({ length: perDay }, (_, k) => ordered[(start + k) % ordered.length]);
+  let fetched = 0, added = 0, remote = 0, skipped = 0;
+  const errors: string[] = [], found: string[] = [];
+  for (const c of today) {
+    const cc = candCountry(c);
+    const titles = [...new Set(candTitles(c).map((t) => t.trim()).filter(Boolean))].slice(0, 10);
     let postings: any[] = [];
-    try { postings = await searchJobs({ titles, countries: [cc], maxAgeDays: s.leads.maxAgeDays, limit }); }
-    catch (e) { errors.push(cc + ": " + String((e as Error)?.message || e).slice(0, 160)); if (/\b40[13]\b/.test(String((e as Error)?.message))) break; continue; }
+    try { postings = await searchJobs({ titles, countries: [cc], maxAgeDays: s.leads.maxAgeDays, limit: each }); }
+    catch (e) {
+      const m = String((e as Error)?.message || e);
+      errors.push(firstName(c) + " (" + cc + "): " + m.slice(0, 300));
+      if (/\b401\b/.test(m) || /\b402\b/.test(m) || (/\b403\b/.test(m) && !/free plan/i.test(m))) break;   // key or credits: stop for today
+      continue;
+    }
     fetched += postings.length;
+    const employers = candEmployers(c);
+    let mine = 0;
     for (const p of postings) {
-      // Roles in the candidates' own country only: remote roles are left out.
+      // Roles in the candidate's own country only: remote roles are left out, and never a company
+      // they work or worked at.
       if (p.remote) { remote++; continue; }
       const pc = countryCode(p.country) || cc;
       if (pc !== cc) continue;
+      if (workedAt(employers, p.company)) { skipped++; continue; }
       const { error } = await admin.from("leads").insert({
         source: "theirstack", external_id: p.id, company: p.company, company_domain: p.domain, job_title: p.title,
         location: p.location, country: pc, region: regionOf(pc), url: p.url, posted_at: p.posted_at,
-        description: p.description, salary: p.salary, status: "pending", data: { hiring_team: p.hiring_team, remote: p.remote },
+        description: p.description, salary: p.salary, status: "pending",
+        data: { hiring_team: p.hiring_team, remote: p.remote, for_candidate: c.id, for_titles: titles },
       });
-      if (!error) added++;               // duplicates hit the unique external_id and are skipped
+      if (!error) { added++; mine++; }  // a posting already found (for anyone) hits the unique external_id and is skipped
     }
+    found.push(firstName(c) + " " + mine);
   }
   if (!fetched && errors.length) throw new Error(errors[0]);
-  return { ok: true, fetched, added, countries: countries.map(([c, l]) => c + " (" + l.length + ")"),
-    message: `Checked ${fetched} new postings in ${countries.map(([c]) => c).join(", ")}; ${added} new.${remote ? " " + remote + " remote roles left out." : ""}${errors.length ? " Some countries failed: " + errors.join("; ") : ""}` };
+  const who = today.length === all.length ? `all ${all.length} Active file candidates` : `${today.length} of ${all.length} Active file candidates (the rest on the next days)`;
+  return { ok: true, fetched, added, candidates: found,
+    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
 }
+const firstName = (c: any) => String(c?.name || "").trim().split(/\s+/)[0] || "A candidate";
 
 export async function processLead(admin: any, lead: any, s: Settings) {
-  // The Active file in the posting's country, never anyone who works or worked at that company.
+  // The candidate it was found for, plus other Active file candidates in the posting's country with
+  // a matching title; never anyone who works or worked at that company.
   const cc = countryCode(lead.country);
+  const forId = lead.data?.for_candidate || null;
   const cands = (await pitchableCandidates(admin)).filter((c: any) => candCountry(c) === cc && !workedAt(candEmployers(c), lead.company));
-  const pool = cands.map((c: any) => ({ c, score: titlesMatch([lead.job_title], candTitles(c)) }))
-    .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score).slice(0, 8).map((x: any) => x.c);
+  const target = forId ? cands.find((c: any) => c.id === forId) : null;
   const ignore = async (why: string) => { await admin.from("leads").update({ status: "ignored", notes: why }).eq("id", lead.id); return { ok: true, kept: false, why }; };
+  if (forId && !target) return ignore("The candidate this role was found for is no longer free to put forward");
+  const others = cands.filter((c: any) => c.id !== forId).map((c: any) => ({ c, score: titlesMatch([lead.job_title], candTitles(c)) }))
+    .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score).slice(0, target ? 7 : 8).map((x: any) => x.c);
+  const pool = target ? [target, ...others] : others;
   if (!pool.length) return ignore("No Active file candidate in " + (lead.country || "that country") + " matches this title");
 
   // Fit check: the posting against each candidate's anonymous profile.
@@ -96,8 +118,10 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   const fits = await askAI(fitSys, posting + "\n\nCandidates:\n" + list, 3000);
   const kept = fitsToPercent(Array.isArray(fits?.results) ? fits.results : [])
     .map((r: any) => ({ r, c: pool[Number(r.n)] })).filter((x: any) => x.c && ["Perfect fit", "Good fit"].includes(x.r.verdict))
-    .sort((a: any, b: any) => (Number(b.r.fit) || 0) - (Number(a.r.fit) || 0)).slice(0, MAX_PER_PITCH);
-  if (!kept.length) return ignore("Our Active file candidates weren't a strong enough fit");
+    .sort((a: any, b: any) => (target && a.c.id === target.id ? -1 : target && b.c.id === target.id ? 1 : (Number(b.r.fit) || 0) - (Number(a.r.fit) || 0))).slice(0, MAX_PER_PITCH);
+  if (!kept.length) return ignore(target ? "Not a strong enough fit for " + firstName(target) : "Our Active file candidates weren't a strong enough fit");
+  // Found for a candidate: kept only when it fits them.
+  if (target && !kept.some((x: any) => x.c.id === target.id)) return ignore("Not a strong enough fit for " + firstName(target) + " (the role it was found for)");
   const matches = kept.map((x: any) => ({
     candidate_id: x.c.id, verdict: x.r.verdict, fit: Math.round(Number(x.r.fit) || 0), reason: scrub(String(x.r.reason || ""), [x.c]).slice(0, 300),
     bullets: (Array.isArray(x.r.bullets) ? x.r.bullets : []).slice(0, 3).map((b: unknown) => scrub(String(b), [x.c]).slice(0, 140)),

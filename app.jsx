@@ -9933,6 +9933,9 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             <div className="min-w-0">
               <div className="font-medium text-sm">{l.job_title}</div>
               <div className="text-xs" style={{ color: C.ink2 }}>{[l.company, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</div>
+              {l.data && l.data.for_candidate && (() => { const fc = S.cands.find((x) => x.id === l.data.for_candidate); return (
+                <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Found for <button type="button" className="font-medium" style={{ color: fc ? C.em : C.ink2 }} onClick={() => fc && S.openCandidate(fc.id)}>{fc ? fc.name : "a candidate"}</button></div>
+              ); })()}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <Pill tone={l.channel === "email" ? "em" : l.channel === "linkedin" ? "info" : "neutral"}>{l.channel === "email" ? "Email" : l.channel === "linkedin" ? "LinkedIn" : "No contact"}</Pill>
@@ -10075,7 +10078,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           </div>
           <div>
             <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where client leads come from</label>
-            <div className="text-xs mt-1 leading-relaxed" style={{ color: C.ink2 }}>The countries your Active file candidates live in: new roles in their own country only (remote roles are left out). Each email to a company carries up to 5 qualified candidates as blind resumes, so make and check blind resumes under Candidates &gt; Blind resumes.</div>
+            <div className="text-xs mt-1 leading-relaxed" style={{ color: C.ink2 }}>Your Active file candidates, one at a time: each day ProNext looks for new roles that match a candidate's own job titles, in the country they live in (remote roles and companies they've worked for are left out), and keeps a role only if it's a strong fit for that candidate. Each email to a company carries up to 5 qualified candidates as blind resumes, so make and check blind resumes under Candidates &gt; Blind resumes.</div>
           </div>
           <div className="md:col-span-2 rounded-xl p-3.5 flex flex-col gap-2.5" style={{ background: C.canvas }}>
             <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!(f.contract && f.contract.enabled)} onChange={(e) => set("contract", { ...(f.contract || {}), enabled: e.target.checked })} /> Send our contract automatically when a company says it's interested</label>
