@@ -9980,24 +9980,38 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
                 <Pill tone={tone}>{label}</Pill>
               </div>
             </div>
-            {reqs.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-1.5">
-                {reqs.map((q, i) => <span key={i} title={(q.theirs ? "They want: " + q.theirs : "") + (q.role ? " · This role: " + q.role : "")} className="rounded-full px-2 py-0.5" style={{ background: q.status === "met" ? C.emTint : C.warnBg, color: q.status === "met" ? C.emText : C.warnText }}>{q.status === "met" ? "✓ " : "? "}{q.item}</span>)}
-              </div>
-            )}
             {o.reason && <div className="mt-1" style={{ color: C.ink2 }}>{o.reason}</div>}
-            {(reqs.length > 0 || qs.length > 0) && <button type="button" className="mt-1 font-medium" style={{ color: C.em }} onClick={() => setOpen({ ...open, [o.id]: !open[o.id] })}>{open[o.id] ? "Hide details" : "Details" + (qs.length ? " · " + qs.length + " question" + (qs.length === 1 ? "" : "s") + (ans.length ? ", answered" : "") : "")}</button>}
-            {open[o.id] && (
-              <div className="mt-1.5 flex flex-col gap-1.5">
-                {reqs.map((q, i) => (
-                  <div key={i} className="grid grid-cols-[96px_1fr_1fr_auto] gap-2">
-                    <span className="font-medium">{q.item}</span><span style={{ color: C.ink2 }}>{q.theirs || "-"}</span><span>{q.role || "-"}</span>
-                    <span className="font-semibold" style={{ color: q.status === "met" ? C.em : C.warnFg }}>{q.status === "met" ? "Matches" : "To discuss"}</span>
-                  </div>
-                ))}
-                {qs.map((q, i) => <div key={"q" + i}><span className="font-medium">Q: </span>{q}{ans[i] ? <div style={{ color: C.ink2 }}><span className="font-medium">A: </span>{ans[i]}</div> : null}</div>)}
-              </div>
-            )}
+            {reqs.length > 0 && (() => {
+              const met = reqs.filter((q) => q.status === "met").length, discuss = reqs.length - met;
+              return (
+                <div className="mt-2 rounded-lg" style={{ background: C.card, border: "1px solid " + C.line }}>
+                  <button type="button" aria-expanded={!!open[o.id]} onClick={() => setOpen({ ...open, [o.id]: !open[o.id] })} className="w-full flex items-center gap-2 px-2.5 py-2 text-left flex-wrap">
+                    <span className="font-semibold" style={{ color: C.ink }}>What they're looking for</span>
+                    <span className="font-semibold" style={{ color: C.em }}>✓ {met} of {reqs.length} match</span>
+                    {discuss > 0 && <span className="font-semibold" style={{ color: C.warnFg }}>{discuss} to discuss</span>}
+                    {o.fit != null && <span style={{ color: C.ink2 }}>· fit {o.fit}%</span>}
+                    {qs.length > 0 && <span style={{ color: C.ink2 }}>· {plural(qs.length, "question")}{ans.length ? ", answered" : o.status === "acknowledged" ? ", waiting for answers" : ""}</span>}
+                    <ChevronDown size={14} color={C.ink2} className="ml-auto shrink-0" style={{ transform: open[o.id] ? "rotate(180deg)" : "none" }} />
+                  </button>
+                  {open[o.id] && (
+                    <div className="px-2.5 pb-2.5">
+                      <div className="grid grid-cols-[minmax(80px,auto)_1fr_1fr_auto] gap-x-3 text-[11px] pb-1" style={{ color: C.ink3 }}><span /><span>They want</span><span>This role</span><span /></div>
+                      {reqs.map((q, i) => (
+                        <div key={i} className="grid grid-cols-[minmax(80px,auto)_1fr_1fr_auto] gap-x-3 py-1.5" style={{ borderTop: "1px solid " + C.line }}>
+                          <span className="font-semibold">{q.item}</span><span style={{ color: C.ink2 }}>{q.theirs || "-"}</span><span>{q.role || "-"}</span>
+                          <span className="font-semibold whitespace-nowrap" style={{ color: q.status === "met" ? C.em : C.warnFg }}>{q.status === "met" ? "✓ Matches" : "To discuss"}</span>
+                        </div>
+                      ))}
+                      {qs.length > 0 && (
+                        <div className="mt-2 pt-2 flex flex-col gap-1.5" style={{ borderTop: "1px solid " + C.line }}>
+                          {qs.map((q, i) => <div key={i}><span className="font-medium">Q: </span>{q}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 items-center justify-end">
               {o.status === "ready" && <span style={{ color: blindOk ? C.em : C.warnFg }}>{blindOk ? "Blind resume checked" : "Needs a checked blind resume"}</span>}
               {o.note && <span style={{ color: C.ink3 }}>{o.note}</span>}
