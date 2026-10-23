@@ -19,7 +19,7 @@
 //   The company's "We're interested" sends the contract automatically (stepContracts in index.ts).
 
 import { askAI } from "./ai.ts";
-import { assessForPitch, notifyOffer, OUT, PENDING, strongEnough } from "./pitch.ts";
+import { assessForPitch, OUT, PENDING, strongEnough } from "./pitch.ts";
 import { searchJobs, theirstackKey } from "./theirstack.ts";
 import { apolloKey, matchByName } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, locationCountry, placeParts, regionOf } from "./regions.ts";
@@ -199,18 +199,17 @@ export async function processLead(admin: any, lead: any, s: Settings) {
     candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: scrub(a.reason, [c]).slice(0, 300),
     bullets: a.bullets.map((b) => scrub(b, [c]).slice(0, 140)), requirements: a.requirements, questions: a.questions, why_role: a.whyRole,
   }));
-  await admin.from("leads").update({ status: "awaiting", matches, data: { ...(lead.data || {}), role }, notes: "Telling the candidates first; the pitch goes once they've acknowledged." }).eq("id", lead.id);
-  // Each candidate's own place on this pitch, then their information email (candidate first).
-  let told = 0;
+  await admin.from("leads").update({ status: "awaiting", matches, data: { ...(lead.data || {}), role }, notes: "Candidate emails to review: open each candidate's email, then send. The pitch goes once they've acknowledged." }).eq("id", lead.id);
+  // Each candidate's own place on this pitch, with their information email written as a draft:
+  // nothing goes out until Rec Ops / an Admin reviews it and presses Send (candidate first).
   for (const m of matches) {
-    const { data: o, error } = await admin.from("lead_offers").upsert({
+    const { error } = await admin.from("lead_offers").upsert({
       lead_id: lead.id, candidate_id: m.candidate_id, fit: m.fit, verdict: m.verdict, reason: m.reason, bullets: m.bullets,
-      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), why_role: m.why_role || null, status: "notified",
-    }, { onConflict: "lead_id,candidate_id" }).select("id").single();
-    if (error || !o) { console.error("lead offer", error?.message); continue; }
-    try { const r = await notifyOffer(admin, o.id); if (r.sent) told++; } catch (e) { console.error("notify offer", String((e as Error)?.message || e)); }
+      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), why_role: m.why_role || null, status: "draft",
+    }, { onConflict: "lead_id,candidate_id" });
+    if (error) console.error("lead offer", error.message);
   }
-  return { ok: true, kept: true, candidates: matches.length, told };
+  return { ok: true, kept: true, candidates: matches.length, drafts: matches.length };
 }
 
 // Where a pitch's candidates are: whoever is ready (acknowledged, answered or put through) and
@@ -237,7 +236,8 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
       return { ok: true, pitched: false, allOut: true };
     }
     if (st.pending.length && !force) {
-      await admin.from("leads").update({ status: "awaiting", notes: `Waiting for ${st.pending.length} of ${st.offers.length - st.out.length} candidate${st.offers.length - st.out.length === 1 ? "" : "s"} to acknowledge (reminder after 2 days). Put them through or send now with the ready ones.` }).eq("id", lead.id);
+      await admin.from("leads").update({ status: "awaiting", notes: (() => { const d = st.pending.filter((o: any) => o.status === "draft").length, w = st.pending.length - d, live = st.offers.length - st.out.length;
+        return [d ? `${d} candidate email${d === 1 ? "" : "s"} to review and send` : "", w ? `waiting for ${w} of ${live} candidate${live === 1 ? "" : "s"} to acknowledge (remind after 2 days)` : ""].filter(Boolean).join("; ").replace(/^./, (x) => x.toUpperCase()) + ". Put them through or send now with the ready ones."; })() }).eq("id", lead.id);
       return { ok: true, pitched: false, waitingForCandidates: st.pending.length };
     }
     const readyIds = new Set([...st.ready, ...st.pitched].map((o: any) => o.candidate_id));
