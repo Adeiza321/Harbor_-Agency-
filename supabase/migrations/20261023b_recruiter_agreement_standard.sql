@@ -89,7 +89,7 @@ update public.agency_settings
          'body', $draft$This Agreement is dated {{date}}.
 
 ## Parties
-(1) PRONEXT OUTSOURCING AGENCY of {{agency_address}} (the "Agency"); and
+(1) PRONEXT OUTSOURCING AGENCY of 94 Ayanguren Road, Ikorodu, Lagos State, Nigeria (the "Agency"); and
 (2) {{recruiter}} of {{recruiter_address}} (the "Recruiter"),
 each a "Party" and together the "Parties".
 
