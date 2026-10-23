@@ -19,7 +19,7 @@ This Agreement is dated {{date}}.
 2.1 These Terms are the contract between the Agency and the Client for the introduction of candidates to be engaged directly by the Client. They apply to every Candidate the Agency Introduces to the Client, now and in future. They are accepted by the Client signing them, by an Introduction leading to an Engagement, or by the Client passing information about a Candidate to a third party.
 2.2 These Terms are the entire agreement between the parties and prevail over any other terms of business or purchase conditions put forward by the Client, unless a Director or Manager of the Agency agrees otherwise in writing.
 2.3 No variation of these Terms is valid unless it is agreed in writing between a Director or Manager of the Agency and the Client, stating the date from which it applies.
-2.4 The Agency acts as an employment agency (as defined in Section 13(2) of the Employment Agencies Act 1973) when Introducing Candidates to the Client for direct Engagement.
+2.4 The Agency acts as an independent recruitment agency, introducing Candidates for direct Engagement by the Client. The Agency is not the employer of any Candidate the Client Engages.
 
 ## 3. No charge unless the Client hires
 3.1 Introducing Candidates and arranging interviews is free of charge. There is no retainer. The only charge is the Introduction Fee when the Client Engages a Candidate.
@@ -34,13 +34,13 @@ This Agreement is dated {{date}}.
 4.4 If the Agency finds that the actual Remuneration is different from what the Client told it, the Introduction Fee is recalculated on the actual Remuneration and the Client pays the difference.
 4.5 Where the actual Remuneration is not known or cannot reasonably be worked out, the Introduction Fee is calculated on the typical market salary for a comparable role in the same location.
 4.6 If, before the Engagement starts, the Agency and the Client agree that it is for a fixed term of less than 12 months, the Introduction Fee is reduced pro rata. If the Client extends the Engagement beyond that term, or Engages the Candidate again within 6 months of its end, a further fee is payable on the additional Remuneration, up to the fee that would have been payable for an Engagement of 12 months or more.
-4.7 The Agency invoices the Introduction Fee once the Candidate has completed 30 days of the Engagement. The invoice is payable within 5 business days after the Candidate's 60th day of the Engagement (the "due date").
+4.7 The Agency invoices the Introduction Fee once the Candidate has completed 30 days of the Engagement. The invoice is payable within 5 business days (in the Client's country) after the Candidate's 60th day of the Engagement (the "due date"). The Introduction Fee is invoiced in the currency of the Candidate's Remuneration, unless the parties agree otherwise in writing.
 4.8 If the Engagement ends, for any reason, before the Candidate completes 60 days, no Introduction Fee is payable and the Agency will cancel its invoice (or refund anything already paid), provided the Client tells the Agency in writing within 7 days of the Engagement ending.
-4.9 The Client pays without any set-off, deduction or withholding.
-4.10 VAT or any similar tax is added to the Introduction Fee where it applies. The Agency may charge interest on any amount not paid by its due date under the Late Payment of Commercial Debts (Interest) Act 1998, at 8% a year above the Bank of England base rate, from the due date until payment.
+4.9 The Client pays without any set-off or deduction. If the law requires the Client to withhold tax from the payment, the Client will tell the Agency before paying and give the Agency the official receipt or certificate for the tax withheld.
+4.10 Sales taxes (such as VAT, GST or sales tax) are added to the Introduction Fee where they apply. The Agency may charge interest on any amount not paid by its due date at 1% a month, or the highest rate the applicable law allows if that is lower, from the due date until payment.
 4.11 If the Client does not pay by the due date, any discount (including the first-time client discount) no longer applies, and the Agency will invoice the difference.
 4.12 If any member of the Agency's staff with whom the Client has dealt is Engaged by the Client while working for the Agency, or within 6 months of leaving it, the Client pays an Introduction Fee calculated on that person's Remuneration, with no refund or replacement.
-4.13 If the Agency has to take legal action to enforce these Terms, including to recover payment, and the Client admits liability or is found liable, the Client pays the Agency's reasonable costs and expenses, including legal costs.
+4.13 If the Agency has to take action to recover a payment due under these Terms, the Client pays the Agency's reasonable costs of doing so, including collection and legal costs, where the applicable law allows.
 
 ## 5. Guarantee
 5.1 If, after completing 60 days, the Engagement ends before the Candidate completes 90 days because (a) the Candidate leaves, or (b) the Client ends it because the Candidate is not technically competent or has committed misconduct (but not where the Candidate is made redundant), the Agency will, at the Client's choice, find a replacement Candidate free of charge or refund 50% of the Introduction Fee.
@@ -62,23 +62,25 @@ This Agreement is dated {{date}}.
 8.1 The Agency introduces Candidates without discrimination. The Client will not ask the Agency to act in a way that would breach equality or anti-discrimination law, and will comply with the employment laws that apply to it in its treatment of Candidates.
 
 ## 9. Confidentiality and data protection
-9.1 All information about a Candidate is confidential and is given only so that the Agency can provide its recruitment services to the Client. The Client will not use it for any other purpose or disclose it to any third party, and will handle it in line with the data protection laws that apply to it (including the UK GDPR and the Data Protection Act 2018 where they apply).
+9.1 All information about a Candidate is confidential and is given only so that the Agency can provide its recruitment services to the Client. The Client will not use it for any other purpose or disclose it to any third party, and will handle it in line with the data protection and privacy laws that apply to it (for example the GDPR or UK GDPR, US state privacy laws, the Philippines Data Privacy Act or Malaysia's Personal Data Protection Act).
 9.2 Information about the Agency's business that is capable of being confidential must also be kept confidential, except information that is in the public domain.
 
 ## 10. Liability
-10.1 The Agency is not liable for any loss, expense, damage, delay, costs or compensation (whether direct, indirect or consequential) suffered by the Client arising from or connected with the Agency looking for a Candidate for the Client, the Introduction or Engagement of any Candidate, or the Agency not Introducing a Candidate. This does not exclude the Agency's liability for death or personal injury caused by its negligence, or any other liability that cannot be excluded by law.
+10.1 The Agency is not liable for any loss, expense, damage, delay, costs or compensation (whether direct, indirect or consequential) suffered by the Client arising from or connected with the Agency looking for a Candidate for the Client, the Introduction or Engagement of any Candidate, or the Agency not Introducing a Candidate. This does not exclude or limit any liability that cannot be excluded or limited by law.
 10.2 Subject to clause 10.1, the Agency's total liability to the Client in connection with any Candidate is limited to the Introduction Fee paid for that Candidate.
 
 ## 11. Notices
-11.1 Notices under these Terms must be in writing and may be delivered by hand, by first-class post to the other party's registered office or any other address it has given in writing, or by email. A notice is treated as served: if delivered by hand, on delivery; if posted, 48 hours after posting; if emailed, when sent.
+11.1 Notices under these Terms must be in writing and are sent by email to the address each party has given (for the Client, the email given when signing), or delivered to the other party's business address. An emailed notice is treated as received on the next business day after it is sent; a delivered notice, on delivery.
 
 ## 12. Term and severability
 12.1 These Terms continue until either party ends them by written notice. Ending them does not affect any Introduction Fee for a Candidate Introduced before then, or clauses 4 to 10, which continue to apply.
 12.2 If any part of these Terms is found unenforceable by a competent authority, that part is removed to that extent and the rest of these Terms stays in force to the fullest extent the law allows.
 
-## 13. Applicable law
-13.1 Where the law of the country in which the Candidate is Engaged requires different terms (for example on fees, refunds or guarantee periods), that law applies and these Terms are read so that they comply with it.
-13.2 Otherwise these Terms are governed by the law of England and Wales, and the courts of England and Wales have exclusive jurisdiction.
+## 13. Applicable law and disputes
+13.1 These Terms are governed by the laws of the country (and, where relevant, the state or province) where the Client is established.
+13.2 Where the law of the place in which the Candidate is Engaged requires different terms (for example on fees, refunds, guarantee periods or recruitment agency rules), that law applies and these Terms are read so that they comply with it.
+13.3 If a dispute arises, the parties will first try in good faith to settle it by discussion between senior people on each side within 30 days of either party raising it in writing. If it is not settled, either party may refer it to mediation or to the courts that have jurisdiction under clause 13.1. Nothing in this clause stops the Agency from recovering an unpaid invoice that is not disputed in good faith.
+13.4 These Terms are written in English. If they are translated, the English version prevails.
 
 ## 14. Signing
 14.1 Signing these Terms electronically, by typing a name, is as valid as a handwritten signature.
