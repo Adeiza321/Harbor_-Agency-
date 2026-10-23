@@ -1749,6 +1749,29 @@ function Modal({ open, onClose, title, children, wide }) {
   );
 }
 
+/* "Why?" before a status change: the reason is optional (saved on the candidate's timeline with
+   the change); Cancel leaves everything as it was. */
+function ReasonModal({ ask, onDone }) {
+  const [text, setText] = useState("");
+  const ref = React.useRef(null);
+  useEffect(() => { const t = setTimeout(() => ref.current && ref.current.focus(), 50); return () => clearTimeout(t); }, []);
+  return (
+    <Modal open onClose={() => onDone(null)} title={ask.title || "Change status"}>
+      {ask.sub && <div className="text-sm -mt-2 mb-3" style={{ color: C.ink2 }}>{ask.sub}</div>}
+      <label htmlFor="reason-text" className="text-xs font-medium" style={{ color: C.ink2 }}>Reason <span style={{ color: C.ink3 }}>(optional)</span></label>
+      <textarea id="reason-text" ref={ref} value={text} onChange={(e) => setText(e.target.value)} rows={3} maxLength={500}
+        placeholder={ask.placeholder || "e.g. Client asked to see them again after the hiring manager changed"}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onDone(text.trim()); }}
+        className="w-full mt-1 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+      <div className="text-xs mt-1" style={{ color: C.ink3 }}>Saved on their timeline with the change.</div>
+      <div className="flex justify-end gap-2 mt-4">
+        <Btn onClick={() => onDone(null)}>Cancel</Btn>
+        <Btn kind="primary" onClick={() => onDone(text.trim())}>{ask.confirmLabel || "Save"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 /* Shared "are you sure" modal for destructive actions (delete candidate/job/campaign/ad). */
 function ConfirmModal({ open, onClose, title, body, confirmLabel = "Delete", onConfirm, busy, busyLabel = "Deleting" }) {
   return (
@@ -5665,7 +5688,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   }, [candidate.id, candidate.emailAddr]); // eslint-disable-line
   const status = candidate.status;
   const patch = (fn) => S.updateCand(candidate.id, fn);
-  const setStatus = (v) => patch((c) => ({ status: v, timeline: [...c.timeline, { t: "Status set to " + v, d: todayStr(), done: true }] }));
+  const setStatus = (v, reason) => patch((c) => ({ status: v, timeline: [...c.timeline, { t: "Status set to " + v + (c.status && c.status !== v ? " (was " + c.status + ")" : "") + (reason ? ". Reason: " + reason : "") + (S.me && S.me.name ? " · by " + S.me.name : ""), d: todayStr(), done: true }] }));
   const [panel, setPanel] = useState(null);
   const [delOpen, setDelOpen] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
@@ -5766,21 +5789,23 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   // that in the database. Only someone with no live role has their status set directly.
   const activeRoles = candidate.jobLinks.filter(isLiveLink).map((l) => ({ link: l, job: S.jobs.find((j) => j.id === l.jobId) })).filter((x) => x.job);
   const [holdPick, setHoldPick] = useState(false);
-  const holdOn = (x) => S.setStage(x.link.id, "In review").then(() => { setHoldPick(false); toast("Back to In review for " + x.job.role); }).catch(() => {});
+  // Every status change asks for an optional reason first (saved on the timeline); Cancel stops it.
+  const why = (to, sub) => S.askReason({ title: "Move " + candidate.name.split(" ")[0] + " to " + to + "?", sub: sub || ("Now " + status) });
+  const holdOn = (x) => why("In review", x.job.role + (x.job.client ? " · " + x.job.client : "") + " · now " + x.link.stage).then((r) => r === null ? null
+    : S.setStage(x.link.id, "In review", { reason: r }).then(() => { setHoldPick(false); toast("Back to In review for " + x.job.role); })).catch(() => {});
   const doStatus = (opt) => {
     setMenuOpen(false);
     if (opt === "Not a fit for this role") {
       if (activeRoles.length) { reject(false); return; }
-      setStatus("Active file"); setReassign("searching"); toast("Moved to Active file");
-      setTimeout(() => setReassign("found"), 1200);
+      why("Active file").then((r) => { if (r === null) return; setStatus("Active file", r); setReassign("searching"); toast("Moved to Active file"); setTimeout(() => setReassign("found"), 1200); });
     } else if (opt === "Approve, forward to client") { setFwd(activeRoles.length === 1 ? activeRoles[0].job.id : ""); setPanel("fwd"); }
     else if (opt === "Reject") { reject(false); }
     else if (opt === "Client reject") { reject(true); }
     else if (opt === "Mark placed") { openPlaced(); }
     // A recruiter's only status action: flags the candidate for Rec Ops/Admin to confirm.
     // Doesn't create a placement or billing entry — that still only happens via Mark placed.
-    else if (opt === "Hired") { setStatus("Hired"); toast("Marked Hired — Rec Ops or an Admin will confirm the placement"); }
-    else if (activeRoles.length === 0) { setStatus("In review"); toast("Status set to In review"); }
+    else if (opt === "Hired") { why("Hired").then((r) => { if (r === null) return; setStatus("Hired", r); toast("Marked Hired — Rec Ops or an Admin will confirm the placement"); }); }
+    else if (activeRoles.length === 0) { why("In review").then((r) => { if (r === null) return; setStatus("In review", r); toast("Status set to In review"); }); }
     else if (activeRoles.length === 1) holdOn(activeRoles[0]);
     else setHoldPick(true);
   };
@@ -7153,7 +7178,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
             <div className="flex items-center gap-2 shrink-0">
               {j && j.leadRole && S.role === "recruiter"
                 ? <span title="A client lead role: Rec Ops or an Admin moves this candidate along"><Pill tone="info">{l.stage}</Pill></span>
-                : <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.setStage(l.id, v).then(() => toast("Stage set to " + v)).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
+                : <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.askReason({ title: "Move " + candidate.name.split(" ")[0] + " to " + v + "?", sub: (j ? j.role + (j.client ? " · " + j.client : "") + " · " : "") + "now " + l.stage }).then((r) => r === null ? null : S.setStage(l.id, v, { reason: r }).then(() => toast("Stage set to " + v))).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
               {S.role !== "recruiter" && ["Rejected", "Withdrawn"].includes(l.stage) && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
             </div>
           </div>
@@ -7956,7 +7981,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
               ) : c.link ? (
                 <div className="flex items-center gap-1.5">
                   <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={c.link.stage} onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.setStage(c.link.id, v).then(() => toast(c.name.split(" ")[0] + " moved to " + v)).catch(() => {}); }}>
+                    onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.askReason({ title: "Move " + c.name.split(" ")[0] + " to " + v + "?", sub: (job ? job.role + (job.client ? " · " + job.client : "") + " · " : "") + "now " + c.link.stage }).then((r) => r === null ? null : S.setStage(c.link.id, v, { reason: r }).then(() => toast(c.name.split(" ")[0] + " moved to " + v))).catch(() => {}); }}>
                     {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                   {c.link.reject && <span className="text-xs max-w-[220px] truncate" style={{ color: C.dangerFg }} title={c.link.reject.feedback || ""}>{c.link.reject.kind === "client" ? "Client: " : "Us: "}{REJECT_LABEL[c.link.reject.reason] || c.link.reject.reason}</span>}
@@ -15076,6 +15101,7 @@ export default function App() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [toastText, setToastText] = useState("");
   const [errorModalMsg, setErrorModalMsg] = useState("");
+  const [reasonAsk, setReasonAsk] = useState(null);
   const [mfaPending, setMfaPending] = useState(null);
   const [profileTab, setProfileTab] = useState(() => new URLSearchParams(window.location.search).get("tab") || "account");
   const [isPublic] = useState(isPublicRoute);
@@ -15725,7 +15751,28 @@ export default function App() {
       logAudit("added candidate", "candidate", candidateId, job ? job.role + " – " + job.client : "");
       return row;
     },
-    setStage: (linkId, stage) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { stage } }),
+    // A role's stage, recorded on the candidate's timeline (from what, to what, the optional reason
+    // and who) and in the audit log.
+    setStage: async (linkId, stage, opts = {}) => {
+      const c = (data.cands || []).find((x) => (x.jobLinks || []).some((l) => l.id === linkId));
+      const l = c ? c.jobLinks.find((x) => x.id === linkId) : null;
+      const from = l ? l.stage : null;
+      try {
+        await sbFetch("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", token: session.token, body: { stage } });
+        if (c && from !== stage) {
+          const j = (data.jobs || []).find((x) => x.id === l.jobId);
+          const reason = String(opts.reason || "").trim().slice(0, 500);
+          const who = (me && me.name) || "";
+          const title = "Moved to " + stage + (j ? " for " + j.role + (j.client ? " at " + j.client : "") : "") + (from ? " (was " + from + ")" : "") + (reason ? ". Reason: " + reason : "") + (who ? " · by " + who : "");
+          await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: c.id, title, done: true } }).catch(() => {});
+          logAudit("stage changed", "candidate", c.id, c.name + ": " + (from || "?") + " → " + stage + (j ? " (" + j.role + ")" : "") + (reason ? ". Reason: " + reason : ""));
+        }
+        reload();
+      } catch (e) { S.error(e.message); throw e; }
+    },
+    // Asks for an optional reason before a status change: resolves with the text ('' when left
+    // empty), or null when the person cancels.
+    askReason: (opts) => new Promise((resolve) => setReasonAsk({ ...opts, resolve })),
     setScreeningAnswers: (linkId, screeningAnswers) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "PATCH", body: { screening_answers: screeningAnswers } }),
     unlinkJob: (linkId) => call("/rest/v1/candidate_jobs?id=eq." + linkId, { method: "DELETE" }),
     deleteEndorsement: (id) => call("/rest/v1/candidate_endorsements?id=eq." + id, { method: "DELETE" }),
@@ -15944,6 +15991,7 @@ export default function App() {
       <style>{FILTER_CSS}</style>
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} S={S} role={role} setPage={setPage} />
       <Toast text={toastText} />
+      {reasonAsk && <ReasonModal ask={reasonAsk} onDone={(v) => { const r = reasonAsk.resolve; setReasonAsk(null); r(v); }} />}
       <ErrorModal message={errorModalMsg} onClose={() => setErrorModalMsg("")} report={me && me.roleKey === "recruiter" ? { audience: "recruiter", sessionToken: session && session.token } : null} />
       <Modal open={idleLeft != null} onClose={() => { idleStore.touch(Date.now()); setIdleLeft(null); }} title="Are you still there?">
         <div className="text-sm mb-5" style={{ color: C.ink2 }}>For security, ProNext signs you out after {idleStore.label()} without activity. You'll be signed out in <span className="font-semibold" style={{ color: C.ink }}>{idleLeft != null ? Math.floor(idleLeft / 60) + ":" + String(idleLeft % 60).padStart(2, "0") : ""}</span>.</div>
