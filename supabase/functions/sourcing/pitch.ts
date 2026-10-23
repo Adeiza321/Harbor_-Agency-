@@ -354,7 +354,7 @@ export async function updateOffer(admin: any, offerId: string, patch: { whyRole?
     // Edited text keeps its place: a question that confirms a job-description requirement stays a
     // yes/no confirmation (matched by its text, or by its position when none were added or removed).
     const before: any[] = Array.isArray(o.questions) ? o.questions : [];
-    upd.questions = patch.questions.map((q, i) => ({ text: String((q as any)?.q ?? q ?? "").trim().slice(0, 240), was: before.find((b) => (b?.q ?? b) === String((q as any)?.q ?? q ?? "").trim()) || (patch.questions!.length === before.length ? before[i] : null) }))
+    upd.questions = patch.questions.map((q, i) => ({ text: String((q as any)?.q ?? q ?? "").trim().slice(0, 240), was: before.find((b) => (b?.q ?? b) === String((q as any)?.q ?? q ?? "").trim()) || ((patch.questions as unknown[]).length === before.length ? before[i] : null) }))
       .filter((x) => x.text).slice(0, 5).map((x) => (x.was && typeof x.was === "object" && x.was.confirm ? { q: x.text, confirm: x.was.confirm } : { q: x.text }));
   }
   if (Object.keys(upd).length) await admin.from("lead_offers").update(upd).eq("id", o.id);
