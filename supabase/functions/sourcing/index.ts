@@ -9,7 +9,7 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
-import { offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
+import { notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
@@ -246,6 +246,14 @@ async function handle(req: Request): Promise<Response> {
         try { out.clientFollowups = await stepClientFollowups(admin); } catch (e) { out.clientFollowupsError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
+        return json({ ok: true, ...out });
+      }
+      // Test run (internal only): a pitch's candidate email (to the candidate on file) and the client
+      // email (to the given address), sent straight away instead of through review and the queue.
+      if (body.action === "test_pitch_emails" && body.leadId) {
+        const out: Record<string, unknown> = {};
+        if (body.offerId) out.candidate = await notifyOffer(admin, String(body.offerId));
+        if (body.to) out.client = await sendLeadTest(admin, String(body.leadId), String(body.to), s, agencyName).catch((e) => ({ error: errMsg(e) }));
         return json({ ok: true, ...out });
       }
       // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, pick up stalled ones.
