@@ -14156,7 +14156,17 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
 // PortalOffer.
 function PortalOfferOrPitch({ token, offer, onKind, onDone }) {
   const [d, setD] = useState(undefined);
-  React.useEffect(() => { sbFetch("/rest/v1/rpc/candidate_pitch", { method: "POST", body: { p_token: token, p_offer: offer } }).then((j) => { setD(j || null); onKind && onKind(j ? "pitch" : "offer"); }).catch(() => { setD(null); onKind && onKind("offer"); }); }, [token, offer]); // eslint-disable-line react-hooks/exhaustive-deps
+  React.useEffect(() => {
+    sbFetch("/rest/v1/rpc/candidate_pitch", { method: "POST", body: { p_token: token, p_offer: offer } }).then((j) => {
+      // Already responded (acknowledged and answered, or withdrew and answered about other roles, or
+      // taken off by us): the link goes straight to their profile. The Withdraw link still works
+      // while they're on the pitch.
+      const r = new URLSearchParams(window.location.search).get("r");
+      const done = j && (["ready", "pitched", "removed"].includes(j.status) || (j.status === "withdrawn" && (j.withdrawnBy !== "candidate" || j.otherRoles != null)));
+      if (done && !(r === "withdraw" && ["ready", "pitched"].includes(j.status))) { onKind && onKind("pitch"); onDone && onDone(null); return; }
+      setD(j || null); onKind && onKind(j ? "pitch" : "offer");
+    }).catch(() => { setD(null); onKind && onKind("offer"); });
+  }, [token, offer]); // eslint-disable-line react-hooks/exhaustive-deps
   if (d === undefined) return null;
   // A pitch is its own page; when they're done they go back to their candidate profile.
   if (d) return (
