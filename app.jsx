@@ -14154,13 +14154,23 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
 // any questions we have (answers go to their recruiter in the chat); Withdraw takes them off the
 // pitch and asks whether they still want other roles. Older offers (the Yes/No ask) fall back to
 // PortalOffer.
-function PortalOfferOrPitch({ token, offer }) {
+function PortalOfferOrPitch({ token, offer, onKind, onDone }) {
   const [d, setD] = useState(undefined);
-  React.useEffect(() => { sbFetch("/rest/v1/rpc/candidate_pitch", { method: "POST", body: { p_token: token, p_offer: offer } }).then((j) => setD(j || null)).catch(() => setD(null)); }, [token, offer]);
+  React.useEffect(() => { sbFetch("/rest/v1/rpc/candidate_pitch", { method: "POST", body: { p_token: token, p_offer: offer } }).then((j) => { setD(j || null); onKind && onKind(j ? "pitch" : "offer"); }).catch(() => { setD(null); onKind && onKind("offer"); }); }, [token, offer]); // eslint-disable-line react-hooks/exhaustive-deps
   if (d === undefined) return null;
-  return d ? <PortalPitch token={token} offer={offer} initial={d} /> : <PortalOffer token={token} offer={offer} />;
+  // A pitch is its own page; when they're done they go back to their candidate profile.
+  if (d) return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        <PortalPitch token={token} offer={offer} initial={d} onDone={onDone} />
+        <button type="button" onClick={() => onDone && onDone(null)} className="text-sm underline self-start" style={{ color: C.ink2 }}>Go to your profile</button>
+      </div>
+    </div>
+  );
+  return <PortalOffer token={token} offer={offer} />;
 }
-function PortalPitch({ token, offer, initial }) {
+function PortalPitch({ token, offer, initial, onDone }) {
   const [d, setD] = useState(initial);
   const [busy, setBusy] = useState("");
   const [answers, setAnswers] = useState([]);
@@ -14168,14 +14178,19 @@ function PortalPitch({ token, offer, initial }) {
   const call = (fn, body) => sbFetch("/rest/v1/rpc/" + fn, { method: "POST", body: { p_token: token, p_offer: offer, ...(body || {}) } });
   const reload = () => call("candidate_pitch").then((j) => j && setD(j));
   const run = (key, fn, body) => { setBusy(key); return call(fn, body).then(reload).catch((e) => popError(e)).finally(() => setBusy("")); };
+  // Acknowledged with nothing to answer, or answers sent: back to their profile.
+  const finish = (msg) => onDone && onDone(msg);
+  const ack = () => { setBusy("ack"); call("candidate_pitch_ack").then((r) => (r && r.needsAnswers ? reload() : finish("ack"))).catch((e) => popError(e)).finally(() => setBusy("")); };
+  const answer = () => { setBusy("ans"); call("candidate_pitch_answer", { p_answers: questionsList().map((_, i) => (answers[i] || "").trim()) }).then(() => finish("answers")).catch((e) => popError(e)).finally(() => setBusy("")); };
   // From the email: Acknowledge counts straight away; Withdraw asks them to confirm first.
   React.useEffect(() => {
     const r = new URLSearchParams(window.location.search).get("r");
-    if (r === "ack" && ["notified", "reminded", "no_email"].includes(initial.status)) run("ack", "candidate_pitch_ack");
+    if (r === "ack" && ["notified", "reminded", "no_email"].includes(initial.status)) ack();
     if (r === "withdraw" && !["withdrawn", "removed"].includes(initial.status)) setConfirmWithdraw(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const role = d.role || {}, facts = d.facts || {};
-  const questions = (d.questions || []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+  const questionsList = () => (d.questions || []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+  const questions = questionsList();
   const waiting = ["notified", "reminded", "no_email"].includes(d.status);
   const needsAnswers = d.status === "acknowledged" && questions.length > 0 && !d.answers;
   const row = (k, v) => v ? <div className="flex gap-3 text-sm"><span className="w-24 shrink-0" style={{ color: C.ink3 }}>{k}</span><span>{v}</span></div> : null;
@@ -14219,7 +14234,7 @@ function PortalPitch({ token, offer, initial }) {
         <div className="mt-4">
           <div className="text-sm" style={{ color: C.ink2 }}>You don't need to do anything. We'll update you as soon as the employer comes back about your profile. If we have questions we'll ask, and you can reply to our email with yours.</div>
           <div className="flex gap-2 mt-3 flex-wrap items-center">
-            <Btn kind="primary" disabled={!!busy} onClick={() => run("ack", "candidate_pitch_ack")}>{busy === "ack" ? "Saving…" : "Acknowledge"}</Btn>
+            <Btn kind="primary" disabled={!!busy} onClick={ack}>{busy === "ack" ? "Saving…" : "Acknowledge"}</Btn>
             <button type="button" className="text-sm underline" style={{ color: C.ink2 }} disabled={!!busy} onClick={() => setConfirmWithdraw(true)}>Withdraw my profile</button>
           </div>
         </div>
@@ -14244,7 +14259,7 @@ function PortalPitch({ token, offer, initial }) {
                 className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
             </label>
           ))}
-          <div><Btn kind="primary" disabled={!!busy || questions.some((_, i) => !(answers[i] || "").trim())} onClick={() => run("ans", "candidate_pitch_answer", { p_answers: questions.map((_, i) => (answers[i] || "").trim()) })}>{busy === "ans" ? "Sending…" : "Send my answers"}</Btn></div>
+          <div><Btn kind="primary" disabled={!!busy || questions.some((_, i) => !(answers[i] || "").trim())} onClick={answer}>{busy === "ans" ? "Sending…" : "Send my answers"}</Btn></div>
           <div className="text-xs" style={{ color: C.ink3 }}>Your answers go to your recruiter.</div>
         </div>
       )}
@@ -14337,6 +14352,9 @@ function PortalOffer({ token, offer }) {
   );
 }
 function CandidatePortal({ data, token, onChanged }) {
+  const [offerParam, setOfferParam] = useState(() => new URLSearchParams(window.location.search).get("offer") || "");
+  const [pitchMode, setPitchMode] = useState(() => !!new URLSearchParams(window.location.search).get("offer"));
+  const [pitchNote, setPitchNote] = useState("");
   const c = { name: "", endorsements: [], matches: [], routed: [], questions: [], answered: [], applications: [], ...(data || {}) };
   const [answers, setAnswers] = useState({});
   const [busy, setBusy] = useState("");
@@ -14382,11 +14400,24 @@ function CandidatePortal({ data, token, onChanged }) {
   const people = [...new Set(chats.map((x) => x.name).filter(Boolean))];
   const chatName = (linkId) => { const x = chats.find((y) => y.linkId === linkId); return (x && x.name) || recName || "your recruiter"; };
 
+  // From a pitch email (?offer=): the role gets its own page; done, they come back here.
+  if (pitchMode && offerParam) return (
+    <PortalOfferOrPitch token={token} offer={offerParam} onKind={(k) => { if (k !== "pitch") setPitchMode(false); }}
+      onDone={(msg) => {
+        try { const u = new URL(window.location.href); u.searchParams.delete("offer"); u.searchParams.delete("r"); window.history.replaceState(window.history.state, "", u); } catch (e) { /* fine */ }
+        setOfferParam(""); setPitchMode(false);
+        if (msg) setPitchNote(msg === "answers" ? "Thanks, we've got your answers. We'll put your profile forward and let you know as soon as the employer comes back." : "Thanks for acknowledging. We'll put your profile forward and let you know as soon as the employer comes back.");
+        if (onChanged) onChanged();
+        window.scrollTo(0, 0);
+      }} />
+  );
+
   return (
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1"><BrandLogo height={30} /></div>
-        {token && new URLSearchParams(window.location.search).get("offer") && <PortalOfferOrPitch token={token} offer={new URLSearchParams(window.location.search).get("offer")} />}
+        {pitchNote && <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.emText }}>{pitchNote}</div>}
+        {token && offerParam && !pitchMode && <PortalOfferOrPitch token={token} offer={offerParam} />}
         {token && <EmailChoiceNote token={token} onChanged={onChanged} onPitchYes={() => setPrefsSignal((n) => n + 1)} />}
         {thanks && <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.em }}>{thanks === "updated" ? "Saved. Your information is up to date." : thanks === "finished"
           ? "Thank you! You're all set. We'll put your profile forward anonymously for roles that fit what you told us. Your name and contact details stay private, and your recruiter will be in touch when an employer wants to talk."
