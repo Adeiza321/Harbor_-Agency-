@@ -517,7 +517,7 @@ function mapAll(d) {
   return { cands, jobs, inbox, placements, campaigns, ads, jobEngagements, auditLog, users, interviews, chatClears, jobViews, tasks,
     settings: { name: set.agency_name || "ProNext", guaranteeDays: set.guarantee_days != null ? set.guarantee_days : 60, ai: set.ai_screening !== false,
       defaultCurrency: set.default_currency || "NGN", defaultCountry: set.default_country || "Nigeria", retentionDays: set.retention_days || null,
-      integrations: set.integrations || {}, company: set.company || {}, recruiterAgreement: set.recruiter_agreement || null, businessAddress: (set.outreach && set.outreach.businessAddress) || "", invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30,
+      integrations: set.integrations || {}, company: set.company || {}, recruiterAgreement: set.recruiter_agreement || null, clientAgreement: set.client_agreement || null, clientPoc: set.client_poc || null, businessAddress: (set.outreach && set.outreach.businessAddress) || "", invoicePrefix: set.invoice_prefix || "INV", idleMinutes: set.idle_timeout_minutes || 30,
       revenueGoal: { amount: 50000, currency: "USD", by: new Date().getFullYear() + "-12-31", ...(set.revenue_goal || {}) } } };
 }
 function buildTeam(users, cands, placements) {
@@ -5809,15 +5809,17 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     else if (activeRoles.length === 1) holdOn(activeRoles[0]);
     else setHoldPick(true);
   };
+  const [joinDate, setJoinDate] = useState("");
   const markPlaced = async () => {
     const amt = num(fee); if (!amt) { toast("Enter the placement fee"); return; }
+    if (!joinDate) { toast("Add the joining date"); return; }
     const e = candidate.endorsed[candidate.endorsed.length - 1];
     try {
       await S.insertPlacement({
         name: candidate.name, role: placeJob ? placeJob.role + ", " + placeJob.client : (e ? e.role + ", " + e.company : candidate.role),
         candidateId: candidate.id, jobId: placeJob ? placeJob.id : null,
         recruiterId: candidate.recruiterId, recruiterInit: candidate.recruiterInit,
-        fee: amt, feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur,
+        fee: amt, feeCurrency: feeCur, incentive: incentive ? num(incentive) : null, incentiveCurrency: incentiveCur, startDate: joinDate,
       });
       // insertPlacement itself moves the candidate to "Placed" (it's the single place
       // that creates a placement, so status stays in sync no matter which door was used).
@@ -5893,8 +5895,10 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Recruiter incentive</label><input value={incentive} onChange={(e) => setIncentive(e.target.value)} placeholder="optional" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={incentiveCur} onChange={setIncentiveCur} options={withValue(CURRENCY_OPTIONS, incentiveCur)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
           </div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Joining date</label><input type="date" value={joinDate} onChange={(e) => setJoinDate(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+            <div className="text-xs mt-1" style={{ color: C.ink3 }}>The day they start. A week later the client is asked for feedback.</div></div>
           <div className="text-xs" style={{ color: C.ink3 }}>Prefilled from this role's billing settings — edit as needed before confirming.</div>
-          <Btn kind="primary" full onClick={markPlaced}>Confirm placement</Btn>
+          <Btn kind="primary" full disabled={!joinDate} onClick={markPlaced}>Confirm placement</Btn>
         </div>
       </Modal>
       <Modal open={panel === "fwd"} onClose={() => setPanel(null)} title="Forward to a client">
@@ -10113,6 +10117,8 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             <div className="min-w-0">
               <div className="font-medium text-sm">{l.job_title}</div>
               <div className="text-xs" style={{ color: C.ink2 }}>{[l.company, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</div>
+              {l.data && l.data.signer && <div className="text-xs mt-0.5 font-medium" style={{ color: C.em }}>Signed our terms: {l.data.signer.name}{l.data.signer.title ? ", " + l.data.signer.title : ""}{l.interested_at ? " · " + fdate(l.interested_at) : ""}</div>}
+              {l.data && l.data.timeline && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Hiring timeline: {l.data.timeline.text}</div>}
               {l.data && l.data.for_candidate && (() => { const fc = S.cands.find((x) => x.id === l.data.for_candidate); return (
                 <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Found for <button type="button" className="font-medium" style={{ color: fc ? C.em : C.ink2 }} onClick={() => fc && S.openCandidate(fc.id)}>{fc ? fc.name : "a candidate"}</button></div>
               ); })()}
@@ -11441,6 +11447,237 @@ function ProtectedPages({ pages, client }) {
 // Client leads: the page behind the pitch's "View the candidates" button (/?t=s-<token>). Up to
 // five candidates, each as a blind resume with their selling points (no names), and "We're
 // interested", which sends our contract by itself.
+// Client sourcing, the client side (/?t=s-<token>): each candidate with the must-haves they meet and
+// their blind resume. Opening one shows the terms in a pop-up: close it to read the blind resume, or
+// sign the agreement (one signature per company) to unlock the full resumes. After signing: names,
+// contact details, full resumes, their point of contact (book a call) and the hiring timeline form.
+const clientCall = (token, action, extra) => fetch(SB_URL + "/functions/v1/client-view", { method: "POST", headers: { apikey: SB_KEY, Authorization: "Bearer " + SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify({ token, action, ...(extra || {}) }) })
+  .then((r) => r.json().then((j) => { if (!r.ok || j.error) throw new Error(j.error || "This link is not valid."); return j; }));
+const deviceOf = (ua) => { const u = String(ua || ""); const b = /Edg\//.test(u) ? "Edge" : /Chrome\//.test(u) ? "Chrome" : /Firefox\//.test(u) ? "Firefox" : /Safari\//.test(u) ? "Safari" : "Browser";
+  const os = /iPhone|iPad/.test(u) ? "iOS" : /Android/.test(u) ? "Android" : /Windows/.test(u) ? "Windows" : /Mac OS X/.test(u) ? "macOS" : /Linux/.test(u) ? "Linux" : ""; return b + (os ? " on " + os : ""); };
+function TypedSignature({ name, title, at, ip, device, party }) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold tracking-widest mb-1" style={{ color: C.ink3 }}>{party}</div>
+      <div className="rounded-xl flex items-center px-4" style={{ height: 70, background: "#fff", border: `1px solid ${C.line}` }}>
+        <span style={{ ...DOC_FONT, fontSize: 26, fontStyle: "italic", color: C.ink }}>{name || " "}</span>
+      </div>
+      <div className="mt-2 pt-2 text-xs flex flex-col gap-0.5" style={{ borderTop: `1.5px solid ${C.ink}`, color: C.ink2 }}>
+        <span className="font-medium" style={{ color: C.ink }}>{name}{title ? ", " + title : ""}</span>
+        <span>{at ? "Signed " + signedStamp(at) : "Date and time are stamped when you sign"}</span>
+        {(ip || device) && <span style={{ color: C.ink3 }}>{[ip ? "IP " + ip : "", device].filter(Boolean).join(" · ")}</span>}
+      </div>
+    </div>
+  );
+}
+function ClientPitchPage({ token }) {
+  const q = new URLSearchParams(window.location.search);
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(() => Math.max(0, (Number(q.get("c")) || 1) - 1));
+  const [gate, setGate] = useState(null);       // index of the candidate whose blind resume was just opened (pop-up)
+  const [seen, setSeen] = useState({});          // blind resumes already opened (no pop-up again)
+  const [terms, setTerms] = useState(null);      // the agreement pop-up
+  const [f, setF] = useState({ name: "", title: "", company: "", address: "", email: "", authorised: false });
+  const [busy, setBusy] = useState("");
+  const [tl, setTl] = useState("");
+  const [tlDone, setTlDone] = useState(false);
+  const load = () => clientCall(token, "pitch").then(setD).catch((e) => setErr(e.message));
+  React.useEffect(() => { load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  const list = (d && d.candidates) || [];
+  const signed = d && d.signed;
+  const viewBlind = (i) => { setOpen(i); if (!signed && !seen[i]) setGate(i); };
+  const openTerms = () => { setGate(null); clientCall(token, "terms").then((t) => { setTerms(t); setF((x) => ({ ...x, company: x.company || t.company || "", email: x.email || t.email || "", name: x.name || t.name || "" })); }).catch((e) => popError(e)); };
+  const sign = () => { setBusy("sign"); clientCall(token, "sign", f).then(() => { setTerms(null); return load(); }).catch((e) => popError(e)).finally(() => setBusy("")); };
+  const fullResume = (n) => { setBusy("cv" + n); clientCall(token, "resume", { n }).then((r) => window.open(r.url, "_blank", "noopener")).catch((e) => popError(e)).finally(() => setBusy("")); };
+  const sendTl = () => { setBusy("tl"); clientCall(token, "timeline", { text: tl }).then(() => setTlDone(true)).catch((e) => popError(e)).finally(() => setBusy("")); };
+  const okToSign = f.name.trim().length > 2 && f.title.trim() && f.company.trim() && f.address.trim().length > 7 && /@/.test(f.email) && f.authorised;
+  const field = (k, label, ph, area) => (
+    <label className="flex flex-col gap-1"><span className="text-xs font-medium" style={{ color: C.ink2 }}>{label}</span>
+      {area ? <textarea rows={2} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={ph} className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+        : <input value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={ph} className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />}
+    </label>
+  );
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-3xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        {err && <Card><div className="text-sm" style={{ color: C.dangerFg }}>{err === "Link not found" ? "This link is not valid any more." : err}</div></Card>}
+        {!d && !err && <div className="py-10 flex justify-center"><LogoSpinner compact label="" /></div>}
+        {d && (
+          <>
+            <Card>
+              <div className="text-xs font-semibold tracking-widest" style={{ color: C.em }}>{list.length === 1 ? "A CANDIDATE FOR YOUR ROLE" : "CANDIDATES FOR YOUR ROLE"}</div>
+              <div className="text-2xl mt-1" style={{ ...SERIF }}>{d.role}</div>
+              <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{[d.company, d.location].filter(Boolean).join(" · ")}</div>
+              {signed ? (
+                <div className="text-sm rounded-xl px-3.5 py-3 mt-3" style={{ background: C.emTint, color: C.emText }}>Terms signed by {signed.name}{signed.title ? ", " + signed.title : ""} on {fdate(signed.at)}. The full resumes and contact details are unlocked below.</div>
+              ) : (
+                <div className="text-sm mt-3" style={{ color: C.ink2 }}>Review {list.length === 1 ? "the anonymised resume" : "each anonymised resume"} free. We don't charge to arrange interviews: we only bill a fee when you hire our candidate.</div>
+              )}
+            </Card>
+            {signed && d.poc && (
+              <Card>
+                <div className="flex items-start gap-3">
+                  <Avatar init={initialsOf(d.poc.name)} src={d.poc.photo} tone="em" size={48} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold tracking-widest" style={{ color: C.em }}>YOUR POINT OF CONTACT</div>
+                    <div className="text-lg" style={{ ...SERIF }}>{d.poc.name}</div>
+                    <div className="text-sm" style={{ color: C.ink2 }}>{[d.poc.title, d.poc.email, d.poc.phone].filter(Boolean).join(" · ")}</div>
+                    <div className="text-sm mt-1" style={{ color: C.ink2 }}>{d.poc.name.split(" ")[0]} coordinates with {list.length === 1 ? "the candidate" : "the candidates"} throughout: interviews, feedback and offers.</div>
+                    {d.poc.bookingUrl && <a href={d.poc.bookingUrl} target="_blank" rel="noopener noreferrer"><Btn kind="primary" icon={Calendar} className="mt-3">Book a call with {d.poc.name.split(" ")[0]}</Btn></a>}
+                  </div>
+                </div>
+                <div className="mt-4 pt-3" style={{ borderTop: "1px solid " + C.line }} id="timeline">
+                  <div className="text-sm font-medium">Managing {list.length === 1 ? "the candidate" : "the candidates"} yourselves?</div>
+                  {d.timeline || tlDone ? <div className="text-sm mt-1" style={{ color: C.emText }}>Thanks, we have your hiring timeline{d.timeline && !tlDone ? ": " + d.timeline.text : ""}. We'll keep {list.length === 1 ? "the candidate" : "the candidates"} informed.</div> : (
+                    <>
+                      <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>Tell us your hiring timeline so we can keep {list.length === 1 ? "them" : "them"} informed and manage expectations.</div>
+                      <textarea rows={2} value={tl} onChange={(e) => setTl(e.target.value)} placeholder="e.g. First interviews next week, decision by mid-November" className="w-full mt-2 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} autoFocus={q.get("timeline") === "1"} />
+                      <Btn disabled={busy === "tl" || tl.trim().length < 3} onClick={sendTl} className="mt-2">{busy === "tl" ? "Sending…" : "Send our timeline"}</Btn>
+                    </>
+                  )}
+                </div>
+              </Card>
+            )}
+            {list.map((c, i) => (
+              <Card key={i}>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="text-base font-semibold">{signed && c.name ? c.name : "Candidate " + c.n}{c.verdict ? <span className="ml-2 align-middle"><Pill tone="em">{c.verdict}</Pill></span> : null}</div>
+                    {signed && c.name && <div className="text-sm" style={{ color: C.ink2 }}>{[c.title, c.location].filter(Boolean).join(" · ")}</div>}
+                    {signed && c.name && <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{[c.email, c.phone].filter(Boolean).join(" · ")}{c.linkedin ? <> · <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: C.em }}>LinkedIn</a></> : null}</div>}
+                  </div>
+                  <div className="flex gap-2">
+                    {signed && c.hasResume && <Btn kind="primary" disabled={busy === "cv" + c.n} onClick={() => fullResume(c.n)}>{busy === "cv" + c.n ? "Opening…" : "Full resume"}</Btn>}
+                    <Btn onClick={() => (open === i && seen[i] ? setOpen(-1) : viewBlind(i))}>{open === i && (signed || seen[i]) ? "Hide blind resume" : "Review the blind resume"}</Btn>
+                  </div>
+                </div>
+                {(c.musts || []).length > 0 && (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>MUST-HAVES {signed && c.name ? c.name.split(" ")[0].toUpperCase() : "THEY"} MEET{signed && c.name ? "S" : ""}</div>
+                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span><b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}</ul>
+                  </div>
+                )}
+                {open === i && (signed || seen[i]) && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
+                  : <div className="text-sm mt-3" style={{ color: C.ink3 }}>The anonymised resume isn't available right now.</div>)}
+              </Card>
+            ))}
+          </>
+        )}
+      </div>
+      {gate !== null && d && (
+        <Modal open onClose={() => { setSeen({ ...seen, [gate]: true }); setGate(null); }} title="Free to review, free to interview">
+          <div className="flex flex-col gap-3 text-sm leading-relaxed">
+            <div>We don't charge to arrange interviews. We only bill a fee when our candidate is hired by you: <b>{d.fee}</b>.</div>
+            <div>Review and sign our agreement to unlock the full resume{list.length > 1 ? "s" : ""} and contact details. We'll notify the candidate{list.length > 1 ? "s" : ""} as soon as you agree to the terms.</div>
+            <div className="flex gap-2 flex-wrap mt-1">
+              <Btn kind="primary" onClick={() => { setSeen({ ...seen, [gate]: true }); openTerms(); }}>Review the agreement</Btn>
+              <Btn onClick={() => { setSeen({ ...seen, [gate]: true }); setGate(null); }}>View the blind resume</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {terms && (
+        <Modal open onClose={() => setTerms(null)} title={terms.title} wide>
+          <div className="flex flex-col gap-4">
+            <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>Fee only when you hire: {terms.fee}. No charge to review or interview.</div>
+            <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 340 }}><AgreementText body={String(terms.body || "").replace("[company address]", f.address.trim() || "[company address]")} /></div>
+            {terms.signed ? (
+              <div className="grid sm:grid-cols-2 gap-4">
+                <TypedSignature party="FOR THE AGENCY" name={terms.signed.agency_signer_name} title={terms.signed.agency_signer_title} at={terms.signed.agency_signed_at} />
+                <TypedSignature party="FOR THE CLIENT" name={terms.signed.signer_name} title={terms.signed.signer_title} at={terms.signed.signed_at} ip={terms.signed.ip} device={deviceOf(terms.signed.user_agent)} />
+              </div>
+            ) : (
+              <>
+                <div className="grid sm:grid-cols-2 gap-3">
+                  {field("name", "Full name", "")}
+                  {field("title", "Job title", "e.g. Head of Finance")}
+                  {field("company", "Company", "")}
+                  {field("email", "Work email", "")}
+                </div>
+                {field("address", "Company address", "Street, city, state, country", true)}
+                <TypedSignature party="FOR THE CLIENT" name={f.name} title={f.title} device={deviceOf(navigator.userAgent)} />
+                <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={f.authorised} onChange={(e) => setF({ ...f, authorised: e.target.checked })} className="mt-1" />
+                  <span>I've read and agree to these terms, and by signing I confirm that I'm authorised to sign on behalf of {f.company || "the company"}.</span></label>
+                <div className="text-xs" style={{ color: C.ink3 }}>Your signature is stamped with the date, time, your IP address and device. The Agency countersigns straight away.</div>
+                <div className="flex justify-end gap-2">
+                  <Btn onClick={() => setTerms(null)}>Not now</Btn>
+                  <Btn kind="primary" disabled={!okToSign || busy === "sign"} onClick={sign}>{busy === "sign" ? "Signing…" : "Sign and unlock"}</Btn>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
+      )}
+      {signed && <div className="max-w-3xl mx-auto px-4 md:px-8 pb-8"><button type="button" className="text-sm underline" style={{ color: C.ink2 }} onClick={() => clientCall(token, "terms").then(setTerms).catch((e) => popError(e))}>View the signed agreement</button></div>}
+    </div>
+  );
+}
+// After a hire (/?t=f-<token>): rating, comment and "make it permanent".
+function ClientFeedbackPage({ token }) {
+  const q = new URLSearchParams(window.location.search);
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const [rating, setRating] = useState(Number(q.get("r")) || 0);
+  const [comment, setComment] = useState("");
+  const [permanent, setPermanent] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  React.useEffect(() => { clientCall(token, "feedback").then((j) => { setD(j); if (j.submitted) setDone(true); }).catch((e) => setErr(e.message)); }, [token]);
+  const send = () => { setBusy(true); clientCall(token, "feedback_submit", { rating, comment, permanent }).then(() => setDone(true)).catch((e) => popError(e)).finally(() => setBusy(false)); };
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        {err && <Card><div className="text-sm" style={{ color: C.dangerFg }}>{err === "Link not found" ? "This link is not valid any more." : err}</div></Card>}
+        {d && (done ? <Card><div className="text-lg" style={{ ...SERIF }}>Thank you!</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>We've got your feedback{permanent ? ", and we'll check in every month for new roles we can fill for you" : ""}.</div></Card> : (
+          <Card>
+            <div className="text-2xl" style={{ ...SERIF }}>How is {d.candidate} settling in?</div>
+            <div className="text-sm mt-1" style={{ color: C.ink2 }}>{d.role}{d.company ? " · " + d.company : ""}</div>
+            <div className="text-sm font-medium mt-4">How did we do?</div>
+            <div className="flex gap-1 mt-1">{[1, 2, 3, 4, 5].map((n) => <button key={n} type="button" aria-label={n + " stars"} onClick={() => setRating(n)} style={{ fontSize: 28, color: n <= rating ? C.em : C.line2 }}>★</button>)}</div>
+            <textarea rows={3} value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Anything we did well, or could do better?" className="w-full mt-3 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+            <div className="text-sm font-medium mt-4">Would you like to make our arrangement permanent?</div>
+            <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>Send us any new role and we'll source it for free. No retainer: we're only paid when we fill a role for you.</div>
+            <div className="flex gap-2 mt-2"><Btn kind={permanent === true ? "primary" : undefined} onClick={() => setPermanent(true)}>Yes, let's do that</Btn><Btn kind={permanent === false ? "dark" : undefined} onClick={() => setPermanent(false)}>Not for now</Btn></div>
+            <div className="mt-4"><Btn kind="primary" full disabled={busy || !rating} onClick={send}>{busy ? "Sending…" : "Send feedback"}</Btn></div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+// Monthly check-in (/?t=r-<token>): send us a new role.
+function ClientRolesPage({ token }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const [f, setF] = useState({ title: "", location: "", details: "" });
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  React.useEffect(() => { clientCall(token, "relation").then(setD).catch((e) => setErr(e.message)); }, [token]);
+  const send = () => { setBusy(true); clientCall(token, "relation_request", f).then(() => setDone(true)).catch((e) => popError(e)).finally(() => setBusy(false)); };
+  return (
+    <div className="min-h-screen" style={{ background: C.canvas }}>
+      <div className="max-w-xl mx-auto p-4 md:p-8 flex flex-col gap-4">
+        <div className="mb-1"><BrandLogo height={30} /></div>
+        {err && <Card><div className="text-sm" style={{ color: C.dangerFg }}>{err === "Link not found" ? "This link is not valid any more." : err}</div></Card>}
+        {d && (done ? <Card><div className="text-lg" style={{ ...SERIF }}>Thanks, we're on it.</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>We'll start sourcing and come back to you with candidates. No fee unless you hire.</div></Card> : (
+          <Card>
+            <div className="text-2xl" style={{ ...SERIF }}>A new role for {d.company}?</div>
+            <div className="text-sm mt-1" style={{ color: C.ink2 }}>We source it for free and are only paid when we fill it.</div>
+            <div className="flex flex-col gap-3 mt-4">
+              <input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="Job title" className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+              <input value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} placeholder="Location (and on-site, hybrid or remote)" className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+              <textarea rows={5} value={f.details} onChange={(e) => setF({ ...f, details: e.target.value })} placeholder="What the role involves, must-haves, salary range, timeline" className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+              <Btn kind="primary" disabled={busy || !f.title.trim()} onClick={send}>{busy ? "Sending…" : "Send the role"}</Btn>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
 function ShortlistPage({ token }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState("");
@@ -11666,7 +11903,7 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label><PickList value={incentiveCur} onChange={setIncentiveCur} options={withValue(CURRENCY_OPTIONS, incentiveCur)} searchPlaceholder="Search currency or code" className={sel} style={selStyle} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Start date</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={sel} style={selStyle} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Joining date</label><input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={sel} style={selStyle} /></div>
           {payType !== "monthly" && <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee (days)</label><input type="number" min="0" value={gDays} onChange={(e) => setGDays(e.target.value)} className={sel} style={selStyle} /></div>}
         </div>
         <div className="text-xs" style={{ color: C.ink3 }}>{payType === "monthly" ? "Each month is paid a month after it starts, from the start date." : "The payout is due when the guarantee ends (Reflik: 90 days). 0 days means it's ready to invoice straight away."}</div>
@@ -13183,16 +13420,90 @@ function AuditLogTab({ S }) {
   );
 }
 
+// Agency settings > Client agreement: the terms clients sign to unlock full resumes, the fee, and
+// the point of contact introduced to them after they sign (with their booking link). Plus every
+// signed client agreement.
+function ClientTermsTab({ toast, S }) {
+  const cur = (S.settings && S.settings.clientAgreement) || { title: "Candidate Introduction Terms", body: "", version: 1, feePct: 10, firstTimeDiscountPct: 20 };
+  const poc0 = (S.settings && S.settings.clientPoc) || {};
+  const [f, setF] = useState({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20 });
+  const [poc, setPoc] = useState({ userId: poc0.userId || "", title: poc0.title || "", bookingUrl: poc0.bookingUrl || "", us: (poc0.phones && poc0.phones.us) || "", eu: (poc0.phones && poc0.phones.eu) || "" });
+  const [busy, setBusy] = useState(false);
+  const [rows, setRows] = useState(null);
+  const [view, setView] = useState(null);
+  React.useEffect(() => { S.clientAgreements().then((r) => setRows(r || [])).catch(() => setRows([])); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const staff = (S.users || []).filter((u) => ["admin", "recops"].includes(u.roleKey) && u.status === "Active");
+  const inp = "w-full mt-1 rounded-lg border px-3 py-2 text-sm outline-none", inpS = { borderColor: C.line, background: C.soft };
+  const changed = f.body !== (cur.body || "") || f.title !== (cur.title || "");
+  const save = () => {
+    setBusy(true);
+    const a = { ...cur, title: f.title.trim() || "Candidate Introduction Terms", body: f.body, feePct: Number(f.feePct) || 10, firstTimeDiscountPct: Math.max(0, Number(f.firstTimeDiscountPct) || 0),
+      version: (Number(cur.version) || 1) + (changed ? 1 : 0), updatedAt: new Date().toISOString() };
+    S.saveClientTerms(a, { userId: poc.userId || null, title: poc.title.trim(), bookingUrl: poc.bookingUrl.trim(), phones: { us: poc.us.trim(), eu: poc.eu.trim() } }).then(() => toast("Saved. New signatures use these terms; signed copies don't change.")).catch(() => {}).finally(() => setBusy(false));
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      <Card>
+        <SectionTitle title="Point of contact" sub="Introduced to a client as soon as they sign, to coordinate with the candidates. The client can book a call with them." />
+        <div className="grid sm:grid-cols-3 gap-3 mt-3">
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Person<select value={poc.userId} onChange={(e) => setPoc({ ...poc, userId: e.target.value })} className={inp} style={inpS}>{staff.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Title shown to clients<input value={poc.title} onChange={(e) => setPoc({ ...poc, title: e.target.value })} placeholder="e.g. Client Partner" className={inp} style={inpS} /></label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Booking link<input value={poc.bookingUrl} onChange={(e) => setPoc({ ...poc, bookingUrl: e.target.value })} placeholder="https://calendly.com/…" className={inp} style={inpS} /></label>
+        </div>
+        <div className="grid sm:grid-cols-2 gap-3 mt-3">
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone shown to US clients<input value={poc.us} onChange={(e) => setPoc({ ...poc, us: e.target.value })} placeholder="optional, e.g. +1 …" className={inp} style={inpS} /></label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone shown to UK and Europe clients<input value={poc.eu} onChange={(e) => setPoc({ ...poc, eu: e.target.value })} placeholder="optional, e.g. +44 …" className={inp} style={inpS} /></label>
+        </div>
+        <div className="text-xs mt-1" style={{ color: C.ink3 }}>Clients see the number for where they are; elsewhere, no number. A person's own number is never shown.</div>
+        {!poc.bookingUrl && <div className="text-xs mt-2" style={{ color: C.warnFg }}>No booking link yet: clients are asked to reply to arrange a call instead.</div>}
+      </Card>
+      <Card>
+        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_address}} {{agency_address}} {{date}} {{fee}} {{discount}}." />
+        <div className="grid sm:grid-cols-3 gap-3 mt-3">
+          <label className="text-xs font-medium sm:col-span-1" style={{ color: C.ink2 }}>Title<input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp} style={inpS} /></label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Fee (% of annual gross salary)<input type="number" min="0" step="0.5" value={f.feePct} onChange={(e) => setF({ ...f, feePct: e.target.value })} className={inp} style={inpS} /></label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>First-time client discount (% off the fee)<input type="number" min="0" max="100" step="1" value={f.firstTimeDiscountPct} onChange={(e) => setF({ ...f, firstTimeDiscountPct: e.target.value })} className={inp} style={inpS} /></label>
+        </div>
+        <textarea value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} rows={18} className={inp + " font-mono text-xs leading-relaxed mt-3"} style={inpS} />
+        <div className="flex justify-end mt-3"><Btn kind="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</Btn></div>
+      </Card>
+      <Card>
+        <SectionTitle title="Signed by clients" sub="Countersigned automatically by the point of contact." />
+        {rows === null ? <SkeletonRows n={2} /> : rows.length === 0 ? <div className="text-sm py-3" style={{ color: C.ink3 }}>No client has signed yet.</div> : (
+          <div className="flex flex-col mt-2">
+            {rows.map((a) => (
+              <div key={a.id} className="flex items-center gap-3 py-2.5 text-sm" style={{ borderTop: "1px solid " + C.line }}>
+                <div className="flex-1 min-w-0"><div className="font-medium truncate">{a.company}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{a.signer_name}, {a.signer_title} · {signedStamp(a.signed_at)} · fee {a.fee_pct}%{a.first_time ? " (first-time)" : ""}</div></div>
+                <button type="button" onClick={() => setView(a)} className="text-xs font-medium" style={{ color: C.em }}>View</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      {view && (
+        <Modal open onClose={() => setView(null)} title={view.title + ": " + view.company} wide>
+          <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 420 }}><AgreementText body={view.body} /></div>
+          <div className="grid sm:grid-cols-2 gap-4 mt-4">
+            <TypedSignature party="FOR THE AGENCY" name={view.agency_signer_name} title={view.agency_signer_title} at={view.agency_signed_at} />
+            <TypedSignature party="FOR THE CLIENT" name={view.signer_name} title={view.signer_title} at={view.signed_at} ip={view.ip} device={deviceOf(view.user_agent)} />
+          </div>
+          <div className="text-xs mt-3" style={{ color: C.ink3 }}>Company address: {view.company_address} · {view.signer_email}</div>
+        </Modal>
+      )}
+    </div>
+  );
+}
 function SettingsPage({ toast, S }) {
-  const [tab, setTab] = useState(() => takeTabParam(["agency", "privacy", "agreement", "integrations", "audit"], "agency"));
+  const [tab, setTab] = useState(() => takeTabParam(["agency", "privacy", "agreement", "clientterms", "integrations", "audit"], "agency"));
   useEffect(clearTabParam, []);
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <SectionTitle size="text-3xl md:text-4xl" title="Agency settings" sub="Defaults that apply across the whole agency." />
-      <div className="overflow-x-auto"><Tabs tabs={[{ key: "agency", label: "Agency" }, { key: "privacy", label: "Data & privacy" }, { key: "agreement", label: "Recruiter agreement" }, { key: "integrations", label: "Integrations" }, { key: "audit", label: "Audit log" }]} active={tab} setActive={setTab} /></div>
+      <div className="overflow-x-auto"><Tabs tabs={[{ key: "agency", label: "Agency" }, { key: "privacy", label: "Data & privacy" }, { key: "agreement", label: "Recruiter agreement" }, { key: "clientterms", label: "Client agreement" }, { key: "integrations", label: "Integrations" }, { key: "audit", label: "Audit log" }]} active={tab} setActive={setTab} /></div>
       {tab === "agency" && <AgencyTab toast={toast} S={S} />}
       {tab === "privacy" && <DataPrivacyTab toast={toast} S={S} />}
       {tab === "agreement" && <AgreementSettingsTab toast={toast} S={S} />}
+      {tab === "clientterms" && <ClientTermsTab toast={toast} S={S} />}
       {tab === "integrations" && <IntegrationsTab toast={toast} S={S} />}
       {tab === "audit" && <AuditLogTab S={S} />}
     </div>
@@ -15298,7 +15609,7 @@ export function PublicRoot() {
   if (r.kind === "board") return <JobsBoard />;
   if (r.kind === "join") return <JoinPage />;
   if (r.kind === "outreach") return <OutreachLinkPage token={r.token} kind={r.linkKind} action={r.action} />;
-  if (r.kind === "client") return /^s-/.test(r.token) ? <ShortlistPage token={r.token} /> : <ClientViewPage token={r.token} />;
+  if (r.kind === "client") return /^s-/.test(r.token) ? <ClientPitchPage token={r.token} /> : /^f-/.test(r.token) ? <ClientFeedbackPage token={r.token} /> : /^r-/.test(r.token) ? <ClientRolesPage token={r.token} /> : <ClientViewPage token={r.token} />;
   if (portalToken === "preview") return <PreferencesPreviewPage />;
   if (!portalData) return <PortalSkeleton />;
   if (portalData.error || !portalData.name) return <div className="min-h-screen flex items-center justify-center p-4 text-center" style={{ background: C.canvas }}><div style={{ color: C.ink2 }}>This link is not valid.</div></div>;
@@ -15859,6 +16170,8 @@ export default function App() {
     // Countersign for the Agency (Admins), one or several signed agreements at once.
     countersignAgreements: (ids, name, title, signature) => sbFetch("/rest/v1/rpc/countersign_recruiter_agreements", { method: "POST", token: session.token, body: { p_ids: ids, p_name: name, p_title: title, p_signature: signature } }),
     resetAgreement: (userId) => call("/rest/v1/rpc/reset_recruiter_agreement", { method: "POST", body: { p_user: userId } }),
+    saveClientTerms: (a, poc) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { client_agreement: a, client_poc: poc } }).then(() => logAudit("updated", "agency_settings", "1", "Client agreement and point of contact")),
+    clientAgreements: () => sbFetch("/rest/v1/client_agreements?select=*&order=signed_at.desc&limit=200", { token: session.token }),
     saveAgreement: (a) => call("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body: { recruiter_agreement: a } }).then(() => logAudit("updated", "agency_settings", "1", "Recruiter agreement" + (a.published ? " (published)" : " (draft)"))),
     // Suspend / reactivate a recruiter (Admins and Rec Ops; database function set_user_suspended).
     suspendUser: (id, suspend, reason) => call("/rest/v1/rpc/set_user_suspended", { method: "POST", body: { p_user: id, p_suspend: !!suspend, p_reason: reason || null } }),
