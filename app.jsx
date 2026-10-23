@@ -10006,6 +10006,98 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
     </Modal>
   );
 }
+// Who the pitch goes to: Talent Acquisition, the hiring manager and the CEO, found on Apollo at
+// the company. The first is the main recipient; the others are copied. Rec Ops / an Admin can look
+// again, add someone by hand, change who it goes to, or take someone off.
+function LeadContacts({ l, S, toast, onChanged }) {
+  const [busy, setBusy] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ name: "", email: "", title: "" });
+  const staff = S && (S.role === "admin" || S.role === "recops");
+  const d = l.data || {};
+  const list = (Array.isArray(d.contacts) ? d.contacts : []).filter((c) => c && !c.removed);
+  const run = (key, body, after) => { setBusy(key); S.sourcing("lead_contacts", { leadId: l.id, ...body }).then((r) => { toast((r && r.message) || "Saved"); after && after(); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const locked = ["contacted", "replied", "meeting", "won", "lost", "unsubscribed"].includes(l.status);
+  const inp = "rounded-lg border px-2.5 py-1.5 text-xs outline-none min-w-0";
+  // Older leads: the single contact from the posting.
+  if (!list.length && l.contact_email && !d.contacts_checked_at) return (
+    <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name || l.contact_email}</span>{l.contact_role ? ", " + l.contact_role : ""} · {l.contact_email}</div>
+  );
+  return (
+    <div className="text-xs mt-1.5 rounded-lg px-2.5 py-2" style={{ background: C.canvas }}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="font-semibold" style={{ color: C.ink }}>Contacts</span>
+        <span style={{ color: C.ink3 }}>{list.length ? "one email: to the first, the others copied" : d.contacts_checked_at ? "no one found on Apollo" + (d.contacts_tried ? " (" + d.contacts_tried.join(", ") + ")" : "") : "looked up on Apollo when the pitch is written"}</span>
+        {staff && !locked && <span className="ml-auto flex gap-3">
+          <button type="button" disabled={!!busy} onClick={() => run("find", { op: "find" })} className="font-medium" style={{ color: C.em }}>{busy === "find" ? "Looking…" : d.contacts_checked_at ? "Look again on Apollo" : "Find on Apollo"}</button>
+          <button type="button" onClick={() => setAdding((a) => !a)} className="font-medium" style={{ color: C.em }}>{adding ? "Cancel" : "Add a contact"}</button>
+        </span>}
+      </div>
+      {list.map((c, i) => (
+        <div key={c.email} className="flex items-center gap-2 flex-wrap mt-1.5">
+          <Pill tone={i === 0 ? "em" : "neutral"}>{i === 0 ? "To" : "Cc"}</Pill>
+          <span className="font-medium" style={{ color: C.ink }}>{c.name || c.email}</span>
+          <span style={{ color: C.ink2 }}>{[c.title || c.role, c.email].filter(Boolean).join(" · ")}</span>
+          <span style={{ color: C.ink3 }}>{c.role && c.title ? "(" + c.role + ")" : ""}</span>
+          {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn</a>}
+          {staff && !locked && <span className="ml-auto flex gap-3">
+            {i > 0 && <button type="button" disabled={!!busy} onClick={() => run("m" + i, { op: "main", index: i })} style={{ color: C.em }}>Send to them</button>}
+            <button type="button" disabled={!!busy} onClick={() => run("r" + i, { op: "remove", index: i })} style={{ color: C.ink3 }}>Take off</button>
+          </span>}
+        </div>
+      ))}
+      {!list.length && d.contacts_checked_at && <div className="mt-1" style={{ color: C.warnFg }}>The pitch waits until a contact is added.</div>}
+      {adding && (
+        <div className="mt-2 flex flex-wrap gap-2 items-center">
+          <input placeholder="Name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={inp + " w-36"} style={{ borderColor: C.line, background: C.soft }} />
+          <input placeholder="Email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} className={inp + " w-48"} style={{ borderColor: C.line, background: C.soft }} />
+          <input placeholder="Job title" value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp + " w-36"} style={{ borderColor: C.line, background: C.soft }} />
+          <Btn kind="primary" disabled={!!busy || !f.email.trim()} onClick={() => run("add", { op: "add", ...f, main: !list.length }, () => { setAdding(false); setF({ name: "", email: "", title: "" }); })} className="!py-1.5 !px-3 text-xs">{busy === "add" ? "Adding…" : list.length ? "Add (copied)" : "Add"}</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// What the job description asks for and where one candidate stands on each, from their CV:
+// required items decide (met / to confirm / confirmed / not met); nice-to-haves they meet are a bonus.
+const JD_STATE = { met: ["✓", "Met"], confirmed: ["✓", "Confirmed by them"], not_shown: ["?", "Not on their CV: asked to confirm"], not_met: ["✗", "Not met"] };
+function JdCheckList({ checks, open, onToggle }) {
+  const list = Array.isArray(checks) ? checks : [];
+  if (!list.length) return null;
+  const req = list.filter((x) => x.required !== false), nice = list.filter((x) => x.required === false);
+  const ok = req.filter((x) => x.status === "met" || x.status === "confirmed").length;
+  const ask = req.filter((x) => x.status === "not_shown").length;
+  const bonus = nice.filter((x) => x.status === "met").length;
+  const color = (st) => (st === "met" || st === "confirmed" ? C.em : st === "not_met" ? C.dangerFg : C.warnFg);
+  const row = (x, i) => (
+    <div key={i} className="grid grid-cols-[16px_1fr_auto] gap-x-2 py-1.5" style={{ borderTop: "1px solid " + C.line }}>
+      <span className="font-bold" style={{ color: color(x.status) }}>{(JD_STATE[x.status] || JD_STATE.not_shown)[0]}</span>
+      <span>{x.item}{x.evidence && <span style={{ color: C.ink2 }}> · {x.evidence}</span>}</span>
+      <span className="text-[11px] whitespace-nowrap" style={{ color: color(x.status) }}>{x.required === false && x.status !== "met" ? "Not shown" : (JD_STATE[x.status] || JD_STATE.not_shown)[1]}</span>
+    </div>
+  );
+  return (
+    <div className="mt-2 rounded-lg" style={{ background: C.card, border: "1px solid " + C.line }}>
+      <button type="button" aria-expanded={open} onClick={onToggle} className="w-full flex items-center gap-2 px-2.5 py-2 text-left flex-wrap">
+        <span className="font-semibold" style={{ color: C.ink }}>Job description check</span>
+        <span className="font-semibold" style={{ color: C.em }}>✓ {ok} of {req.length} required</span>
+        {ask > 0 && <span className="font-semibold" style={{ color: C.warnFg }}>{ask} to confirm</span>}
+        {nice.length > 0 && <span style={{ color: C.ink2 }}>· {bonus} of {nice.length} nice-to-haves</span>}
+        <ChevronDown size={14} color={C.ink2} className="ml-auto shrink-0" style={{ transform: open ? "rotate(180deg)" : "none" }} />
+      </button>
+      {open && (
+        <div className="px-2.5 pb-2.5">
+          <div className="text-[11px] pb-1" style={{ color: C.ink3 }}>Required, from the job description</div>
+          {req.map(row)}
+          {nice.length > 0 && <div className="text-[11px] pt-2 pb-1" style={{ color: C.ink3 }}>Nice to have (a bonus, doesn't decide)</div>}
+          {nice.map(row)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState({});
@@ -10026,7 +10118,8 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
         const c = S.cands.find((x) => x.id === o.candidate_id);
         const [label, tone] = o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : PITCH_STATE[o.status];
         const reqs = Array.isArray(o.requirements) ? o.requirements : [];
-        const qs = (Array.isArray(o.questions) ? o.questions : []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+        const rawQs = (Array.isArray(o.questions) ? o.questions : []).filter((q) => (typeof q === "string" ? q : q && q.q));
+        const qs = rawQs.map((q) => (typeof q === "string" ? q : q.q));
         const ans = Array.isArray(o.answers) ? o.answers : [];
         const live = !["withdrawn", "removed", "pitched"].includes(o.status);
         const first = c ? c.name.split(" ")[0] : "them";
@@ -10043,6 +10136,7 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
             </div>
             {o.reason && <div className="mt-1" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For the client: </span>{o.reason}</div>}
             {o.why_role && <div className="mt-0.5" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For {first}: </span>{o.why_role}</div>}
+            <JdCheckList checks={o.jd_check} open={!!open[o.id + "jd"]} onToggle={() => setOpen({ ...open, [o.id + "jd"]: !open[o.id + "jd"] })} />
             {reqs.length > 0 && (() => {
               const met = reqs.filter((q) => q.status === "met").length, discuss = reqs.length - met;
               return (
@@ -10068,7 +10162,7 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
                         <div className="mt-2 pt-2 flex flex-col gap-1.5" style={{ borderTop: "1px solid " + C.line }}>
                           {qs.map((q, i) => (
                             <div key={i} className="flex items-start gap-2">
-                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
+                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}{rawQs[i] && rawQs[i].confirm && <span className="ml-1 font-semibold" style={{ color: C.warnFg }}>(confirms a requirement)</span>}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
                               {staff && !ans.length && live && <button type="button" disabled={!!busy} onClick={() => run(o.id + "q" + i, "offer_question_remove", { offerId: o.id, index: i }, "Question removed")} className="shrink-0 inline-flex items-center gap-1" style={{ color: C.ink3 }} title="Remove this question: they won't be asked it"><X size={12} />Remove</button>}
                             </div>
                           ))}
@@ -10131,9 +10225,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
               </select>
             </div>
           </div>
-          <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>
-            {l.contact_name ? <>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name}</span>{l.contact_role ? ", " + l.contact_role : ""}{l.contact_email ? " · " + l.contact_email : ""}</> : "No hiring contact listed on the posting."}
-          </div>
+          <LeadContacts l={l} S={S} toast={toast} onChanged={onChanged} />
           <ApolloNote data={l.data} />
           {offers.some(isPitchOffer) ? <LeadPitchCandidates l={l} offers={offers.filter(isPitchOffer)} S={S} toast={toast} onChanged={onChanged} /> : offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
@@ -11558,7 +11650,7 @@ function ClientPitchPage({ token }) {
                 {(c.musts || []).length > 0 && (
                   <div className="mt-3">
                     <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>MUST-HAVES {signed && c.name ? c.name.split(" ")[0].toUpperCase() : "THEY"} MEET{signed && c.name ? "S" : ""}</div>
-                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span><b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}</ul>
+                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span>{m.bonus && <span className="text-xs font-semibold mr-1" style={{ color: C.ink3 }}>Nice to have:</span>}<b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}</ul>
                   </div>
                 )}
                 {open === i && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
@@ -14185,6 +14277,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
   const [d, setD] = useState(initial);
   const [busy, setBusy] = useState("");
   const [answers, setAnswers] = useState([]);
+  const [yn, setYn] = useState([]);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
   const call = (fn, body) => sbFetch("/rest/v1/rpc/" + fn, { method: "POST", body: { p_token: token, p_offer: offer, ...(body || {}) } });
   const reload = () => call("candidate_pitch").then((j) => j && setD(j));
@@ -14192,7 +14285,9 @@ function PortalPitch({ token, offer, initial, onDone }) {
   // Acknowledged with nothing to answer, or answers sent: back to their profile.
   const finish = (msg) => onDone && onDone(msg);
   const ack = () => { setBusy("ack"); call("candidate_pitch_ack").then((r) => (r && r.needsAnswers ? reload() : finish("ack"))).catch((e) => popError(e)).finally(() => setBusy("")); };
-  const answer = () => { setBusy("ans"); call("candidate_pitch_answer", { p_answers: questionsList().map((_, i) => (answers[i] || "").trim()) }).then(() => finish("answers")).catch((e) => popError(e)).finally(() => setBusy("")); };
+  // A yes/no question confirms a requirement their CV doesn't show: "Yes" / "No", plus any detail.
+  const answerText = (i) => { const q = rawQuestions()[i]; const t = (answers[i] || "").trim(); return q && q.confirm ? (yn[i] ? yn[i] + (t ? " - " + t : "") : "") : t; };
+  const answer = () => { setBusy("ans"); call("candidate_pitch_answer", { p_answers: questionsList().map((_, i) => answerText(i)) }).then(() => finish("answers")).catch((e) => popError(e)).finally(() => setBusy("")); };
   // From the email: Acknowledge counts straight away; Withdraw asks them to confirm first.
   React.useEffect(() => {
     const r = new URLSearchParams(window.location.search).get("r");
@@ -14200,7 +14295,8 @@ function PortalPitch({ token, offer, initial, onDone }) {
     if (r === "withdraw" && !["withdrawn", "removed"].includes(initial.status)) setConfirmWithdraw(true);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const role = d.role || {}, facts = d.facts || {};
-  const questionsList = () => (d.questions || []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+  const rawQuestions = () => (d.questions || []).filter((q) => (typeof q === "string" ? q : q && q.q));
+  const questionsList = () => rawQuestions().map((q) => (typeof q === "string" ? q : q.q));
   const questions = questionsList();
   const waiting = ["notified", "reminded", "no_email"].includes(d.status);
   const needsAnswers = d.status === "acknowledged" && questions.length > 0 && !d.answers;
@@ -14263,16 +14359,31 @@ function PortalPitch({ token, offer, initial, onDone }) {
       {needsAnswers && (
         <div className="mt-4 flex flex-col gap-3">
           <div className="text-sm font-medium">Thanks for acknowledging. {questions.length === 1 ? "One quick question" : "A few quick questions"} before we put you forward:</div>
-          {questions.map((q, i) => (
+          {questions.map((q, i) => { const confirm = rawQuestions()[i] && rawQuestions()[i].confirm; const setA = (v) => { const a = answers.slice(); a[i] = v; setAnswers(a); }; return confirm ? (
+            <div key={i} className="flex flex-col gap-1.5">
+              <span className="text-sm">{q}</span>
+              <div className="flex gap-2">
+                {["Yes", "No"].map((v) => (
+                  <button key={v} type="button" onClick={() => { const a = yn.slice(); a[i] = v; setYn(a); }} aria-pressed={yn[i] === v}
+                    className="rounded-lg border px-4 py-1.5 text-sm font-medium" style={{ borderColor: yn[i] === v ? C.em : C.line, background: yn[i] === v ? C.emTint : C.card, color: yn[i] === v ? C.emText : C.ink }}>{v}</button>
+                ))}
+              </div>
+              {yn[i] && <input value={answers[i] || ""} onChange={(e) => setA(e.target.value)} placeholder="Anything to add? (optional)"
+                className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />}
+            </div>
+          ) : (
             <label key={i} className="flex flex-col gap-1">
               <span className="text-sm">{q}</span>
-              <textarea rows={2} value={answers[i] || ""} onChange={(e) => { const a = answers.slice(); a[i] = e.target.value; setAnswers(a); }}
+              <textarea rows={2} value={answers[i] || ""} onChange={(e) => setA(e.target.value)}
                 className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
             </label>
-          ))}
-          <div><Btn kind="primary" disabled={!!busy || questions.some((_, i) => !(answers[i] || "").trim())} onClick={answer}>{busy === "ans" ? "Sending…" : "Send my answers"}</Btn></div>
+          ); })}
+          <div><Btn kind="primary" disabled={!!busy || questions.some((_, i) => !answerText(i))} onClick={answer}>{busy === "ans" ? "Sending…" : "Send my answers"}</Btn></div>
           <div className="text-xs" style={{ color: C.ink3 }}>Your answers go to your recruiter.</div>
         </div>
+      )}
+      {d.status === "acknowledged" && d.answers && (
+        <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.canvas, color: C.ink }}>Thanks for your answers. Your recruiter will look at them and be in touch before anything goes to the employer.</div>
       )}
       {["ready", "pitched"].includes(d.status) && !needsAnswers && (
         <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.emTint, color: C.emText }}>Thanks, you're all set. We'll put your profile forward anonymously and let you know as soon as the employer comes back. Any questions, just reply to our email or message us below.</div>

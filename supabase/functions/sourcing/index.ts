@@ -11,6 +11,7 @@ import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
 import { notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
+import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
@@ -581,6 +582,11 @@ async function handle(req: Request): Promise<Response> {
       if (!l) return json({ error: "Lead not found" }, 404);
       // force: send now with the candidates who are ready, without waiting for the rest.
       return json(await pitchLead(admin, l, s, body.force === true));
+    }
+    // A lead's contacts: find on Apollo again, add by hand, make main, take off.
+    if (action === "lead_contacts" && body.leadId) {
+      if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
+      return json(await leadContactsAction(admin, String(body.leadId), String(body.op || ""), body));
     }
     // Candidate first: one candidate on a pitch. push = ready without waiting; withdraw / remove =
     // off this pitch; remind = the reminder email now.

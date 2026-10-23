@@ -8,7 +8,8 @@ import { emailHash, provider, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
 import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceShort, sourceText, templateEmail } from "./outreach.ts";
 import { isTemplateBody, templateParts } from "./template.ts";
-import { loadBrand, sendBrevo, type Brand } from "./brand.ts";
+import { esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
+import { ccOf } from "./contacts.ts";
 
 // "City, Country" without repeating a country the location already names (same as the app's jobPlace).
 const COUNTRY_ALIASES: Record<string, string[]> = { "United States": ["usa", "us", "u.s.", "united states of america"], "United Kingdom": ["uk", "u.k.", "england", "scotland", "wales", "great britain"], "United Arab Emirates": ["uae"] };
@@ -33,7 +34,7 @@ export function pitchCands(l: any, viewUrl: string) {
   const ms: any[] = Array.isArray(l.matches) ? l.matches : [];
   return ids.map((id, i) => {
     const m = ms.find((x) => x.candidate_id === id) || {};
-    const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => x.item + (x.evidence ? ": " + x.evidence : "")) : (m.bullets || [])).slice(0, 6);
+    const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => (x.bonus ? "Nice to have: " : "") + x.item + (x.evidence ? ": " + x.evidence : "")) : (m.bullets || [])).slice(0, 8);
     return { n: i + 1, verdict: m.verdict || "", musts, url: viewUrl ? viewUrl + "&c=" + (i + 1) : "" };
   });
 }
@@ -149,7 +150,9 @@ export async function sendLeadTest(admin: any, leadId: string, to: string, s: Se
   if (!l.pitch_body) throw new Error("This lead has no drafted email yet");
   const b = await loadBrand(admin);
   const region = (l.region as Region) || regionOf(countryCode(l.country));
-  const html = leadHtml(l, "test-preview", region, s, agencyName, b);
+  const cc = ccOf(l);
+  const who = l.contact_email ? `This test would go to ${esc(l.contact_name || "")} &lt;${esc(l.contact_email)}&gt;${cc.length ? ", copying " + cc.map((c) => `${esc(c.name)} &lt;${esc(c.email)}&gt;`).join(", ") : ""}.` : "No contact yet: add one on the lead before it can be sent.";
+  const html = leadHtml(l, "test-preview", region, s, agencyName, b).replace(/(<body[^>]*>)/i, `$1<div style="font-family:Arial,sans-serif;font-size:13px;background:#FFF6E0;color:#6B4E00;padding:10px 14px;">${who}</div>`);
   const ok = await sendBrevo(b, { email: to }, "[TEST] " + (l.pitch_subject || `Candidate for your ${l.job_title} role`), html);
   if (!ok) throw new Error("Brevo didn't accept the test email");
   return { ok: true, to };
@@ -202,7 +205,7 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
     if (sup) { await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id); continue; }
     const region = (l.region as Region) || regionOf(countryCode(l.country));
     const { error } = await admin.from("outreach_messages").insert({
-      kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name,
+      kind: "client", lead_id: l.id, to_email: l.contact_email, to_name: l.contact_name, cc: ccOf(l),
       subject: l.pitch_subject || `Candidate for your ${l.job_title} role`, body: finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"),
       html: leadHtml(l, l.unsub_token, region, s, agencyName, brand), approved_by: approver,
     });
@@ -248,7 +251,7 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
       first = l?.contact_first_name || ""; last = String(l?.contact_name || "").split(" ").slice(1).join(" "); company = l?.company || ""; token = l?.unsub_token || "";
     }
     try {
-      const r = await sendMail({ kind: m.kind, to: m.to_email, toName: m.to_name || "", firstName: first, lastName: last, company, subject: m.subject, body: m.body, html: m.html || undefined,
+      const r = await sendMail({ kind: m.kind, to: m.to_email, toName: m.to_name || "", cc: Array.isArray(m.cc) ? m.cc : [], firstName: first, lastName: last, company, subject: m.subject, body: m.body, html: m.html || undefined,
         unsubUrl: linkFor(token, m.prospect_id ? "p" : "l", "unsubscribe") }, s.senderName);
       const now = new Date().toISOString();
       await admin.from("outreach_messages").update({ status: "sent", provider: r.provider, provider_ref: r.ref, sent_at: now, error: null }).eq("id", m.id);
@@ -288,7 +291,7 @@ export async function manualCompose(admin: any, kind: "p" | "l", id: string, s: 
   if (sup) { await admin.from("leads").update({ status: "unsubscribed" }).eq("id", l.id); throw new Error("They've unsubscribed, so they can't be emailed"); }
   const { data: q } = await admin.from("outreach_messages").select("subject,body").eq("lead_id", id).eq("status", "queued").limit(1).maybeSingle();
   const region = (l.region as Region) || regionOf(countryCode(l.country));
-  return { to: l.contact_email, toName: l.contact_name || "", subject: q?.subject || l.pitch_subject || `Candidate for your ${l.job_title} role`,
+  return { to: l.contact_email, toName: l.contact_name || "", cc: ccOf(l), subject: q?.subject || l.pitch_subject || `Candidate for your ${l.job_title} role`,
     body: q?.body || finalBody(leadText(l), l.unsub_token, "l", region, s, agencyName, "client"), html: q?.html || undefined };
 }
 

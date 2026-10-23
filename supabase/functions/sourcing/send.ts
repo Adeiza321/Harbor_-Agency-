@@ -9,6 +9,8 @@
 //     Sends through the Gmail API from one outreach mailbox.
 //
 // With neither set, approved emails wait in the queue ("Waiting for a sender").
+// Copying people (a client pitch goes to one contact with the others copied) works with Gmail and
+// "send it myself"; Apollo sequences and Instantly campaigns send to the main contact only.
 
 import { sendViaApollo } from "./apollo.ts";
 
@@ -62,7 +64,7 @@ export const toHtml = (text: string) => {
 };
 
 export type Attachment = { name: string; type: string; bytes: Uint8Array };
-export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; firstName: string; lastName: string; company: string; subject: string; body: string; html?: string; unsubUrl: string; attachment?: Attachment };
+export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; cc?: { email: string; name?: string }[]; firstName: string; lastName: string; company: string; subject: string; body: string; html?: string; unsubUrl: string; attachment?: Attachment };
 
 async function sendInstantly(m: OutMail): Promise<string> {
   const campaign = m.kind === "client" ? (Deno.env.get("INSTANTLY_CLIENT_CAMPAIGN_ID") || Deno.env.get("INSTANTLY_CAMPAIGN_ID")) : Deno.env.get("INSTANTLY_CAMPAIGN_ID");
@@ -129,6 +131,7 @@ async function sendGmail(m: OutMail, fromName: string): Promise<string> {
   const raw = [
     `From: ${encWord(fromName || sender)} <${sender}>`,
     `To: ${m.toName ? encWord(m.toName) + " " : ""}<${m.to}>`,
+    ...(m.cc?.length ? [`Cc: ${m.cc.map((c) => (c.name ? encWord(c.name) + " " : "") + "<" + c.email + ">").join(", ")}`] : []),
     `Subject: ${encWord(m.subject)}`,
     `List-Unsubscribe: <${m.unsubUrl}>`,
     "MIME-Version: 1.0",

@@ -7,10 +7,10 @@
 //     against where they live: only roles within about an hour's commute (or in a city they'd move
 //     to) are kept. A candidate without a known city isn't searched. The day's postings are shared out between candidates; when there are more
 //     candidates than the day allows, it works through them in turn over the following days.
-//   processLead (a few per run): the candidate it was found for, checked against the posting; kept
-//     only if they're a Good or Perfect fit. Other Active file candidates in that country with the
-//     same title are checked too and join the pitch if they fit (up to 5 in all).
-//   pitchLead: the hiring contact (the poster from the job feed, email via Apollo) and an anonymous
+//   processLead (a few per run): the candidate it was found for, screened strictly by the job
+//     description (its requirements and qualifications, read against their CV). Other Active file
+//     candidates in that country with the same title are screened too and join (up to 5 in all).
+//   pitchLead: the contacts (Talent Acquisition, hiring manager, CEO, found on Apollo at the company) and an anonymous
 //     email: up to 5 candidates, each as a blind resume behind a "View the candidates" button
 //     (/?t=s-<client_token>), only candidates whose blind resume a Rec Ops/Admin has checked. A lead
 //     whose matches have no checked blind resume yet waits ('awaiting') and is pitched once they do.
@@ -21,9 +21,8 @@
 import { askAI } from "./ai.ts";
 import { assessForPitch, OUT, PENDING, strongEnough } from "./pitch.ts";
 import { searchJobs, theirstackKey } from "./theirstack.ts";
-import { apolloKey, matchByName } from "./apollo.ts";
+import { contactFields, findCompanyContacts, type Contact } from "./contacts.ts";
 import { COUNTRY_NAMES, countryCode, locationCountry, placeParts, regionOf } from "./regions.ts";
-import { emailHash } from "./send.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 import { portalBase } from "./queue.ts";
 import { anonSummary, candEmployers, candTitles, fitsToPercent, isBusy, scrub, titlesMatch, workedAt, type Settings } from "./common.ts";
@@ -33,7 +32,7 @@ export const MAX_PER_PITCH = 5;
 // Who we pitch: the Active file (not drafts, with a CV), and the country each one lives in.
 export async function pitchableCandidates(admin: any) {
   const { data } = await admin.from("candidates")
-    .select("id,name,status,email,pay,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
+    .select("id,name,status,email,pay,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,resume_name,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
     .eq("is_draft", false).eq("status", "Active file");
   return (data || []).filter((c: any) => isOpen(c) && !isBusy(c) && (c.resume_path || c.cv_path) && candTitles(c).length && candCountry(c));
 }
@@ -186,31 +185,43 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   const pool = target ? [target, ...near] : near;
   if (!pool.length) return ignore("No Active file candidate near " + (lead.location || lead.country || "there") + " matches this title");
 
-  // Fit check, against a very high bar (only someone the employer is unlikely to find better than:
-  // Perfect / Good fit, 80%+, nothing the posting needs clearly missing), plus how the role meets
-  // what each of them is looking for and any questions to ask them first (pitch.ts).
-  const { role, results } = await assessForPitch(lead, pool);
+  // Screening strictly by the job description (pitch.ts): what it asks for (required / nice to
+  // have, nothing assumed), checked against each candidate's CV. Anything required they don't have
+  // takes them out; a required item their CV doesn't show becomes a yes/no question to them, and
+  // they're pitched only once they've said yes. Plus how the role meets what each of them wants.
+  const { role, items, results } = await assessForPitch(admin, lead, pool);
+  const data = { ...(lead.data || {}), role, jd: items };
+  if (!items.some((x) => x.required)) {
+    await admin.from("leads").update({ status: "ignored", notes: "The job description doesn't list any requirements or qualifications to screen against", data }).eq("id", lead.id);
+    return { ok: true, kept: false, why: "No requirements in the job description" };
+  }
   // Direct hire only for now: contract and temporary roles are left out.
   if (/contract|temporary|temp\b/i.test(role.employmentType) || /\b(contract|temporary|temp)\b(?!.{0,15}hire)/i.test(lead.job_title || "")) {
-    await admin.from("leads").update({ status: "ignored", notes: "Contract or temporary role: direct hire only for now", data: { ...(lead.data || {}), role } }).eq("id", lead.id);
+    await admin.from("leads").update({ status: "ignored", notes: "Contract or temporary role: direct hire only for now", data }).eq("id", lead.id);
     return { ok: true, kept: false, why: "Contract or temporary role" };
   }
+  const ignoreWith = async (why: string) => { await admin.from("leads").update({ status: "ignored", notes: why, data }).eq("id", lead.id); return { ok: true, kept: false, why }; };
   const kept = results.map((a) => ({ a, c: pool[a.n] })).filter((x) => x.c && strongEnough(x.a))
     .sort((x, y) => (target && x.c.id === target.id ? -1 : target && y.c.id === target.id ? 1 : y.a.fit - x.a.fit)).slice(0, MAX_PER_PITCH);
-  if (!kept.length) return ignore(target ? "Not a strong enough fit for " + firstName(target) : "Our Active file candidates weren't a strong enough fit");
+  const whyOut = (c: any) => results.find((a) => pool[a.n]?.id === c.id)?.out || "doesn't meet the job description";
   // Found for a candidate: kept only when it fits them.
-  if (target && !kept.some((x) => x.c.id === target.id)) return ignore("Not a strong enough fit for " + firstName(target) + " (the role it was found for)");
+  if (target && !kept.some((x) => x.c.id === target.id)) return ignoreWith("Not a fit for " + firstName(target) + " by the job description: " + whyOut(target));
+  if (!kept.length) return ignoreWith("None of our Active file candidates meet the job description");
   const matches = kept.map(({ a, c }) => ({
-    candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: scrub(a.reason, [c]).slice(0, 300),
-    bullets: a.bullets.map((b) => scrub(b, [c]).slice(0, 140)), requirements: a.requirements, questions: a.questions, why_role: a.whyRole, musts: a.musts.map((q) => ({ item: q.item, evidence: scrub(q.evidence, [c]).slice(0, 120) })),
+    candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: a.reason.slice(0, 300),
+    bullets: a.bullets, requirements: a.requirements, why_role: a.whyRole, musts: a.musts, jd: a.jd,
+    // Yes/no questions for the required items their CV doesn't show first, then any others.
+    questions: [...a.confirm.map((q) => ({ q: q.q, confirm: q.item })), ...a.questions.map((q) => ({ q }))].slice(0, 5),
   }));
-  await admin.from("leads").update({ status: "awaiting", matches, data: { ...(lead.data || {}), role }, notes: "Candidate emails to review: open each candidate's email, then send. The pitch goes once they've acknowledged." }).eq("id", lead.id);
+  const toConfirm = matches.filter((m) => m.questions.some((q: any) => q.confirm)).length;
+  await admin.from("leads").update({ status: "awaiting", matches, data,
+    notes: "Candidate emails to review: open each candidate's email, then send." + (toConfirm ? ` ${toConfirm === 1 ? "One candidate is" : toConfirm + " candidates are"} asked to confirm requirements their CV doesn't show.` : "") + " The pitch goes once they've acknowledged." }).eq("id", lead.id);
   // Each candidate's own place on this pitch, with their information email written as a draft:
   // nothing goes out until Rec Ops / an Admin reviews it and presses Send (candidate first).
   for (const m of matches) {
     const { error } = await admin.from("lead_offers").upsert({
       lead_id: lead.id, candidate_id: m.candidate_id, fit: m.fit, verdict: m.verdict, reason: m.reason, bullets: m.bullets,
-      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), why_role: m.why_role || null, client_musts: m.musts || [], status: "draft",
+      requirements: m.requirements, questions: m.questions, why_role: m.why_role || null, client_musts: m.musts || [], jd_check: m.jd, status: "draft",
     }, { onConflict: "lead_id,candidate_id" });
     if (error) console.error("lead offer", error.message);
   }
@@ -221,7 +232,7 @@ export async function processLead(admin: any, lead: any, s: Settings) {
 // whose blind resume is checked goes in. It waits while anyone is still to respond, unless Rec Ops
 // / an Admin sends it now with the ready ones (force). Everyone off it: the lead is let go.
 export async function pitchState(admin: any, lead: any) {
-  const { data: offers } = await admin.from("lead_offers").select("id,candidate_id,status,fit,verdict,reason,bullets").eq("lead_id", lead.id);
+  const { data: offers } = await admin.from("lead_offers").select("id,candidate_id,status,fit,verdict,reason,bullets,client_musts").eq("lead_id", lead.id);
   const fresh = (offers || []).filter((o: any) => [...PENDING, "ready", "pitched", ...OUT].includes(o.status));
   return { offers: fresh, pending: fresh.filter((o: any) => PENDING.includes(o.status)), ready: fresh.filter((o: any) => o.status === "ready"),
     pitched: fresh.filter((o: any) => o.status === "pitched"), out: fresh.filter((o: any) => OUT.includes(o.status)) };
@@ -246,6 +257,8 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
       return { ok: true, pitched: false, waitingForCandidates: st.pending.length };
     }
     const readyIds = new Set([...st.ready, ...st.pitched].map((o: any) => o.candidate_id));
+    // What each meets as of now: requirements they've since confirmed count (lead_offers).
+    all = all.map((m: any) => { const o = st.offers.find((x: any) => x.candidate_id === m.candidate_id); return o ? { ...m, fit: o.fit ?? m.fit, verdict: o.verdict || m.verdict, musts: Array.isArray(o.client_musts) && o.client_musts.length ? o.client_musts : m.musts } : m; });
     all = all.filter((m: any) => readyIds.has(m.candidate_id));
     if (!all.length) return { ok: true, pitched: false, waitingForCandidates: st.pending.length };
   }
@@ -260,21 +273,19 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
   const kc = ready.map((m: any) => (cs || []).find((x: any) => x.id === m.candidate_id) || { id: m.candidate_id });
   const posting = `Job: ${lead.job_title} at ${lead.company}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}\nDescription:\n${String(lead.description || "").slice(0, 3000)}`;
 
-  // Who to contact: the poster from the job feed; their work email from Apollo when available.
-  const team: any[] = Array.isArray(lead.data?.hiring_team) ? lead.data.hiring_team : [];
-  const poster = team.find((h) => /talent|recruit|hiring|people|hr\b|human/i.test(h.role || "")) || team[0] || null;
-  let contactEmail = "", emailStatus = "";
-  if (poster && apolloKey()) {
-    const parts = String(poster.full_name || "").trim().split(/\s+/);
-    try {
-      const p = await matchByName(poster.first_name || parts[0] || "", parts.slice(1).join(" "), lead.company_domain || "", lead.company || "");
-      if (p?.email && p.email_status === "verified") {
-        const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(p.email)).maybeSingle();
-        if (!sup) { contactEmail = p.email; emailStatus = p.email_status; }
-      }
-    } catch (e) { console.error("apollo contact", String((e as Error)?.message || e)); }
+  // Who to contact: Talent Acquisition, the hiring manager and the CEO, found on Apollo at the
+  // company (contacts.ts), looked up once per lead. One email: the first found is the main
+  // recipient, the others are copied. None found: the lead waits for a contact added by hand.
+  let contacts: Contact[] = Array.isArray(lead.data?.contacts) ? lead.data.contacts.filter((c: any) => !c.removed) : [];
+  let lookup: Record<string, unknown> | null = null;
+  if (!lead.data?.contacts_checked_at) {
+    const found = await findCompanyContacts(admin, lead, lead.data?.role?.hmTitles || []);
+    contacts = found.contacts;
+    lookup = { contacts, contacts_checked_at: new Date().toISOString(), contacts_tried: found.tried, ...(found.error ? { contacts_error: found.error } : {}) };
   }
-  const channel = contactEmail ? "email" : poster?.linkedin_url ? "linkedin" : "none";
+  const main = contacts[0] || null;
+  const fields = contactFields(contacts);
+  const channel = lookup || !lead.contact_email ? fields.channel : lead.channel;
 
   // Pitch: a short intro (the email lists each candidate with the must-haves they meet and a
   // button to their blind resume, added by the email itself) and a LinkedIn note. Never names.
@@ -287,12 +298,12 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
     "No candidate list (it's added below), no sign-off, no links, no footer (added separately). " +
     "linkedin: under 280 characters, friendly, same offer, no links.";
   const pts = ready.map((m: any, i: number) => `Candidate ${i + 1} (${m.verdict}): ${(m.musts || []).map((x: any) => x.item).join("; ") || (m.bullets || []).join("; ")}`).join("\n");
-  const pitch = await askAI(pitchSys, `${posting.slice(0, 1500)}\n\nHiring contact first name: ${poster?.first_name || "unknown"}${poster?.role ? " (" + poster.role + ")" : ""}\n\nOur candidates:\n${pts}`, 2000);
+  const pitch = await askAI(pitchSys, `${posting.slice(0, 1500)}\n\nHiring contact first name: ${main?.first_name || "unknown"}${main?.title ? " (" + main.title + ")" : ""}\n\nOur candidates:\n${pts}`, 2000);
   await admin.from("leads").update({
     status: "new", matches: all, notes: null,
-    data: { ...(lead.data || {}), pitched: ready.map((m: any) => m.candidate_id) },
-    contact_name: poster?.full_name || null, contact_first_name: poster?.first_name || null, contact_role: poster?.role || null,
-    contact_linkedin: poster?.linkedin_url || null, contact_email: contactEmail || null, contact_email_status: emailStatus || null, channel,
+    data: { ...(lead.data || {}), ...(lookup || {}), pitched: ready.map((m: any) => m.candidate_id) },
+    // A contact added by hand stays as it is.
+    ...(lookup || !lead.contact_email ? fields : {}),
     pitch_subject: scrub(String(pitch?.subject || ""), kc).slice(0, 120), pitch_body: scrub(String(pitch?.body || ""), kc).slice(0, 3000),
     linkedin_message: scrub(String(pitch?.linkedin || ""), kc).slice(0, 300),
   }).eq("id", lead.id);

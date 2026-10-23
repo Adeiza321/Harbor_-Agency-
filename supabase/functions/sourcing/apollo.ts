@@ -49,6 +49,26 @@ export async function searchPeople(opts: { titles: string[]; locations: string[]
   return { hits, total: Number(data?.total_entries || data?.pagination?.total_entries || hits.length) };
 }
 
+// People at one company by title (free; no emails). By the company's web domain when we have it,
+// otherwise by its name (then only hits whose company name matches are kept).
+export async function searchCompanyPeople(opts: { domain?: string; company?: string; titles: string[]; perPage?: number }): Promise<ApolloHit[]> {
+  const domain = String(opts.domain || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "");
+  const company = String(opts.company || "").trim();
+  if (!domain && !company) return [];
+  const data = await call("/mixed_people/api_search", {
+    person_titles: opts.titles.slice(0, 10),
+    include_similar_titles: true,
+    ...(domain ? { q_organization_domains_list: [domain] } : { q_keywords: company }),
+    per_page: Math.min(opts.perPage || 10, 25),
+    page: 1,
+  });
+  const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\b(inc|llc|ltd|limited|corp|corporation|co|company|plc|group|holdings|the)\b/g, " ").replace(/\s+/g, " ").trim();
+  return (Array.isArray(data?.people) ? data.people : []).map((p: any) => ({
+    id: String(p.id || ""), first_name: String(p.first_name || ""), title: String(p.title || ""),
+    company: String(p.organization?.name || p.organization_name || ""), has_email: p.has_email !== false,
+  })).filter((p: ApolloHit) => p.id && (domain || (norm(p.company) && norm(p.company) === norm(company))));
+}
+
 export type ApolloPerson = {
   id: string; first_name: string; last_name: string; name: string; title: string; email: string; email_status: string;
   linkedin_url: string; city: string; state: string; country: string; company: string; domain: string; history: string;
