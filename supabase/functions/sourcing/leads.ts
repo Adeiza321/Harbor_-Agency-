@@ -19,6 +19,7 @@
 //   The company's "We're interested" sends the contract automatically (stepContracts in index.ts).
 
 import { askAI } from "./ai.ts";
+import { assessForPitch, notifyOffer, OUT, PENDING, strongEnough } from "./pitch.ts";
 import { searchJobs, theirstackKey } from "./theirstack.ts";
 import { apolloKey, matchByName } from "./apollo.ts";
 import { COUNTRY_NAMES, countryCode, locationCountry, placeParts, regionOf } from "./regions.ts";
@@ -32,7 +33,7 @@ export const MAX_PER_PITCH = 5;
 // Who we pitch: the Active file (not drafts, with a CV), and the country each one lives in.
 export async function pitchableCandidates(admin: any) {
   const { data } = await admin.from("candidates")
-    .select("id,name,status,email,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
+    .select("id,name,status,email,pay,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
     .eq("is_draft", false).eq("status", "Active file");
   return (data || []).filter((c: any) => isOpen(c) && !isBusy(c) && (c.resume_path || c.cv_path) && candTitles(c).length && candCountry(c));
 }
@@ -185,35 +186,67 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   const pool = target ? [target, ...near] : near;
   if (!pool.length) return ignore("No Active file candidate near " + (lead.location || lead.country || "there") + " matches this title");
 
-  // Fit check: the posting against each candidate's anonymous profile.
-  const fitSys = "You are a recruitment analyst at an agency. For each candidate, judge fit for this job posting on must-have experience, seniority, skills, industry and location/work setup. " +
-    "Reply with STRICT JSON only: {\"results\": [{\"n\": number, \"fit\": number (a percentage from 0 to 100, e.g. 85; never a 0-10 score), \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"reason\": string, \"bullets\": string[]}]}. " +
-    "reason: one short sentence. bullets: 3 short selling points for the hiring manager, each under 15 words, anonymous (no names, no employer names; say e.g. 'Big 4-trained').";
-  const posting = `Job: ${lead.job_title} at ${lead.company}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}\nDescription:\n${String(lead.description || "").slice(0, 4000)}`;
-  const list = pool.map((c: any, i: number) => `n=${i} | ${anonSummary(c)}`).join("\n");
-  const fits = await askAI(fitSys, posting + "\n\nCandidates:\n" + list, 3000);
-  const kept = fitsToPercent(Array.isArray(fits?.results) ? fits.results : [])
-    .map((r: any) => ({ r, c: pool[Number(r.n)] })).filter((x: any) => x.c && ["Perfect fit", "Good fit"].includes(x.r.verdict))
-    .sort((a: any, b: any) => (target && a.c.id === target.id ? -1 : target && b.c.id === target.id ? 1 : (Number(b.r.fit) || 0) - (Number(a.r.fit) || 0))).slice(0, MAX_PER_PITCH);
+  // Fit check, against a very high bar (only someone the employer is unlikely to find better than:
+  // Perfect / Good fit, 80%+, nothing the posting needs clearly missing), plus how the role meets
+  // what each of them is looking for and any questions to ask them first (pitch.ts).
+  const { role, results } = await assessForPitch(lead, pool);
+  const kept = results.map((a) => ({ a, c: pool[a.n] })).filter((x) => x.c && strongEnough(x.a))
+    .sort((x, y) => (target && x.c.id === target.id ? -1 : target && y.c.id === target.id ? 1 : y.a.fit - x.a.fit)).slice(0, MAX_PER_PITCH);
   if (!kept.length) return ignore(target ? "Not a strong enough fit for " + firstName(target) : "Our Active file candidates weren't a strong enough fit");
   // Found for a candidate: kept only when it fits them.
-  if (target && !kept.some((x: any) => x.c.id === target.id)) return ignore("Not a strong enough fit for " + firstName(target) + " (the role it was found for)");
-  const matches = kept.map((x: any) => ({
-    candidate_id: x.c.id, verdict: x.r.verdict, fit: Math.round(Number(x.r.fit) || 0), reason: scrub(String(x.r.reason || ""), [x.c]).slice(0, 300),
-    bullets: (Array.isArray(x.r.bullets) ? x.r.bullets : []).slice(0, 3).map((b: unknown) => scrub(String(b), [x.c]).slice(0, 140)),
+  if (target && !kept.some((x) => x.c.id === target.id)) return ignore("Not a strong enough fit for " + firstName(target) + " (the role it was found for)");
+  const matches = kept.map(({ a, c }) => ({
+    candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: scrub(a.reason, [c]).slice(0, 300),
+    bullets: a.bullets.map((b) => scrub(b, [c]).slice(0, 140)), requirements: a.requirements, questions: a.questions, why_role: a.whyRole,
   }));
-  await admin.from("leads").update({ status: "awaiting", matches }).eq("id", lead.id);
-  const pr: any = await pitchLead(admin, { ...lead, matches }, s);
-  return { ...pr, ok: true, kept: true };
+  await admin.from("leads").update({ status: "awaiting", matches, data: { ...(lead.data || {}), role }, notes: "Telling the candidates first; the pitch goes once they've acknowledged." }).eq("id", lead.id);
+  // Each candidate's own place on this pitch, then their information email (candidate first).
+  let told = 0;
+  for (const m of matches) {
+    const { data: o, error } = await admin.from("lead_offers").upsert({
+      lead_id: lead.id, candidate_id: m.candidate_id, fit: m.fit, verdict: m.verdict, reason: m.reason, bullets: m.bullets,
+      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), why_role: m.why_role || null, status: "notified",
+    }, { onConflict: "lead_id,candidate_id" }).select("id").single();
+    if (error || !o) { console.error("lead offer", error?.message); continue; }
+    try { const r = await notifyOffer(admin, o.id); if (r.sent) told++; } catch (e) { console.error("notify offer", String((e as Error)?.message || e)); }
+  }
+  return { ok: true, kept: true, candidates: matches.length, told };
+}
+
+// Where a pitch's candidates are: whoever is ready (acknowledged, answered or put through) and
+// whose blind resume is checked goes in. It waits while anyone is still to respond, unless Rec Ops
+// / an Admin sends it now with the ready ones (force). Everyone off it: the lead is let go.
+export async function pitchState(admin: any, lead: any) {
+  const { data: offers } = await admin.from("lead_offers").select("id,candidate_id,status,fit,verdict,reason,bullets").eq("lead_id", lead.id);
+  const fresh = (offers || []).filter((o: any) => [...PENDING, "ready", "pitched", ...OUT].includes(o.status));
+  return { offers: fresh, pending: fresh.filter((o: any) => PENDING.includes(o.status)), ready: fresh.filter((o: any) => o.status === "ready"),
+    pitched: fresh.filter((o: any) => o.status === "pitched"), out: fresh.filter((o: any) => OUT.includes(o.status)) };
 }
 
 // The hiring contact and the pitch, with every match whose blind resume is ready (checked). If none
 // is ready yet, the lead waits ('awaiting', with a note) and stepLeads tries again later.
-export async function pitchLead(admin: any, lead: any, s: Settings) {
-  const all: any[] = Array.isArray(lead.matches) ? lead.matches : [];
+export async function pitchLead(admin: any, lead: any, s: Settings, force = false) {
+  let all: any[] = Array.isArray(lead.matches) ? lead.matches : [];
   if (!all.length) return { ok: true, pitched: false };
+  const st = await pitchState(admin, lead);
+  const candidateFirst = st.offers.length > 0;
+  if (candidateFirst) {
+    // Everyone withdrew or was taken off: nothing to pitch.
+    if (!st.pending.length && !st.ready.length && !st.pitched.length) {
+      await admin.from("leads").update({ status: "ignored", notes: "Every candidate withdrew or was taken off" }).eq("id", lead.id);
+      return { ok: true, pitched: false, allOut: true };
+    }
+    if (st.pending.length && !force) {
+      await admin.from("leads").update({ status: "awaiting", notes: `Waiting for ${st.pending.length} of ${st.offers.length - st.out.length} candidate${st.offers.length - st.out.length === 1 ? "" : "s"} to acknowledge (reminder after 2 days). Put them through or send now with the ready ones.` }).eq("id", lead.id);
+      return { ok: true, pitched: false, waitingForCandidates: st.pending.length };
+    }
+    const readyIds = new Set([...st.ready, ...st.pitched].map((o: any) => o.candidate_id));
+    all = all.filter((m: any) => readyIds.has(m.candidate_id));
+    if (!all.length) return { ok: true, pitched: false, waitingForCandidates: st.pending.length };
+  }
   const { data: cs } = await admin.from("candidates").select("id,name,current_company,blind_pages,blind_checked_at,status").in("id", all.map((m: any) => m.candidate_id));
-  const ready = all.filter((m: any) => { const c = (cs || []).find((x: any) => x.id === m.candidate_id); return c && blindReady(c) && c.status === "Active file"; }).slice(0, MAX_PER_PITCH);
+  // Candidate first: they're on the lead's role now (In review), so their status isn't Active file.
+  const ready = all.filter((m: any) => { const c = (cs || []).find((x: any) => x.id === m.candidate_id); return c && blindReady(c) && (candidateFirst || c.status === "Active file"); }).slice(0, MAX_PER_PITCH);
   if (!ready.length) {
     const waiting = all.map((m: any) => (cs || []).find((x: any) => x.id === m.candidate_id)?.name).filter(Boolean);
     await admin.from("leads").update({ status: "awaiting", notes: "Waiting for a checked blind resume for: " + waiting.join(", ") + " (Candidates > Blind resumes)." }).eq("id", lead.id);
@@ -257,6 +290,8 @@ export async function pitchLead(admin: any, lead: any, s: Settings) {
     pitch_subject: scrub(String(pitch?.subject || ""), kc).slice(0, 120), pitch_body: scrub(String(pitch?.body || ""), kc).slice(0, 3000),
     linkedin_message: scrub(String(pitch?.linkedin || ""), kc).slice(0, 300),
   }).eq("id", lead.id);
+  // Candidate first: those in the pitch are marked as such (moved to Submitted once it's sent).
+  await admin.from("lead_offers").update({ status: "pitched", pitched_at: new Date().toISOString() }).eq("lead_id", lead.id).eq("status", "ready").in("candidate_id", ready.map((m: any) => m.candidate_id));
   return { ok: true, pitched: true, kept: true, channel, candidates: n };
 }
 

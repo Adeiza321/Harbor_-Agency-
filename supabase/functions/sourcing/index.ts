@@ -9,6 +9,7 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
+import { offerAction, removeQuestion, stepReminders } from "./pitch.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
@@ -138,6 +139,8 @@ async function stepMusts(admin: any, s: any, max = 10, jobId?: string) {
 }
 
 async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
+  // Candidate first: a reminder to anyone told about a pitch 2+ days ago who hasn't responded.
+  try { await stepReminders(admin); } catch (e) { console.error("pitch reminders", errMsg(e)); }
   const { data: pending } = await admin.from("leads").select("*").eq("status", "pending").order("created_at").limit(n);
   let kept = 0, pitched = 0; const errors: string[] = [];
   const queueIfAuto = async (l: any, r: any) => { if (r?.pitched) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [l.id], null, s, agencyName); } };
@@ -566,7 +569,16 @@ async function handle(req: Request): Promise<Response> {
     if (action === "pitch_lead" && body.leadId) {
       const { data: l } = await admin.from("leads").select("*").eq("id", body.leadId).single();
       if (!l) return json({ error: "Lead not found" }, 404);
-      return json(await pitchLead(admin, l, s));
+      // force: send now with the candidates who are ready, without waiting for the rest.
+      return json(await pitchLead(admin, l, s, body.force === true));
+    }
+    // Candidate first: one candidate on a pitch. push = ready without waiting; withdraw / remove =
+    // off this pitch; remind = the reminder email now.
+    if (["offer_push", "offer_withdraw", "offer_remove", "offer_remind", "offer_question_remove"].includes(action) && body.offerId) {
+      if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
+      const { data: pf } = await admin.from("profiles").select("full_name").eq("id", me.id).maybeSingle();
+      if (action === "offer_question_remove") return json(await removeQuestion(admin, { id: me.id, name: String(pf?.full_name || "") }, String(body.offerId), Number(body.index)));
+      return json(await offerAction(admin, { id: me.id, name: String(pf?.full_name || "") }, String(body.offerId), action.replace("offer_", "") as any));
     }
 
     // Won lead -> a draft job in Pronext (then it goes live like any other job).

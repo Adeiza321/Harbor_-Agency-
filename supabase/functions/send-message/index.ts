@@ -18,6 +18,9 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+// What candidates see as the employer: never the employer of a client-lead role (a pitch to an
+// employer the candidate hasn't been told about).
+const cl = (j: any) => (j?.lead_role ? "" : String(j?.client || ""));
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 
@@ -97,7 +100,7 @@ async function routeReminders(admin: any) {
       .eq("id", l.id).eq("route_reminders", l.route_reminders).eq("candidate_response", "pending").select("id");
     if (!claimed?.length) continue;
     const { data: cand } = await admin.from("candidates").select("id,name,email,portal_token,email_opt_out").eq("id", l.candidate_id).maybeSingle();
-    const { data: job } = await admin.from("jobs").select("role_title,client,status,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,commission_only,description").eq("id", l.job_id).maybeSingle();
+    const { data: job } = await admin.from("jobs").select("role_title,client,lead_role,status,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,commission_only,description").eq("id", l.job_id).maybeSingle();
     if (!cand?.email || cand.email_opt_out || !job || job.status !== "Open") { out.push({ id: l.id, skipped: true }); continue; }
     const f = l.ai?.followups;
     const n = f && f.state === "sent" && Array.isArray(f.questions) ? f.questions.length : 0;
@@ -107,7 +110,7 @@ async function routeReminders(admin: any) {
     const subject = n ? `You're ${n === 1 ? "one quick question" : n + " quick questions"} away from applying for ${job.role_title}` : `Still interested in ${job.role_title}?`;
     const html = emailShell(brand, subject,
       `<div style="font-size:20px;margin-bottom:8px;">Hi ${first},</div>
-       <div style="font-size:15px;line-height:1.6;">We put you forward as a strong fit for the <b>${esc(job.role_title)}</b> role${job.client ? ` at <b>${esc(job.client)}</b>` : ""}, and it's still open.</div>
+       <div style="font-size:15px;line-height:1.6;">We put you forward as a strong fit for the <b>${esc(job.role_title)}</b> role${cl(job) ? ` at <b>${esc(cl(job))}</b>` : ""}, and it's still open.</div>
        ${roleCard(job)}
        <div style="font-size:15px;line-height:1.6;margin-top:16px;">${n ? `Answer ${n === 1 ? "one quick question" : n + " quick questions"} and you've applied. It takes a couple of minutes.` : "Have a look and apply in one tap."}${last ? " This is the last reminder we'll send about this role." : ""}</div>
        ${button(brand, portalUrl + "&role=" + encodeURIComponent(l.id) + (n ? "&go=questions" : ""), n ? "Finish applying" : "See the role and apply")}`, undefined, portalUrl + "&unsub=1");
@@ -228,12 +231,12 @@ Deno.serve(async (req: Request) => {
     if (!candidateId) return json({ error: "candidateId is required" }, 400);
     const { data: cand } = await admin.from("candidates").select("id,name,email,recruiter_id,portal_token,status,pitch_consent,pitch_consent_at,email_opt_out").eq("id", candidateId).single();
     if (!cand) return json({ error: "Candidate not found" }, 404);
-    const { data: job } = link ? await admin.from("jobs").select("role_title,client,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,commission_only,description").eq("id", link.job_id).maybeSingle() : { data: null };
+    const { data: job } = link ? await admin.from("jobs").select("role_title,client,lead_role,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,commission_only,description").eq("id", link.job_id).maybeSingle() : { data: null };
     if (!isStaff && cand.recruiter_id !== me.id) {
       const { data: jr } = link ? await admin.from("job_recruiters").select("recruiter_id").eq("job_id", link.job_id).eq("recruiter_id", me.id).maybeSingle() : { data: null };
       if (!jr) return json({ error: "You don't have access to this candidate" }, 403);
     }
-    const roleLabel = job ? `${job.role_title} at ${job.client}` : "your role";
+    const roleLabel = job ? job.role_title + (cl(job) ? " at " + cl(job) : "") : "your role";
     const portalUrl = `${PORTAL_BASE}/?c=${cand.portal_token}`;
     const recruiterName = me.full_name || "your recruiter";
     const firstName = esc(String(cand.name || "there").split(" ")[0]);
@@ -249,7 +252,7 @@ Deno.serve(async (req: Request) => {
       // The candidate's own recruiter (whoever added them may be Rec Ops or an Admin).
       const { data: rec } = cand.recruiter_id ? await admin.from("profiles").select("full_name").eq("id", cand.recruiter_id).maybeSingle() : { data: null };
       const recruiterName = String(rec?.full_name || me.full_name || "").trim() || "one of our recruiters";
-      const roleHtml = job ? `the <b>${esc(job.role_title)}</b> role${job.client ? ` at <b>${esc(job.client)}</b>` : ""}` : "the role";
+      const roleHtml = job ? `the <b>${esc(job.role_title)}</b> role${cl(job) ? ` at <b>${esc(cl(job))}</b>` : ""}` : "the role";
       // Routed (put forward for a role by the team, waiting for them to accept): a "new role for you"
       // email asking them to look and accept, not "your application is under review".
       if (link?.candidate_response === "pending") {
@@ -328,7 +331,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "preview_reject") {
-      const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message: String(body.message || defaultReasonText(reason || "other", kind)), recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
+      const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: cl(job), kind, message: String(body.message || defaultReasonText(reason || "other", kind)), recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
       return json({ ok: true, subject: m.subject, html: m.html, to: cand.email || "", unsubscribed: optedOut });
     }
 
@@ -351,7 +354,7 @@ Deno.serve(async (req: Request) => {
         const { data: msgRow } = link ? await admin.from("candidate_job_messages").insert({ link_id: link.id, sender: "recruiter", author_id: me.id, body: (kind === "client" ? "The client has decided not to move forward with your profile for this role. " : "We've decided not to put you forward for this role. ") + message, recruiter_read_at: now }).select("id").single() : { data: null };
         let result: { ok: boolean; messageId?: string; error?: string } | null = null;
         if (cand.email && !optedOut) {
-          const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: job?.client || "", kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
+          const m = rejectEmail(brand, { name: cand.name, role: job?.role_title || "the role", company: cl(job), kind, message, recruiter: String(me.full_name || "").split(" ")[0], portalUrl, askPitch: !cand.pitch_consent });
           result = await sendTracked(brand, { email: cand.email, name: cand.name }, m.subject, m.html, await recruiterCc(admin, cand));
           emailed = result.ok;
         }

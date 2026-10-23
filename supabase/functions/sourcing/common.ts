@@ -21,12 +21,16 @@ export type Settings = {
   retentionDays: number;               // delete prospects nobody engaged with after this long
 };
 
+// The address in every outreach and candidate email footer: always the UK office, whatever is set
+// in Agency settings.
+export const UK_ADDRESS = "167-169 Great Portland Street, 5th Floor, London W1W 5PF, United Kingdom";
+
 export async function loadSettings(admin: any): Promise<{ s: Settings; agencyName: string }> {
   const { data } = await admin.from("agency_settings").select("agency_name,company,outreach").limit(1).maybeSingle();
   const o = (data?.outreach && typeof data.outreach === "object") ? data.outreach : {};
   const company = (data?.company && typeof data.company === "object") ? data.company : {};
   const num = (v: unknown, d: number, lo: number, hi: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : d; };
-  const addr = String(o.businessAddress || company.address || "").trim();
+  const addr = UK_ADDRESS;
   const agencyName = String(data?.agency_name || company.name || "").trim();
   return {
     agencyName,

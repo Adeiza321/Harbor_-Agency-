@@ -9940,6 +9940,98 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
     </div>
   );
 }
+// Candidate first: each candidate on a pitch has their own status. They're told about the role
+// (no employer) and the pitch waits for them; Rec Ops / Admins can remind, put through, withdraw
+// or remove each one, and send the pitch now with whoever is ready.
+const PITCH_STATE = { notified: ["Told, waiting to acknowledge", "warn"], reminded: ["Reminded, still waiting", "warn"], no_email: ["Couldn't be emailed", "danger"],
+  acknowledged: ["Acknowledged, answering questions", "info"], ready: ["Ready for the pitch", "em"], pitched: ["In the pitch", "em"], withdrawn: ["Withdrew", "neutral"], removed: ["Removed from consideration", "neutral"] };
+const isPitchOffer = (o) => !!PITCH_STATE[o.status];
+function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
+  const [busy, setBusy] = useState("");
+  const [open, setOpen] = useState({});
+  const staff = S.role === "admin" || S.role === "recops";
+  const run = (key, action, body, msg) => { setBusy(key); S.sourcing(action, body).then((r) => { toast((r && r.message) || msg); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const ready = offers.filter((o) => o.status === "ready"), pending = offers.filter((o) => ["notified", "reminded", "no_email", "acknowledged"].includes(o.status));
+  const order = { ready: 0, acknowledged: 1, notified: 2, reminded: 2, no_email: 3, pitched: 4, withdrawn: 5, removed: 6 };
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {l.status === "awaiting" && (
+        <div className="rounded-lg px-3 py-2 text-xs flex flex-wrap items-center gap-2" style={{ background: C.warnBg, color: C.warnText }}>
+          <span className="flex-1 min-w-[200px]">{l.notes || "Telling the candidates first; the pitch goes once they've acknowledged."}</span>
+          {staff && ready.length > 0 && pending.length > 0 && <Btn kind="primary" disabled={!!busy} onClick={() => run("send", "pitch_lead", { leadId: l.id, force: true }, "Pitch written with the ready candidates. Review it under Messages and notes.")} className="!py-1.5 !px-3 text-xs">{busy === "send" ? "Writing…" : "Send now with " + ready.length + " ready"}</Btn>}
+        </div>
+      )}
+      {offers.slice().sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (b.fit || 0) - (a.fit || 0)).map((o) => {
+        const c = S.cands.find((x) => x.id === o.candidate_id);
+        const [label, tone] = o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : PITCH_STATE[o.status];
+        const reqs = Array.isArray(o.requirements) ? o.requirements : [];
+        const qs = (Array.isArray(o.questions) ? o.questions : []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+        const ans = Array.isArray(o.answers) ? o.answers : [];
+        const live = !["withdrawn", "removed", "pitched"].includes(o.status);
+        const first = c ? c.name.split(" ")[0] : "them";
+        const blindOk = c && c.blind && c.blind.checkedAt;
+        return (
+          <div key={o.id} className="rounded-lg px-3 py-2 text-xs" style={{ background: C.canvas, opacity: live || o.status === "pitched" ? 1 : 0.7 }}>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <button className="font-medium truncate text-left text-sm" onClick={() => c && S.openCandidate(c.id)} style={{ color: c ? C.em : C.ink }}>{c ? c.name : "Candidate"}</button>
+              <div className="flex items-center gap-1.5">
+                {o.fit != null && <span className="font-semibold" style={{ color: C.ink }}>{o.fit}%</span>}
+                {o.verdict && <span style={{ color: C.ink2 }}>{o.verdict}</span>}
+                <Pill tone={tone}>{label}</Pill>
+              </div>
+            </div>
+            {o.reason && <div className="mt-1" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For the client: </span>{o.reason}</div>}
+            {o.why_role && <div className="mt-0.5" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For {first}: </span>{o.why_role}</div>}
+            {reqs.length > 0 && (() => {
+              const met = reqs.filter((q) => q.status === "met").length, discuss = reqs.length - met;
+              return (
+                <div className="mt-2 rounded-lg" style={{ background: C.card, border: "1px solid " + C.line }}>
+                  <button type="button" aria-expanded={!!open[o.id]} onClick={() => setOpen({ ...open, [o.id]: !open[o.id] })} className="w-full flex items-center gap-2 px-2.5 py-2 text-left flex-wrap">
+                    <span className="font-semibold" style={{ color: C.ink }}>What they're looking for</span>
+                    <span className="font-semibold" style={{ color: C.em }}>✓ {met} of {reqs.length} match</span>
+                    {discuss > 0 && <span className="font-semibold" style={{ color: C.warnFg }}>{discuss} to discuss</span>}
+                    {o.fit != null && <span style={{ color: C.ink2 }}>· fit {o.fit}%</span>}
+                    {qs.length > 0 && <span style={{ color: C.ink2 }}>· {plural(qs.length, "question")}{ans.length ? ", answered" : o.status === "acknowledged" ? ", waiting for answers" : ""}</span>}
+                    <ChevronDown size={14} color={C.ink2} className="ml-auto shrink-0" style={{ transform: open[o.id] ? "rotate(180deg)" : "none" }} />
+                  </button>
+                  {open[o.id] && (
+                    <div className="px-2.5 pb-2.5">
+                      <div className="grid grid-cols-[minmax(80px,auto)_1fr_1fr_auto] gap-x-3 text-[11px] pb-1" style={{ color: C.ink3 }}><span /><span>They want</span><span>This role</span><span /></div>
+                      {reqs.map((q, i) => (
+                        <div key={i} className="grid grid-cols-[minmax(80px,auto)_1fr_1fr_auto] gap-x-3 py-1.5" style={{ borderTop: "1px solid " + C.line }}>
+                          <span className="font-semibold">{q.item}</span><span style={{ color: C.ink2 }}>{q.theirs || "-"}</span><span>{q.role || "-"}</span>
+                          <span className="font-semibold whitespace-nowrap" style={{ color: q.status === "met" ? C.em : C.warnFg }}>{q.status === "met" ? "✓ Matches" : "To discuss"}</span>
+                        </div>
+                      ))}
+                      {qs.length > 0 && (
+                        <div className="mt-2 pt-2 flex flex-col gap-1.5" style={{ borderTop: "1px solid " + C.line }}>
+                          {qs.map((q, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
+                              {staff && !ans.length && live && <button type="button" disabled={!!busy} onClick={() => run(o.id + "q" + i, "offer_question_remove", { offerId: o.id, index: i }, "Question removed")} className="shrink-0 inline-flex items-center gap-1" style={{ color: C.ink3 }} title="Remove this question: they won't be asked it"><X size={12} />Remove</button>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 items-center justify-end">
+              {o.status === "ready" && <span style={{ color: blindOk ? C.em : C.warnFg }}>{blindOk ? "Blind resume checked" : "Needs a checked blind resume"}</span>}
+              {o.note && <span style={{ color: C.ink3 }}>{o.note}</span>}
+              {staff && ["notified", "reminded"].includes(o.status) && <button disabled={!!busy} onClick={() => run(o.id + "r", "offer_remind", { offerId: o.id }, "Reminder sent")} className="font-medium" style={{ color: C.em }}>{busy === o.id + "r" ? "Sending…" : "Remind"}</button>}
+              {staff && ["notified", "reminded", "no_email", "acknowledged"].includes(o.status) && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for them"}>Put through</button>}
+              {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "w", "offer_withdraw", { offerId: o.id }, "Withdrawn")} style={{ color: C.ink2 }}>Withdraw</button>}
+              {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "x", "offer_remove", { offerId: o.id }, "Removed")} style={{ color: C.dangerFg }}>Remove from consideration</button>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ pitch_subject: l.pitch_subject || "", pitch_body: l.pitch_body || "", linkedin_message: l.linkedin_message || "", notes: l.notes || "" });
@@ -9976,7 +10068,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             {l.contact_name ? <>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name}</span>{l.contact_role ? ", " + l.contact_role : ""}{l.contact_email ? " · " + l.contact_email : ""}</> : "No hiring contact listed on the posting."}
           </div>
           <ApolloNote data={l.data} />
-          {offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
+          {offers.some(isPitchOffer) ? <LeadPitchCandidates l={l} offers={offers.filter(isPitchOffer)} S={S} toast={toast} onChanged={onChanged} /> : offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
               {l.status === "awaiting" && (
                 <div className="rounded-lg px-3 py-2 text-xs" style={{ background: C.warnBg, color: C.warnText }}>
@@ -10288,7 +10380,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext pulls new postings in the countries your Active file candidates live in, for the titles they hold, leaving out remote roles, and keeps the ones where up to 5 of them are a strong fit. The hiring contact gets one email with those candidates' blind resumes behind a "View the candidates" button; when they say they're interested, the contract goes out by itself (Outreach settings).</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. The hiring contact then gets one email with the ready candidates' blind resumes behind a "View the candidates" button; when they say they're interested, the contract goes out by itself (Outreach settings).</div>
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
@@ -13684,6 +13776,129 @@ function RoutedRoleCard({ r, q, token, recName, onDone }) {
   );
 }
 
+// A client-lead pitch, candidate first (?offer=<token> from the email): information, not a request.
+// The role (never the employer), how it meets what they want and their fit score. Acknowledge opens
+// any questions we have (answers go to their recruiter in the chat); Withdraw takes them off the
+// pitch and asks whether they still want other roles. Older offers (the Yes/No ask) fall back to
+// PortalOffer.
+function PortalOfferOrPitch({ token, offer }) {
+  const [d, setD] = useState(undefined);
+  React.useEffect(() => { sbFetch("/rest/v1/rpc/candidate_pitch", { method: "POST", body: { p_token: token, p_offer: offer } }).then((j) => setD(j || null)).catch(() => setD(null)); }, [token, offer]);
+  if (d === undefined) return null;
+  return d ? <PortalPitch token={token} offer={offer} initial={d} /> : <PortalOffer token={token} offer={offer} />;
+}
+function PortalPitch({ token, offer, initial }) {
+  const [d, setD] = useState(initial);
+  const [busy, setBusy] = useState("");
+  const [answers, setAnswers] = useState([]);
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const call = (fn, body) => sbFetch("/rest/v1/rpc/" + fn, { method: "POST", body: { p_token: token, p_offer: offer, ...(body || {}) } });
+  const reload = () => call("candidate_pitch").then((j) => j && setD(j));
+  const run = (key, fn, body) => { setBusy(key); return call(fn, body).then(reload).catch((e) => popError(e)).finally(() => setBusy("")); };
+  // From the email: Acknowledge counts straight away; Withdraw asks them to confirm first.
+  React.useEffect(() => {
+    const r = new URLSearchParams(window.location.search).get("r");
+    if (r === "ack" && ["notified", "reminded", "no_email"].includes(initial.status)) run("ack", "candidate_pitch_ack");
+    if (r === "withdraw" && !["withdrawn", "removed"].includes(initial.status)) setConfirmWithdraw(true);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const role = d.role || {}, facts = d.facts || {};
+  const questions = (d.questions || []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean);
+  const waiting = ["notified", "reminded", "no_email"].includes(d.status);
+  const needsAnswers = d.status === "acknowledged" && questions.length > 0 && !d.answers;
+  const row = (k, v) => v ? <div className="flex gap-3 text-sm"><span className="w-24 shrink-0" style={{ color: C.ink3 }}>{k}</span><span>{v}</span></div> : null;
+  return (
+    <Card>
+      <div className="text-xs font-semibold tracking-widest mb-1" style={{ color: C.em }}>WE'RE PUTTING YOU FORWARD</div>
+      <div className="text-xl" style={{ ...SERIF }}>{role.title}</div>
+      <div className="mt-2 flex flex-col gap-1">
+        {row("Where", [role.location, role.remote ? "Remote" : ""].filter(Boolean).join(" · "))}
+        {row("Work setup", facts.workSetup)}
+        {row("Type", facts.employmentType)}
+        {row("Pay", role.salary)}
+      </div>
+      {facts.summary && <div className="text-sm leading-relaxed mt-3" style={{ color: C.ink }}>{facts.summary}</div>}
+      <div className="text-xs mt-2" style={{ color: C.ink3 }}>The employer's name stays private for now.</div>
+      {d.whyRole && (
+        <div className="mt-4">
+          <div className="text-sm font-semibold mb-1">Why we think it suits you</div>
+          <div className="text-sm leading-relaxed" style={{ color: C.ink }}>{d.whyRole}</div>
+        </div>
+      )}
+      {(d.requirements || []).length > 0 && (
+        <div className="mt-4">
+          <div className="text-sm font-semibold mb-1">How it matches what you're looking for</div>
+          <div className="flex flex-col">
+            {d.requirements.map((q, i) => (
+              <div key={i} className="grid grid-cols-[90px_1fr_auto] sm:grid-cols-[110px_1fr_1fr_auto] gap-x-3 gap-y-0.5 py-2 text-sm" style={{ borderTop: "1px solid " + C.line }}>
+                <span className="font-medium">{q.item}</span>
+                <span style={{ color: C.ink2 }} className="hidden sm:block">{q.theirs || "-"}</span>
+                <span className="sm:hidden" style={{ color: C.ink2 }}>{q.role || "-"}</span>
+                <span className="hidden sm:block">{q.role || "-"}</span>
+                <span className="text-xs font-semibold whitespace-nowrap" style={{ color: q.status === "met" ? C.em : C.warnFg }}>{q.status === "met" ? "✓ Matches" : "To discuss"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {d.fit != null && <div className="text-sm mt-3"><b>Our fit score for you: {d.fit}%</b>{d.verdict ? " (" + d.verdict + ")" : ""}. That's how closely your experience matches what the employer needs.</div>}
+
+      {waiting && !confirmWithdraw && (
+        <div className="mt-4">
+          <div className="text-sm" style={{ color: C.ink2 }}>You don't need to do anything. We'll update you as soon as the employer comes back about your profile. If we have questions we'll ask, and you can reply to our email with yours.</div>
+          <div className="flex gap-2 mt-3 flex-wrap items-center">
+            <Btn kind="primary" disabled={!!busy} onClick={() => run("ack", "candidate_pitch_ack")}>{busy === "ack" ? "Saving…" : "Acknowledge"}</Btn>
+            <button type="button" className="text-sm underline" style={{ color: C.ink2 }} disabled={!!busy} onClick={() => setConfirmWithdraw(true)}>Withdraw my profile</button>
+          </div>
+        </div>
+      )}
+      {confirmWithdraw && !["withdrawn", "removed"].includes(d.status) && (
+        <div className="mt-4 rounded-xl p-3.5" style={{ background: C.canvas }}>
+          <div className="text-sm font-medium">Withdraw your profile from this role?</div>
+          <div className="text-sm mt-1" style={{ color: C.ink2 }}>We won't put you forward for it. Your recruiter will be told.</div>
+          <div className="flex gap-2 mt-3">
+            <Btn kind="primary" disabled={!!busy} onClick={() => run("wd", "candidate_pitch_withdraw").then(() => setConfirmWithdraw(false))}>{busy === "wd" ? "Withdrawing…" : "Yes, withdraw"}</Btn>
+            <Btn disabled={!!busy} onClick={() => setConfirmWithdraw(false)}>Keep me in</Btn>
+          </div>
+        </div>
+      )}
+      {needsAnswers && (
+        <div className="mt-4 flex flex-col gap-3">
+          <div className="text-sm font-medium">Thanks for acknowledging. {questions.length === 1 ? "One quick question" : "A few quick questions"} before we put you forward:</div>
+          {questions.map((q, i) => (
+            <label key={i} className="flex flex-col gap-1">
+              <span className="text-sm">{q}</span>
+              <textarea rows={2} value={answers[i] || ""} onChange={(e) => { const a = answers.slice(); a[i] = e.target.value; setAnswers(a); }}
+                className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+            </label>
+          ))}
+          <div><Btn kind="primary" disabled={!!busy || questions.some((_, i) => !(answers[i] || "").trim())} onClick={() => run("ans", "candidate_pitch_answer", { p_answers: questions.map((_, i) => (answers[i] || "").trim()) })}>{busy === "ans" ? "Sending…" : "Send my answers"}</Btn></div>
+          <div className="text-xs" style={{ color: C.ink3 }}>Your answers go to your recruiter.</div>
+        </div>
+      )}
+      {["ready", "pitched"].includes(d.status) && !needsAnswers && (
+        <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.emTint, color: C.emText }}>Thanks, you're all set. We'll put your profile forward anonymously and let you know as soon as the employer comes back. Any questions, just reply to our email or message us below.</div>
+      )}
+      {d.status === "withdrawn" && d.withdrawnBy === "candidate" && (
+        <div className="mt-4 rounded-xl p-3.5" style={{ background: C.canvas }}>
+          <div className="text-sm">You've withdrawn your profile from this role. Your recruiter has been told.</div>
+          {d.otherRoles == null ? (
+            <>
+              <div className="text-sm font-medium mt-3">Would you still like to be considered for other roles?</div>
+              <div className="flex gap-2 mt-2">
+                <Btn kind="primary" disabled={!!busy} onClick={() => run("yes", "candidate_pitch_other_roles", { p_yes: true })}>Yes</Btn>
+                <Btn disabled={!!busy} onClick={() => run("no", "candidate_pitch_other_roles", { p_yes: false })}>No</Btn>
+              </div>
+            </>
+          ) : <div className="text-sm mt-2" style={{ color: C.ink2 }}>{d.otherRoles ? "Great, we'll keep putting you forward for roles that suit you." : "Understood. We won't put you forward for other roles for now. You can turn this back on from this page any time."}</div>}
+        </div>
+      )}
+      {(d.status === "removed" || (d.status === "withdrawn" && d.withdrawnBy !== "candidate")) && (
+        <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.neutralBg, color: C.ink2 }}>You're no longer being put forward for this role. We'll keep an eye out for roles that suit you.</div>
+      )}
+    </Card>
+  );
+}
+
 // A role we matched them to from outside, asked about before anything goes to the employer
 // (?offer=<token> from the email). The employer isn't named. Yes -> they check and edit what we
 // have on file, then confirm; only then can we pitch them (with a blind resume).
@@ -13798,7 +14013,7 @@ function CandidatePortal({ data, token, onChanged }) {
     <div className="min-h-screen" style={{ background: C.canvas }}>
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1"><BrandLogo height={30} /></div>
-        {token && new URLSearchParams(window.location.search).get("offer") && <PortalOffer token={token} offer={new URLSearchParams(window.location.search).get("offer")} />}
+        {token && new URLSearchParams(window.location.search).get("offer") && <PortalOfferOrPitch token={token} offer={new URLSearchParams(window.location.search).get("offer")} />}
         {token && <EmailChoiceNote token={token} onChanged={onChanged} onPitchYes={() => setPrefsSignal((n) => n + 1)} />}
         {thanks && <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.emTint, color: C.em }}>{thanks === "updated" ? "Saved. Your information is up to date." : thanks === "finished"
           ? "Thank you! You're all set. We'll put your profile forward anonymously for roles that fit what you told us. Your name and contact details stay private, and your recruiter will be in touch when an employer wants to talk."

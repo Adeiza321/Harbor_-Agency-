@@ -180,7 +180,7 @@ async function activity(admin: any, body: any) {
   };
   const quote = (t: string) => t ? `<div style="margin-top:14px;padding:14px 16px;background:#F3EFE7;border-radius:10px;font-size:14px;line-height:1.5;">${esc(t.slice(0, 600))}</div>` : "";
   const loadLink = async (id: string) => {
-    const { data } = await admin.from("candidate_jobs").select("id,stage,candidate_response,reject_kind,reject_reason,reject_feedback,candidates(id,name,recruiter_id,email,email_opt_out),jobs(id,role_title,client)").eq("id", id).maybeSingle();
+    const { data } = await admin.from("candidate_jobs").select("id,stage,candidate_response,reject_kind,reject_reason,reject_feedback,candidates(id,name,recruiter_id,email,email_opt_out),jobs(id,role_title,client,lead_role)").eq("id", id).maybeSingle();
     return data;
   };
   const roleOf = (j: any) => j ? j.role_title + (j.client ? " at " + j.client : "") : "a role";
@@ -189,6 +189,9 @@ async function activity(admin: any, body: any) {
   if (kind === "stage" || kind === "response" || kind === "added") {
     const l = await loadLink(uuid(body.linkId)); if (!l) return { ok: true, skipped: "no link" };
     const c: any = l.candidates, j: any = l.jobs;
+    // A pitch to a client lead: the candidate is put on the lead's role by the system before the
+    // pitch; their recruiter hears about it through the candidate's replies in the chat instead.
+    if (kind === "added" && j?.lead_role) return { ok: true, skipped: "client-lead pitch" };
     const u = await person(c?.recruiter_id); if (!okFor(u)) return { ok: true, skipped: "not for them" };
     const who = `<b>${esc(c.name)}</b>`, role = `<b>${esc(roleOf(j))}</b>`;
     if (kind === "stage") {
