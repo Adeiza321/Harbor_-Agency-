@@ -260,10 +260,12 @@ async function handle(req: Request): Promise<Response> {
       if (body.action === "test_upload_resume" && body.candidateId) {
         const { data: c } = await admin.from("candidates").select("id,name").eq("id", String(body.candidateId)).maybeSingle();
         if (!c || !/^Sani Test/.test(String(c.name || ""))) return json({ error: "Only for the test candidate" }, 403);
-        const bin = (b64: string) => Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+        // The test files, from this project's repository (test-assets/ at the given commit).
+        const sha = String(body.sha || "").replace(/[^0-9a-f]/g, "");
+        const raw = (f: string) => fetch(`https://raw.githubusercontent.com/Adeiza321/Harbor_-Agency-/${sha}/test-assets/${f}`).then((r) => { if (!r.ok) throw new Error("Couldn't fetch " + f); return r.arrayBuffer(); });
         const path = `${c.id}/test-resume.pdf`;
-        const up1 = await admin.storage.from("resumes").upload(path, bin(String(body.pdf || "")), { contentType: "application/pdf", upsert: true });
-        const up2 = await admin.storage.from("blind-resumes").upload(`cand-${c.id}/1.webp`, bin(String(body.blind || "")), { contentType: "image/webp", upsert: true });
+        const up1 = await admin.storage.from("resumes").upload(path, new Uint8Array(await raw("test-resume.pdf")), { contentType: "application/pdf", upsert: true });
+        const up2 = await admin.storage.from("blind-resumes").upload(`cand-${c.id}/1.webp`, new Uint8Array(await raw("test-resume-blind.webp")), { contentType: "image/webp", upsert: true });
         if (up1.error || up2.error) return json({ error: (up1.error || up2.error)!.message }, 500);
         const now = new Date().toISOString();
         await admin.from("candidates").update({ resume_path: path, blind_pages: 1, blind_at: now, blind_checked_at: now }).eq("id", c.id);
