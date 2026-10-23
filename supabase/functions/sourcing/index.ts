@@ -252,14 +252,6 @@ async function handle(req: Request): Promise<Response> {
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
       }
-      // Test run (internal only): a pitch's candidate email (to the candidate on file) and the client
-      // email (to the given address), sent straight away instead of through review and the queue.
-      if (body.action === "test_pitch_emails" && body.leadId) {
-        const out: Record<string, unknown> = {};
-        if (body.offerId) out.candidate = await notifyOffer(admin, String(body.offerId));
-        if (body.to) out.client = await sendLeadTest(admin, String(body.leadId), String(body.to), s, agencyName).catch((e) => ({ error: errMsg(e) }));
-        return json({ ok: true, ...out });
-      }
       // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, pick up stalled ones.
       if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
       // Someone a recruiter found is interested (database trigger prospects_sourced_interest).

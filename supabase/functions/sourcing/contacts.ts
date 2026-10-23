@@ -129,7 +129,9 @@ export async function findCompanyContacts(admin: any, lead: any, hmTitles: strin
     }
   }
   if (!co && !ap) errors.push("Neither ContactOut nor Apollo is connected");
-  return { contacts: contacts.slice(0, MAX_CONTACTS), tried, ...(errors.length && !contacts.length ? { error: errors[0].slice(0, 200) } : {}) };
+  // Lookup problems are kept even when someone was found (shown on the lead), so a source that
+  // stopped working doesn't go unnoticed.
+  return { contacts: contacts.slice(0, MAX_CONTACTS), tried, ...(errors.length ? { error: [...new Set(errors.map((e) => e.slice(0, 160)))].join("; ").slice(0, 300) } : {}) };
 }
 
 // Who still gets the pitch: everyone on the lead who hasn't unsubscribed.
