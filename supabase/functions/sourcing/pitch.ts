@@ -46,7 +46,7 @@ export function lookingFor(c: any): string {
 }
 
 export type Assessed = {
-  n: number; fit: number; verdict: string; reason: string; bullets: string[];
+  n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[];
   notMet: string[]; requirements: { item: string; theirs: string; role: string; status: "met" | "discuss" }[]; questions: string[];
 };
 export type RoleFacts = { summary: string; workSetup: string; employmentType: string; seniority: string };
@@ -57,12 +57,13 @@ export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: R
   const sys = "You are a senior recruiter at an agency deciding which of our candidates to put forward for an employer's job posting. The bar is very high: " +
     "only someone who is a very strong fit and that the employer is unlikely to find better than. Reply with STRICT JSON only: " +
     "{\"role\": {\"summary\": string, \"work_setup\": \"On-site\" | \"Hybrid\" | \"Remote\" | \"\", \"employment_type\": \"Full-time\" | \"Part-time\" | \"Contract\" | \"Temporary\" | \"\", \"seniority\": string}, " +
-    "\"results\": [{\"n\": number, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"must_haves_not_met\": string[], \"reason\": string, \"bullets\": string[], " +
+    "\"results\": [{\"n\": number, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"must_haves_not_met\": string[], \"reason\": string, \"why_role\": string, \"bullets\": string[], " +
     "\"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": string[]}]}. " +
     "role.summary: two short sentences on what the job is, for the candidate. NEVER name the employer, its brands, website or anything that identifies it ('a growing manufacturer', 'a regional bank'). " +
     "fit: a percentage 0-100 for how well their experience fits this posting. verdict: 'Perfect fit' or 'Good fit' only when they're a very strong match on experience, skills, seniority and industry. " +
     "must_haves_not_met: the posting's real requirements (licences, years, specific experience) that their profile clearly does NOT meet; [] when none. Missing information is not 'not met'. " +
-    "reason: one short sentence. bullets: 3 selling points for the hiring manager, each under 15 words, anonymous (no names, no employer names). " +
+    "reason: one short sentence on why they fit the employer. why_role: two short sentences to the candidate ('you') on why this role is a great match for THEM: what it gives them that they're looking for (the work, the step up, the setup, the location, the pay). Warm, specific, honest; never name the employer. " +
+    "bullets: 3 selling points for the hiring manager, each under 15 words, anonymous (no names, no employer names). " +
     "requirements: how THIS ROLE meets what the CANDIDATE is looking for, one item each for: 'Role' (the roles they want or their current title vs this job), 'Level', 'Location' (where they live, or cities they'd move to, vs where the job is), " +
     "'Work setup', 'Employment type', 'Pay' (only when both their expectation and the job's pay are known). theirs: what they want, in a few words. role: what this job offers, in a few words. " +
     "status 'met' when the role clearly gives them what they want; 'discuss' when it doesn't clearly, or isn't stated (these are negotiable, so they're talked through, not ruled out). Leave out an item only when neither side is known. " +
@@ -75,7 +76,7 @@ export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: R
   const results: Assessed[] = (Array.isArray(out?.results) ? out.results : []).map((x: any) => ({
     n: Number(x?.n), fit: Math.max(0, Math.min(100, Math.round(Number(x?.fit) > 0 && Number(x?.fit) <= 10 ? Number(x.fit) * 10 : Number(x?.fit) || 0))),
     verdict: ["Perfect fit", "Good fit", "Possible fit", "Not a fit"].includes(x?.verdict) ? x.verdict : "Possible fit",
-    reason: clip(x?.reason, 300), bullets: (Array.isArray(x?.bullets) ? x.bullets : []).slice(0, 3).map((b: unknown) => clip(b, 140)),
+    reason: clip(x?.reason, 300), whyRole: clip(x?.why_role, 400), bullets: (Array.isArray(x?.bullets) ? x.bullets : []).slice(0, 3).map((b: unknown) => clip(b, 140)),
     notMet: (Array.isArray(x?.must_haves_not_met) ? x.must_haves_not_met : []).map((b: unknown) => clip(b, 120)).filter(Boolean),
     requirements: (Array.isArray(x?.requirements) ? x.requirements : []).slice(0, 6).map((q: any) => ({
       item: clip(q?.item, 30), theirs: clip(q?.theirs, 90), role: clip(q?.role, 90), status: q?.status === "met" ? "met" : "discuss" as "met" | "discuss",
@@ -88,6 +89,7 @@ export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: R
   for (const a of results) {
     a.requirements = a.requirements.map((q) => ({ ...q, theirs: hide(q.theirs), role: hide(q.role) }));
     a.questions = a.questions.map(hide);
+    a.whyRole = hide(a.whyRole);
   }
   return { role, results };
 }
@@ -145,7 +147,7 @@ const links = (portalToken: string, offerToken: string) => ({
   withdraw: `${portalBase()}/?c=${encodeURIComponent(portalToken)}&offer=${encodeURIComponent(offerToken)}&r=withdraw`,
 });
 
-export function noticeEmail(b: Brand, o: { first: string; facts: Facts; requirements: any[]; fit: number | null; verdict: string; questions: number; recruiter: string; ack: string; withdraw: string; reminder?: boolean }) {
+export function noticeEmail(b: Brand, o: { first: string; facts: Facts; whyRole?: string; requirements: any[]; fit: number | null; verdict: string; questions: number; recruiter: string; ack: string; withdraw: string; reminder?: boolean }) {
   const f = o.facts;
   const row = (k: string, v: string) => v ? `<tr><td style="padding:3px 12px 3px 0;color:#56605A;font-size:13px;white-space:nowrap;vertical-align:top;">${esc(k)}</td><td style="padding:3px 0;font-size:14px;">${esc(v)}</td></tr>` : "";
   const reqRows = (o.requirements || []).map((q: any) => `<tr>
@@ -162,6 +164,7 @@ export function noticeEmail(b: Brand, o: { first: string; facts: Facts; requirem
 <table role="presentation" cellpadding="0" cellspacing="0" border="0">${row("Where", f.place)}${row("Work setup", f.setup)}${row("Type", f.type)}${row("Pay", f.pay)}</table>
 ${f.summary ? `<div style="font-size:14px;line-height:1.55;margin-top:8px;color:#14201B;">${esc(f.summary)}</div>` : ""}
 </div>` +
+    (o.whyRole ? `<div style="font-size:15px;font-weight:600;margin:0 0 4px;">Why we think it suits you</div>` + p(esc(o.whyRole)) : "") +
     (reqRows ? `<div style="font-size:15px;font-weight:600;margin:0 0 4px;">How it matches what you're looking for</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin-bottom:12px;font-family:Arial,sans-serif;">
 <tr><td style="font-size:11px;color:#8A8578;padding:0 8px 4px 0;">&nbsp;</td><td style="font-size:11px;color:#8A8578;padding:0 8px 4px;">You</td><td style="font-size:11px;color:#8A8578;padding:0 8px 4px;">This role</td><td></td></tr>
@@ -173,8 +176,9 @@ ${reqRows}</table>` : "") +
     p(`<br>${esc(o.recruiter || "The team")}<br><span style="color:#56605A;font-size:13px;">${esc(b.legal || b.name)}</span>`);
   return emailShell(b, o.reminder ? "Reminder: we're putting you forward for " + f.title : "We're putting you forward for " + f.title, body);
 }
-const noticeText = (facts: Facts, fit: number | null, questions: number) =>
+const noticeText = (facts: Facts, fit: number | null, questions: number, whyRole = "") =>
   `We're putting you forward for ${facts.title}${facts.place ? " (" + facts.place + ")" : ""}. The employer's name stays private for now.` +
+  (whyRole ? " " + whyRole : "") +
   (fit != null ? ` Our fit score for you: ${fit}%.` : "") +
   ` You don't need to do anything: we'll update you when the employer comes back about your profile.` +
   (questions ? ` We have ${questions === 1 ? "a quick question" : questions + " quick questions"} for you, which open when you acknowledge.` : "") +
@@ -197,7 +201,7 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   const nq = Array.isArray(o.questions) ? o.questions.length : 0;
   const { data: rec } = c.recruiter_id ? await admin.from("profiles").select("full_name,email").eq("id", c.recruiter_id).maybeSingle() : { data: null };
   if (linkId) {
-    await admin.from("candidate_job_messages").insert({ link_id: linkId, sender: "recruiter", body: (reminder ? "Reminder: " : "") + noticeText(facts, o.fit, nq), staff_id: c.recruiter_id || null });
+    await admin.from("candidate_job_messages").insert({ link_id: linkId, sender: "recruiter", body: (reminder ? "Reminder: " : "") + noticeText(facts, o.fit, nq, reminder ? "" : o.why_role || ""), staff_id: c.recruiter_id || null });
   }
   const now = new Date().toISOString();
   if (!c.email || c.email_opt_out || !c.portal_token) {
@@ -206,7 +210,7 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   }
   const b = await loadBrand(admin);
   const l = links(c.portal_token, o.token);
-  const html = noticeEmail(b, { first: String(c.name || "").split(" ")[0] || "there", facts, requirements: o.requirements || [], fit: o.fit, verdict: o.verdict || "", questions: nq,
+  const html = noticeEmail(b, { first: String(c.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], fit: o.fit, verdict: o.verdict || "", questions: nq,
     recruiter: String(rec?.full_name || "").split(" ")[0] || "", ack: l.ack, withdraw: l.withdraw, reminder });
   const subject = (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role");
   const sent = await sendBrevo(b, { email: c.email, name: c.name }, subject, html, undefined, { replyTo: rec?.email ? { email: rec.email, name: rec.full_name || undefined } : null });
@@ -223,6 +227,19 @@ export async function stepReminders(admin: any, n = 10) {
   let sent = 0;
   for (const o of data || []) { const r = await notifyOffer(admin, o.id, true).catch(() => null); if (r?.sent) sent++; }
   return { reminded: sent };
+}
+
+// Rec Ops / Admin: drop a question we don't need. With none left, someone who has acknowledged is
+// ready for the pitch.
+export async function removeQuestion(admin: any, me: { id: string; name: string }, offerId: string, index: number) {
+  const { data: o } = await admin.from("lead_offers").select("id,status,questions,answers").eq("id", offerId).maybeSingle();
+  if (!o) throw new Error("Not found");
+  if (Array.isArray(o.answers) && o.answers.length) throw new Error("They've already answered");
+  const qs = (Array.isArray(o.questions) ? o.questions : []).filter((_: unknown, i: number) => i !== index);
+  const upd: Record<string, unknown> = { questions: qs };
+  if (!qs.length && o.status === "acknowledged") Object.assign(upd, { status: "ready", ready_at: new Date().toISOString() });
+  await admin.from("lead_offers").update(upd).eq("id", o.id);
+  return { ok: true, message: qs.length ? "Question removed" : o.status === "acknowledged" ? "Question removed. They're ready for the pitch" : "Question removed" };
 }
 
 // Rec Ops / Admin actions on one candidate of a pitch.

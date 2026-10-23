@@ -197,7 +197,7 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   if (target && !kept.some((x) => x.c.id === target.id)) return ignore("Not a strong enough fit for " + firstName(target) + " (the role it was found for)");
   const matches = kept.map(({ a, c }) => ({
     candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: scrub(a.reason, [c]).slice(0, 300),
-    bullets: a.bullets.map((b) => scrub(b, [c]).slice(0, 140)), requirements: a.requirements, questions: a.questions,
+    bullets: a.bullets.map((b) => scrub(b, [c]).slice(0, 140)), requirements: a.requirements, questions: a.questions, why_role: a.whyRole,
   }));
   await admin.from("leads").update({ status: "awaiting", matches, data: { ...(lead.data || {}), role }, notes: "Telling the candidates first; the pitch goes once they've acknowledged." }).eq("id", lead.id);
   // Each candidate's own place on this pitch, then their information email (candidate first).
@@ -205,7 +205,7 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   for (const m of matches) {
     const { data: o, error } = await admin.from("lead_offers").upsert({
       lead_id: lead.id, candidate_id: m.candidate_id, fit: m.fit, verdict: m.verdict, reason: m.reason, bullets: m.bullets,
-      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), status: "notified",
+      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), why_role: m.why_role || null, status: "notified",
     }, { onConflict: "lead_id,candidate_id" }).select("id").single();
     if (error || !o) { console.error("lead offer", error?.message); continue; }
     try { const r = await notifyOffer(admin, o.id); if (r.sent) told++; } catch (e) { console.error("notify offer", String((e as Error)?.message || e)); }

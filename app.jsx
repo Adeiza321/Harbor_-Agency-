@@ -9980,7 +9980,8 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
                 <Pill tone={tone}>{label}</Pill>
               </div>
             </div>
-            {o.reason && <div className="mt-1" style={{ color: C.ink2 }}>{o.reason}</div>}
+            {o.reason && <div className="mt-1" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For the client: </span>{o.reason}</div>}
+            {o.why_role && <div className="mt-0.5" style={{ color: C.ink2 }}><span className="font-medium" style={{ color: C.ink }}>For {first}: </span>{o.why_role}</div>}
             {reqs.length > 0 && (() => {
               const met = reqs.filter((q) => q.status === "met").length, discuss = reqs.length - met;
               return (
@@ -10004,7 +10005,12 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
                       ))}
                       {qs.length > 0 && (
                         <div className="mt-2 pt-2 flex flex-col gap-1.5" style={{ borderTop: "1px solid " + C.line }}>
-                          {qs.map((q, i) => <div key={i}><span className="font-medium">Q: </span>{q}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>)}
+                          {qs.map((q, i) => (
+                            <div key={i} className="flex items-start gap-2">
+                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
+                              {staff && !ans.length && live && <button type="button" disabled={!!busy} onClick={() => run(o.id + "q" + i, "offer_question_remove", { offerId: o.id, index: i }, "Question removed")} className="shrink-0 inline-flex items-center gap-1" style={{ color: C.ink3 }} title="Remove this question: they won't be asked it"><X size={12} />Remove</button>}
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -13812,6 +13818,12 @@ function PortalPitch({ token, offer, initial }) {
       </div>
       {facts.summary && <div className="text-sm leading-relaxed mt-3" style={{ color: C.ink }}>{facts.summary}</div>}
       <div className="text-xs mt-2" style={{ color: C.ink3 }}>The employer's name stays private for now.</div>
+      {d.whyRole && (
+        <div className="mt-4">
+          <div className="text-sm font-semibold mb-1">Why we think it suits you</div>
+          <div className="text-sm leading-relaxed" style={{ color: C.ink }}>{d.whyRole}</div>
+        </div>
+      )}
       {(d.requirements || []).length > 0 && (
         <div className="mt-4">
           <div className="text-sm font-semibold mb-1">How it matches what you're looking for</div>
