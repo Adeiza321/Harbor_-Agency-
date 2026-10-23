@@ -9967,14 +9967,16 @@ const isPitchOffer = (o) => !!PITCH_STATE[o.status];
 function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged }) {
   const [p, setP] = useState(null);
   const [why, setWhy] = useState(offer.why_role || "");
-  const [qs, setQs] = useState((Array.isArray(offer.questions) ? offer.questions : []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean));
+  // Questions as { q, yesno, confirm }: confirm ones check a job-description requirement (always yes / no).
+  const norm = (list) => (Array.isArray(list) ? list : []).map((q) => (typeof q === "string" ? { q } : { q: q.q || "", yesno: !!q.yesno, confirm: q.confirm || "" })).filter((q) => q.q);
+  const [qs, setQs] = useState(norm(offer.questions));
   const [busy, setBusy] = useState("");
   const answered = Array.isArray(offer.answers) && offer.answers.length > 0;
   const load = () => S.sourcing("offer_preview", { offerId: offer.id, reminder: !!reminder }).then(setP).catch((e) => S.error(e.message));
   React.useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const dirty = why !== (offer.why_role || "") || JSON.stringify(qs) !== JSON.stringify((offer.questions || []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean));
-  const save = () => { setBusy("save"); return S.sourcing("offer_update", { offerId: offer.id, whyRole: why, ...(answered ? {} : { questions: qs.filter((q) => q.trim()) }) })
-    .then(() => { offer.why_role = why; if (!answered) offer.questions = qs.filter((q) => q.trim()).map((q) => ({ q })); return load(); }).finally(() => setBusy("")); };
+  const dirty = why !== (offer.why_role || "") || JSON.stringify(qs) !== JSON.stringify(norm(offer.questions));
+  const save = () => { setBusy("save"); const kept = qs.filter((q) => q.q.trim()); return S.sourcing("offer_update", { offerId: offer.id, whyRole: why, ...(answered ? {} : { questions: kept.map((q) => ({ q: q.q, yesno: q.yesno })) }) })
+    .then(() => { offer.why_role = why; if (!answered) offer.questions = kept.map((q) => (q.confirm ? { q: q.q, confirm: q.confirm } : q.yesno ? { q: q.q, yesno: true } : { q: q.q })); setQs(norm(offer.questions)); return load(); }).finally(() => setBusy("")); };
   const send = async () => {
     setBusy("send");
     try {
@@ -9999,11 +10001,13 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
                 {qs.length === 0 && <span className="text-xs" style={{ color: C.ink3 }}>No questions.</span>}
                 {qs.map((q, i) => (
                   <div key={i} className="flex gap-2 items-start">
-                    <input value={q} disabled={answered} onChange={(e) => setQs(qs.map((x, k) => (k === i ? e.target.value : x)))} className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+                    <input value={q.q} disabled={answered} onChange={(e) => setQs(qs.map((x, k) => (k === i ? { ...x, q: e.target.value } : x)))} className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+                    {q.confirm ? <span className="text-xs mt-2 whitespace-nowrap font-medium" style={{ color: C.warnFg }} title={"Confirms: " + q.confirm}>Yes / no · requirement</span>
+                      : <label className="text-xs mt-2 flex items-center gap-1 whitespace-nowrap" style={{ color: C.ink2 }}><input type="checkbox" disabled={answered} checked={!!q.yesno} onChange={(e) => setQs(qs.map((x, k) => (k === i ? { ...x, yesno: e.target.checked } : x)))} />Yes / no</label>}
                     {!answered && <button type="button" onClick={() => setQs(qs.filter((_, k) => k !== i))} className="text-xs inline-flex items-center gap-1 mt-2" style={{ color: C.ink3 }}><X size={12} />Remove</button>}
                   </div>
                 ))}
-                {!answered && qs.length < 5 && <button type="button" onClick={() => setQs([...qs, ""])} className="text-xs self-start font-medium" style={{ color: C.em }}>+ Add a question</button>}
+                {!answered && qs.length < 6 && <button type="button" onClick={() => setQs([...qs, { q: "", yesno: false }])} className="text-xs self-start font-medium" style={{ color: C.em }}>+ Add a question the AI missed</button>}
               </div>
               {dirty && <div><Btn disabled={!!busy} onClick={save} className="!py-1.5 !px-3 text-xs">{busy === "save" ? "Updating…" : "Update preview"}</Btn></div>}
             </>
@@ -10113,6 +10117,23 @@ function JdCheckList({ checks, open, onToggle }) {
   );
 }
 
+// A question the AI missed, added by Rec Ops / an Admin before the candidate answers. Yes / no
+// questions show Yes and No buttons on the candidate's page.
+function AddPitchQuestion({ offerId, S, toast, onChanged }) {
+  const [q, setQ] = useState("");
+  const [yesno, setYesno] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const add = () => { setBusy(true); S.sourcing("offer_question_add", { offerId, q, yesno }).then((r) => { toast((r && r.message) || "Question added"); setQ(""); setYesno(false); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  return (
+    <div className="mt-2 pt-2 flex flex-wrap items-center gap-2" style={{ borderTop: "1px solid " + C.line }}>
+      <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && q.trim().length > 4 && !busy) add(); }} placeholder="Add a question the AI missed…" maxLength={240}
+        className="flex-1 min-w-[200px] rounded-lg border px-2.5 py-1.5 text-xs outline-none" style={{ borderColor: C.line, background: C.soft }} />
+      <label className="flex items-center gap-1.5 text-xs" style={{ color: C.ink2 }}><input type="checkbox" checked={yesno} onChange={(e) => setYesno(e.target.checked)} />Yes / no</label>
+      <Btn kind="primary" disabled={busy || q.trim().length < 5} onClick={add} className="!py-1.5 !px-3 text-xs">{busy ? "Adding…" : "Add question"}</Btn>
+    </div>
+  );
+}
+
 function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState({});
@@ -10173,11 +10194,14 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
                           <span className="font-semibold whitespace-nowrap" style={{ color: q.status === "met" ? C.em : C.warnFg }}>{q.status === "met" ? "✓ Matches" : "To discuss"}</span>
                         </div>
                       ))}
+                      {staff && !ans.length && ["draft", "notified", "reminded", "no_email", "acknowledged"].includes(o.status) && qs.length < 6 && (
+                        <AddPitchQuestion offerId={o.id} S={S} toast={toast} onChanged={onChanged} />
+                      )}
                       {qs.length > 0 && (
                         <div className="mt-2 pt-2 flex flex-col gap-1.5" style={{ borderTop: "1px solid " + C.line }}>
                           {qs.map((q, i) => (
                             <div key={i} className="flex items-start gap-2">
-                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}{rawQs[i] && rawQs[i].confirm && <span className="ml-1 font-semibold" style={{ color: C.warnFg }}>(confirms a requirement)</span>}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
+                              <div className="flex-1 min-w-0"><span className="font-medium">Q: </span>{q}{rawQs[i] && rawQs[i].confirm && <span className="ml-1 font-semibold" style={{ color: C.warnFg }}>(confirms a requirement)</span>}{rawQs[i] && rawQs[i].yesno && <span className="ml-1" style={{ color: C.ink3 }}>(yes / no)</span>}<div style={{ color: ans[i] ? C.ink2 : C.ink3 }}><span className="font-medium">A: </span>{ans[i] || "not answered yet"}</div></div>
                               {staff && !ans.length && live && <button type="button" disabled={!!busy} onClick={() => run(o.id + "q" + i, "offer_question_remove", { offerId: o.id, index: i }, "Question removed")} className="shrink-0 inline-flex items-center gap-1" style={{ color: C.ink3 }} title="Remove this question: they won't be asked it"><X size={12} />Remove</button>}
                             </div>
                           ))}
@@ -11665,7 +11689,15 @@ function ClientPitchPage({ token }) {
                 {(c.musts || []).length > 0 && (
                   <div className="mt-3">
                     <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>MUST-HAVES {signed && c.name ? c.name.split(" ")[0].toUpperCase() : "THEY"} MEET{signed && c.name ? "S" : ""}</div>
-                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span>{m.bonus && <span className="text-xs font-semibold mr-1" style={{ color: C.ink3 }}>Nice to have:</span>}<b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}</ul>
+                    {c.reqTotal > 0 && <div className="text-sm font-medium mb-1.5">Meets {c.reqMet} of {c.reqTotal} requirements in your job description{c.fit != null ? <span className="font-normal" style={{ color: C.ink2 }}> · fit {c.fit}%</span> : null}</div>}
+                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span>{m.bonus && <span className="text-xs font-semibold mr-1" style={{ color: C.ink3 }}>Nice to have:</span>}<b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}
+                      {(c.toConfirm || []).map((m, k) => <li key={"t" + k} className="flex gap-2"><span className="w-[15px] text-center font-bold shrink-0" style={{ color: C.warnFg }}>?</span><span><b className="font-medium">{m}</b><span style={{ color: C.ink2 }}> · still to confirm</span></span></li>)}</ul>
+                  </div>
+                )}
+                {(c.wants || []).length > 0 && (
+                  <div className="mt-3 text-sm">
+                    <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>WHAT {signed && c.name ? c.name.split(" ")[0].toUpperCase() : "THEY"} {signed && c.name ? "IS" : "ARE"} LOOKING FOR</div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">{c.wants.map((w, k) => <span key={k}>{w.item} <span className="font-semibold" style={{ color: w.ok ? C.em : C.warnFg }}>{w.ok ? "✓" : "to discuss"}</span></span>)}</div>
                   </div>
                 )}
                 {open === i && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
@@ -14292,6 +14324,31 @@ function PortalOfferOrPitch({ token, offer, onKind, onDone }) {
   );
   return <PortalOffer token={token} offer={offer} />;
 }
+// The job-description check on the candidate's own page: what the employer asks for and how they
+// match it (from their CV). "you": written to the candidate.
+const jdCounts = (jd) => { const l = Array.isArray(jd) ? jd : []; const req = l.filter((x) => x && x.required !== false && !x.info);
+  return { total: req.length, met: req.filter((x) => x.status === "met" || x.status === "confirmed").length, ask: req.filter((x) => x.status === "not_shown").length }; };
+function PitchJdList({ jd, you }) {
+  const l = Array.isArray(jd) ? jd : [];
+  const req = l.filter((x) => x && x.required !== false && !x.info);
+  if (!req.length) return null;
+  const extra = l.filter((x) => x && (x.required === false || x.info) && x.status === "met");
+  const row = (mark, color, item, note, k) => (
+    <div key={k} className="flex gap-2 py-1.5 text-sm" style={{ borderTop: "1px solid " + C.line }}>
+      <span className="font-bold w-4 shrink-0" style={{ color }}>{mark}</span>
+      <span>{item}{note && <span style={{ color: C.ink2 }}> · {note}</span>}</span>
+    </div>
+  );
+  return (
+    <div className="mt-4">
+      <div className="text-sm font-semibold mb-1">{you ? "What the employer asks for, and how you match" : "Their job description"}</div>
+      {req.filter((x) => x.status === "met" || x.status === "confirmed").map((x, i) => row("✓", C.em, x.item, x.status === "confirmed" ? (you ? "you confirmed this" : "confirmed") : x.evidence, "m" + i))}
+      {req.filter((x) => x.status === "not_shown").map((x, i) => row("?", C.warnFg, x.item, you ? "not on your CV, we'll ask you to confirm" : "still to confirm", "a" + i))}
+      {extra.map((x, i) => row("+", C.em, x.info ? x.item : "Nice to have: " + x.item, x.evidence, "b" + i))}
+    </div>
+  );
+}
+
 function PortalPitch({ token, offer, initial, onDone }) {
   const [d, setD] = useState(initial);
   const [busy, setBusy] = useState("");
@@ -14305,7 +14362,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
   const finish = (msg) => onDone && onDone(msg);
   const ack = () => { setBusy("ack"); call("candidate_pitch_ack").then((r) => (r && r.needsAnswers ? reload() : finish("ack"))).catch((e) => popError(e)).finally(() => setBusy("")); };
   // A yes/no question confirms a requirement their CV doesn't show: "Yes" / "No", plus any detail.
-  const answerText = (i) => { const q = rawQuestions()[i]; const t = (answers[i] || "").trim(); return q && q.confirm ? (yn[i] ? yn[i] + (t ? " - " + t : "") : "") : t; };
+  const answerText = (i) => { const q = rawQuestions()[i]; const t = (answers[i] || "").trim(); return q && (q.confirm || q.yesno) ? (yn[i] ? yn[i] + (t ? " - " + t : "") : "") : t; };
   const answer = () => { setBusy("ans"); call("candidate_pitch_answer", { p_answers: questionsList().map((_, i) => answerText(i)) }).then(() => finish("answers")).catch((e) => popError(e)).finally(() => setBusy("")); };
   // From the email: Acknowledge counts straight away; Withdraw asks them to confirm first.
   React.useEffect(() => {
@@ -14338,6 +14395,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
           <div className="text-sm leading-relaxed" style={{ color: C.ink }}>{d.whyRole}</div>
         </div>
       )}
+      <PitchJdList jd={d.jdCheck} you />
       {(d.requirements || []).length > 0 && (
         <div className="mt-4">
           <div className="text-sm font-semibold mb-1">How it matches what you're looking for</div>
@@ -14354,7 +14412,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
           </div>
         </div>
       )}
-      {d.fit != null && <div className="text-sm mt-3"><b>Our fit score for you: {d.fit}%</b>{d.verdict ? " (" + d.verdict + ")" : ""}. That's how closely your experience matches what the employer needs.</div>}
+      {d.fit != null && <div className="text-sm mt-3"><b>Our fit score for you: {d.fit}%</b>{d.verdict ? " (" + d.verdict + ")" : ""}. {(() => { const js = jdCounts(d.jdCheck); return js.total ? "You meet " + js.met + " of the " + js.total + " requirements in the employer's job description" + (js.ask ? "; we'll ask you to confirm the other " + (js.ask === 1 ? "one" : js.ask) : "") + "." : "That's how closely your experience matches what the employer needs."; })()}</div>}
 
       {waiting && !confirmWithdraw && (
         <div className="mt-4">
@@ -14378,7 +14436,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
       {needsAnswers && (
         <div className="mt-4 flex flex-col gap-3">
           <div className="text-sm font-medium">Thanks for acknowledging. {questions.length === 1 ? "One quick question" : "A few quick questions"} before we put you forward:</div>
-          {questions.map((q, i) => { const confirm = rawQuestions()[i] && rawQuestions()[i].confirm; const setA = (v) => { const a = answers.slice(); a[i] = v; setAnswers(a); }; return confirm ? (
+          {questions.map((q, i) => { const confirm = rawQuestions()[i] && (rawQuestions()[i].confirm || rawQuestions()[i].yesno); const setA = (v) => { const a = answers.slice(); a[i] = v; setAnswers(a); }; return confirm ? (
             <div key={i} className="flex flex-col gap-1.5">
               <span className="text-sm">{q}</span>
               <div className="flex gap-2">

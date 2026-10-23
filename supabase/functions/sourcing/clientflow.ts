@@ -17,6 +17,7 @@
 //   make the arrangement permanent (we source every new role free, paid only on hire); permanent
 //   clients get a monthly check-in for new roles.
 
+import { pitchFacts } from "./queue.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
 import { UK_ADDRESS } from "./common.ts";
 
@@ -100,7 +101,7 @@ export async function shortlistFor(admin: any, l: any) {
       pages = (signed || []).map((x: any) => x.signedUrl).filter(Boolean);
     }
     const musts = Array.isArray(m.musts) && m.musts.length ? m.musts : (m.bullets || []).map((b: string) => ({ item: b, evidence: "" }));
-    out.push({ n: out.length + 1, verdict: m.verdict || "", fit: m.fit || null, musts, bullets: Array.isArray(m.bullets) ? m.bullets.slice(0, 3) : [], pages,
+    out.push({ n: out.length + 1, verdict: m.verdict || "", fit: m.fit || null, musts, ...pitchFacts(m), bullets: Array.isArray(m.bullets) ? m.bullets.slice(0, 3) : [], pages,
       ...(ag && c ? { name: c.name, email: c.email || "", phone: c.phone || "", linkedin: c.linkedin_url || "", title: c.current_title || "", location: c.location || "", hasResume: !!(c.resume_path || c.cv_path) } : {}) });
   }
   return { candidates: out, agreement: ag };

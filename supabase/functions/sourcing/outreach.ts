@@ -218,14 +218,18 @@ export function footerHtml(b: Brand, f: { sender: string; agency: string; addres
 // The pitch to a hiring manager, in the same design. Its "Interested? Click here: <link>" line
 // becomes the button; the footer carries the sender details, notice and unsubscribe links.
 // With viewUrl (client leads): "View the N candidates" opens their blind resumes; "We're interested" sits under it.
-export function clientEmail(b: Brand, o: { cands?: { n: number; verdict: string; musts: string[]; url: string }[]; body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string; viewUrl?: string; viewCount?: number }) {
+type PitchCand = { n: number; verdict: string; fit?: number | null; musts: string[]; url: string; reqTotal?: number; reqMet?: number; toConfirm?: string[]; wants?: { item: string; ok: boolean }[] };
+export function clientEmail(b: Brand, o: { cands?: PitchCand[]; body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string; viewUrl?: string; viewCount?: number }) {
   const { paragraphs, signoff } = introOf(String(o.body || ""));
   const lines = paragraphs.filter((p) => !/click here|\{\{INTERESTED_LINK\}\}/i.test(p));
   const n = o.viewCount || 0;
   // Candidate first: each candidate with the must-haves they meet and their own blind resume.
-  const candHtml = (c: { n: number; verdict: string; musts: string[]; url: string }) => `<div style="border:1px solid #E6E1D6;border-radius:12px;padding:14px 16px;margin:12px 0;">
+  const small = (t: string) => `<div style="font-family:Arial,sans-serif;font-size:13px;line-height:1.5;color:#56605A;margin-top:6px;">${t}</div>`;
+  const candHtml = (c: PitchCand) => `<div style="border:1px solid #E6E1D6;border-radius:12px;padding:14px 16px;margin:12px 0;">
 <div style="font-size:16px;font-weight:600;">Candidate ${c.n}${c.verdict ? ` <span style="font-size:12px;font-weight:600;color:${b.color};background:#E8F1EC;border-radius:999px;padding:2px 8px;font-family:Arial,sans-serif;">${esc(c.verdict)}</span>` : ""}</div>
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;">${c.musts.map((m) => `<tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:${b.color};font-weight:700;">&#10003;</td><td style="padding:2px 0;font-size:14px;line-height:1.5;">${esc(m)}</td></tr>`).join("")}</table>
+${c.reqTotal ? small(`<b style="color:#14201B;">Meets ${c.reqMet} of ${c.reqTotal} requirements in your job description</b>${c.fit != null ? ` · fit ${c.fit}%` : ""}`) : ""}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;">${c.musts.map((m) => `<tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:${b.color};font-weight:700;">&#10003;</td><td style="padding:2px 0;font-size:14px;line-height:1.5;">${esc(m)}</td></tr>`).join("")}${(c.toConfirm || []).map((m) => `<tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:#9A6B00;font-weight:700;">?</td><td style="padding:2px 0;font-size:14px;line-height:1.5;">${esc(m)}<span style="color:#56605A;"> · still to confirm</span></td></tr>`).join("")}</table>
+${c.wants && c.wants.length ? small(`What they're looking for: ${c.wants.map((w) => `${esc(w.item)} <span style="color:${w.ok ? b.color : "#9A6B00"};font-weight:600;">${w.ok ? "&#10003;" : "to discuss"}</span>`).join(" &nbsp;·&nbsp; ")}`) : ""}
 ${c.url ? `<a href="${esc(c.url)}" style="display:inline-block;margin-top:10px;padding:9px 16px;background:${b.color};color:#ffffff;text-decoration:none;border-radius:9px;font-family:Arial,sans-serif;font-size:13px;font-weight:600;">View the anonymised resume</a>` : ""}
 </div>`;
   if (o.cands && o.cands.length) {

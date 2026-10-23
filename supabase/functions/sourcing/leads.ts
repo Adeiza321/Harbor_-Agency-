@@ -233,7 +233,7 @@ export async function processLead(admin: any, lead: any, s: Settings) {
 // whose blind resume is checked goes in. It waits while anyone is still to respond, unless Rec Ops
 // / an Admin sends it now with the ready ones (force). Everyone off it: the lead is let go.
 export async function pitchState(admin: any, lead: any) {
-  const { data: offers } = await admin.from("lead_offers").select("id,candidate_id,status,fit,verdict,reason,bullets,client_musts").eq("lead_id", lead.id);
+  const { data: offers } = await admin.from("lead_offers").select("id,candidate_id,status,fit,verdict,reason,bullets,client_musts,jd_check,requirements").eq("lead_id", lead.id);
   const fresh = (offers || []).filter((o: any) => [...PENDING, "ready", "pitched", ...OUT].includes(o.status));
   return { offers: fresh, pending: fresh.filter((o: any) => PENDING.includes(o.status)), ready: fresh.filter((o: any) => o.status === "ready"),
     pitched: fresh.filter((o: any) => o.status === "pitched"), out: fresh.filter((o: any) => OUT.includes(o.status)) };
@@ -259,7 +259,8 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
     }
     const readyIds = new Set([...st.ready, ...st.pitched].map((o: any) => o.candidate_id));
     // What each meets as of now: requirements they've since confirmed count (lead_offers).
-    all = all.map((m: any) => { const o = st.offers.find((x: any) => x.candidate_id === m.candidate_id); return o ? { ...m, fit: o.fit ?? m.fit, verdict: o.verdict || m.verdict, musts: Array.isArray(o.client_musts) && o.client_musts.length ? o.client_musts : m.musts } : m; });
+    all = all.map((m: any) => { const o = st.offers.find((x: any) => x.candidate_id === m.candidate_id); return o ? { ...m, fit: o.fit ?? m.fit, verdict: o.verdict || m.verdict, musts: Array.isArray(o.client_musts) && o.client_musts.length ? o.client_musts : m.musts,
+      jd: Array.isArray(o.jd_check) && o.jd_check.length ? o.jd_check : m.jd, requirements: Array.isArray(o.requirements) ? o.requirements : m.requirements } : m; });
     all = all.filter((m: any) => readyIds.has(m.candidate_id));
     if (!all.length) return { ok: true, pitched: false, waitingForCandidates: st.pending.length };
   }

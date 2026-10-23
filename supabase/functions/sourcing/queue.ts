@@ -10,6 +10,7 @@ import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceShor
 import { isTemplateBody, templateParts } from "./template.ts";
 import { esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
 import { greet, liveContacts } from "./contacts.ts";
+import { jdSummary } from "./pitch.ts";
 
 // Everyone a client pitch goes to, each with their own email: the lead's contacts, or (older leads)
 // its single contact. Each has their own links (the lead's token ~ theirs).
@@ -43,8 +44,16 @@ export function pitchCands(l: any, viewUrl: string) {
   return ids.map((id, i) => {
     const m = ms.find((x) => x.candidate_id === id) || {};
     const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => (x.bonus ? "Nice to have: " : "") + x.item + (x.evidence ? ": " + x.evidence : "")) : (m.bullets || [])).slice(0, 8);
-    return { n: i + 1, verdict: m.verdict || "", musts, url: viewUrl ? viewUrl + "&c=" + (i + 1) : "" };
+    return { n: i + 1, verdict: m.verdict || "", fit: m.fit ?? null, musts, url: viewUrl ? viewUrl + "&c=" + (i + 1) : "", ...pitchFacts(m) };
   });
+}
+// Why the score is what it is, for the client: how many of their job description's requirements the
+// candidate meets (and any still to confirm), and how the role fits what the candidate wants
+// (matches / to discuss, never the candidate's own figures).
+export function pitchFacts(m: any) {
+  const js = jdSummary(m?.jd);
+  const wants: { item: string; ok: boolean }[] = (Array.isArray(m?.requirements) ? m.requirements : []).filter((q: any) => q?.item).map((q: any) => ({ item: String(q.item), ok: q.status === "met" }));
+  return { reqTotal: js.total, reqMet: js.met.length, toConfirm: js.toConfirm.map((x: any) => String(x.item)), wants };
 }
 
 export function leadHtml(l: any, token: string, region: Region, s: Settings, agencyName: string, b: Brand) {
@@ -61,7 +70,12 @@ export function leadText(l: any) {
   const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
   if (!l.client_token || !n) return String(l.pitch_body || "");
   const viewUrl = `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}`;
-  return String(l.pitch_body || "") + "\n\n" + pitchCands(l, viewUrl).map((c) => `Candidate ${c.n}${c.verdict ? " (" + c.verdict + ")" : ""}\n${c.musts.map((x: string) => "- " + x).join("\n")}\nView the anonymised resume: ${c.url}`).join("\n\n") +
+  return String(l.pitch_body || "") + "\n\n" + pitchCands(l, viewUrl).map((c) => `Candidate ${c.n}${c.verdict ? " (" + c.verdict + ")" : ""}` +
+    (c.reqTotal ? `\nMeets ${c.reqMet} of ${c.reqTotal} requirements in your job description${c.fit != null ? " (fit " + c.fit + "%)" : ""}` : "") +
+    `\n${c.musts.map((x: string) => "- " + x).join("\n")}` +
+    (c.toConfirm.length ? `\nStill to confirm: ${c.toConfirm.join("; ")}` : "") +
+    (c.wants.length ? `\nWhat they're looking for: ${c.wants.map((w) => w.item + (w.ok ? " matches" : " to discuss")).join(", ")}` : "") +
+    `\nView the anonymised resume: ${c.url}`).join("\n\n") +
     "\n\nWe don't charge to arrange interviews. We only bill a fee when you hire our candidate.";
 }
 

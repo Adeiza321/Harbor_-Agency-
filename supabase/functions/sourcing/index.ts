@@ -9,7 +9,7 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
-import { notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
+import { addQuestion, notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
 import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
@@ -586,9 +586,10 @@ async function handle(req: Request): Promise<Response> {
     }
     // Candidate first: one candidate on a pitch. push = ready without waiting; withdraw / remove =
     // off this pitch; remind = the reminder email now.
-    if (["offer_send", "offer_push", "offer_withdraw", "offer_remove", "offer_remind", "offer_question_remove", "offer_preview", "offer_update"].includes(action) && body.offerId) {
+    if (["offer_send", "offer_push", "offer_withdraw", "offer_remove", "offer_remind", "offer_question_remove", "offer_question_add", "offer_preview", "offer_update"].includes(action) && body.offerId) {
       if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
       if (action === "offer_preview") return json(await previewOffer(admin, String(body.offerId), body.reminder === true));
+      if (action === "offer_question_add") return json(await addQuestion(admin, String(body.offerId), body.q, body.yesno === true));
       if (action === "offer_update") return json(await updateOffer(admin, String(body.offerId), { whyRole: body.whyRole, questions: body.questions }));
       const { data: pf } = await admin.from("profiles").select("full_name").eq("id", me.id).maybeSingle();
       if (action === "offer_question_remove") return json(await removeQuestion(admin, { id: me.id, name: String(pf?.full_name || "") }, String(body.offerId), Number(body.index)));
