@@ -250,8 +250,31 @@ const links = (portalToken: string, offerToken: string) => ({
   withdraw: `${portalBase()}/?c=${encodeURIComponent(portalToken)}&offer=${encodeURIComponent(offerToken)}&r=withdraw`,
 });
 
-export function noticeEmail(b: Brand, o: { first: string; facts: Facts; whyRole?: string; requirements: any[]; fit: number | null; verdict: string; questions: number; recruiter: string; ack: string; withdraw: string; reminder?: boolean }) {
+// The job-description check in short, for emails and pages: required items met (or confirmed),
+// still to confirm, not met, nice-to-haves met, and the industry note.
+export function jdSummary(jd: unknown) {
+  const list: any[] = Array.isArray(jd) ? jd : [];
+  const req = list.filter((x) => x && x.required !== false && !x.info);
+  const ok = req.filter((x) => x.status === "met" || x.status === "confirmed");
+  return {
+    total: req.length, met: ok, toConfirm: req.filter((x) => x.status === "not_shown"), notMet: req.filter((x) => x.status === "not_met"),
+    bonus: list.filter((x) => x && x.required === false && !x.info && x.status === "met"),
+    industry: list.find((x) => x && x.info) || null,
+  };
+}
+
+export function noticeEmail(b: Brand, o: { first: string; facts: Facts; whyRole?: string; requirements: any[]; jd?: unknown; fit: number | null; verdict: string; questions: number; recruiter: string; ack: string; withdraw: string; reminder?: boolean }) {
   const f = o.facts;
+  // What the employer's job description asks for, and how they match it (from their CV).
+  const js = jdSummary(o.jd);
+  const jdRow = (mark: string, color: string, item: string, note: string) => `<tr><td style="vertical-align:top;padding:4px 8px 4px 0;color:${color};font-weight:700;font-size:14px;">${mark}</td><td style="padding:4px 0;font-size:14px;line-height:1.5;">${esc(item)}${note ? `<span style="color:#56605A;"> · ${esc(note)}</span>` : ""}</td></tr>`;
+  const jdHtml = js.total ? `<div style="font-size:15px;font-weight:600;margin:0 0 4px;">What the employer asks for, and how you match</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;font-family:Arial,sans-serif;">
+${js.met.map((x: any) => jdRow("&#10003;", "#1F6F54", x.item, x.status === "confirmed" ? "you confirmed this" : x.evidence || "")).join("")}
+${js.toConfirm.map((x: any) => jdRow("?", "#9A6B00", x.item, "not on your CV, we'll ask you to confirm")).join("")}
+${js.bonus.map((x: any) => jdRow("+", "#1F6F54", "Nice to have: " + x.item, x.evidence || "")).join("")}
+${js.industry && js.industry.status === "met" ? jdRow("+", "#1F6F54", js.industry.item, js.industry.evidence || "") : ""}
+</table>` : "";
   const row = (k: string, v: string) => v ? `<tr><td style="padding:3px 12px 3px 0;color:#56605A;font-size:13px;white-space:nowrap;vertical-align:top;">${esc(k)}</td><td style="padding:3px 0;font-size:14px;">${esc(v)}</td></tr>` : "";
   const reqRows = (o.requirements || []).map((q: any) => `<tr>
 <td style="padding:8px 8px 8px 0;border-top:1px solid #EEE9DF;font-size:13px;font-weight:600;vertical-align:top;">${esc(q.item)}</td>
@@ -268,11 +291,13 @@ export function noticeEmail(b: Brand, o: { first: string; facts: Facts; whyRole?
 ${f.summary ? `<div style="font-size:14px;line-height:1.55;margin-top:8px;color:#14201B;">${esc(f.summary)}</div>` : ""}
 </div>` +
     (o.whyRole ? `<div style="font-size:15px;font-weight:600;margin:0 0 4px;">Why we think it suits you</div>` + p(esc(o.whyRole)) : "") +
+    jdHtml +
     (reqRows ? `<div style="font-size:15px;font-weight:600;margin:0 0 4px;">How it matches what you're looking for</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin-bottom:12px;font-family:Arial,sans-serif;">
 <tr><td style="font-size:11px;color:#8A8578;padding:0 8px 4px 0;">&nbsp;</td><td style="font-size:11px;color:#8A8578;padding:0 8px 4px;">You</td><td style="font-size:11px;color:#8A8578;padding:0 8px 4px;">This role</td><td></td></tr>
 ${reqRows}</table>` : "") +
-    (o.fit != null ? p(`<b>Our fit score for you: ${o.fit}%</b>${o.verdict ? " (" + esc(o.verdict) + ")" : ""}. That's how closely your experience matches what the employer needs.`) : "") +
+    (o.fit != null ? p(`<b>Our fit score for you: ${o.fit}%</b>${o.verdict ? " (" + esc(o.verdict) + ")" : ""}. ` +
+      (js.total ? `You meet ${js.met.length} of the ${js.total} requirements in the employer's job description${js.toConfirm.length ? `; we'll ask you to confirm the other ${js.toConfirm.length === 1 ? "one" : js.toConfirm.length}` : ""}.` : `That's how closely your experience matches what the employer needs.`)) : "") +
     p(`<b>You don't need to do anything.</b> We'll update you as soon as the employer comes back about your profile. If we have any questions we'll reach out${o.questions ? " (we have " + (o.questions === 1 ? "one quick question" : o.questions + " quick questions") + ", which open when you acknowledge)" : ""}, and if you have any, just reply to this email.`) +
     `<div>${button(b, o.ack, "Acknowledge")}</div>` +
     `<p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#56605A;">Rather not be put forward for this one? <a href="${esc(o.withdraw)}" style="color:#56605A;">Withdraw my profile</a></p>` +
@@ -313,7 +338,7 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   }
   const b = await loadBrand(admin);
   const l = links(c.portal_token, o.token);
-  const html = noticeEmail(b, { first: String(c.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], fit: o.fit, verdict: o.verdict || "", questions: nq,
+  const html = noticeEmail(b, { first: String(c.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "", questions: nq,
     recruiter: String(rec?.full_name || "").split(" ")[0] || "", ack: l.ack, withdraw: l.withdraw, reminder });
   const subject = (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role");
   const sent = await sendBrevo(b, { email: c.email, name: c.name }, subject, html, undefined, { replyTo: rec?.email ? { email: rec.email, name: rec.full_name || undefined } : null });
@@ -337,7 +362,7 @@ export async function previewOffer(admin: any, offerId: string, reminder = false
   const b = await loadBrand(admin);
   const facts = factsOf(lead || {});
   const l = links(c?.portal_token || "preview", o.token);
-  const html = noticeEmail(b, { first: String(c?.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], fit: o.fit, verdict: o.verdict || "",
+  const html = noticeEmail(b, { first: String(c?.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "",
     questions: Array.isArray(o.questions) ? o.questions.length : 0, recruiter: String(rec?.full_name || "").split(" ")[0] || "", ack: l.ack, withdraw: l.withdraw, reminder });
   return { ok: true, html, subject: (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role"),
     to: c?.email || "", canEmail: !!(c?.email && !c.email_opt_out && c.portal_token), replyTo: rec?.email || "" };
@@ -345,16 +370,38 @@ export async function previewOffer(admin: any, offerId: string, reminder = false
 
 // Edits before sending: the "why it suits you" text and the questions.
 export async function updateOffer(admin: any, offerId: string, patch: { whyRole?: unknown; questions?: unknown }) {
-  const { data: o } = await admin.from("lead_offers").select("id,status,answers").eq("id", offerId).maybeSingle();
+  const { data: o } = await admin.from("lead_offers").select("id,status,answers,questions").eq("id", offerId).maybeSingle();
   if (!o) throw new Error("Not found");
   const upd: Record<string, unknown> = {};
   if (patch.whyRole !== undefined) upd.why_role = String(patch.whyRole || "").trim().slice(0, 600) || null;
   if (Array.isArray(patch.questions)) {
     if (Array.isArray(o.answers) && o.answers.length) throw new Error("They've already answered");
-    upd.questions = patch.questions.map((q) => String((q as any)?.q ?? q ?? "").trim().slice(0, 240)).filter(Boolean).slice(0, 5).map((q) => ({ q }));
+    // Edited text keeps its place: a question that confirms a job-description requirement stays a
+    // yes/no confirmation (matched by its text, or by its position when none were added or removed).
+    const before: any[] = Array.isArray(o.questions) ? o.questions : [];
+    upd.questions = patch.questions.map((q, i) => ({ text: String((q as any)?.q ?? q ?? "").trim().slice(0, 240), was: before.find((b) => (b?.q ?? b) === String((q as any)?.q ?? q ?? "").trim()) || ((patch.questions as unknown[]).length === before.length ? before[i] : null) }))
+      .map((x, i) => ({ ...x, yesno: !!(patch.questions as any[])[i]?.yesno }))
+      .filter((x) => x.text).slice(0, MAX_QUESTIONS).map((x) => (x.was && typeof x.was === "object" && x.was.confirm ? { q: x.text, confirm: x.was.confirm } : x.yesno ? { q: x.text, yesno: true } : { q: x.text }));
   }
   if (Object.keys(upd).length) await admin.from("lead_offers").update(upd).eq("id", o.id);
   return { ok: true, message: "Saved" };
+}
+
+// Rec Ops / Admin: a question the AI missed, added before the candidate answers. A yes/no
+// question shows Yes / No buttons on their page. Once they've answered (or are already through to
+// the pitch), ask in their chat instead.
+export const MAX_QUESTIONS = 6;
+export async function addQuestion(admin: any, offerId: string, q: unknown, yesno: boolean) {
+  const text = String(q || "").trim().slice(0, 240);
+  if (text.length < 5) throw new Error("Write the question first");
+  const { data: o } = await admin.from("lead_offers").select("id,status,questions,answers").eq("id", offerId).maybeSingle();
+  if (!o) throw new Error("Not found");
+  if (Array.isArray(o.answers) && o.answers.length) throw new Error("They've already answered. Ask in their chat instead");
+  if (!["draft", "notified", "reminded", "no_email", "acknowledged"].includes(o.status)) throw new Error("They're already through to the pitch. Ask in their chat instead");
+  const qs: any[] = Array.isArray(o.questions) ? o.questions : [];
+  if (qs.length >= MAX_QUESTIONS) throw new Error(`Up to ${MAX_QUESTIONS} questions`);
+  await admin.from("lead_offers").update({ questions: [...qs, yesno ? { q: text, yesno: true } : { q: text }] }).eq("id", o.id);
+  return { ok: true, message: o.status === "draft" ? "Question added" : "Question added. They'll see it when they acknowledge" };
 }
 
 // Rec Ops / Admin: drop a question we don't need. With none left, someone who has acknowledged is

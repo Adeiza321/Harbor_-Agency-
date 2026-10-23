@@ -9,7 +9,7 @@ import { loadSettings, sendBlockers } from "./common.ts";
 import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
-import { notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
+import { addQuestion, notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
 import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
@@ -558,8 +558,9 @@ async function handle(req: Request): Promise<Response> {
       return json({ ok: true, requested: true, message: created ? "Sent to an Admin for approval. It runs once they approve." : "Already waiting for an Admin's approval." });
     }
     if (action === "process_leads") return json({ ok: true, ...(await stepLeads(admin, s, agencyName, 3)) });
-    // Ask candidates about matched roles (the role goes without the employer's name).
-    if (action === "offer_send") {
+    // Older flow: ask several candidates at once about matched roles (offerIds). A single pitch
+    // email (offerId, "Review and send email") is handled further down.
+    if (action === "offer_send" && Array.isArray(body.offerIds) && !body.offerId) {
       const ids = (Array.isArray(body.offerIds) ? body.offerIds : []).map(String).filter(Boolean);
       if (!ids.length) return json({ error: "Pick at least one candidate" }, 400);
       return json({ ok: true, ...(await sendOffers(admin, ids, me.id)) });
@@ -585,9 +586,10 @@ async function handle(req: Request): Promise<Response> {
     }
     // Candidate first: one candidate on a pitch. push = ready without waiting; withdraw / remove =
     // off this pitch; remind = the reminder email now.
-    if (["offer_send", "offer_push", "offer_withdraw", "offer_remove", "offer_remind", "offer_question_remove", "offer_preview", "offer_update"].includes(action) && body.offerId) {
+    if (["offer_send", "offer_push", "offer_withdraw", "offer_remove", "offer_remind", "offer_question_remove", "offer_question_add", "offer_preview", "offer_update"].includes(action) && body.offerId) {
       if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
       if (action === "offer_preview") return json(await previewOffer(admin, String(body.offerId), body.reminder === true));
+      if (action === "offer_question_add") return json(await addQuestion(admin, String(body.offerId), body.q, body.yesno === true));
       if (action === "offer_update") return json(await updateOffer(admin, String(body.offerId), { whyRole: body.whyRole, questions: body.questions }));
       const { data: pf } = await admin.from("profiles").select("full_name").eq("id", me.id).maybeSingle();
       if (action === "offer_question_remove") return json(await removeQuestion(admin, { id: me.id, name: String(pf?.full_name || "") }, String(body.offerId), Number(body.index)));
