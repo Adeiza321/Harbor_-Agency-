@@ -11598,7 +11598,7 @@ function ClientPitchPage({ token }) {
   const sign = () => { setBusy("sign"); clientCall(token, "sign", f).then(() => { setTerms(null); return load(); }).catch((e) => popError(e)).finally(() => setBusy("")); };
   const fullResume = (n) => { setBusy("cv" + n); clientCall(token, "resume", { n }).then((r) => window.open(r.url, "_blank", "noopener")).catch((e) => popError(e)).finally(() => setBusy("")); };
   const sendTl = () => { setBusy("tl"); clientCall(token, "timeline", { text: tl }).then(() => setTlDone(true)).catch((e) => popError(e)).finally(() => setBusy("")); };
-  const okToSign = f.name.trim().length > 2 && f.title.trim() && f.company.trim() && f.address.trim().length > 7 && /@/.test(f.email) && f.authorised;
+  const okToSign = f.name.trim().length > 2 && f.title.trim() && f.company.trim() && f.companyNo.trim().length > 2 && f.address.trim().length > 7 && /@/.test(f.email) && f.authorised;
   const field = (k, label, ph, area) => (
     <label className="flex flex-col gap-1"><span className="text-xs font-medium" style={{ color: C.ink2 }}>{label}</span>
       {area ? <textarea rows={2} value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} placeholder={ph} className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
@@ -11690,7 +11690,7 @@ function ClientPitchPage({ token }) {
         <Modal open onClose={() => setTerms(null)} title={terms.title} wide>
           <div className="flex flex-col gap-4">
             <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>Fee only when you hire: {terms.fee}. No charge to review or interview.</div>
-            <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 340 }}><AgreementText body={String(terms.body || "").replace("[company address]", f.address.trim() || "[company address]")} /></div>
+            <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 340 }}><AgreementText body={String(terms.body || "").replace("[company address]", f.address.trim() || "[company address]").replace("[company number]", f.companyNo.trim() || "[company number]")} /></div>
             {terms.signed ? (
               <div className="grid sm:grid-cols-2 gap-4">
                 <TypedSignature party="FOR THE AGENCY" name={terms.signed.agency_signer_name} title={terms.signed.agency_signer_title} at={terms.signed.agency_signed_at} />
@@ -11705,7 +11705,7 @@ function ClientPitchPage({ token }) {
                   {field("email", "Work email", "")}
                 </div>
                 <div className="grid sm:grid-cols-2 gap-3">
-                  {field("companyNo", "Company number (optional)", "Registration number")}
+                  {field("companyNo", "Company number", "Company registration number")}
                   {field("website", "Company website (optional)", "https://")}
                 </div>
                 {field("address", "Company address", "Street, city, state, country", true)}
@@ -13538,7 +13538,7 @@ function AuditLogTab({ S }) {
 function ClientTermsTab({ toast, S }) {
   const cur = (S.settings && S.settings.clientAgreement) || { title: "Candidate Introduction Terms", body: "", version: 1, feePct: 10, firstTimeDiscountPct: 20 };
   const poc0 = (S.settings && S.settings.clientPoc) || {};
-  const [f, setF] = useState({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20, agencyCompanyNo: cur.agencyCompanyNo || "" });
+  const [f, setF] = useState({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20 });
   const [poc, setPoc] = useState({ userId: poc0.userId || "", title: poc0.title || "", bookingUrl: poc0.bookingUrl || "", us: (poc0.phones && poc0.phones.us) || "", eu: (poc0.phones && poc0.phones.eu) || "" });
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState(null);
@@ -13549,7 +13549,7 @@ function ClientTermsTab({ toast, S }) {
   const changed = f.body !== (cur.body || "") || f.title !== (cur.title || "");
   const save = () => {
     setBusy(true);
-    const a = { ...cur, title: f.title.trim() || "Candidate Introduction Terms", body: f.body, feePct: Number(f.feePct) || 10, firstTimeDiscountPct: Math.max(0, Number(f.firstTimeDiscountPct) || 0), agencyCompanyNo: f.agencyCompanyNo.trim(),
+    const a = { ...cur, title: f.title.trim() || "Candidate Introduction Terms", body: f.body, feePct: Number(f.feePct) || 10, firstTimeDiscountPct: Math.max(0, Number(f.firstTimeDiscountPct) || 0),
       version: (Number(cur.version) || 1) + (changed ? 1 : 0), updatedAt: new Date().toISOString() };
     S.saveClientTerms(a, { userId: poc.userId || null, title: poc.title.trim(), bookingUrl: poc.bookingUrl.trim(), phones: { us: poc.us.trim(), eu: poc.eu.trim() } }).then(() => toast("Saved. New signatures use these terms; signed copies don't change.")).catch(() => {}).finally(() => setBusy(false));
   };
@@ -13570,13 +13570,12 @@ function ClientTermsTab({ toast, S }) {
         {!poc.bookingUrl && <div className="text-xs mt-2" style={{ color: C.warnFg }}>No booking link yet: clients are asked to reply to arrange a call instead.</div>}
       </Card>
       <Card>
-        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_company_no}} {{client_address}} {{agency_address}} {{agency_company_no}} {{date}} {{fee}} {{discount}}." />
+        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_company_no}} {{client_address}} {{agency_address}} {{date}} {{fee}} {{discount}}." />
         <div className="grid sm:grid-cols-3 gap-3 mt-3">
           <label className="text-xs font-medium sm:col-span-1" style={{ color: C.ink2 }}>Title<input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp} style={inpS} /></label>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Fee (% of annual gross salary)<input type="number" min="0" step="0.5" value={f.feePct} onChange={(e) => setF({ ...f, feePct: e.target.value })} className={inp} style={inpS} /></label>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>First-time client discount (% off the fee)<input type="number" min="0" max="100" step="1" value={f.firstTimeDiscountPct} onChange={(e) => setF({ ...f, firstTimeDiscountPct: e.target.value })} className={inp} style={inpS} /></label>
         </div>
-        <label className="text-xs font-medium block mt-3" style={{ color: C.ink2 }}>Pronext's company number (shown in the agreement)<input value={f.agencyCompanyNo} onChange={(e) => setF({ ...f, agencyCompanyNo: e.target.value })} placeholder="e.g. 12345678" className={inp + " sm:max-w-xs"} style={inpS} /></label>
         <textarea value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} rows={18} className={inp + " font-mono text-xs leading-relaxed mt-3"} style={inpS} />
         <div className="flex justify-end mt-3"><Btn kind="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</Btn></div>
       </Card>

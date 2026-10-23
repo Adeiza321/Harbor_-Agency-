@@ -1,10 +1,11 @@
 -- Client agreement v2 (23 Oct 2026): rewritten from the terms of business shared on 23 Oct (permanent
--- staff, direct hire), with Pronext's commercial terms: fee 10% of the first-year salary with the
--- first-time discount, invoiced after 60 days, 50% refund or a free replacement between day 61 and
--- day 90, local law first. The source text is supabase/terms/client-agreement-v2.md.
+-- staff, direct hire), with Pronext's commercial terms: fee 10% of the first-year salary (20% off a
+-- first-time client's first hire), invoiced after 30 days and due 5 business days after day 60 (no
+-- fee if they leave before day 60), 50% refund or a free replacement between day 61 and day 90,
+-- local law first. The source text is supabase/terms/client-agreement-v2.md.
 -- Placeholders: {{client}} {{client_company_no}} {{client_address}} {{agency_address}}
--- {{agency_company_no}} {{date}} {{fee}} {{discount}}
--- Signing also asks for the client's company number and website (both optional).
+-- {{date}} {{fee}} {{discount}}
+-- Signing also asks for the client's company number (required) and website (optional).
 
 alter table public.client_agreements
   add column if not exists company_number text,
@@ -17,7 +18,7 @@ update public.agency_settings set client_agreement = coalesce(client_agreement, 
   'body', $terms$This Agreement is dated {{date}}.
 
 ## Parties
-(1) PRONEXT OUTSOURCING AGENCY{{agency_company_no}}, of {{agency_address}} (the "Agency"); and
+(1) PRONEXT OUTSOURCING AGENCY, of {{agency_address}} (the "Agency"); and
 (2) {{client}}{{client_company_no}}, of {{client_address}} (the "Client").
 
 ## 1. Definitions
@@ -50,19 +51,21 @@ update public.agency_settings set client_agreement = coalesce(client_agreement, 
 4.4 If the Agency finds that the actual Remuneration is different from what the Client told it, the Introduction Fee is recalculated on the actual Remuneration and the Client pays the difference.
 4.5 Where the actual Remuneration is not known or cannot reasonably be worked out, the Introduction Fee is calculated on the typical market salary for a comparable role in the same location.
 4.6 If, before the Engagement starts, the Agency and the Client agree that it is for a fixed term of less than 12 months, the Introduction Fee is reduced pro rata. If the Client extends the Engagement beyond that term, or Engages the Candidate again within 6 months of its end, a further fee is payable on the additional Remuneration, up to the fee that would have been payable for an Engagement of 12 months or more.
-4.7 The Agency invoices the Introduction Fee once the Candidate has completed 60 days of the Engagement. The invoice is payable within 14 days of its date. No Introduction Fee is payable if the Engagement ends, for any reason, before the Candidate completes 60 days.
-4.8 The Client pays without any set-off, deduction or withholding.
-4.9 VAT or any similar tax is added to the Introduction Fee where it applies. The Agency may charge interest on any amount not paid by its due date under the Late Payment of Commercial Debts (Interest) Act 1998, at 8% a year above the Bank of England base rate, from the due date until payment.
-4.10 If the Client does not pay by the due date, any discount (including the first-time client discount) no longer applies, and the Agency will invoice the difference.
-4.11 If any member of the Agency's staff with whom the Client has dealt is Engaged by the Client while working for the Agency, or within 6 months of leaving it, the Client pays an Introduction Fee calculated on that person's Remuneration, with no refund or replacement.
-4.12 If the Agency has to take legal action to enforce these Terms, including to recover payment, and the Client admits liability or is found liable, the Client pays the Agency's reasonable costs and expenses, including legal costs.
+4.7 The Agency invoices the Introduction Fee once the Candidate has completed 30 days of the Engagement. The invoice is payable within 5 business days after the Candidate's 60th day of the Engagement (the "due date").
+4.8 If the Engagement ends, for any reason, before the Candidate completes 60 days, no Introduction Fee is payable and the Agency will cancel its invoice (or refund anything already paid), provided the Client tells the Agency in writing within 7 days of the Engagement ending.
+4.9 The Client pays without any set-off, deduction or withholding.
+4.10 VAT or any similar tax is added to the Introduction Fee where it applies. The Agency may charge interest on any amount not paid by its due date under the Late Payment of Commercial Debts (Interest) Act 1998, at 8% a year above the Bank of England base rate, from the due date until payment.
+4.11 If the Client does not pay by the due date, any discount (including the first-time client discount) no longer applies, and the Agency will invoice the difference.
+4.12 If any member of the Agency's staff with whom the Client has dealt is Engaged by the Client while working for the Agency, or within 6 months of leaving it, the Client pays an Introduction Fee calculated on that person's Remuneration, with no refund or replacement.
+4.13 If the Agency has to take legal action to enforce these Terms, including to recover payment, and the Client admits liability or is found liable, the Client pays the Agency's reasonable costs and expenses, including legal costs.
 
 ## 5. Guarantee
 5.1 If, after completing 60 days, the Engagement ends before the Candidate completes 90 days because (a) the Candidate leaves, or (b) the Client ends it because the Candidate is not technically competent or has committed misconduct (but not where the Candidate is made redundant), the Agency will, at the Client's choice, find a replacement Candidate free of charge or refund 50% of the Introduction Fee.
-5.2 The guarantee applies only if the Client has complied with clause 4.1, tells the Agency in writing within 7 days of the Engagement ending, and has paid the Agency's invoice by its due date.
+5.2 The guarantee applies only if the Client has complied with clause 4.1, tells the Agency in writing within 7 days of the Engagement ending, and has paid the Agency's invoice by its due date. The Client chooses between a replacement and a refund when it tells the Agency.
 5.3 The Engagement ends on the date the Candidate stops working for the Client, or would have stopped but for any garden leave or payment in lieu of notice, whichever is later.
 5.4 There is no refund or replacement where clause 4.5 applies.
-5.5 If the Client Engages the Candidate again within 6 months after a refund, the refund is repaid to the Agency and there is no further guarantee for that Candidate.
+5.5 A replacement is offered once for each position. If the Agency cannot introduce a suitable replacement who is Engaged within 60 days of the Client choosing a replacement, the Agency will refund 50% of the Introduction Fee instead. A replacement Candidate is not covered by a further guarantee.
+5.6 If the Client Engages the Candidate again within 6 months after a refund, the refund is repaid to the Agency and there is no further guarantee for that Candidate.
 
 ## 6. Introductions to third parties
 6.1 Introductions are confidential. If the Client passes a Candidate's details to a third party and that third party Engages the Candidate within 6 months of the Agency's Introduction, the Client pays the Introduction Fee under clause 4, with no refund or replacement under clause 5.
@@ -72,25 +75,30 @@ update public.agency_settings set client_agreement = coalesce(client_agreement, 
 7.2 The Client must still satisfy itself that the Candidate is suitable for the position. The Client is responsible for: (a) taking up references before Engaging the Candidate; (b) checking the Candidate's right to work and obtaining any permission to work required by the law of the country where the Candidate will work; (c) any medical checks; and (d) any qualifications, licences or permissions the position requires.
 7.3 So that the Agency can meet clause 7.1, the Client will give the Agency details of the position, including: the type of work; the location and hours; the experience, training, qualifications and authorisations needed; any known health and safety risks and the steps taken to control them; the start date; the likely duration; the minimum Remuneration, expenses and benefits offered; how often pay is made; and the notice period on each side.
 
-## 8. Confidentiality and data protection
-8.1 All information about a Candidate is confidential and is given only so that the Agency can provide its recruitment services to the Client. The Client will not use it for any other purpose or disclose it to any third party, and will handle it in line with the data protection laws that apply to it (including the UK GDPR and the Data Protection Act 2018 where they apply).
-8.2 Information about the Agency's business that is capable of being confidential must also be kept confidential, except information that is in the public domain.
+## 8. Equal opportunities
+8.1 The Agency introduces Candidates without discrimination. The Client will not ask the Agency to act in a way that would breach equality or anti-discrimination law, and will comply with the employment laws that apply to it in its treatment of Candidates.
 
-## 9. Liability
-9.1 The Agency is not liable for any loss, expense, damage, delay, costs or compensation (whether direct, indirect or consequential) suffered by the Client arising from or connected with the Agency looking for a Candidate for the Client, the Introduction or Engagement of any Candidate, or the Agency not Introducing a Candidate. This does not exclude the Agency's liability for death or personal injury caused by its negligence, or any other liability that cannot be excluded by law.
+## 9. Confidentiality and data protection
+9.1 All information about a Candidate is confidential and is given only so that the Agency can provide its recruitment services to the Client. The Client will not use it for any other purpose or disclose it to any third party, and will handle it in line with the data protection laws that apply to it (including the UK GDPR and the Data Protection Act 2018 where they apply).
+9.2 Information about the Agency's business that is capable of being confidential must also be kept confidential, except information that is in the public domain.
 
-## 10. Notices
-10.1 Notices under these Terms must be in writing and may be delivered by hand, by first-class post to the other party's registered office or any other address it has given in writing, or by email. A notice is treated as served: if delivered by hand, on delivery; if posted, 48 hours after posting; if emailed, when sent.
+## 10. Liability
+10.1 The Agency is not liable for any loss, expense, damage, delay, costs or compensation (whether direct, indirect or consequential) suffered by the Client arising from or connected with the Agency looking for a Candidate for the Client, the Introduction or Engagement of any Candidate, or the Agency not Introducing a Candidate. This does not exclude the Agency's liability for death or personal injury caused by its negligence, or any other liability that cannot be excluded by law.
+10.2 Subject to clause 10.1, the Agency's total liability to the Client in connection with any Candidate is limited to the Introduction Fee paid for that Candidate.
 
-## 11. Severability
-11.1 If any part of these Terms is found unenforceable by a competent authority, that part is removed to that extent and the rest of these Terms stays in force to the fullest extent the law allows.
+## 11. Notices
+11.1 Notices under these Terms must be in writing and may be delivered by hand, by first-class post to the other party's registered office or any other address it has given in writing, or by email. A notice is treated as served: if delivered by hand, on delivery; if posted, 48 hours after posting; if emailed, when sent.
 
-## 12. Applicable law
-12.1 Where the law of the country in which the Candidate is Engaged requires different terms (for example on fees, refunds or guarantee periods), that law applies and these Terms are read so that they comply with it.
-12.2 Otherwise these Terms are governed by the law of England and Wales, and the courts of England and Wales have exclusive jurisdiction.
+## 12. Term and severability
+12.1 These Terms continue until either party ends them by written notice. Ending them does not affect any Introduction Fee for a Candidate Introduced before then, or clauses 4 to 10, which continue to apply.
+12.2 If any part of these Terms is found unenforceable by a competent authority, that part is removed to that extent and the rest of these Terms stays in force to the fullest extent the law allows.
 
-## 13. Signing
-13.1 Signing these Terms electronically, by typing a name, is as valid as a handwritten signature.
-13.2 The person signing confirms that they are authorised to sign these Terms on behalf of the Client.
+## 13. Applicable law
+13.1 Where the law of the country in which the Candidate is Engaged requires different terms (for example on fees, refunds or guarantee periods), that law applies and these Terms are read so that they comply with it.
+13.2 Otherwise these Terms are governed by the law of England and Wales, and the courts of England and Wales have exclusive jurisdiction.
+
+## 14. Signing
+14.1 Signing these Terms electronically, by typing a name, is as valid as a handwritten signature.
+14.2 The person signing confirms that they are authorised to sign these Terms on behalf of the Client.
 $terms$)
  where coalesce((client_agreement ->> 'version')::int, 1) < 2;
