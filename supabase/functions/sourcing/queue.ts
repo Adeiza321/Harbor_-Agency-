@@ -27,10 +27,22 @@ export const linkFor = (token: string, kind: "p" | "l", action: "interested" | "
   `${portalBase()}/?u=${token}&k=${kind}&a=${action}`;
 
 // The pitch to a hiring manager in the house design (HTML), from the lead's drafted text.
+// The candidates in a pitch, in order: what each meets of the posting (or their selling points).
+export function pitchCands(l: any, viewUrl: string) {
+  const ids: string[] = Array.isArray(l.data?.pitched) ? l.data.pitched.map(String) : [];
+  const ms: any[] = Array.isArray(l.matches) ? l.matches : [];
+  return ids.map((id, i) => {
+    const m = ms.find((x) => x.candidate_id === id) || {};
+    const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => x.item + (x.evidence ? ": " + x.evidence : "")) : (m.bullets || [])).slice(0, 6);
+    return { n: i + 1, verdict: m.verdict || "", musts, url: viewUrl ? viewUrl + "&c=" + (i + 1) : "" };
+  });
+}
+
 export function leadHtml(l: any, token: string, region: Region, s: Settings, agencyName: string, b: Brand) {
   const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
+  const viewUrl = l.client_token && n ? `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}` : "";
   return clientEmail(b, { body: l.pitch_body, interestedUrl: linkFor(token, "l", "interested"), region, subject: l.pitch_subject || `Candidate for your ${l.job_title} role`,
-    viewUrl: l.client_token && n ? `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}` : "", viewCount: n,
+    viewUrl, viewCount: n, cands: viewUrl ? pitchCands(l, viewUrl) : undefined,
     senderName: s.senderName, senderTitle: s.senderTitle, agency: s.footerName || agencyName, address: s.businessAddress,
     unsubUrl: linkFor(token, "l", "unsubscribe"), deleteUrl: linkFor(token, "l", "delete") });
 }
@@ -38,7 +50,10 @@ export function leadHtml(l: any, token: string, region: Region, s: Settings, age
 // A client-lead pitch as plain text: the pitch, then the link to the candidates' blind resumes.
 export function leadText(l: any) {
   const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
-  return String(l.pitch_body || "") + (l.client_token && n ? `\n\nView the ${n > 1 ? n + " candidates" : "candidate"}: ${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}\nInterested? {{INTERESTED_LINK}}` : "");
+  if (!l.client_token || !n) return String(l.pitch_body || "");
+  const viewUrl = `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}`;
+  return String(l.pitch_body || "") + "\n\n" + pitchCands(l, viewUrl).map((c) => `Candidate ${c.n}${c.verdict ? " (" + c.verdict + ")" : ""}\n${c.musts.map((x: string) => "- " + x).join("\n")}\nReview the blind resume: ${c.url}`).join("\n\n") +
+    "\n\nWe don't charge to arrange interviews. We only bill a fee when you hire our candidate.";
 }
 
 // Plain-text version of a client pitch, with the footer underneath (sent alongside the HTML).

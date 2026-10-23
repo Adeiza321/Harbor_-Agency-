@@ -48,7 +48,7 @@ export function lookingFor(c: any): string {
 }
 
 export type Assessed = {
-  n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[];
+  n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[]; musts: { item: string; evidence: string }[];
   notMet: string[]; requirements: { item: string; theirs: string; role: string; status: "met" | "discuss" }[]; questions: string[];
 };
 export type RoleFacts = { summary: string; workSetup: string; employmentType: string; seniority: string };
@@ -59,10 +59,11 @@ export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: R
   const sys = "You are a senior recruiter at an agency deciding which of our candidates to put forward for an employer's job posting. The bar is very high: " +
     "only someone who is a very strong fit and that the employer is unlikely to find better than. Reply with STRICT JSON only: " +
     "{\"role\": {\"summary\": string, \"work_setup\": \"On-site\" | \"Hybrid\" | \"Remote\" | \"\", \"employment_type\": \"Full-time\" | \"Part-time\" | \"Contract\" | \"Temporary\" | \"\", \"seniority\": string}, " +
-    "\"results\": [{\"n\": number, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"must_haves_not_met\": string[], \"reason\": string, \"why_role\": string, \"bullets\": string[], " +
+    "\"results\": [{\"n\": number, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"must_haves_not_met\": string[], \"must_haves_met\": [{\"item\": string, \"evidence\": string}], \"reason\": string, \"why_role\": string, \"bullets\": string[], " +
     "\"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": string[]}]}. " +
     "role.summary: two short sentences on what the job is, for the candidate. NEVER name the employer, its brands, website or anything that identifies it ('a growing manufacturer', 'a regional bank'). " +
     "fit: a percentage 0-100 for how well their experience fits this posting. verdict: 'Perfect fit' or 'Good fit' only when they're a very strong match on experience, skills, seniority and industry. " +
+    "must_haves_met: the posting's main requirements (up to 6) that the candidate clearly meets, each with a few words of evidence for the hiring manager (anonymous: no names, no employer names; e.g. item 'CPA licence', evidence 'Licensed CPA, 8 years'). " +
     "must_haves_not_met: the posting's real requirements (licences, years, specific experience) that their profile clearly does NOT meet; [] when none. Missing information is not 'not met'. " +
     "reason: one short sentence on why they fit the employer. why_role: two short sentences to the candidate ('you') on why this role is a great match for THEM: what it gives them that they're looking for (the work, the step up, the setup, the location, the pay). Warm, specific, honest; never name the employer. " +
     "bullets: 3 selling points for the hiring manager, each under 15 words, anonymous (no names, no employer names). " +
@@ -78,7 +79,9 @@ export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: R
   const results: Assessed[] = (Array.isArray(out?.results) ? out.results : []).map((x: any) => ({
     n: Number(x?.n), fit: Math.max(0, Math.min(100, Math.round(Number(x?.fit) > 0 && Number(x?.fit) <= 10 ? Number(x.fit) * 10 : Number(x?.fit) || 0))),
     verdict: ["Perfect fit", "Good fit", "Possible fit", "Not a fit"].includes(x?.verdict) ? x.verdict : "Possible fit",
-    reason: clip(x?.reason, 300), whyRole: clip(x?.why_role, 400), bullets: (Array.isArray(x?.bullets) ? x.bullets : []).slice(0, 3).map((b: unknown) => clip(b, 140)),
+    reason: clip(x?.reason, 300), whyRole: clip(x?.why_role, 400),
+    musts: (Array.isArray(x?.must_haves_met) ? x.must_haves_met : []).slice(0, 6).map((q: any) => ({ item: clip(q?.item, 80), evidence: clip(q?.evidence, 120) })).filter((q: any) => q.item),
+    bullets: (Array.isArray(x?.bullets) ? x.bullets : []).slice(0, 3).map((b: unknown) => clip(b, 140)),
     notMet: (Array.isArray(x?.must_haves_not_met) ? x.must_haves_not_met : []).map((b: unknown) => clip(b, 120)).filter(Boolean),
     requirements: (Array.isArray(x?.requirements) ? x.requirements : []).slice(0, 6).map((q: any) => ({
       item: clip(q?.item, 30), theirs: clip(q?.theirs, 90), role: clip(q?.role, 90), status: q?.status === "met" ? "met" : "discuss" as "met" | "discuss",

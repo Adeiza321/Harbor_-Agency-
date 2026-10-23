@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { feeLine, feedbackGet, feedbackSubmit, fillTerms, fullResume, loadPoc, relationGet, relationRequest, saveTimeline, shortlistFor, signForLead, termsFor } from "../sourcing/clientflow.ts";
 
 // Signs a resume URL for the client-facing blind-profile page (/?t=<client_token>), and
 // (action "blind") the blind resume's page images. The
@@ -19,9 +20,49 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
   try {
-    const { token, action } = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({}));
+    const { token, action } = body;
     if (!token || typeof token !== "string" || token.length < 12) return json({ error: "Missing token" }, 400);
     const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+
+    // After a hire: the client's feedback page (/?t=f-<token>) and the monthly check-in page (/?t=r-<token>).
+    if (action === "feedback") return json({ ok: true, ...(await feedbackGet(admin, token.replace(/^f-/, ""))) });
+    if (action === "feedback_submit") return json(await feedbackSubmit(admin, token.replace(/^f-/, ""), body));
+    if (action === "relation") return json({ ok: true, ...(await relationGet(admin, token.replace(/^r-/, ""))) });
+    if (action === "relation_request") return json(await relationRequest(admin, token.replace(/^r-/, ""), body));
+
+    // Client sourcing, the client side: the pitch page's candidates (full details once the company
+    // has signed), the terms, signing, a full resume, and the hiring timeline.
+    if (["pitch", "terms", "sign", "resume", "timeline"].includes(action)) {
+      const ct = token.replace(/^s-/, "");
+      if (!/^[0-9a-f-]{36}$/i.test(ct)) return json({ error: "Link not found" }, 404);
+      const { data: l } = await admin.from("leads").select("*").eq("client_token", ct).maybeSingle();
+      if (!l || ["unsubscribed", "ignored"].includes(l.status)) return json({ error: "Link not found" }, 404);
+      if (action === "pitch") {
+        if (!l.client_viewed_at) await admin.from("leads").update({ client_viewed_at: new Date().toISOString() }).eq("id", l.id);
+        const { candidates, agreement } = await shortlistFor(admin, l);
+        const t = await termsFor(admin, l.company);
+        const poc = await loadPoc(admin);
+        return json({ ok: true, company: l.company || "", role: l.job_title || "", location: l.location || "", candidates, fee: feeLine(t), firstTime: t.firstTime,
+          signed: agreement ? { at: agreement.signed_at, name: agreement.signer_name, title: agreement.signer_title } : null,
+          timeline: l.data?.timeline || null,
+          poc: agreement ? { name: poc.name, title: poc.title, email: poc.email, phone: poc.phone, photo: poc.photo, bookingUrl: poc.bookingUrl } : null });
+      }
+      if (action === "terms") {
+        const t = await termsFor(admin, l.company);
+        const { agreement } = await shortlistFor(admin, l);
+        if (agreement) return json({ ok: true, title: agreement.title, body: agreement.body, signed: agreement, fee: feeLine(t) });
+        return json({ ok: true, title: t.title, body: fillTerms(t, { client: String(l.company || "the Client").toUpperCase(), clientAddress: "", date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) }),
+          fee: feeLine(t), company: l.company || "", email: l.contact_email || "", name: l.contact_name || "" });
+      }
+      if (action === "sign") {
+        const ip = String(req.headers.get("x-forwarded-for") || req.headers.get("cf-connecting-ip") || "").split(",")[0].trim();
+        const r = await signForLead(admin, l, body, ip, String(req.headers.get("user-agent") || ""));
+        return json({ ok: true, already: r.already, signed: r.agreement });
+      }
+      if (action === "resume") return json({ ok: true, url: await fullResume(admin, l, Number(body.n) || 1) });
+      if (action === "timeline") return json(await saveTimeline(admin, l, String(body.text || "")));
+    }
 
     // Client leads: the page behind the pitch's "View the candidates" button (/?t=s-<client_token>).
     // Up to 5 candidates, each as a blind resume (only checked ones), with their selling points;

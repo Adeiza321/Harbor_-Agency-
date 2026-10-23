@@ -10,6 +10,7 @@ import { searchArea, sourceExternal } from "./prospects.ts";
 import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
 import { offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
+import { stepClientFollowups } from "./clientflow.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
@@ -242,6 +243,7 @@ async function handle(req: Request): Promise<Response> {
         try { out.inactive = await stepInactiveRecruiters(admin); } catch (e) { out.inactiveError = errMsg(e); }
         try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
         try { out.contracts = await stepContracts(admin, s, agencyName); } catch (e) { out.contractsError = errMsg(e); }
+        try { out.clientFollowups = await stepClientFollowups(admin); } catch (e) { out.clientFollowupsError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });

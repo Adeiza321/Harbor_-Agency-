@@ -190,6 +190,11 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   // Perfect / Good fit, 80%+, nothing the posting needs clearly missing), plus how the role meets
   // what each of them is looking for and any questions to ask them first (pitch.ts).
   const { role, results } = await assessForPitch(lead, pool);
+  // Direct hire only for now: contract and temporary roles are left out.
+  if (/contract|temporary|temp\b/i.test(role.employmentType) || /\b(contract|temporary|temp)\b(?!.{0,15}hire)/i.test(lead.job_title || "")) {
+    await admin.from("leads").update({ status: "ignored", notes: "Contract or temporary role: direct hire only for now", data: { ...(lead.data || {}), role } }).eq("id", lead.id);
+    return { ok: true, kept: false, why: "Contract or temporary role" };
+  }
   const kept = results.map((a) => ({ a, c: pool[a.n] })).filter((x) => x.c && strongEnough(x.a))
     .sort((x, y) => (target && x.c.id === target.id ? -1 : target && y.c.id === target.id ? 1 : y.a.fit - x.a.fit)).slice(0, MAX_PER_PITCH);
   if (!kept.length) return ignore(target ? "Not a strong enough fit for " + firstName(target) : "Our Active file candidates weren't a strong enough fit");
@@ -197,7 +202,7 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   if (target && !kept.some((x) => x.c.id === target.id)) return ignore("Not a strong enough fit for " + firstName(target) + " (the role it was found for)");
   const matches = kept.map(({ a, c }) => ({
     candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: scrub(a.reason, [c]).slice(0, 300),
-    bullets: a.bullets.map((b) => scrub(b, [c]).slice(0, 140)), requirements: a.requirements, questions: a.questions, why_role: a.whyRole,
+    bullets: a.bullets.map((b) => scrub(b, [c]).slice(0, 140)), requirements: a.requirements, questions: a.questions, why_role: a.whyRole, musts: a.musts.map((q) => ({ item: q.item, evidence: scrub(q.evidence, [c]).slice(0, 120) })),
   }));
   await admin.from("leads").update({ status: "awaiting", matches, data: { ...(lead.data || {}), role }, notes: "Candidate emails to review: open each candidate's email, then send. The pitch goes once they've acknowledged." }).eq("id", lead.id);
   // Each candidate's own place on this pitch, with their information email written as a draft:
@@ -205,7 +210,7 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   for (const m of matches) {
     const { error } = await admin.from("lead_offers").upsert({
       lead_id: lead.id, candidate_id: m.candidate_id, fit: m.fit, verdict: m.verdict, reason: m.reason, bullets: m.bullets,
-      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), why_role: m.why_role || null, status: "draft",
+      requirements: m.requirements, questions: m.questions.map((q: string) => ({ q })), why_role: m.why_role || null, client_musts: m.musts || [], status: "draft",
     }, { onConflict: "lead_id,candidate_id" });
     if (error) console.error("lead offer", error.message);
   }
@@ -271,17 +276,18 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
   }
   const channel = contactEmail ? "email" : poster?.linkedin_url ? "linkedin" : "none";
 
-  // Pitch: short email and a LinkedIn note, both anonymous; the blind resumes sit behind the button.
+  // Pitch: a short intro (the email lists each candidate with the must-haves they meet and a
+  // button to their blind resume, added by the email itself) and a LinkedIn note. Never names.
   const n = ready.length;
-  const pitchSys = "You write short, specific business-development messages for a recruitment agency to a hiring manager who just posted a job. Reply with STRICT JSON only: " +
+  const pitchSys = "You write short, specific business-development emails for a recruitment agency to a hiring manager who just posted a job. Reply with STRICT JSON only: " +
     "{\"subject\": string, \"body\": string, \"linkedin\": string}. Rules: never name the candidates or their employers. " +
-    `subject under 60 characters, referencing their role. body 70-120 words, plain text, start 'Hi <first name>,' (or 'Hi there,' if unknown), mention their open role by title, ` +
-    `say we have ${n === 1 ? "a strong candidate" : n + " strong candidates"} for it right now and give one line per candidate using the selling points given (as a short list), ` +
-    `then say their anonymised CV${n === 1 ? " is" : "s are"} ready to view at the button below, and that if they'd like to talk to any of them they can click 'We're interested' or just reply. ` +
-    "End with a sign-off with only the sender's first name. No links, no footer or unsubscribe text (added separately). " +
+    `subject under 70 characters, in this spirit: 'Review ${n === 1 ? "the perfect candidate" : "the " + n + " perfect candidates"} for your <role> role, free'. ` +
+    `body 40-70 words, plain text, start 'Hi <first name>,' (or 'Hi there,' if unknown): mention their open role by title, say we have ${n === 1 ? "a candidate who meets" : n + " candidates who meet"} what they're looking for, ` +
+    `that the must-haves ${n === 1 ? "they meet are" : "each meets are"} listed below with ${n === 1 ? "an anonymised resume" : "anonymised resumes"} they can review free, and that we don't charge to arrange interviews (we only bill when they hire our candidate). ` +
+    "No candidate list (it's added below), no sign-off, no links, no footer (added separately). " +
     "linkedin: under 280 characters, friendly, same offer, no links.";
-  const pts = ready.map((m: any, i: number) => `Candidate ${i + 1} (${m.verdict}): ${(m.bullets || []).join("; ")}`).join("\n");
-  const pitch = await askAI(pitchSys, `${posting.slice(0, 1500)}\n\nHiring contact first name: ${poster?.first_name || "unknown"}${poster?.role ? " (" + poster.role + ")" : ""}\nSender first name: ${(s.senderName || "").split(" ")[0] || "the recruiter"}\n\nOur candidates:\n${pts}`, 2000);
+  const pts = ready.map((m: any, i: number) => `Candidate ${i + 1} (${m.verdict}): ${(m.musts || []).map((x: any) => x.item).join("; ") || (m.bullets || []).join("; ")}`).join("\n");
+  const pitch = await askAI(pitchSys, `${posting.slice(0, 1500)}\n\nHiring contact first name: ${poster?.first_name || "unknown"}${poster?.role ? " (" + poster.role + ")" : ""}\n\nOur candidates:\n${pts}`, 2000);
   await admin.from("leads").update({
     status: "new", matches: all, notes: null,
     data: { ...(lead.data || {}), pitched: ready.map((m: any) => m.candidate_id) },

@@ -218,10 +218,26 @@ export function footerHtml(b: Brand, f: { sender: string; agency: string; addres
 // The pitch to a hiring manager, in the same design. Its "Interested? Click here: <link>" line
 // becomes the button; the footer carries the sender details, notice and unsubscribe links.
 // With viewUrl (client leads): "View the N candidates" opens their blind resumes; "We're interested" sits under it.
-export function clientEmail(b: Brand, o: { body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string; viewUrl?: string; viewCount?: number }) {
+export function clientEmail(b: Brand, o: { cands?: { n: number; verdict: string; musts: string[]; url: string }[]; body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string; viewUrl?: string; viewCount?: number }) {
   const { paragraphs, signoff } = introOf(String(o.body || ""));
   const lines = paragraphs.filter((p) => !/click here|\{\{INTERESTED_LINK\}\}/i.test(p));
   const n = o.viewCount || 0;
+  // Candidate first: each candidate with the must-haves they meet and their own blind resume.
+  const candHtml = (c: { n: number; verdict: string; musts: string[]; url: string }) => `<div style="border:1px solid #E6E1D6;border-radius:12px;padding:14px 16px;margin:12px 0;">
+<div style="font-size:16px;font-weight:600;">Candidate ${c.n}${c.verdict ? ` <span style="font-size:12px;font-weight:600;color:${b.color};background:#E8F1EC;border-radius:999px;padding:2px 8px;font-family:Arial,sans-serif;">${esc(c.verdict)}</span>` : ""}</div>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;">${c.musts.map((m) => `<tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:${b.color};font-weight:700;">&#10003;</td><td style="padding:2px 0;font-size:14px;line-height:1.5;">${esc(m)}</td></tr>`).join("")}</table>
+${c.url ? `<a href="${esc(c.url)}" style="display:inline-block;margin-top:10px;padding:9px 16px;background:${b.color};color:#ffffff;text-decoration:none;border-radius:9px;font-family:Arial,sans-serif;font-size:13px;font-weight:600;">Review the blind resume</a>` : ""}
+</div>`;
+  if (o.cands && o.cands.length) {
+    return emailShell(b, o.subject,
+      noteHtml(b, lines) + o.cands.map(candHtml).join("") +
+      `<div style="font-size:14px;line-height:1.6;margin-top:6px;color:#56605A;">We don't charge to arrange interviews. We only bill a fee when you hire our candidate.</div>` +
+      signHtml(signoff || o.senderName.split(" ")[0] || "", o.senderTitle, o.agency),
+      undefined, undefined,
+      footerHtml(b, { sender: [o.senderName, o.senderTitle].filter(Boolean).join(", "), agency: o.agency, address: o.address,
+        why: o.region !== "US" ? "Why you're getting this: your company advertised this role publicly and we have a matching candidate. We use only your name, role and work email, only for this purpose." : "You are receiving this email because your company advertised this role publicly.",
+        unsubUrl: o.unsubUrl, deleteUrl: o.region !== "US" ? o.deleteUrl : "" }));
+  }
   const html = emailShell(b, o.subject,
     noteHtml(b, lines) +
     (o.viewUrl
