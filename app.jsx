@@ -10229,8 +10229,45 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
     </div>
   );
 }
-function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
+// What needs doing on a lead, shown on its collapsed header: emails to review, answers in, ready.
+function LeadAttention({ l, offers }) {
+  const live = (offers || []).filter(isPitchOffer);
+  const draft = live.filter((o) => o.status === "draft").length;
+  const ready = live.filter((o) => o.status === "ready").length;
+  const answered = live.filter((o) => o.status === "acknowledged" && Array.isArray(o.answers) && o.answers.length).length;
+  const due = live.filter((o) => o.status === "notified" && o.notified_at && Date.now() - new Date(o.notified_at).getTime() > 2 * 864e5).length;
+  const bits = [draft && [draft + " to review", "warn"], answered && [answered + " answered", "info"], due && [due + " reminder" + (due === 1 ? "" : "s") + " due", "warn"], ready && [ready + " ready", "em"]].filter(Boolean);
+  return bits.length ? <span className="hidden sm:flex gap-1.5">{bits.map(([t, tone]) => <Pill key={t} tone={tone}>{t}</Pill>)}</span> : null;
+}
+
+// The candidates under a collapsed lead: name, fit and where they are. Opening the lead shows the
+// full detail (job description check, questions, emails).
+function LeadCandidateRows({ l, offers, matches, S, onOpen }) {
+  const pitch = (offers || []).filter(isPitchOffer);
+  const rows = pitch.length ? pitch.map((o) => ({ id: o.candidate_id, fit: o.fit, verdict: o.verdict, state: o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : PITCH_STATE[o.status], out: ["withdrawn", "removed"].includes(o.status) }))
+    : (matches || []).map((m) => ({ id: m.candidate_id, fit: m.fit, verdict: m.verdict, state: null, out: false }));
+  if (!rows.length) return l.status === "ignored" && l.notes ? <div className="text-xs mt-1.5 pl-6" style={{ color: C.ink3 }}>{l.notes}</div> : null;
+  return (
+    <div className="mt-2 pl-6 flex flex-col">
+      {rows.sort((a, b) => (a.out ? 1 : 0) - (b.out ? 1 : 0) || (b.fit || 0) - (a.fit || 0)).map((r) => { const c = S.cands.find((x) => x.id === r.id); return (
+        <div key={r.id} role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="flex items-center justify-between gap-2 py-1.5 text-xs cursor-pointer" style={{ borderTop: "1px solid " + C.line, opacity: r.out ? 0.6 : 1 }}>
+          <button type="button" className="font-medium truncate text-left" style={{ color: c ? C.em : C.ink }} onClick={(e) => { e.stopPropagation(); if (c) S.openCandidate(c.id); }}>{c ? c.name : "Candidate"}</button>
+          <span className="flex items-center gap-2 shrink-0">
+            {r.fit != null && <span className="font-semibold" style={{ color: C.ink }}>{r.fit}%</span>}
+            {r.verdict && <span className="hidden sm:inline" style={{ color: C.ink2 }}>{r.verdict}</span>}
+            {r.state && <Pill tone={r.state[1]}>{r.state[0]}</Pill>}
+          </span>
+        </div>
+      ); })}
+    </div>
+  );
+}
+
+function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
   const [open, setOpen] = useState(false);
+  // Collapsed by default: the role, the company and its candidates; open it for everything else.
+  const [expanded, setExpanded] = useState(false);
+  React.useEffect(() => { if (expandAll && expandAll.n) setExpanded(expandAll.v); }, [expandAll && expandAll.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const [f, setF] = useState({ pitch_subject: l.pitch_subject || "", pitch_body: l.pitch_body || "", linkedin_message: l.linkedin_message || "", notes: l.notes || "" });
   const dirty = ["pitch_subject", "pitch_body", "linkedin_message", "notes"].some((k) => f[k] !== (l[k] || ""));
   const patch = (body, msg) => S.sb("/rest/v1/leads?id=eq." + l.id, { method: "PATCH", body }).then(() => { toast(msg); onChanged(); }).catch((e) => S.error(e.message));
@@ -10247,21 +10284,31 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
         {emailable && <input type="checkbox" checked={selected} onChange={(e) => onSelect(e.target.checked)} className="mt-1.5 shrink-0" />}
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2 flex-wrap">
+            <button type="button" aria-expanded={expanded} onClick={() => setExpanded((x) => !x)} className="min-w-0 flex items-start gap-2 text-left flex-1">
+              <ChevronDown size={16} color={C.ink2} className="shrink-0 mt-0.5 transition-transform" style={{ transform: expanded ? "none" : "rotate(-90deg)" }} />
+              <span className="min-w-0">
+                <span className="block font-medium text-sm">{l.job_title}</span>
+                <span className="block text-xs" style={{ color: C.ink2 }}>{[l.company, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</span>
+              </span>
+            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <LeadAttention l={l} offers={offers} />
+              <Pill tone={l.channel === "email" ? "em" : l.channel === "linkedin" ? "info" : "neutral"}>{l.channel === "email" ? "Email" : l.channel === "linkedin" ? "LinkedIn" : "No contact"}</Pill>
+              <select value={l.status} onChange={(e) => patch({ status: e.target.value, ...(e.target.value === "contacted" && !l.contacted_at ? { contacted_at: new Date().toISOString() } : {}) }, "Moved to " + (LEAD_LABEL[e.target.value] || e.target.value))} className="text-xs rounded-lg border px-2 py-1 bg-white" style={{ borderColor: C.line }}>
+                {Object.keys(LEAD_LABEL).map((k) => <option key={k} value={k}>{LEAD_LABEL[k]}</option>)}
+              </select>
+            </div>
+          </div>
+          {!expanded && <LeadCandidateRows l={l} offers={offers} matches={matches} S={S} onOpen={() => setExpanded(true)} />}
+          {expanded && <>
+          <div className="pl-6">
             <div className="min-w-0">
-              <div className="font-medium text-sm">{l.job_title}</div>
-              <div className="text-xs" style={{ color: C.ink2 }}>{[l.company, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</div>
               {l.data && ((l.data.role && l.data.role.industry) || l.data.industry) && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Industry: {(l.data.role && l.data.role.industry) || l.data.industry}</div>}
               {l.data && l.data.signer && <div className="text-xs mt-0.5 font-medium" style={{ color: C.em }}>Signed our terms: {l.data.signer.name}{l.data.signer.title ? ", " + l.data.signer.title : ""}{l.interested_at ? " · " + fdate(l.interested_at) : ""}</div>}
               {l.data && l.data.timeline && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Hiring timeline: {l.data.timeline.text}</div>}
               {l.data && l.data.for_candidate && (() => { const fc = S.cands.find((x) => x.id === l.data.for_candidate); return (
                 <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Found for <button type="button" className="font-medium" style={{ color: fc ? C.em : C.ink2 }} onClick={() => fc && S.openCandidate(fc.id)}>{fc ? fc.name : "a candidate"}</button></div>
               ); })()}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Pill tone={l.channel === "email" ? "em" : l.channel === "linkedin" ? "info" : "neutral"}>{l.channel === "email" ? "Email" : l.channel === "linkedin" ? "LinkedIn" : "No contact"}</Pill>
-              <select value={l.status} onChange={(e) => patch({ status: e.target.value, ...(e.target.value === "contacted" && !l.contacted_at ? { contacted_at: new Date().toISOString() } : {}) }, "Moved to " + (LEAD_LABEL[e.target.value] || e.target.value))} className="text-xs rounded-lg border px-2 py-1 bg-white" style={{ borderColor: C.line }}>
-                {Object.keys(LEAD_LABEL).map((k) => <option key={k} value={k}>{LEAD_LABEL[k]}</option>)}
-              </select>
             </div>
           </div>
           <LeadContacts l={l} S={S} toast={toast} onChanged={onChanged} />
@@ -10325,6 +10372,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             {["replied", "meeting", "won"].includes(l.status) && !l.converted_job_id && <Btn kind="primary" icon={Briefcase} onClick={convert}>Create job from this</Btn>}
             {l.converted_job_id && <Pill tone="em">Job created</Pill>}
           </div>
+          </>}
         </div>
       </div>
     </div>
@@ -10439,6 +10487,7 @@ function CampaignsPage({ toast, S }) {
   const [pendingLeads, setPendingLeads] = useState(0);
   const [pf, setPf] = useState("found");
   const [lf, setLf] = useState("awaiting");
+  const [expandAll, setExpandAll] = useState({ v: false, n: 0 });
   const [sel, setSel] = useState({});
   const [busy, setBusy] = useState("");
   // Search and filters (kept while switching between the status tabs), and pages of up to 50.
@@ -10580,9 +10629,13 @@ function CampaignsPage({ toast, S }) {
           </div>
           <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on ContactOut or Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</div>
           {filterBar}
-          <div className="flex flex-col gap-2 mt-3">
+          {lList.length > 0 && <div className="flex justify-end gap-3 mt-3 text-xs">
+            <button type="button" onClick={() => setExpandAll((x) => ({ v: true, n: x.n + 1 }))} className="font-medium" style={{ color: C.em }}>Expand all</button>
+            <button type="button" onClick={() => setExpandAll((x) => ({ v: false, n: x.n + 1 }))} className="font-medium" style={{ color: C.em }}>Collapse all</button>
+          </div>}
+          <div className="flex flex-col gap-2 mt-2">
             {leads == null ? <SkeletonRows n={4} /> : lList.length ? pageOf(lList).map((l) => (
-              <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
+              <LeadCard key={l.id + l.status} l={l} S={S} toast={toast} onChanged={load} expandAll={expandAll} selected={!!sel[l.id]} onSelect={(v) => setSel((m) => ({ ...m, [l.id]: v }))} />
             )) : <EmptyState title={ql || nFilters ? "No leads match your search or filters" : "No client leads here yet"} text={ql || nFilters ? "Try removing a filter or searching for something else." : "Hiring managers whose new job posts fit your candidates appear here."} />}
           </div>
           {pager}
