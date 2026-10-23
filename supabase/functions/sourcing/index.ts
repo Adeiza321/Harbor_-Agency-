@@ -256,6 +256,19 @@ async function handle(req: Request): Promise<Response> {
         if (body.to) out.client = await sendLeadTest(admin, String(body.leadId), String(body.to), s, agencyName).catch((e) => ({ error: errMsg(e) }));
         return json({ ok: true, ...out });
       }
+      // Test data (internal only): a resume and its anonymised page for the TEST candidate only.
+      if (body.action === "test_upload_resume" && body.candidateId) {
+        const { data: c } = await admin.from("candidates").select("id,name").eq("id", String(body.candidateId)).maybeSingle();
+        if (!c || !/^Sani Test/.test(String(c.name || ""))) return json({ error: "Only for the test candidate" }, 403);
+        const bin = (b64: string) => Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+        const path = `${c.id}/test-resume.pdf`;
+        const up1 = await admin.storage.from("resumes").upload(path, bin(String(body.pdf || "")), { contentType: "application/pdf", upsert: true });
+        const up2 = await admin.storage.from("blind-resumes").upload(`cand-${c.id}/1.webp`, bin(String(body.blind || "")), { contentType: "image/webp", upsert: true });
+        if (up1.error || up2.error) return json({ error: (up1.error || up2.error)!.message }, 500);
+        const now = new Date().toISOString();
+        await admin.from("candidates").update({ resume_path: path, blind_pages: 1, blind_at: now, blind_checked_at: now }).eq("id", c.id);
+        return json({ ok: true });
+      }
       // Every 2 minutes (cron harbor-xray-queue): start queued X-ray searches, pick up stalled ones.
       if (body.action === "xray_queue") return json({ ok: true, ...(await stepXrayQueue(admin, s)) });
       // Someone a recruiter found is interested (database trigger prospects_sourced_interest).
