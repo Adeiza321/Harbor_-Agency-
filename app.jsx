@@ -10117,6 +10117,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged }) {
             <div className="min-w-0">
               <div className="font-medium text-sm">{l.job_title}</div>
               <div className="text-xs" style={{ color: C.ink2 }}>{[l.company, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</div>
+              {l.data && ((l.data.role && l.data.role.industry) || l.data.industry) && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Industry: {(l.data.role && l.data.role.industry) || l.data.industry}</div>}
               {l.data && l.data.signer && <div className="text-xs mt-0.5 font-medium" style={{ color: C.em }}>Signed our terms: {l.data.signer.name}{l.data.signer.title ? ", " + l.data.signer.title : ""}{l.interested_at ? " · " + fdate(l.interested_at) : ""}</div>}
               {l.data && l.data.timeline && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Hiring timeline: {l.data.timeline.text}</div>}
               {l.data && l.data.for_candidate && (() => { const fc = S.cands.find((x) => x.id === l.data.for_candidate); return (
@@ -11476,7 +11477,6 @@ function ClientPitchPage({ token }) {
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(() => Math.max(0, (Number(q.get("c")) || 1) - 1));
   const [gate, setGate] = useState(null);       // index of the candidate whose blind resume was just opened (pop-up)
-  const [seen, setSeen] = useState({});          // blind resumes already opened (no pop-up again)
   const [terms, setTerms] = useState(null);      // the agreement pop-up
   const [f, setF] = useState({ name: "", title: "", company: "", address: "", email: "", authorised: false });
   const [busy, setBusy] = useState("");
@@ -11486,7 +11486,8 @@ function ClientPitchPage({ token }) {
   React.useEffect(() => { load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
   const list = (d && d.candidates) || [];
   const signed = d && d.signed;
-  const viewBlind = (i) => { setOpen(i); if (!signed && !seen[i]) setGate(i); };
+  // The anonymised resume opens straight away; "View full resume" (before signing) brings up the terms.
+  const viewBlind = (i) => setOpen(open === i ? -1 : i);
   const openTerms = () => { setGate(null); clientCall(token, "terms").then((t) => { setTerms(t); setF((x) => ({ ...x, company: x.company || t.company || "", email: x.email || t.email || "", name: x.name || t.name || "" })); }).catch((e) => popError(e)); };
   const sign = () => { setBusy("sign"); clientCall(token, "sign", f).then(() => { setTerms(null); return load(); }).catch((e) => popError(e)).finally(() => setBusy("")); };
   const fullResume = (n) => { setBusy("cv" + n); clientCall(token, "resume", { n }).then((r) => window.open(r.url, "_blank", "noopener")).catch((e) => popError(e)).finally(() => setBusy("")); };
@@ -11548,9 +11549,10 @@ function ClientPitchPage({ token }) {
                     {signed && c.name && <div className="text-sm" style={{ color: C.ink2 }}>{[c.title, c.location].filter(Boolean).join(" · ")}</div>}
                     {signed && c.name && <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{[c.email, c.phone].filter(Boolean).join(" · ")}{c.linkedin ? <> · <a href={c.linkedin} target="_blank" rel="noopener noreferrer" style={{ color: C.em }}>LinkedIn</a></> : null}</div>}
                   </div>
-                  <div className="flex gap-2">
-                    {signed && c.hasResume && <Btn kind="primary" disabled={busy === "cv" + c.n} onClick={() => fullResume(c.n)}>{busy === "cv" + c.n ? "Opening…" : "Full resume"}</Btn>}
-                    <Btn onClick={() => (open === i && seen[i] ? setOpen(-1) : viewBlind(i))}>{open === i && (signed || seen[i]) ? "Hide blind resume" : "Review the blind resume"}</Btn>
+                  <div className="flex gap-2 flex-wrap">
+                    <Btn onClick={() => viewBlind(i)}>{open === i ? "Hide anonymised resume" : "View anonymised resume"}</Btn>
+                    {signed ? (c.hasResume && <Btn kind="primary" disabled={busy === "cv" + c.n} onClick={() => fullResume(c.n)}>{busy === "cv" + c.n ? "Opening…" : "Full resume"}</Btn>)
+                      : <Btn kind="primary" onClick={() => setGate(i)}>View full resume</Btn>}
                   </div>
                 </div>
                 {(c.musts || []).length > 0 && (
@@ -11559,7 +11561,7 @@ function ClientPitchPage({ token }) {
                     <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span><b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}</ul>
                   </div>
                 )}
-                {open === i && (signed || seen[i]) && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
+                {open === i && (c.pages.length ? <div className="mt-4"><ProtectedPages pages={c.pages} client={d.company} /></div>
                   : <div className="text-sm mt-3" style={{ color: C.ink3 }}>The anonymised resume isn't available right now.</div>)}
               </Card>
             ))}
@@ -11567,13 +11569,13 @@ function ClientPitchPage({ token }) {
         )}
       </div>
       {gate !== null && d && (
-        <Modal open onClose={() => { setSeen({ ...seen, [gate]: true }); setGate(null); }} title="Free to review, free to interview">
+        <Modal open onClose={() => setGate(null)} title="Unlock the full resume">
           <div className="flex flex-col gap-3 text-sm leading-relaxed">
             <div>We don't charge to arrange interviews. We only bill a fee when our candidate is hired by you: <b>{d.fee}</b>.</div>
             <div>Review and sign our agreement to unlock the full resume{list.length > 1 ? "s" : ""} and contact details. We'll notify the candidate{list.length > 1 ? "s" : ""} as soon as you agree to the terms.</div>
             <div className="flex gap-2 flex-wrap mt-1">
-              <Btn kind="primary" onClick={() => { setSeen({ ...seen, [gate]: true }); openTerms(); }}>Review the agreement</Btn>
-              <Btn onClick={() => { setSeen({ ...seen, [gate]: true }); setGate(null); }}>View the blind resume</Btn>
+              <Btn kind="primary" onClick={openTerms}>Review the agreement</Btn>
+              <Btn onClick={() => { setOpen(gate); setGate(null); }}>Back to the anonymised resume</Btn>
             </div>
           </div>
         </Modal>

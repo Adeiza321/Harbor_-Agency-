@@ -226,7 +226,7 @@ export function clientEmail(b: Brand, o: { cands?: { n: number; verdict: string;
   const candHtml = (c: { n: number; verdict: string; musts: string[]; url: string }) => `<div style="border:1px solid #E6E1D6;border-radius:12px;padding:14px 16px;margin:12px 0;">
 <div style="font-size:16px;font-weight:600;">Candidate ${c.n}${c.verdict ? ` <span style="font-size:12px;font-weight:600;color:${b.color};background:#E8F1EC;border-radius:999px;padding:2px 8px;font-family:Arial,sans-serif;">${esc(c.verdict)}</span>` : ""}</div>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-top:6px;">${c.musts.map((m) => `<tr><td style="vertical-align:top;padding:2px 8px 2px 0;color:${b.color};font-weight:700;">&#10003;</td><td style="padding:2px 0;font-size:14px;line-height:1.5;">${esc(m)}</td></tr>`).join("")}</table>
-${c.url ? `<a href="${esc(c.url)}" style="display:inline-block;margin-top:10px;padding:9px 16px;background:${b.color};color:#ffffff;text-decoration:none;border-radius:9px;font-family:Arial,sans-serif;font-size:13px;font-weight:600;">Review the blind resume</a>` : ""}
+${c.url ? `<a href="${esc(c.url)}" style="display:inline-block;margin-top:10px;padding:9px 16px;background:${b.color};color:#ffffff;text-decoration:none;border-radius:9px;font-family:Arial,sans-serif;font-size:13px;font-weight:600;">View the anonymised resume</a>` : ""}
 </div>`;
   if (o.cands && o.cands.length) {
     return emailShell(b, o.subject,

@@ -51,17 +51,20 @@ export type Assessed = {
   n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[]; musts: { item: string; evidence: string }[];
   notMet: string[]; requirements: { item: string; theirs: string; role: string; status: "met" | "discuss" }[]; questions: string[];
 };
-export type RoleFacts = { summary: string; workSetup: string; employmentType: string; seniority: string };
+export type RoleFacts = { summary: string; industry: string; workSetup: string; employmentType: string; seniority: string };
 
 // One AI question per lead: the role (anonymised) and, for each candidate, the fit, what the
 // posting needs that they clearly lack, how the role meets what they want, and questions to ask.
 export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: RoleFacts; results: Assessed[] }> {
   const sys = "You are a senior recruiter at an agency deciding which of our candidates to put forward for an employer's job posting. The bar is very high: " +
     "only someone who is a very strong fit and that the employer is unlikely to find better than. Reply with STRICT JSON only: " +
-    "{\"role\": {\"summary\": string, \"work_setup\": \"On-site\" | \"Hybrid\" | \"Remote\" | \"\", \"employment_type\": \"Full-time\" | \"Part-time\" | \"Contract\" | \"Temporary\" | \"\", \"seniority\": string}, " +
+    "{\"role\": {\"summary\": string, \"industry\": string, \"work_setup\": \"On-site\" | \"Hybrid\" | \"Remote\" | \"\", \"employment_type\": \"Full-time\" | \"Part-time\" | \"Contract\" | \"Temporary\" | \"\", \"seniority\": string}, " +
     "\"results\": [{\"n\": number, \"fit\": number, \"verdict\": \"Perfect fit\" | \"Good fit\" | \"Possible fit\" | \"Not a fit\", \"must_haves_not_met\": string[], \"must_haves_met\": [{\"item\": string, \"evidence\": string}], \"reason\": string, \"why_role\": string, \"bullets\": string[], " +
     "\"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": string[]}]}. " +
     "role.summary: two short sentences on what the job is, for the candidate. NEVER name the employer, its brands, website or anything that identifies it ('a growing manufacturer', 'a regional bank'). " +
+    "role.industry: the employer's industry in a few words (from the industry given, or the employer and description), e.g. 'Manufacturing (industrial equipment)'. " +
+    "INDUSTRY MATTERS A LOT: employers want people who know their industry. A candidate is a 'Perfect fit' or 'Good fit' only when they have worked in the employer's industry or a closely related one; " +
+    "without that they are at most a 'Possible fit', however good the rest. When they have it, include it in must_haves_met (item 'Industry experience', evidence e.g. '6 years in manufacturing'). " +
     "fit: a percentage 0-100 for how well their experience fits this posting. verdict: 'Perfect fit' or 'Good fit' only when they're a very strong match on experience, skills, seniority and industry. " +
     "must_haves_met: the posting's main requirements (up to 6) that the candidate clearly meets, each with a few words of evidence for the hiring manager (anonymous: no names, no employer names; e.g. item 'CPA licence', evidence 'Licensed CPA, 8 years'). " +
     "must_haves_not_met: the posting's real requirements (licences, years, specific experience) that their profile clearly does NOT meet; [] when none. Missing information is not 'not met'. " +
@@ -71,11 +74,11 @@ export async function assessForPitch(lead: any, cands: any[]): Promise<{ role: R
     "'Work setup', 'Employment type', 'Pay' (only when both their expectation and the job's pay are known). theirs: what they want, in a few words. role: what this job offers, in a few words. " +
     "status 'met' when the role clearly gives them what they want; 'discuss' when it doesn't clearly, or isn't stated (these are negotiable, so they're talked through, not ruled out). Leave out an item only when neither side is known. " +
     "questions: up to 3 short, friendly questions we should ask the candidate before putting them forward: about 'discuss' items, or anything the employer will want confirmed. Never name the employer. [] when none.";
-  const posting = `Job: ${lead.job_title}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${lead.data?.remote ? "\nRemote" : ""}\nEmployer (never mention it): ${lead.company}\nDescription:\n${String(lead.description || "").slice(0, 4000)}`;
+  const posting = `Job: ${lead.job_title}${lead.data?.industry ? "\nEmployer industry: " + lead.data.industry : ""}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${lead.data?.remote ? "\nRemote" : ""}\nEmployer (never mention it): ${lead.company}\nDescription:\n${String(lead.description || "").slice(0, 4000)}`;
   const list = cands.map((c: any, i: number) => `n=${i} | ${anonSummary(c)} | ${lookingFor(c)}`).join("\n");
   const out = await askAI(sys, posting + "\n\nCandidates:\n" + list, 4000);
   const r = out?.role || {};
-  const role: RoleFacts = { summary: scrub(clip(r.summary, 400), []), workSetup: clip(r.work_setup, 20), employmentType: clip(r.employment_type, 20), seniority: clip(r.seniority, 40) };
+  const role: RoleFacts = { summary: scrub(clip(r.summary, 400), []), industry: hideEmployer(clip(r.industry, 80), lead), workSetup: clip(r.work_setup, 20), employmentType: clip(r.employment_type, 20), seniority: clip(r.seniority, 40) };
   const results: Assessed[] = (Array.isArray(out?.results) ? out.results : []).map((x: any) => ({
     n: Number(x?.n), fit: Math.max(0, Math.min(100, Math.round(Number(x?.fit) > 0 && Number(x?.fit) <= 10 ? Number(x.fit) * 10 : Number(x?.fit) || 0))),
     verdict: ["Perfect fit", "Good fit", "Possible fit", "Not a fit"].includes(x?.verdict) ? x.verdict : "Possible fit",
