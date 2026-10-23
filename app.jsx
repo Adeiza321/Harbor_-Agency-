@@ -6138,8 +6138,11 @@ function CompanyScreeningCards({ candidate, S, toast }) {
   const groups = [];
   // Accepted roles, and roles they've been routed to but haven't accepted yet (shown with the
   // fit review against that job's description, and screened in full once they accept).
+  // Roles that ended (rejected by the client or by us, or withdrawn) leave the company cards: they're
+  // listed under "Ended" below, with why.
+  const ENDED = ["Rejected", "Withdrawn"];
   candidate.jobLinks
-    .filter((l) => l.response === "accepted" || (l.response === "pending" && l.stage !== "Withdrawn"))
+    .filter((l) => !ENDED.includes(l.stage) && (l.response === "accepted" || l.response === "pending"))
     .sort((a, b) => b.createdAt - a.createdAt)
     .forEach((l) => {
       const job = S.jobs.find((j) => j.id === l.jobId);
@@ -6151,9 +6154,23 @@ function CompanyScreeningCards({ candidate, S, toast }) {
   // A submission belongs to a card when it's the same company, or the same role as a job on
   // that card (so a client renamed after submitting doesn't show up as a second company).
   const onGroup = (g, e) => e.company === g.company || g.items.some((x) => x.job.role === e.role);
-  const otherSubs = candidate.endorsed.filter((e) => !groups.some((g) => onGroup(g, e)));
+  const endedAt = (l) => (l.reject && l.reject.at ? new Date(l.reject.at).getTime() : 0) || l.createdAt || 0;
+  const ended = candidate.jobLinks.filter((l) => ENDED.includes(l.stage) && l.response !== "declined").sort((a, b) => endedAt(b) - endedAt(a))
+    .map((l) => {
+      const job = S.jobs.find((j) => j.id === l.jobId);
+      const r = l.reject;
+      const why = l.stage === "Withdrawn" ? "Withdrew" : r ? (r.kind === "client" ? "Rejected by the client" : r.kind === "rerouted" ? "Routed to another role" : "Rejected by us") + (r.reason && r.kind !== "rerouted" ? ": " + (REJECT_LABEL[r.reason] || r.reason) : "") : "Rejected";
+      return { id: l.id, company: job ? job.client : "Role removed", role: job ? job.role : "", why, at: r && r.at ? r.at : null, client: !!(r && r.kind === "client") };
+    });
+  const endedSub = (e) => ended.some((x) => x.company === e.company && x.role === e.role);
+  // A submission marked Rejected that isn't on a live card is an ended one too.
+  const otherSubs = candidate.endorsed.filter((e) => !groups.some((g) => onGroup(g, e)) && !endedSub(e) && e.status !== "Rejected");
+  const endedSubs = candidate.endorsed.filter((e) => !groups.some((g) => onGroup(g, e)) && !endedSub(e) && e.status === "Rejected")
+    .map((e) => ({ id: "e" + e.id, company: e.company, role: e.role, why: e.next ? e.next.replace(/^Client: /, "Rejected by the client: ") : "Rejected", at: null, client: /^Client/.test(e.next || "") }));
+  const endedAll = [...ended, ...endedSubs];
+  const [showEnded, setShowEnded] = useState(false);
   const [open, setOpen] = useState(() => (groups[0] ? { [groups[0].company]: true } : {}));
-  if (!groups.length && !otherSubs.length) return (
+  if (!groups.length && !otherSubs.length && !endedAll.length) return (
     <div className="text-sm py-6 text-center" style={{ color: C.ink3 }}>No companies yet. Add them to a job from the Jobs card, or route them to a role they match. A screening card appears here once they're on it.</div>
   );
   return (
@@ -6171,6 +6188,20 @@ function CompanyScreeningCards({ candidate, S, toast }) {
               <div className="flex-1 min-w-0"><div className="font-medium text-sm">{e.company}</div><div className="text-xs" style={{ color: C.ink2 }}>{e.role}</div></div>
               <div className="text-right shrink-0"><StatusPill status={e.status} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>{e.next}</div></div>
               {S.role !== "recruiter" && e.id && <button type="button" title="Remove this submission" aria-label={"Remove the " + e.company + " submission"} onClick={() => S.deleteEndorsement(e.id).then(() => toast("Submission removed")).catch(() => {})} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0" style={{ borderColor: C.line, color: C.ink2, background: C.card }}><X size={14} /></button>}
+            </div>
+          ))}
+        </div>
+      )}
+      {endedAll.length > 0 && (
+        <div className="mt-1">
+          <button type="button" onClick={() => setShowEnded(!showEnded)} aria-expanded={showEnded} className="text-xs font-semibold flex items-center gap-1" style={{ color: C.ink3 }}>
+            ENDED ({endedAll.length}) <ChevronDown size={14} style={{ transform: showEnded ? "rotate(180deg)" : "none" }} />
+          </button>
+          {showEnded && endedAll.map((x, i) => (
+            <div key={x.id} className="flex items-center gap-3 py-2.5" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center font-semibold shrink-0 text-sm" style={{ background: C.canvas, color: C.ink3 }}>{(x.company || "?")[0]}</div>
+              <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate" style={{ color: C.ink2 }}>{x.company}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{x.role}</div></div>
+              <div className="text-right shrink-0 max-w-[55%]"><div className="text-xs font-medium" style={{ color: x.client ? C.dangerFg : C.ink2 }}>{x.why}</div>{x.at && <div className="text-xs" style={{ color: C.ink3 }}>{fdate(x.at)}</div>}</div>
             </div>
           ))}
         </div>
