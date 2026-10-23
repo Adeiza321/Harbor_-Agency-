@@ -42,7 +42,7 @@ Deno.serve(async (req: Request) => {
         if (!l.client_viewed_at) await admin.from("leads").update({ client_viewed_at: new Date().toISOString() }).eq("id", l.id);
         const { candidates, agreement } = await shortlistFor(admin, l);
         const t = await termsFor(admin, l.company);
-        const poc = await loadPoc(admin);
+        const poc = await loadPoc(admin, l.region || "");
         return json({ ok: true, company: l.company || "", role: l.job_title || "", location: l.location || "", candidates, fee: feeLine(t), firstTime: t.firstTime,
           signed: agreement ? { at: agreement.signed_at, name: agreement.signer_name, title: agreement.signer_title } : null,
           timeline: l.data?.timeline || null,

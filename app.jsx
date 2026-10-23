@@ -13427,7 +13427,7 @@ function ClientTermsTab({ toast, S }) {
   const cur = (S.settings && S.settings.clientAgreement) || { title: "Candidate Introduction Terms", body: "", version: 1, feePct: 10, firstTimeDiscountPct: 20 };
   const poc0 = (S.settings && S.settings.clientPoc) || {};
   const [f, setF] = useState({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20 });
-  const [poc, setPoc] = useState({ userId: poc0.userId || "", title: poc0.title || "", bookingUrl: poc0.bookingUrl || "" });
+  const [poc, setPoc] = useState({ userId: poc0.userId || "", title: poc0.title || "", bookingUrl: poc0.bookingUrl || "", us: (poc0.phones && poc0.phones.us) || "", eu: (poc0.phones && poc0.phones.eu) || "" });
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState(null);
   const [view, setView] = useState(null);
@@ -13439,7 +13439,7 @@ function ClientTermsTab({ toast, S }) {
     setBusy(true);
     const a = { ...cur, title: f.title.trim() || "Candidate Introduction Terms", body: f.body, feePct: Number(f.feePct) || 10, firstTimeDiscountPct: Math.max(0, Number(f.firstTimeDiscountPct) || 0),
       version: (Number(cur.version) || 1) + (changed ? 1 : 0), updatedAt: new Date().toISOString() };
-    S.saveClientTerms(a, { userId: poc.userId || null, title: poc.title.trim(), bookingUrl: poc.bookingUrl.trim() }).then(() => toast("Saved. New signatures use these terms; signed copies don't change.")).catch(() => {}).finally(() => setBusy(false));
+    S.saveClientTerms(a, { userId: poc.userId || null, title: poc.title.trim(), bookingUrl: poc.bookingUrl.trim(), phones: { us: poc.us.trim(), eu: poc.eu.trim() } }).then(() => toast("Saved. New signatures use these terms; signed copies don't change.")).catch(() => {}).finally(() => setBusy(false));
   };
   return (
     <div className="flex flex-col gap-4">
@@ -13450,6 +13450,11 @@ function ClientTermsTab({ toast, S }) {
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Title shown to clients<input value={poc.title} onChange={(e) => setPoc({ ...poc, title: e.target.value })} placeholder="e.g. Client Partner" className={inp} style={inpS} /></label>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Booking link<input value={poc.bookingUrl} onChange={(e) => setPoc({ ...poc, bookingUrl: e.target.value })} placeholder="https://calendly.com/…" className={inp} style={inpS} /></label>
         </div>
+        <div className="grid sm:grid-cols-2 gap-3 mt-3">
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone shown to US clients<input value={poc.us} onChange={(e) => setPoc({ ...poc, us: e.target.value })} placeholder="optional, e.g. +1 …" className={inp} style={inpS} /></label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone shown to UK and Europe clients<input value={poc.eu} onChange={(e) => setPoc({ ...poc, eu: e.target.value })} placeholder="optional, e.g. +44 …" className={inp} style={inpS} /></label>
+        </div>
+        <div className="text-xs mt-1" style={{ color: C.ink3 }}>Clients see the number for where they are; elsewhere, no number. A person's own number is never shown.</div>
         {!poc.bookingUrl && <div className="text-xs mt-2" style={{ color: C.warnFg }}>No booking link yet: clients are asked to reply to arrange a call instead.</div>}
       </Card>
       <Card>

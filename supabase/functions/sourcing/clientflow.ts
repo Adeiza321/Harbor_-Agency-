@@ -33,12 +33,16 @@ export const companyKey = (s: unknown) => String(s || "").toLowerCase().replace(
 
 // ---- Settings ------------------------------------------------------------------------------------
 export type Poc = { id: string | null; name: string; first: string; title: string; email: string; phone: string; photo: string | null; bookingUrl: string };
-export async function loadPoc(admin: any): Promise<Poc> {
+// The phone number shown to a client depends on where they are: the US number for US clients, the
+// UK / Europe number for UK and European clients, none otherwise (never a person's own number).
+export async function loadPoc(admin: any, region = ""): Promise<Poc> {
   const { data: set } = await admin.from("agency_settings").select("client_poc").limit(1).maybeSingle();
   const cfg = set?.client_poc || {};
   const { data: u } = cfg.userId ? await admin.from("profiles").select("id,full_name,email,phone,avatar_url,role").eq("id", cfg.userId).maybeSingle() : { data: null };
   const name = String(u?.full_name || "Ahmed Sanni").replace(/\s*,\s*/g, " ").replace(/\s+/g, " ").trim();
-  return { id: u?.id || null, name, first: first(name), title: cfg.title || (u?.role === "admin" ? "Client Partner" : "Recruitment Partner"), email: u?.email || "", phone: u?.phone || "",
+  const phones = cfg.phones || {};
+  const phone = String((region === "US" ? phones.us : region === "EU" ? phones.eu : "") || "").trim();
+  return { id: u?.id || null, name, first: first(name), title: cfg.title || (u?.role === "admin" ? "Client Partner" : "Recruitment Partner"), email: u?.email || "", phone,
     photo: u?.avatar_url || null, bookingUrl: String(cfg.bookingUrl || "").trim() };
 }
 export type Terms = { title: string; body: string; version: number; feePct: number; discountPct: number; effectivePct: number; firstTime: boolean };
@@ -127,7 +131,7 @@ export async function signForLead(admin: any, l: any, f: any, ip: string, ua: st
   const existing = await agreementFor(admin, l.company);
   if (existing) return { agreement: existing, already: true };
   const t = await termsFor(admin, l.company);
-  const poc = await loadPoc(admin);
+  const poc = await loadPoc(admin, l.region || "");
   const now = new Date();
   const { data: ag, error } = await admin.from("client_agreements").insert({
     company_key: companyKey(l.company), company: v.company, lead_id: l.id, version: t.version, title: t.title,
