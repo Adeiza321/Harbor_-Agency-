@@ -149,7 +149,7 @@ export async function fetchLeads(admin: any, s: Settings) {
         source: "theirstack", external_id: p.id, company: p.company, company_domain: p.domain, job_title: p.title,
         location: p.location, country: pc, region: regionOf(pc), url: p.url, posted_at: p.posted_at,
         description: p.description, salary: p.salary, status: "pending",
-        data: { hiring_team: p.hiring_team, remote: p.remote, for_candidate: c.id, for_titles: titles, for_area: area.home },
+        data: { hiring_team: p.hiring_team, remote: p.remote, industry: p.industry || null, for_candidate: c.id, for_titles: titles, for_area: area.home },
       });
       if (!error) { added++; mine++; }  // a posting already found (for anyone) hits the unique external_id and is skipped
     }

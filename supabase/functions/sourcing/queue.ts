@@ -52,7 +52,7 @@ export function leadText(l: any) {
   const n = Array.isArray(l.data?.pitched) ? l.data.pitched.length : 0;
   if (!l.client_token || !n) return String(l.pitch_body || "");
   const viewUrl = `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}`;
-  return String(l.pitch_body || "") + "\n\n" + pitchCands(l, viewUrl).map((c) => `Candidate ${c.n}${c.verdict ? " (" + c.verdict + ")" : ""}\n${c.musts.map((x: string) => "- " + x).join("\n")}\nReview the blind resume: ${c.url}`).join("\n\n") +
+  return String(l.pitch_body || "") + "\n\n" + pitchCands(l, viewUrl).map((c) => `Candidate ${c.n}${c.verdict ? " (" + c.verdict + ")" : ""}\n${c.musts.map((x: string) => "- " + x).join("\n")}\nView the anonymised resume: ${c.url}`).join("\n\n") +
     "\n\nWe don't charge to arrange interviews. We only bill a fee when you hire our candidate.";
 }
 

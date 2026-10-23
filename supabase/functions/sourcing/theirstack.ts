@@ -5,7 +5,7 @@ export const theirstackKey = () => Deno.env.get("THEIRSTACK_API_KEY") || "";
 
 export type Posting = {
   id: string; title: string; url: string; posted_at: string | null;
-  company: string; domain: string; country: string; location: string; remote: boolean;
+  company: string; domain: string; country: string; location: string; remote: boolean; industry: string;
   description: string; salary: string;
   hiring_team: { first_name: string; full_name: string; role: string; linkedin_url: string }[];
 };
@@ -59,6 +59,7 @@ async function searchPage(opts: { titles: string[]; countries: string[]; places?
     id: String(j.id ?? ""), title: String(j.job_title || ""), url: String(j.final_url || j.url || ""),
     posted_at: j.date_posted || null, company: String(j.company || j.company_object?.name || ""),
     domain: String(j.company_domain || j.company_object?.domain || ""), country: String(j.country_code || ""),
+    industry: String(j.company_object?.industry || j.company_industry || j.industry || ""),
     location: String(j.location || j.short_location || ""), remote: !!j.remote,
     description: String(j.description || "").slice(0, 6000), salary: String(j.salary_string || ""),
     hiring_team: (Array.isArray(j.hiring_team) ? j.hiring_team : []).map((h: any) => ({
