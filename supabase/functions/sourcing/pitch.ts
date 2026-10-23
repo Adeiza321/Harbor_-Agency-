@@ -13,7 +13,9 @@
 // The pitch has its own chat: the candidate is linked to the lead's role (a private client-lead
 // role, never on the jobs board, the employer never shown to the candidate) and the notice is the
 // first message; their acknowledgement and answers come back to their recruiter there.
-// Reminder after 2 days with no response; then it waits for Rec Ops / an Admin to push them
+// Nothing is emailed automatically: each candidate's email starts as a draft that Rec Ops / an
+// Admin reviews (edit "why it suits you", drop questions) and sends; a reminder is due after 2
+// days with no response and is sent from the lead card. Then it waits for Rec Ops / an Admin to push them
 // through or take them off. Each candidate has their own status (lead_offers), so a pitch can go
 // with some candidates and not others.
 
@@ -23,7 +25,7 @@ import { button, emailShell, esc, loadBrand, sendBrevo, type Brand } from "./bra
 import { portalBase } from "./queue.ts";
 
 export const REMIND_AFTER_MS = 2 * 864e5;
-export const PENDING = ["notified", "reminded", "no_email", "acknowledged"];
+export const PENDING = ["draft", "notified", "reminded", "no_email", "acknowledged"];
 export const OUT = ["withdrawn", "removed"];
 // The bar: only someone the employer is unlikely to find better than.
 export const MIN_PITCH_FIT = 80;
@@ -220,13 +222,38 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   return { status: sent ? (reminder ? "reminded" : "notified") : "no_email", sent, ...(sent ? {} : { why: "the email didn't send" }) };
 }
 
-// Every 10 minutes: a reminder to anyone told 2+ days ago who hasn't responded.
-export async function stepReminders(admin: any, n = 10) {
-  const before = new Date(Date.now() - REMIND_AFTER_MS).toISOString();
-  const { data } = await admin.from("lead_offers").select("id").eq("status", "notified").is("reminded_at", null).lt("notified_at", before).limit(n);
-  let sent = 0;
-  for (const o of data || []) { const r = await notifyOffer(admin, o.id, true).catch(() => null); if (r?.sent) sent++; }
-  return { reminded: sent };
+// Reminders are never sent automatically (every email is reviewed first): the lead card shows
+// "Reminder due" once someone has had 2 days without responding. Kept as a no-op for the tick.
+export async function stepReminders(_admin: any, _n = 10) { return { reminded: 0 }; }
+
+// The email a candidate would get, for review before sending (same as the real one).
+export async function previewOffer(admin: any, offerId: string, reminder = false) {
+  const { data: o } = await admin.from("lead_offers").select("*").eq("id", offerId).maybeSingle();
+  if (!o) throw new Error("Not found");
+  const { data: lead } = await admin.from("leads").select("*").eq("id", o.lead_id).maybeSingle();
+  const { data: c } = await admin.from("candidates").select("name,email,email_opt_out,portal_token,recruiter_id").eq("id", o.candidate_id).maybeSingle();
+  const { data: rec } = c?.recruiter_id ? await admin.from("profiles").select("full_name,email").eq("id", c.recruiter_id).maybeSingle() : { data: null };
+  const b = await loadBrand(admin);
+  const facts = factsOf(lead || {});
+  const l = links(c?.portal_token || "preview", o.token);
+  const html = noticeEmail(b, { first: String(c?.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], fit: o.fit, verdict: o.verdict || "",
+    questions: Array.isArray(o.questions) ? o.questions.length : 0, recruiter: String(rec?.full_name || "").split(" ")[0] || "", ack: l.ack, withdraw: l.withdraw, reminder });
+  return { ok: true, html, subject: (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role"),
+    to: c?.email || "", canEmail: !!(c?.email && !c.email_opt_out && c.portal_token), replyTo: rec?.email || "" };
+}
+
+// Edits before sending: the "why it suits you" text and the questions.
+export async function updateOffer(admin: any, offerId: string, patch: { whyRole?: unknown; questions?: unknown }) {
+  const { data: o } = await admin.from("lead_offers").select("id,status,answers").eq("id", offerId).maybeSingle();
+  if (!o) throw new Error("Not found");
+  const upd: Record<string, unknown> = {};
+  if (patch.whyRole !== undefined) upd.why_role = String(patch.whyRole || "").trim().slice(0, 600) || null;
+  if (Array.isArray(patch.questions)) {
+    if (Array.isArray(o.answers) && o.answers.length) throw new Error("They've already answered");
+    upd.questions = patch.questions.map((q) => String((q as any)?.q ?? q ?? "").trim().slice(0, 240)).filter(Boolean).slice(0, 5).map((q) => ({ q }));
+  }
+  if (Object.keys(upd).length) await admin.from("lead_offers").update(upd).eq("id", o.id);
+  return { ok: true, message: "Saved" };
 }
 
 // Rec Ops / Admin: drop a question we don't need. With none left, someone who has acknowledged is
@@ -243,13 +270,19 @@ export async function removeQuestion(admin: any, me: { id: string; name: string 
 }
 
 // Rec Ops / Admin actions on one candidate of a pitch.
-export async function offerAction(admin: any, me: { id: string; name: string }, offerId: string, action: "push" | "withdraw" | "remove" | "remind") {
+export async function offerAction(admin: any, me: { id: string; name: string }, offerId: string, action: "send" | "push" | "withdraw" | "remove" | "remind") {
   const { data: o } = await admin.from("lead_offers").select("*").eq("id", offerId).maybeSingle();
   if (!o) throw new Error("Not found");
   const { data: lead } = await admin.from("leads").select("job_title").eq("id", o.lead_id).maybeSingle();
   const role = lead?.job_title || "a role";
   const now = new Date().toISOString();
   const tl = (title: string) => admin.from("candidate_timeline").insert({ candidate_id: o.candidate_id, title: title + (me.name ? " · by " + me.name : ""), done: true });
+  if (action === "send") {
+    if (o.status !== "draft") throw new Error("This email has already gone");
+    const r = await notifyOffer(admin, o.id);
+    if (r.sent) await tl("Pitch email reviewed and sent for " + role);
+    return { ok: true, message: r.sent ? "Email sent" : "Couldn't email them: " + (r.why || "no email") + ". Put them through or take them off." };
+  }
   if (action === "remind") {
     if (!["notified", "reminded"].includes(o.status)) throw new Error("Only someone still waiting can be reminded");
     const r = await notifyOffer(admin, o.id, true);

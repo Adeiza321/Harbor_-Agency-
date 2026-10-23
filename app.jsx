@@ -9943,16 +9943,73 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
 // Candidate first: each candidate on a pitch has their own status. They're told about the role
 // (no employer) and the pitch waits for them; Rec Ops / Admins can remind, put through, withdraw
 // or remove each one, and send the pitch now with whoever is ready.
-const PITCH_STATE = { notified: ["Told, waiting to acknowledge", "warn"], reminded: ["Reminded, still waiting", "warn"], no_email: ["Couldn't be emailed", "danger"],
+const PITCH_STATE = { draft: ["Email to review", "warn"], notified: ["Told, waiting to acknowledge", "warn"], reminded: ["Reminded, still waiting", "warn"], no_email: ["Couldn't be emailed", "danger"],
   acknowledged: ["Acknowledged, answering questions", "info"], ready: ["Ready for the pitch", "em"], pitched: ["In the pitch", "em"], withdrawn: ["Withdrew", "neutral"], removed: ["Removed from consideration", "neutral"] };
 const isPitchOffer = (o) => !!PITCH_STATE[o.status];
+// Review a candidate's pitch email before it goes (nothing is sent automatically): the real email,
+// with "why it suits you" and the questions editable; Send emails it (or the reminder).
+function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged }) {
+  const [p, setP] = useState(null);
+  const [why, setWhy] = useState(offer.why_role || "");
+  const [qs, setQs] = useState((Array.isArray(offer.questions) ? offer.questions : []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean));
+  const [busy, setBusy] = useState("");
+  const answered = Array.isArray(offer.answers) && offer.answers.length > 0;
+  const load = () => S.sourcing("offer_preview", { offerId: offer.id, reminder: !!reminder }).then(setP).catch((e) => S.error(e.message));
+  React.useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = why !== (offer.why_role || "") || JSON.stringify(qs) !== JSON.stringify((offer.questions || []).map((q) => (typeof q === "string" ? q : q.q)).filter(Boolean));
+  const save = () => { setBusy("save"); return S.sourcing("offer_update", { offerId: offer.id, whyRole: why, ...(answered ? {} : { questions: qs.filter((q) => q.trim()) }) })
+    .then(() => { offer.why_role = why; if (!answered) offer.questions = qs.filter((q) => q.trim()).map((q) => ({ q })); return load(); }).finally(() => setBusy("")); };
+  const send = async () => {
+    setBusy("send");
+    try {
+      if (dirty) await save();
+      const r = await S.sourcing(reminder ? "offer_remind" : "offer_send", { offerId: offer.id });
+      toast((r && r.message) || "Sent"); onChanged(); onClose();
+    } catch (e) { S.error(e.message); }
+    setBusy("");
+  };
+  return (
+    <Modal open onClose={onClose} title={(reminder ? "Reminder to " : "Email to ") + name} wide>
+      {!p ? <SkeletonRows n={4} /> : (
+        <div className="flex flex-col gap-3">
+          <div className="text-xs" style={{ color: C.ink2 }}>To <b>{p.to || "no email on file"}</b>{p.replyTo ? " · replies go to " + p.replyTo : ""} · Subject: <b>{p.subject}</b></div>
+          {!p.canEmail && <div className="text-xs rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{name.split(" ")[0]} can't be emailed (no email, unsubscribed or no candidate page). Put them through or take them off instead.</div>}
+          {!reminder && (
+            <>
+              <label className="flex flex-col gap-1"><span className="text-xs font-medium" style={{ color: C.ink2 }}>Why we think it suits them</span>
+                <textarea rows={3} value={why} onChange={(e) => setWhy(e.target.value)} maxLength={600} className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></label>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-medium" style={{ color: C.ink2 }}>Questions (open when they acknowledge){answered ? " · already answered" : ""}</span>
+                {qs.length === 0 && <span className="text-xs" style={{ color: C.ink3 }}>No questions.</span>}
+                {qs.map((q, i) => (
+                  <div key={i} className="flex gap-2 items-start">
+                    <input value={q} disabled={answered} onChange={(e) => setQs(qs.map((x, k) => (k === i ? e.target.value : x)))} className="flex-1 rounded-lg border px-3 py-1.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+                    {!answered && <button type="button" onClick={() => setQs(qs.filter((_, k) => k !== i))} className="text-xs inline-flex items-center gap-1 mt-2" style={{ color: C.ink3 }}><X size={12} />Remove</button>}
+                  </div>
+                ))}
+                {!answered && qs.length < 5 && <button type="button" onClick={() => setQs([...qs, ""])} className="text-xs self-start font-medium" style={{ color: C.em }}>+ Add a question</button>}
+              </div>
+              {dirty && <div><Btn disabled={!!busy} onClick={save} className="!py-1.5 !px-3 text-xs">{busy === "save" ? "Updating…" : "Update preview"}</Btn></div>}
+            </>
+          )}
+          <iframe title="Email preview" srcDoc={p.html} sandbox="" className="w-full rounded-lg border" style={{ borderColor: C.line, height: 520, background: "#F3EFE7" }} />
+          <div className="flex justify-end gap-2">
+            <Btn onClick={onClose}>Cancel</Btn>
+            <Btn kind="primary" icon={Send} disabled={!!busy || !p.canEmail} onClick={send}>{busy === "send" ? "Sending…" : reminder ? "Send reminder" : "Send email"}</Btn>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
 function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [open, setOpen] = useState({});
+  const [review, setReview] = useState(null); // { offer, name, reminder }
   const staff = S.role === "admin" || S.role === "recops";
   const run = (key, action, body, msg) => { setBusy(key); S.sourcing(action, body).then((r) => { toast((r && r.message) || msg); onChanged(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
-  const ready = offers.filter((o) => o.status === "ready"), pending = offers.filter((o) => ["notified", "reminded", "no_email", "acknowledged"].includes(o.status));
-  const order = { ready: 0, acknowledged: 1, notified: 2, reminded: 2, no_email: 3, pitched: 4, withdrawn: 5, removed: 6 };
+  const ready = offers.filter((o) => o.status === "ready"), pending = offers.filter((o) => ["draft", "notified", "reminded", "no_email", "acknowledged"].includes(o.status));
+  const order = { draft: 0, ready: 1, acknowledged: 2, notified: 3, reminded: 3, no_email: 4, pitched: 5, withdrawn: 6, removed: 7 };
   return (
     <div className="mt-2 flex flex-col gap-1.5">
       {l.status === "awaiting" && (
@@ -10021,14 +10078,17 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
             <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 items-center justify-end">
               {o.status === "ready" && <span style={{ color: blindOk ? C.em : C.warnFg }}>{blindOk ? "Blind resume checked" : "Needs a checked blind resume"}</span>}
               {o.note && <span style={{ color: C.ink3 }}>{o.note}</span>}
-              {staff && ["notified", "reminded"].includes(o.status) && <button disabled={!!busy} onClick={() => run(o.id + "r", "offer_remind", { offerId: o.id }, "Reminder sent")} className="font-medium" style={{ color: C.em }}>{busy === o.id + "r" ? "Sending…" : "Remind"}</button>}
-              {staff && ["notified", "reminded", "no_email", "acknowledged"].includes(o.status) && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for them"}>Put through</button>}
+              {o.status === "notified" && o.notified_at && Date.now() - new Date(o.notified_at).getTime() > 2 * 864e5 && <span className="font-semibold" style={{ color: C.warnFg }}>Reminder due</span>}
+              {staff && o.status === "draft" && <Btn kind="primary" icon={Mail} disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: false })} className="!py-1.5 !px-3 text-xs">Review and send email</Btn>}
+              {staff && ["notified", "reminded"].includes(o.status) && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }}>Remind</button>}
+              {staff && ["draft", "notified", "reminded", "no_email", "acknowledged"].includes(o.status) && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for them"}>Put through</button>}
               {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "w", "offer_withdraw", { offerId: o.id }, "Withdrawn")} style={{ color: C.ink2 }}>Withdraw</button>}
               {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "x", "offer_remove", { offerId: o.id }, "Removed")} style={{ color: C.dangerFg }}>Remove from consideration</button>}
             </div>
           </div>
         );
       })}
+      {review && <PitchEmailReview offer={review.offer} name={review.name} reminder={review.reminder} S={S} toast={toast} onClose={() => setReview(null)} onChanged={onChanged} />}
     </div>
   );
 }
