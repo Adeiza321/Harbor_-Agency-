@@ -193,6 +193,15 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
     });
     if (error) throw new Error(error.message);
     await admin.from("leads").update({ status: "queued" }).eq("id", l.id);
+    // Candidate first: the candidates in it are now with the client (Submitted on the lead's role).
+    const pitched: string[] = Array.isArray(l.data?.pitched) ? l.data.pitched.map(String) : [];
+    if (pitched.length) {
+      const { data: offs } = await admin.from("lead_offers").select("id,candidate_job_id").eq("lead_id", l.id).in("candidate_id", pitched).in("status", ["ready", "pitched"]);
+      for (const o of offs || []) {
+        await admin.from("lead_offers").update({ status: "pitched", pitched_at: new Date().toISOString() }).eq("id", o.id);
+        if (o.candidate_job_id) await admin.from("candidate_jobs").update({ stage: "Submitted" }).eq("id", o.candidate_job_id).in("stage", ["Sourced", "In review", "Screening"]);
+      }
+    }
     queued++;
   }
   return queued;

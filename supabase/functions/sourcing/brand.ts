@@ -7,7 +7,8 @@ export async function loadBrand(admin: any): Promise<Brand> {
     const { data } = await admin.from("agency_settings").select("agency_name,company,outreach").limit(1).maybeSingle();
     const company = (data?.company && typeof data.company === "object") ? data.company : {};
     const logo = String(company.logoUrl || "").trim();
-    const address = String(company.address || data?.outreach?.businessAddress || "").trim();
+    // Footers always show the UK office (sourcing's emails: candidates and clients).
+    const address = "167-169 Great Portland Street, 5th Floor, London W1W 5PF, United Kingdom";
     const name = String(data?.agency_name || company.name || "Pronext").trim() || "Pronext";
     // Footers use the full company name when one is set in Agency settings ("Pronext Outsourcing Agency").
     const legal = String(company.legalName || "").trim() || name;
@@ -35,7 +36,7 @@ ${bodyHtml}
 </div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;"><tr><td align="center" style="padding:18px 4px 0;font-size:12px;line-height:1.6;color:#56605A;font-family:Arial,sans-serif;text-align:center;">
 <div style="text-align:center;">${footerHtml ? footerHtml : footer ? esc(footer) : "You are receiving this email because you are a candidate with " + esc(b.legal || b.name) + "." + (unsubscribeUrl ? ` If you wish to unsubscribe, <a href="${esc(unsubscribeUrl)}" style="color:#56605A;text-decoration:underline;">click here</a>.` : "")}</div>
-<div style="margin-top:6px;color:#8A8578;text-align:center;">&copy; ${new Date().getFullYear()} ${esc(b.legal || b.name)}</div>
+<div style="margin-top:6px;color:#8A8578;text-align:center;">&copy; ${new Date().getFullYear()} ${esc(b.legal || b.name)}${b.address && !footerHtml ? " &middot; " + esc(b.address) : ""}</div>
 </td></tr></table>
 </div></body></html>`;
 }
@@ -58,7 +59,7 @@ export function ccList(to: { email: string }, cc?: ({ email?: string | null; nam
   return out;
 }
 
-export async function sendBrevo(b: Brand, to: { email: string; name?: string }, subject: string, html: string, attachment?: { name: string; content: string }, opts?: { cc?: ({ email?: string | null; name?: string | null } | null)[] }): Promise<boolean> {
+export async function sendBrevo(b: Brand, to: { email: string; name?: string }, subject: string, html: string, attachment?: { name: string; content: string }, opts?: { cc?: ({ email?: string | null; name?: string | null } | null)[]; replyTo?: { email: string; name?: string } | null }): Promise<boolean> {
   const key = Deno.env.get("BREVO_API_KEY"), senderEmail = Deno.env.get("BREVO_SENDER_EMAIL");
   if (!key || !senderEmail || !to.email) { console.error("Brevo not configured or no recipient; email not sent"); return false; }
   const cc = ccList(to, opts?.cc);
@@ -66,7 +67,7 @@ export async function sendBrevo(b: Brand, to: { email: string; name?: string }, 
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json", "api-key": key },
-      body: JSON.stringify({ sender: { email: senderEmail, name: b.name }, to: [to], ...(cc.length ? { cc } : {}), subject, htmlContent: html, ...(attachment ? { attachment: [attachment] } : {}) }),
+      body: JSON.stringify({ sender: { email: senderEmail, name: b.name }, to: [to], ...(cc.length ? { cc } : {}), ...(opts?.replyTo?.email ? { replyTo: opts.replyTo } : {}), subject, htmlContent: html, ...(attachment ? { attachment: [attachment] } : {}) }),
     });
     if (!res.ok) { console.error("brevo send failed", res.status, (await res.text()).slice(0, 300)); return false; }
     return true;
