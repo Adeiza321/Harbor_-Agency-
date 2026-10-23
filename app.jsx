@@ -443,7 +443,7 @@ function mapAll(d) {
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
     currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
     note: c.profile_note || "", noteBy: c.profile_note_by ? pname(c.profile_note_by) : "", noteAt: c.profile_note_at || null,
-    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: answersFor(l), ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
+    jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: answersFor(l), ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason && ["Rejected", "Withdrawn"].includes(l.stage) ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       blindPages: l.blind_pages || 0, blindAt: l.blind_at || null,
       clientToken: l.client_token, clientRevealed: !!l.client_revealed, clientRevealedAt: l.client_revealed_at, clientViewedAt: l.client_viewed_at,
       // Messages with this candidate about this specific job (candidate_job_messages), oldest first.
@@ -6440,7 +6440,7 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
   const e = endorsed.find((x) => x.role === job.role) || null;
   const status = pending ? "Routed, waiting for " + first + " to accept"
     : link.reject ? (link.reject.kind === "client" ? "Rejected by the client" : "Rejected") + ": " + (REJECT_LABEL[link.reject.reason] || link.reject.reason)
-    : e ? e.status : link.stage;
+    : e && !(e.status === "Rejected" && link.stage !== "Rejected") ? e.status : link.stage;
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   // Once put forward to the client, this always reads Good fit, whatever the AI verdict was.
   const sent = !!e || SENT_STAGES.includes(link.stage);
@@ -15765,6 +15765,11 @@ export default function App() {
           const who = (me && me.name) || "";
           const title = "Moved to " + stage + (j ? " for " + j.role + (j.client ? " at " + j.client : "") : "") + (from ? " (was " + from + ")" : "") + (reason ? ". Reason: " + reason : "") + (who ? " · by " + who : "");
           await sbFetch("/rest/v1/candidate_timeline", { method: "POST", token: session.token, body: { candidate_id: c.id, title, done: true } }).catch(() => {});
+          // Moved on from Rejected: the submission to that company stops saying Rejected.
+          if (from === "Rejected" && stage !== "Rejected" && j) {
+            const e = (c.endorsed || []).find((x) => x.company === j.client && x.role === j.role && x.status === "Rejected");
+            if (e && e.id) await sbFetch("/rest/v1/candidate_endorsements?id=eq." + e.id, { method: "PATCH", token: session.token, body: { status: stage, next_step: null } }).catch(() => {});
+          }
           logAudit("stage changed", "candidate", c.id, c.name + ": " + (from || "?") + " → " + stage + (j ? " (" + j.role + ")" : "") + (reason ? ". Reason: " + reason : ""));
         }
         reload();
