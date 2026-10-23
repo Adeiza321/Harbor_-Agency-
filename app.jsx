@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import qrcode from "qrcode-generator";
+import { createPortal } from "react-dom";
 import {
   LayoutDashboard, Users, Inbox as InboxIcon, Briefcase, TrendingUp, Send,
   CreditCard, Megaphone, Search, Bell, ChevronDown, ChevronRight, ChevronLeft,
@@ -7810,7 +7811,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
         <div className="flex flex-wrap gap-2 mb-4">
           <StatusPill status={job.status} />
           {job.leadRole ? null : myOpenEngagement ? <Pill tone="em">You're engaged{myOpenEngagement.engagedAt ? " · since " + ago(myOpenEngagement.engagedAt) : ""}</Pill> : <Pill tone="neutral">You're not engaged</Pill>}
-          {engagedPeople.length > 0 && <span title={engagedPeople.join(", ")}><Pill tone="neutral">{engagedPeople.length} {engagedPeople.length === 1 ? "person" : "people"} engaged</Pill></span>}
+          {engagedPeople.length > 0 && <EngagedRecruiters job={job} S={S} max={5} label={engagedPeople.length + " engaged"} />}
         </div>
         {job.status === "On hold" && (
           <div className="rounded-lg px-3 py-2.5 mb-4 text-sm flex flex-col sm:flex-row sm:items-center gap-2" style={{ background: C.warnBg, color: C.warnText }}>
@@ -8017,6 +8018,49 @@ function jobHealth(j, S) {
   if (days(j.createdAt || Date.now()) >= 4 && days(lastAdd) >= 4) return { key: "slow", label: "Slowing", tone: "warn", why: "No new candidates in " + days(lastAdd) + " days" };
   return { key: "ok", label: "Healthy", tone: "em", why: lastMove ? "Last activity " + (days(lastMove) ? days(lastMove) + " days ago" : "today") : "" };
 }
+/* The recruiters engaged on a role: their photos (initials when there's none), up to `max`
+   overlapping. Click for the full list in a pop-up. Lives inside clickable job cards, so its clicks
+   don't open the job, and the pop-up is portalled to the page (cards lift with a transform on hover). */
+function EngagedRecruiters({ job, S, size = 22, max = 3, label }) {
+  const [open, setOpen] = useState(false);
+  const users = S.users || [];
+  const since = {};
+  (S.jobEngagements || []).forEach((e) => { if (e.jobId === job.id && !e.disengagedAt && (!since[e.recruiterId] || e.engagedAt < since[e.recruiterId])) since[e.recruiterId] = e.engagedAt; });
+  const people = (job.engagedIds || []).map((id, i) => {
+    const u = users.find((x) => x.id === id);
+    const name = (u && u.name) || (job.engagedNames || [])[i] || "Recruiter";
+    return { id, name, avatarUrl: u ? u.avatarUrl : null, country: u ? u.country : "", role: u ? u.role : "", init: initialsOf(name), since: since[id] || null };
+  }).sort((a, b) => (a.id === S.me.id ? -1 : b.id === S.me.id ? 1 : a.name.localeCompare(b.name)));
+  if (!people.length) return null;
+  const stop = (e) => e.stopPropagation();
+  const more = people.length - max;
+  return (
+    <span onClick={stop} onKeyDown={stop} className="inline-flex">
+      <button type="button" onClick={() => setOpen(true)} className="flex items-center gap-2 rounded-full" title={people.map((p) => p.name).join(", ")} aria-label={"See the " + plural(people.length, "recruiter") + " engaged on this role"}>
+        <span className="flex -space-x-2">
+          {people.slice(0, max).map((p, i) => <span key={p.id} className="relative rounded-full inline-flex" style={{ boxShadow: "0 0 0 2px " + C.card, zIndex: max - i }}><Avatar init={p.init} src={p.avatarUrl} tone={PEOPLE_TONE[p.init] || "em"} size={size} /></span>)}
+          {more > 0 && <span className="rounded-full inline-flex items-center justify-center font-semibold" style={{ width: size, height: size, fontSize: 10, background: C.neutralBg, color: C.ink2, boxShadow: "0 0 0 2px " + C.card }}>+{more}</span>}
+        </span>
+        {label && <span className="text-xs font-medium" style={{ color: C.ink2 }}>{label}</span>}
+      </button>
+      {open && createPortal(
+        <Modal open onClose={() => setOpen(false)} title={"Engaged on this role (" + people.length + ")"}>
+          <div className="text-sm -mt-2 mb-3" style={{ color: C.ink3 }}>{job.role}{job.client ? " · " + job.client : ""}</div>
+          <div className="flex flex-col">
+            {people.map((p) => (
+              <div key={p.id} className="flex items-center gap-3 py-2.5" style={{ borderTop: "1px solid " + C.line }}>
+                <UserAvatar u={p} size={40} tone={PEOPLE_TONE[p.init] || "em"} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{p.name}{p.id === S.me.id && <span className="text-[11px] font-semibold ml-1.5" style={{ color: C.em }}>You</span>}</div>
+                  <div className="text-xs truncate" style={{ color: C.ink3 }}>{[p.role, p.country, p.since ? "engaged " + new Date(p.since).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : ""].filter(Boolean).join(" · ")}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Modal>, document.body)}
+    </span>
+  );
+}
 // One job as a card: where its candidates are (a bar from added → submitted → interview → offer),
 // how long it's been open, who's on it, and its health (open jobs only).
 function JobCard({ j, S, mine, onOpen, onShare, row }) {
@@ -8031,7 +8075,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
   const seg = (v, col) => (n.added ? <i key={col} className="block h-full" style={{ width: (v / n.added) * 100 + "%", background: col }} /> : null);
   const tag = h.key ? <span title={h.why}><Pill tone={h.tone}>{h.label}</Pill></span> : <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>;
   const bar = (cls) => <div className={"flex h-2 rounded-full overflow-hidden " + cls} style={{ background: C.neutralBg }} aria-hidden="true">{[seg(n.added - n.submitted, "#C9D8CF"), seg(n.submitted - n.interview, "#6FA88A"), seg(n.interview - n.offer, C.em), seg(n.offer, C.lime)]}</div>;
-  const people = <>{j.recruiters.length > 0 && <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.slice(0, 3).map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={22} />)}</div>}
+  const people = <><EngagedRecruiters job={j} S={S} />
     {mine && <span className="text-[11px] font-semibold" style={{ color: C.em }}>You</span>}</>;
   const share = j.leadRole ? null : <IconBtn icon={Share2} label="Share job link" tone="em" size="sm" bare onClick={(e) => { e.stopPropagation(); onShare(); }} />;
   if (row) return (
@@ -8063,7 +8107,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
       <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
         <div className="text-xs min-w-0 truncate" style={{ color: C.ink2 }}>Open {j.days}d{h.why ? " · " + h.why.toLowerCase() : ""}</div>
         <div className="flex items-center gap-2 shrink-0">
-          {j.recruiters.length > 0 && <div className="flex -space-x-2" title={(j.engagedNames || []).join(", ")}>{j.recruiters.slice(0, 3).map((r, i) => <Avatar key={i} init={r} tone={PEOPLE_TONE[r]} size={22} />)}</div>}
+          <EngagedRecruiters job={j} S={S} />
           {mine && <span className="text-[11px] font-semibold" style={{ color: C.em }}>You</span>}
           {share}
         </div>
