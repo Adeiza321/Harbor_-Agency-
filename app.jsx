@@ -2139,10 +2139,18 @@ function MyAgreementCard({ S }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { S.signedAgreements(S.me.id).then((r) => setRows(r || [])).catch(() => setRows([])); }, [S.me.agreementSignedAt]); // eslint-disable-line
   const a = rows && rows[0];
-  if (!a) return null;
+  if (!a && !S.me.agreementSignedAt) return null;
+  if (!a) return (
+    <Card>
+      <SectionTitle title="Your recruiter agreement" sub={rows === null ? "Loading your signed copy\u2026" : "You signed it " + signedStamp(S.me.agreementSignedAt) + ", but your copy couldn't be loaded just now. Refresh the page to try again."} size="text-xl" />
+    </Card>
+  );
   return (
     <Card>
-      <SectionTitle title="Your recruiter agreement" sub={"Signed " + signedStamp(a.signed_at) + "."} size="text-xl" />
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: C.emTint }}><FileText size={18} color={C.em} /></div>
+        <SectionTitle title="Your recruiter agreement" sub={"Signed " + signedStamp(a.signed_at) + ". Your copy, with your signature, is kept here."} size="text-xl" />
+      </div>
       <div className="flex gap-2 mt-3"><Btn onClick={() => setOpen(true)}>View</Btn><Btn onClick={() => printAgreement(a)}>Print or save as PDF</Btn></div>
       <Modal open={open} onClose={() => setOpen(false)} title={a.title} wide>
         <div className="overflow-y-auto pr-2" style={{ maxHeight: "60vh" }}><AgreementText body={a.body} /><div className="mt-5"><SignatureBlock src={a.signature} name={a.signed_name} at={a.signed_at} /></div></div>
@@ -2561,6 +2569,7 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
       <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }, { key: "calendar", label: "Calendar" }]} active={tab} setActive={setTab} />
+      {tab === "account" && S.me.roleKey === "recruiter" && <MyAgreementCard S={S} />}
       {tab === "account" && <AppearanceCard />}
       {tab === "account" && (
         <div className="rounded-2xl border p-5 flex flex-col sm:flex-row sm:items-center gap-3" style={{ background: C.card, borderColor: C.line }}>
@@ -2571,7 +2580,6 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
       {tab === "account" && <MyWins S={S} />}
       {tab === "account" && <AccountTab S={S} toast={toast} />}
       {tab === "account" && <WorkProfileCard S={S} toast={toast} />}
-      {tab === "account" && S.me.roleKey === "recruiter" && <MyAgreementCard S={S} />}
       {tab === "notifications" && <NotificationsTab S={S} toast={toast} />}
       {tab === "security" && <SecurityTab S={S} toast={toast} />}
       {tab === "calendar" && <GoogleCalendarTab S={S} toast={toast} />}
