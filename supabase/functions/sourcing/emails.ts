@@ -1,7 +1,8 @@
 // Emails for people found by the X-ray search, who are saved without one.
 //   GitHub profiles: the email the person made public on their GitHub profile (free, automatic).
-//   LinkedIn profiles: ContactOut first (contactout.ts, CONTACTOUT_API_KEY), by their exact profile
-//     address: a personal email first, else a verified work one. When it has nothing usable, Apollo:
+//   LinkedIn profiles: Apollo first (outreach.emailLookup: "apollo_only" (default), "apollo" = then
+//     ContactOut, "contactout" = ContactOut first). ContactOut (contactout.ts, CONTACTOUT_API_KEY), by
+//     their exact profile address: a personal email first, else a verified work one. Apollo:
 //     Apollo looks the person up by their exact profile address and returns a personal email first,
 //     else their verified work email (1 Apollo credit per email found). This runs automatically, without an
 //     approval: every 10 minutes for the best X-ray people (fit >= outreach.xrayEmailMinFit), never more
@@ -203,7 +204,10 @@ export async function pdlEmails(admin: any, ids: string[], s: Settings, agencyNa
 // The paid part (after approval) plus the free part: every X-ray person on the job (or the ids).
 export async function findEmails(admin: any, o: { jobId?: string | null; ids?: string[] }, s: Settings, agencyName: string) {
   const gh = await findGithubEmails(admin, o, s, agencyName);
-  const co = !!contactoutKey(), ap = !!apolloKey();
+  // Which source is asked first (Outreach settings): Apollo first by default; ContactOut only when
+  // the setting includes it (its credits ran out, Oct 2026).
+  const order = s.emailLookup || "apollo_only";
+  const co = !!contactoutKey() && order !== "apollo_only", ap = !!apolloKey();
   const tried = (p: any) => p.data?.email_lookup || {};
   // Anyone on LinkedIn that a connected source hasn't tried yet.
   const list = (await needing(admin, o)).filter((p) => p.linkedin_url && ((co && !tried(p).contactout) || (ap && !tried(p).apollo)));
@@ -222,14 +226,15 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
     let best = { email: "", status: "" }, good = false, via = "", m: any = null;
     let extra: { work: string[]; personal: string[] } | null = null;
     let seenAt = "";   // where a source says they are, when we didn't know
-    // 1. ContactOut first, by their LinkedIn profile.
-    if (co && !coDown && !lookup.contactout) {
+    const askContactOut = async () => {
+      // ContactOut, by their LinkedIn profile (when Apollo, asked first, had nothing usable).
+    if (!good && co && !coDown && !lookup.contactout) {
       coTried++;
       lookup.contactout = new Date().toISOString();
       try {
         const r = await contactoutByLinkedIn(p.linkedin_url);
-        if (r.work.length || r.personal.length) extra = { work: r.work, personal: r.personal };
-        if (r.location) seenAt = r.location;
+        if (r.work.length || r.personal.length) extra = { work: [...new Set([...(extra?.work || []), ...r.work])], personal: [...new Set([...(extra?.personal || []), ...r.personal])] };
+        if (r.location && !seenAt) seenAt = r.location;
         if (r.email && !(await suppressed(admin, r.email))) { best = { email: r.email, status: r.status }; good = true; via = "ContactOut (from their LinkedIn profile)"; coFound++; }
       } catch (e) {
         errors.push(String((e as Error)?.message || e).slice(0, 160));
@@ -237,7 +242,9 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
         if (/credit|quota|limit|401|402|403|429/i.test(errors[errors.length - 1])) { coDown = true; delete lookup.contactout; coTried--; }
       }
     }
-    // 2. Apollo when ContactOut had nothing usable.
+    };
+    const askApollo = async () => {
+      // Apollo, by their LinkedIn profile.
     if (!good && ap && !apDown && !lookup.apollo) {
       try {
         m = await matchByLinkedIn(p.linkedin_url);
@@ -259,9 +266,14 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
         if (/rate|credit|402|403/i.test(errors[errors.length - 1])) apDown = true;
       }
     }
-    if (coDown && (apDown || !ap) && !good && !lookup.apollo) break; // nothing left to ask today
+    };
+    if (order === "contactout") { await askContactOut(); await askApollo(); }
+    else { await askApollo(); await askContactOut(); }
+    if ((coDown || !co) && (apDown || !ap) && !good) break; // nothing left to ask today
+    // (set inside the two lookups above, so TypeScript can't follow it)
+    const found_ = extra as { work: string[]; personal: string[] } | null;
     const cc = countryCode(m?.country || "");
-    const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup, ...(good ? { email_source: via, history: p.data?.history || m?.history } : {}), ...(extra && (extra.work.length || extra.personal.length) ? { emails_found: extra } : {}) } };
+    const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup, ...(good ? { email_source: via, history: p.data?.history || m?.history } : {}), ...(found_ && (found_.work.length || found_.personal.length) ? { emails_found: found_ } : {}) } };
     if (good) Object.assign(patch, {
       email: best.email, email_status: best.status,
       first_name: p.first_name || m?.first_name || null, last_name: p.last_name || m?.last_name || null, full_name: p.full_name || m?.name || null,
@@ -279,7 +291,7 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   const tooFar = await skipTooFar(admin, placedNow || []);
   for (const id of tooFar) { const i = found.indexOf(id); if (i >= 0) found.splice(i, 1); }
   if (found.length) await draftEmails(admin, found, s, agencyName);
-  // Still nothing from ContactOut or Apollo: People Data Labs, within its daily allowance.
+  // Still nothing from Apollo (or ContactOut): People Data Labs, within its daily allowance.
   const pdl = await pdlEmails(admin, list.map((p) => p.id).filter((id) => !found.includes(id)), s, agencyName).catch((e) => ({ tried: 0, found: 0, ids: [] as string[], errors: [String((e as Error)?.message || e)] }));
   errors.push(...pdl.errors);
   found.push(...pdl.ids);
@@ -288,8 +300,8 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   const total = gh.found + found.length;
   const parts = [`Found ${total} email${total === 1 ? "" : "s"}`];
   if (lowSkipped) parts.push(`${lowSkipped} skipped (almost no LinkedIn activity and no email)`);
-  if (coTried) parts.push(`${coFound} of ${coTried} through ContactOut`);
-  if (apTried) parts.push(`${apFound} of ${apTried} more through Apollo (${credits} credit${credits === 1 ? "" : "s"} used)`);
+  if (apTried) parts.push(`${apFound} of ${apTried} through Apollo (${credits} credit${credits === 1 ? "" : "s"} used)`);
+  if (coTried) parts.push(`${coFound} of ${coTried} ${order === "contactout" ? "" : "more "}through ContactOut`);
   if (pdl.tried) parts.push(`${pdl.found} of ${pdl.tried} more through People Data Labs (${pdl.found} credit${pdl.found === 1 ? "" : "s"})`);
   if (gh.checked) parts.push(`${gh.found} of ${gh.checked} from public GitHub profiles (free)`);
   const why = [noMatch ? `${noMatch} not in Apollo` : "", unverified ? `${unverified} without a usable work or personal email` : "", coDown ? "ContactOut stopped (credits or limit)" : ""].filter(Boolean).join(", ");
@@ -307,7 +319,7 @@ export async function autoFindEmails(admin: any, s: Settings, agencyName: string
   const { count: used } = await admin.from("prospects").select("id", { count: "exact", head: true })
     .or(`data->email_lookup->>apollo.gte.${iso},data->email_lookup->>contactout.gte.${iso}`);
   const left = Math.max(0, s.xrayEmailsPerDay - (used || 0));
-  const co = !!contactoutKey(), ap = !!apolloKey();
+  const co = !!contactoutKey() && s.emailLookup !== "apollo_only", ap = !!apolloKey();
   const untried = (p: any) => { const l = p.data?.email_lookup || {}; return (co && !l.contactout) || (ap && !l.apollo); };
   const manual = !!(o.jobId || (o.ids && o.ids.length));
   let q = admin.from("prospects").select("id,source,linkedin_url,fit,data,jobs!inner(status)").is("email", null).eq("status", "found").neq("source", "apollo")

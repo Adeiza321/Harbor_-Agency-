@@ -282,7 +282,7 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
   let contacts: Contact[] = liveContacts(lead);
   let lookup: Record<string, unknown> | null = null;
   if (!lead.data?.contacts_checked_at) {
-    const found = await findCompanyContacts(admin, lead, lead.data?.role?.hmTitles || []);
+    const found = await findCompanyContacts(admin, lead, lead.data?.role?.hmTitles || [], s.emailLookup);
     contacts = found.contacts;
     lookup = { contacts, contacts_checked_at: new Date().toISOString(), contacts_tried: found.tried, ...(found.error ? { contacts_error: found.error } : {}) };
   }
