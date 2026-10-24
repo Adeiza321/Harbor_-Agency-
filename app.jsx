@@ -9885,7 +9885,7 @@ function JobSourcingCard({ job, S, toast }) {
           {showSkipped && <div className="text-xs mb-2" style={{ color: C.ink2 }}>People you skipped for this role. Put back in pool returns them to the list above as Needs approval.</div>}
           <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
             <div className="text-sm font-medium">People found outside ProNext <span style={{ color: C.ink3 }}>· {waiting.length} email{waiting.length === 1 ? "" : "s"} waiting for approval{toContact ? " · " + toContact + " to contact on LinkedIn or their site" : ""}</span></div>
-            {noEmail.length > 0 && <span className="text-xs inline-flex items-center gap-1.5" style={{ color: C.ink2 }} title="The best matches are looked up by their LinkedIn profile every 10 minutes: ContactOut first, then Apollo, then People Data Labs if connected, within the daily limits in Outreach setup; GitHub public emails are free"><Mail size={13} /> Finding emails automatically · {noEmail.length} without one yet</span>}
+            {noEmail.length > 0 && <span className="text-xs inline-flex items-center gap-1.5" style={{ color: C.ink2 }} title="The best matches are looked up by their LinkedIn profile every 10 minutes: Apollo (and ContactOut if switched on in Outreach setup), then People Data Labs if connected, within the daily limits in Outreach setup; GitHub public emails are free"><Mail size={13} /> Finding emails automatically · {noEmail.length} without one yet</span>}
             {waiting.length > 0 && <div className="flex gap-2">
               <Btn onClick={() => setSel(ids.length === waiting.length ? {} : Object.fromEntries(waiting.map((p) => [p.id, true])))}>{ids.length === waiting.length ? "Clear" : "Select all " + waiting.length}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={approve}>{busy === "approve" ? "Approving…" : "Approve " + (ids.length || "") + " email" + (ids.length === 1 ? "" : "s")}</Btn>
@@ -10048,7 +10048,7 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
   );
 }
 // Who the pitch goes to, each their own email: anyone named in the job description, the job's
-// poster, Talent Acquisition, the hiring manager and the CEO (ContactOut first, Apollo as backup,
+// poster, Talent Acquisition, the hiring manager and the CEO (Apollo, or ContactOut per Outreach setup,
 // work emails only). Rec Ops / an Admin can look again, add someone by hand, or take someone off.
 function LeadContacts({ l, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
@@ -10069,7 +10069,7 @@ function LeadContacts({ l, S, toast, onChanged }) {
     <div className="text-xs mt-1.5 rounded-lg px-2.5 py-2" style={{ background: C.canvas }}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-semibold" style={{ color: C.ink }}>Contacts</span>
-        <span style={{ color: C.ink3 }}>{live.length ? (live.length === 1 ? "gets the pitch" : "each gets their own email") : d.contacts_checked_at ? "no one found" + (d.contacts_tried && d.contacts_tried.length ? " (looked for: " + d.contacts_tried.join(", ") + ")" : "") : "looked up when the pitch is written (ContactOut, then Apollo)"}</span>
+        <span style={{ color: C.ink3 }}>{live.length ? (live.length === 1 ? "gets the pitch" : "each gets their own email") : d.contacts_checked_at ? "no one found" + (d.contacts_tried && d.contacts_tried.length ? " (looked for: " + d.contacts_tried.join(", ") + ")" : "") : "looked up on Apollo when the pitch is written"}</span>
         {staff && !locked && <span className="ml-auto flex gap-3">
           <button type="button" disabled={!!busy} onClick={() => run("find", { op: "find" })} className="font-medium" style={{ color: C.em }}>{busy === "find" ? "Looking…" : d.contacts_checked_at ? "Look again" : "Find contacts"}</button>
           <button type="button" onClick={() => setAdding((a) => !a)} className="font-medium" style={{ color: C.em }}>{adding ? "Cancel" : "Add a contact"}</button>
@@ -10445,7 +10445,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
             const one = (k, label, secret) => se[k] ? label + (use[k] ? " " + use[k].used + "/" + use[k].limit + " " + per[use[k].per] : " connected") : label + ": add " + secret;
             return [one("tavily", "Tavily", "TAVILY_API_KEY"), one("brave", "Brave", "BRAVE_API_KEY"), one("gemini", "Gemini (Google Search)", "GEMINI_API_KEY"), one("serper", "Serper (Google)", "SERPER_API_KEY"), se.github ? "GitHub token connected" : "GitHub works without a key (add GITHUB_TOKEN for more profiles)"].join(" · ") + ". ProNext stops before any free allowance runs out, so nothing is charged.";
           })()} />
-          <Row ok={conn.contactout} label="ContactOut: first place ProNext looks for X-ray people's emails (by LinkedIn profile)" hint={conn.contactout ? "Connected" : "Add CONTACTOUT_API_KEY. Until then, Apollo is used on its own."} />
+          <Row ok={conn.contactout} label="ContactOut: optional email lookup (by LinkedIn profile), used only when the Email lookup setting below includes it" hint={conn.contactout ? "Connected" : "Add CONTACTOUT_API_KEY to use it. Apollo works on its own."} />
           <Row ok={conn.pdl} label="People Data Labs: searches a 1.5-billion-profile database for a role, and finds emails Apollo couldn't" hint={conn.pdl ? "Connected" : "Add PDL_API_KEY (Supabase: Edge Functions > Secrets). Needs a paid PDL plan for emails."} />
           <Row ok={conn.theirstack} label="TheirStack: daily feed of new job postings" hint={conn.theirstack ? "Connected" : "Add THEIRSTACK_API_KEY. Until then, no client leads are fetched."} />
           <Row ok={conn.sender && conn.sender !== "none"} label="Email sender" hint={conn.sender === "apollo" ? "Apollo sequence (from your outreach mailbox)" : conn.sender === "instantly" ? "Instantly" : conn.sender === "gmail" ? "Gmail (Google Workspace)" : "Not connected. Link your outreach-domain mailbox in Apollo and add APOLLO_SEQUENCE_ID. Approved emails wait in the queue until then."} />
@@ -10486,7 +10486,13 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside ProNext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most X-ray people kept per job (free searches)</label><input type="number" min="5" max="80" value={f.xrayPerJob ?? 40} onChange={(e) => set("xrayPerJob", e.target.value)} className={inp} style={inpS} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>People looked up for an email per day (ContactOut first, then Apollo; each lookup that finds an email uses a credit; 0 turns it off)</label><input type="number" min="0" max="500" value={f.xrayEmailsPerDay ?? 40} onChange={(e) => set("xrayEmailsPerDay", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email lookup (candidates and client contacts)</label>
+            <select value={f.emailLookup || "apollo_only"} onChange={(e) => set("emailLookup", e.target.value)} className={inp} style={inpS}>
+              <option value="apollo_only">Apollo only</option>
+              <option value="apollo">Apollo first, then ContactOut</option>
+              <option value="contactout">ContactOut first, then Apollo</option>
+            </select></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>People looked up for an email per day ({!f.emailLookup || f.emailLookup === "apollo_only" ? "Apollo" : f.emailLookup === "apollo" ? "Apollo first, then ContactOut" : "ContactOut first, then Apollo"}; each lookup that finds an email uses a credit; 0 turns it off)</label><input type="number" min="0" max="500" value={f.xrayEmailsPerDay ?? 40} onChange={(e) => set("xrayEmailsPerDay", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>People Data Labs email lookups per day, when Apollo has none (1 PDL credit per email found; 0 turns it off)</label><input type="number" min="0" max="200" value={f.pdlEmailsPerDay ?? 10} onChange={(e) => set("pdlEmailsPerDay", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most people per People Data Labs search (1 PDL credit each)</label><input type="number" min="5" max="100" value={f.pdlPerSearch ?? 20} onChange={(e) => set("pdlPerSearch", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only find emails for X-ray people with a fit of at least (%)</label><input type="number" min="0" max="100" value={f.xrayEmailMinFit ?? 60} onChange={(e) => set("xrayEmailMinFit", e.target.value)} className={inp} style={inpS} /></div>
@@ -10673,7 +10679,7 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on ContactOut or Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</div>
+          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</div>
           {filterBar}
           {lf === "removed" && <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={3} /> : removedRows.length ? pageOf(removedRows).map(({ o, l }) => <RemovedOfferRow key={o.id} o={o} l={l} S={S} toast={toast} onChanged={load} />)

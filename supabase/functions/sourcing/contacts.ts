@@ -4,8 +4,10 @@
 //   3. Talent Acquisition (TA / recruiting / HR lead)
 //   4. The hiring manager (the titles this role likely reports to, from the job description)
 //   5. The CEO (or founder / managing director)
-// ContactOut is the main source (search the company by title, then reveal the work email); Apollo
-// is the backup for a role ContactOut finds no one for. Work emails only (never personal), and only
+// Apollo is the main source (outreach.emailLookup: "apollo_only" by default since ContactOut's credits
+// ran out; "apollo" = ContactOut as backup; "contactout" = ContactOut first). Apollo: search the company
+// by title, then reveal the work email. ContactOut the same way; the other source covers anyone missed.
+// Work emails only (never personal), and only
 // verified ones from either source; never anyone who unsubscribed. Looked up once per lead, when the
 // pitch is written (each email revealed costs a credit). With nobody found the lead waits for
 // Rec Ops / an Admin to add a contact by hand.
@@ -57,7 +59,7 @@ export function jdContacts(description: string, aiFound: any[]): Contact[] {
 }
 
 // Find the contacts at the lead's company, in order.
-export async function findCompanyContacts(admin: any, lead: any, hmTitles: string[]): Promise<{ contacts: Contact[]; tried: string[]; error?: string }> {
+export async function findCompanyContacts(admin: any, lead: any, hmTitles: string[], order: string = "apollo_only"): Promise<{ contacts: Contact[]; tried: string[]; error?: string }> {
   const contacts: Contact[] = [];
   const tried: string[] = [];
   const errors: string[] = [];
@@ -68,7 +70,8 @@ export async function findCompanyContacts(admin: any, lead: any, hmTitles: strin
     if (emails.has(e) || await suppressed(admin, c.email)) return false;
     emails.add(e); contacts.push({ ...c, email: e }); return true;
   };
-  const co = !!contactoutKey(), ap = !!apolloKey();
+  const co = !!contactoutKey() && order !== "apollo_only", ap = !!apolloKey();
+  const coFirst = order === "contactout";
 
   // 1. Named in the job description (found when it was read).
   for (const c of Array.isArray(lead.data?.jd_contacts) ? lead.data.jd_contacts : []) await keep({ ...c, token: c.token || newToken() });
@@ -80,22 +83,25 @@ export async function findCompanyContacts(admin: any, lead: any, hmTitles: strin
   if (poster) {
     tried.push("Job poster");
     let got = false;
-    if (co && poster.linkedin_url) {
+    const posterCo = async () => {
+      if (got || !co || !poster.linkedin_url) return;
       try {
         const r = await contactoutByLinkedIn(poster.linkedin_url, true);
         if (r.status === "verified") got = await keep({ role: "Posted the job", name: poster.full_name || "", first_name: poster.first_name || first(poster.full_name), title: poster.role || "", email: r.email, linkedin: poster.linkedin_url, apollo_id: "", source: "ContactOut", token: newToken() });
       } catch (e) { errors.push(String((e as Error)?.message || e)); }
-    }
-    if (!got && ap) {
+    };
+    const posterAp = async () => {
+      if (got || !ap) return;
       const parts = String(poster.full_name || "").trim().split(/\s+/);
       try {
         const p = await matchByName(poster.first_name || parts[0] || "", parts.slice(1).join(" "), lead.company_domain || "", lead.company || "");
-        if (p?.email && p.email_status === "verified") await keep({ ...fromApollo("Posted the job", p), linkedin: p.linkedin_url || poster.linkedin_url || "" });
+        if (p?.email && p.email_status === "verified") got = await keep({ ...fromApollo("Posted the job", p), linkedin: p.linkedin_url || poster.linkedin_url || "" });
       } catch (e) { errors.push(String((e as Error)?.message || e)); }
-    }
+    };
+    if (coFirst) { await posterCo(); await posterAp(); } else { await posterAp(); await posterCo(); }
   }
 
-  // 3-5. Talent Acquisition, hiring manager, CEO: ContactOut first, Apollo for whoever it misses.
+  // 3-5. Talent Acquisition, hiring manager, CEO: the main source first, the other for whoever it misses.
   const roles: { role: string; titles: string[] }[] = [
     { role: "Talent Acquisition", titles: TA_TITLES },
     { role: "Hiring manager", titles: (hmTitles.length ? hmTitles : HM_FALLBACK).slice(0, 8) },
@@ -105,7 +111,8 @@ export async function findCompanyContacts(admin: any, lead: any, hmTitles: strin
     if (contacts.length >= MAX_CONTACTS) break;
     tried.push(r.role);
     let got = false;
-    if (co) {
+    const roleCo = async () => {
+      if (got || !co) return;
       try {
         const hits = await contactoutSearch({ domain: lead.company_domain, company: lead.company, titles: r.titles, limit: 3 });
         for (const h of hits.slice(0, 2)) {   // up to 2 reveals per role
@@ -115,8 +122,9 @@ export async function findCompanyContacts(admin: any, lead: any, hmTitles: strin
           if (got) break;
         }
       } catch (e) { errors.push(String((e as Error)?.message || e)); console.error("contactout contacts", r.role, errors[errors.length - 1]); }
-    }
-    if (!got && ap) {
+    };
+    const roleAp = async () => {
+      if (got || !ap) return;
       try {
         const hits = (await searchCompanyPeople({ domain: lead.company_domain, company: lead.company, titles: r.titles, perPage: 10 })).filter((h) => h.has_email);
         for (const h of hits.slice(0, 2)) {
@@ -126,9 +134,10 @@ export async function findCompanyContacts(admin: any, lead: any, hmTitles: strin
           if (got) break;
         }
       } catch (e) { errors.push(String((e as Error)?.message || e)); console.error("apollo contacts", r.role, errors[errors.length - 1]); }
-    }
+    };
+    if (coFirst) { await roleCo(); await roleAp(); } else { await roleAp(); await roleCo(); }
   }
-  if (!co && !ap) errors.push("Neither ContactOut nor Apollo is connected");
+  if (!co && !ap) errors.push("Apollo isn't connected");
   // Lookup problems are kept even when someone was found (shown on the lead), so a source that
   // stopped working doesn't go unnoticed.
   return { contacts: contacts.slice(0, MAX_CONTACTS), tried, ...(errors.length ? { error: [...new Set(errors.map((e) => e.slice(0, 160)))].join("; ").slice(0, 300) } : {}) };
@@ -152,14 +161,14 @@ export const greet = (body: string, c: { first_name?: string }) =>
   String(body || "").replace(/^\s*(Hi|Hello|Dear)\b[^,\n]*,/i, `Hi ${c.first_name || "there"},`);
 
 // Rec Ops / an Admin on a lead's contacts: look again, add one by hand, or take one off.
-export async function leadContactsAction(admin: any, leadId: string, op: string, body: any) {
+export async function leadContactsAction(admin: any, leadId: string, op: string, body: any, order = "apollo_only") {
   const { data: lead } = await admin.from("leads").select("*").eq("id", leadId).maybeSingle();
   if (!lead) throw new Error("Lead not found");
   let list: Contact[] = (Array.isArray(lead.data?.contacts) ? lead.data.contacts : []).filter((c: any) => c && !c.removed);
   const extra: Record<string, unknown> = {};
   let message = "Saved";
   if (op === "find") {
-    const found = await findCompanyContacts(admin, lead, lead.data?.role?.hmTitles || []);
+    const found = await findCompanyContacts(admin, lead, lead.data?.role?.hmTitles || [], order);
     const have = new Set(list.map((c) => c.email.toLowerCase()));
     const added = found.contacts.filter((c) => !have.has(c.email.toLowerCase()));
     list = [...list, ...added];

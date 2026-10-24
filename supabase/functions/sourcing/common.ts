@@ -9,6 +9,7 @@ export type Settings = {
   xrayPerJob: number;                  // most people kept per job from free X-ray searches (no credits)
   xrayEmailsPerDay: number;            // most X-ray people looked up in Apollo per day, automatically (0 = off)
   xrayEmailMinFit: number;             // only X-ray people at least this good a fit are looked up automatically
+  emailLookup: "apollo_only" | "apollo" | "contactout";   // which email source is asked first (ContactOut credits ran out Oct 2026)
   pdlEmailsPerDay: number;             // most X-ray people looked up in People Data Labs per day when Apollo had no email (0 = off)
   pdlPerSearch: number;                // most people one People Data Labs search returns (1 credit each)
   dailyCap: number;                    // most outreach emails sent per day
@@ -43,6 +44,7 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
       xrayEmailsPerDay: num(o.xrayEmailsPerDay, 40, 0, 500),
       xrayEmailMinFit: num(o.xrayEmailMinFit, 60, 0, 100),
       pdlEmailsPerDay: num(o.pdlEmailsPerDay, 10, 0, 200),
+      emailLookup: ["apollo", "contactout"].includes(o.emailLookup) ? o.emailLookup : "apollo_only",
       pdlPerSearch: num(o.pdlPerSearch, 20, 5, 100),
       dailyCap: num(o.dailyCap, 40, 1, 1000),
       senderName: String(o.senderName || "").trim(),

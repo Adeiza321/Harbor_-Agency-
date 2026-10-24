@@ -582,7 +582,7 @@ async function handle(req: Request): Promise<Response> {
     // A lead's contacts: find on Apollo again, add by hand, make main, take off.
     if (action === "lead_contacts" && body.leadId) {
       if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
-      return json(await leadContactsAction(admin, String(body.leadId), String(body.op || ""), body));
+      return json(await leadContactsAction(admin, String(body.leadId), String(body.op || ""), body, s.emailLookup));
     }
     // Candidate first: one candidate on a pitch. push = ready without waiting; withdraw / remove =
     // off this pitch; remind = the reminder email now.
