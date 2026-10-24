@@ -10523,7 +10523,7 @@ function CampaignsPage({ toast, S }) {
   // Search and filters (kept while switching between the status tabs), and pages of up to 50.
   const [q, setQ] = useState("");
   // Each filter holds a list of choices ([] = no filter); fit is a minimum score.
-  const [fl, setFl] = useState({ role: [], job: [], source: [], email: [], fit: 0, country: [], channel: [], reply: [] });
+  const [fl, setFl] = useState({ role: [], job: [], source: [], email: [], fit: 0, country: [], channel: [], reply: [], ostatus: [], cand: [] });
   const setF = (k, v) => setFl((x) => ({ ...x, [k]: v }));
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(25);
@@ -10557,7 +10557,13 @@ function CampaignsPage({ toast, S }) {
     && (!fl.email.length || fl.email.includes(p.email ? "with" : "without"))
     && (!fl.fit || (Number(p.fit) || 0) >= fl.fit)
     && (!fl.reply.length || fl.reply.some((k) => replyMatch(p.data || {}, k)));
-  const lMatch = (l) => (!ql || [l.job_title, l.company, l.location, l.contact_name, l.contact_email].some((v) => low(v).includes(ql)))
+  // Client leads: a candidate's status on a pitch ("reminded" counts as waiting) and who they are.
+  const oKey = (o) => (o.status === "reminded" ? "notified" : o.status === "withdrawn" && o.withdrawn_by === "candidate" ? "withdrew" : o.status);
+  const pitchOffers = (l) => (Array.isArray(l.lead_offers) ? l.lead_offers : []).filter(isPitchOffer);
+  const candName = (id) => { const c = S.cands.find((x) => x.id === id); return c ? c.name : ""; };
+  const offMatch = (o) => (!fl.ostatus.length || fl.ostatus.includes(oKey(o))) && (!fl.cand.length || fl.cand.includes(o.candidate_id));
+  const lMatch = (l) => (!ql || [l.job_title, l.company, l.location, l.contact_name, l.contact_email, ...pitchOffers(l).map((o) => candName(o.candidate_id))].some((v) => low(v).includes(ql)))
+    && ((!fl.ostatus.length && !fl.cand.length) || pitchOffers(l).some(offMatch))
     && (!fl.role.length || fl.role.some((r) => low(l.job_title).trim() === low(r))) && (!fl.country.length || fl.country.includes(l.country)) && (!fl.channel.length || fl.channel.includes(l.channel));
   // Replies: anyone who referred someone (in a reply or with the email's form), replied at all, or
   // sent only an automatic reply.
@@ -10577,14 +10583,19 @@ function CampaignsPage({ toast, S }) {
   const pList = pAll.filter((p) => pGroups[pfx].includes(p.status));
   const lList = lAll.filter((l) => lGroups[lf].includes(l.status));
   // Candidates taken off a pitch (or who withdrew), across every role: their own tab.
-  const removedRows = lAll.flatMap((l) => (Array.isArray(l.lead_offers) ? l.lead_offers : []).filter((o) => isPitchOffer(o) && OFF_PITCH.includes(o.status)).map((o) => ({ o, l })))
+  const removedRows = lAll.flatMap((l) => (Array.isArray(l.lead_offers) ? l.lead_offers : []).filter((o) => isPitchOffer(o) && OFF_PITCH.includes(o.status) && offMatch(o) && (!ql || [l.job_title, l.company, candName(o.candidate_id)].some((v) => low(v).includes(ql)))).map((o) => ({ o, l })))
     .sort((a, b) => String(b.o.removed_at || b.o.withdrawn_at || "").localeCompare(String(a.o.removed_at || a.o.withdrawn_at || "")));
   const cnt = (list, g) => (list || []).filter((x) => g.includes(x.status)).length;
   const curList = tab === "leads" ? (lf === "removed" ? removedRows : lList) : pList;
   const pages = Math.max(1, Math.ceil(curList.length / size));
   const curPage = Math.min(page, pages);
   const pageOf = (list) => list.slice((curPage - 1) * size, curPage * size);
-  const nFilters = (tab === "leads" ? [fl.role, fl.country, fl.channel] : [fl.job, fl.source, fl.email, fl.reply]).filter((v) => v.length).length + (tab !== "leads" && fl.fit ? 1 : 0);
+  const nFilters = (tab === "leads" ? [fl.role, fl.country, fl.channel, fl.ostatus, fl.cand] : [fl.job, fl.source, fl.email, fl.reply]).filter((v) => v.length).length + (tab !== "leads" && fl.fit ? 1 : 0);
+  // Status / Candidate options: the candidates on this tab's roles (or, on Removed, those removed).
+  const offerBase = lf === "removed" ? (leads || []).flatMap((l) => pitchOffers(l).filter((o) => OFF_PITCH.includes(o.status)))
+    : lBase.flatMap((l) => pitchOffers(l).filter((o) => !OFF_PITCH.includes(o.status)));
+  const STATUS_OPTS = lf === "removed" ? [["removed", "Removed from consideration"], ["withdrawn", "Withdrawn by us"], ["withdrew", "Withdrew"]]
+    : [["draft", "Email to review"], ["notified", "Waiting to acknowledge"], ["no_email", "Couldn't be emailed"], ["acknowledged", "Acknowledged, answering"], ["ready", "Ready for the pitch"], ["pitched", "In the pitch"]];
   // Distinct roles, case-insensitive, first spelling kept.
   const roleOpts = (vals) => { const m = new Map(); vals.map((v) => String(v || "").trim()).filter(Boolean).forEach((v) => { if (!m.has(v.toLowerCase())) m.set(v.toLowerCase(), v); }); return [...m.values()].sort((a, b) => a.localeCompare(b)); };
   const opts = (vals) => [...new Set(vals.filter(Boolean))];
@@ -10595,7 +10606,9 @@ function CampaignsPage({ toast, S }) {
         <FilterPill label="Role" value={fl.role} onChange={(v) => setF("role", v)} options={roleOpts(lBase.map((l) => l.job_title)).map((r) => ({ value: r, label: r, count: lBase.filter((l) => low(l.job_title).trim() === low(r)).length }))} />
         <FilterPill label="Country" value={fl.country} onChange={(v) => setF("country", v)} options={[...countBy(lBase, (l) => l.country)].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([c, n]) => ({ value: c, label: (COUNTRY_DATA.find((x) => x.iso === c) || {}).name || c, count: n }))} />
         <FilterPill label="Contact by" value={fl.channel} onChange={(v) => setF("channel", v)} options={[["email", "Email"], ["linkedin", "LinkedIn"], ["none", "No contact"]].map(([k, l]) => ({ value: k, label: l, count: lBase.filter((x) => x.channel === k).length }))} />
-        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: [], country: [], channel: [] }))} />
+        <FilterPill label="Status" value={fl.ostatus} onChange={(v) => setF("ostatus", v)} options={STATUS_OPTS.map(([k, label]) => ({ value: k, label, count: offerBase.filter((o) => oKey(o) === k).length }))} />
+        <FilterPill label="Candidate" searchable value={fl.cand} onChange={(v) => setF("cand", v)} options={[...new Set(offerBase.map((o) => o.candidate_id))].map((id) => ({ value: id, label: candName(id) || "Candidate", count: offerBase.filter((o) => o.candidate_id === id).length })).sort((a, b) => a.label.localeCompare(b.label))} />
+        <ClearFilters show={nFilters > 0} onClick={() => setFl((x) => ({ ...x, role: [], country: [], channel: [], ostatus: [], cand: [] }))} />
       </>) : (<>
         <FilterPill label="Job" value={fl.job} onChange={(v) => setF("job", v)} options={[...countBy(pBase, (p) => p.job_id)].map(([id, n]) => ({ value: id, label: jobLabel(id) || "Closed or removed job", count: n })).sort((a, b) => a.label.localeCompare(b.label))} />
         <FilterPill label="Found on" value={fl.source} onChange={(v) => setF("source", v)} options={Object.values(Object.fromEntries(pBase.map((p) => { const f = foundOn(p); return [f.key, f]; }))).sort((a, b) => a.label.localeCompare(b.label)).map((f) => ({ value: f.key, label: f.label, count: pBase.filter((p) => foundOn(p).key === f.key).length }))} />
@@ -10626,7 +10639,7 @@ function CampaignsPage({ toast, S }) {
           <div>Nothing is being sent yet. {conn.sender === "none" ? "No email sender is connected. " : ""}{(status.blockers || []).length ? "Missing: " + status.blockers.join(", ") + ". " : ""}Approved emails wait in the queue{conn.sender === "none" && !(status.blockers || []).length ? ", or use Send it myself on any email to send it from your own mailbox" : ""}. <button className="underline" onClick={() => setTab("setup")}>Open Setup</button></div>
         </div>
       ) : null}
-      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "pool", label: "Talent pool " + cnt(prospects, pGroups.pool) }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); setFl((x) => ({ ...x, role: [], job: [] })); }} />
+      <Tabs tabs={[{ key: "candidates", label: "Candidate outreach" }, { key: "pool", label: "Talent pool " + cnt(prospects, pGroups.pool) }, { key: "leads", label: "Client leads" }, { key: "approvals", label: "Approvals" + (status && status.approvals ? " " + status.approvals : "") }, { key: "setup", label: "Setup" }]} active={tab} setActive={(t) => { setTab(t); setSel({}); setFl((x) => ({ ...x, role: [], job: [], ostatus: [], cand: [] })); }} />
 
       {(tab === "candidates" || tab === "pool") && (
         <Card>
@@ -10653,7 +10666,7 @@ function CampaignsPage({ toast, S }) {
       {tab === "leads" && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <Tabs tabs={[["awaiting", "Asking candidates"], ["new", "Ready to pitch"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"], ["removed", "Removed"]].map(([k, label]) => ({ key: k, label: label + " " + (k === "removed" ? removedRows.length : cnt(lAll, lGroups[k])) }))} active={lf} setActive={(k) => { setLf(k); setSel({}); }} />
+            <Tabs tabs={[["awaiting", "Asking candidates"], ["new", "Ready to pitch"], ["sending", "Sending"], ["contacted", "Contacted"], ["active", "In talks"], ["won", "Won"], ["closed", "Closed"], ["removed", "Removed"]].map(([k, label]) => ({ key: k, label: label + " " + (k === "removed" ? removedRows.length : cnt(lAll, lGroups[k])) }))} active={lf} setActive={(k) => { if ((k === "removed") !== (lf === "removed")) setFl((x) => ({ ...x, ostatus: [] })); setLf(k); setSel({}); }} />
             <div className="flex gap-2 shrink-0 flex-wrap">
               {lf === "new" && ids.length > 0 && <Btn kind="primary" icon={Send} disabled={!!busy} onClick={() => run("approve", () => S.sourcing("approve_leads", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held)); }))}>Approve {ids.length} email{ids.length === 1 ? "" : "s"}</Btn>}
               {pendingLeads > 0 && <Btn disabled={!!busy} onClick={() => run("process", () => S.sourcing("process_leads", {}).then((r) => toast("Checked " + (r.processed || 0) + ", kept " + (r.kept || 0))))}>{busy === "process" ? "Checking…" : "Check " + pendingLeads + " waiting"}</Btn>}
