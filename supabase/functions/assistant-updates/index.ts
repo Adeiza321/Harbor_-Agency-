@@ -24,7 +24,13 @@ function linkFor(l: any): string {
   const s = q.toString();
   return APP_URL + "/" + (s ? "?" + s : "");
 }
-const ICON: Record<string, string> = { event: "&#128276;", job: "&#9989;", reminder: "&#9200;", roundup: "&#127751;" };
+// Recruiters are only emailed about their own candidates (stage changes, replies, interviews,
+// a candidate given to them, a candidate confirming details for a client role). Tasks, the daily
+// to-do reminder, the end-of-day round-up, finished searches and new Inbox interest stay in ProNext.
+// (Job status emails come from role-emails.)
+const RECRUITER_PAGES = new Set(["candidates", "messages", "campaigns"]);
+const recruiterEmailOk = (r: any) => (r.kind === "event" || r.kind === "reminder") && RECRUITER_PAGES.has(String(r.link?.page || ""));
+const ICON: Record<string, string> ={ event: "&#128276;", job: "&#9989;", reminder: "&#9200;", roundup: "&#127751;" };
 const para = (t: string) => esc(t).replace(/\n/g, "<br>");
 
 Deno.serve(async (req: Request) => {
@@ -49,10 +55,18 @@ Deno.serve(async (req: Request) => {
     for (const r of due) { const l = byUser.get(r.user_id) || []; l.push(r); byUser.set(r.user_id, l); }
     if (!byUser.size) return json({ ok: true, sent: 0 });
 
-    const { data: people } = await admin.from("profiles").select("id,email,full_name,status,notification_prefs").in("id", [...byUser.keys()]);
+    const { data: people } = await admin.from("profiles").select("id,email,full_name,status,role,notification_prefs").in("id", [...byUser.keys()]);
     const brand = await loadBrand(admin);
     let sent = 0, skipped = 0;
     for (const u of people || []) {
+      if (u.role === "recruiter") {
+        // Not about their candidates: never emailed (still shown in ProNext), and not tried again.
+        const all = byUser.get(u.id) || [];
+        const no = all.filter((r: any) => !recruiterEmailOk(r)).map((r: any) => r.id);
+        if (no.length) { await admin.from("assistant_updates").update({ email_ok: false }).in("id", no); skipped += no.length; }
+        byUser.set(u.id, all.filter(recruiterEmailOk));
+        if (!byUser.get(u.id)!.length) continue;
+      }
       const list = (byUser.get(u.id) || []).slice(0, 12);
       const ids = (byUser.get(u.id) || []).map((r: any) => r.id);
       const off = !u.email || u.status !== "Active" || (u.notification_prefs || {}).assistEmail === false;

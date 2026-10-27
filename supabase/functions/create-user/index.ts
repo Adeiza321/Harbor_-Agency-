@@ -1,8 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { loadBrand, sendBrevo } from "./brand.ts";
+import { loadBrand, sendBrevo, emailShell, esc } from "./brand.ts";
 import { welcomeEmail } from "./welcome.ts";
 
 // Admin-only account management: create, delete, set a password, and send the welcome email.
+// set_email {id, email}: changes the email someone signs in with (Admins for anyone; anyone for
+// their own account). The old address is told, in case it wasn't them.
 // Adding someone sends the welcome email straight away, with a one-time "Set your password" link
 // (account_setup_tokens; the account-setup function redeems it). The account is "Invited" until the
 // person signs in for the first time, which makes it Active on its own (account-setup / record-login).
@@ -55,10 +57,44 @@ Deno.serve(async (req: Request) => {
     if (!caller?.user) return json({ error: "Your session has ended. Sign in again." }, 401);
 
     const { data: me } = await admin.from("profiles").select("role,status,full_name").eq("id", caller.user.id).single();
-    if (!me || me.role !== "admin" || me.status !== "Active") return json({ error: "Only admins can add or change team accounts." }, 403);
-
-    const body = await req.json();
+    const body = await req.json().catch(() => ({}));
     const action = body.action || "create";
+    const self = action === "set_email" && body.id === caller.user.id;
+    if (!me || me.status !== "Active" || (me.role !== "admin" && !self)) return json({ error: "Only admins can add or change team accounts." }, 403);
+
+    // The email someone signs in with: the login (auth) and their profile change together.
+    if (action === "set_email") {
+      const id = String(body.id || "");
+      const email = String(body.email || "").trim().toLowerCase();
+      if (!id) return json({ error: "Choose an account first." }, 400);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "Enter a valid email address." }, 400);
+      const { data: target } = await admin.from("profiles").select("id,email,full_name,status").eq("id", id).maybeSingle();
+      if (!target) return json({ error: "We couldn't find that account." }, 404);
+      const old = String(target.email || "").toLowerCase();
+      if (old === email) return json({ ok: true, email, unchanged: true });
+      const { data: taken } = await admin.from("profiles").select("id").ilike("email", email).neq("id", id).limit(1);
+      if (taken && taken.length) return json({ error: "Someone else on the team already uses this email address." }, 400);
+      const { error } = await admin.auth.admin.updateUserById(id, { email, email_confirm: true });
+      if (error) return json({ error: /already|registered|exists/i.test(error.message) ? "Someone else already has an account with this email address." : "We couldn't change the email. Check the address and try again." }, 400);
+      const { error: pErr } = await admin.from("profiles").update({ email }).eq("id", id);
+      if (pErr) return json({ error: "The sign-in email changed, but the profile couldn't be updated. Try again." }, 500);
+      try { await admin.from("audit_log").insert({ actor_id: caller.user.id, action: "email changed", entity_type: "user", entity_id: id, detail: (old || "(none)") + " -> " + email }); } catch (_) { /* best effort */ }
+      // Tell the old address, so a change they didn't make doesn't go unnoticed.
+      if (old) {
+        try {
+          const b = await loadBrand(admin);
+          const first = String(target.full_name || "").split(" ")[0] || "there";
+          const by = self ? "you" : (me.full_name || "an admin");
+          const subject = "Your " + b.name + " sign-in email was changed";
+          await sendBrevo(b, { email: old, name: target.full_name || undefined }, subject, emailShell(b, subject,
+            `<div style="font-size:20px;margin-bottom:8px;">Hi ${esc(first)},</div>
+             <div style="font-size:15px;line-height:1.6;">The email you sign in to ProNext with was changed by ${esc(by)} to <b>${esc(email)}</b>. Use that address to sign in from now on.</div>
+             <div style="font-size:15px;line-height:1.6;margin-top:10px;">If you didn't expect this, contact your ${esc(b.name)} admin straight away.</div>`,
+            "You're receiving this because this address was used for a " + b.name + " account."));
+        } catch (_) { /* best effort */ }
+      }
+      return json({ ok: true, email });
+    }
 
     if (action === "create") {
       const { email, password, full_name, role } = body;
