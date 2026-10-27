@@ -2500,14 +2500,22 @@ function AccountTab({ S, toast }) {
   const me = S.me;
   const [name, setName] = useState(me.name);
   const [phone, setPhone] = useState(me.phone || "");
+  const [email, setEmail] = useState(me.email || "");
   const [busy, setBusy] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const fileRef = React.useRef(null);
-  const dirty = name.trim() !== me.name || phone.trim() !== (me.phone || "");
-  const save = () => {
+  const emailChanged = email.trim().toLowerCase() !== (me.email || "").toLowerCase();
+  const dirty = name.trim() !== me.name || phone.trim() !== (me.phone || "") || emailChanged;
+  const save = async () => {
     if (!name.trim()) { toast("Add your name"); return; }
+    if (emailChanged && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { toast("Enter a valid email address"); return; }
     setBusy(true);
-    S.updateMyProfile({ name: name.trim(), phone: phone.trim() }).then(() => toast("Profile updated")).catch(() => {}).finally(() => setBusy(false));
+    const newEmail = email.trim().toLowerCase();
+    // The email first: if it's refused (taken, invalid), nothing else has changed yet.
+    if (emailChanged) { try { await S.setUserEmail(me.id, newEmail); } catch (e) { S.error(e.message); setBusy(false); return; } }
+    await S.updateMyProfile({ name: name.trim(), phone: phone.trim() })
+      .then(() => toast(emailChanged ? "Profile updated. Sign in with " + newEmail + " from now on." : "Profile updated")).catch(() => {});
+    setBusy(false);
   };
   const pickAvatar = () => fileRef.current && fileRef.current.click();
   const onAvatarFile = (e) => {
@@ -2541,10 +2549,8 @@ function AccountTab({ S, toast }) {
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
-          <div className="flex items-center gap-2 rounded-lg px-3.5 py-2.5 mt-1.5 text-sm" style={{ background: C.canvas }}>
-            <Mail size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{me.email}</span>
-          </div>
-          <div className="text-xs mt-1" style={{ color: C.ink3 }}>Contact an admin to change the email on your account.</div>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+          <div className="text-xs mt-1" style={{ color: C.ink3 }}>{emailChanged ? "You'll sign in with the new address from now on. Your old address is told about the change." : "The address you sign in with and get ProNext emails at."}</div>
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone number</label>
@@ -2606,7 +2612,7 @@ function NotificationsTab({ S, toast }) {
         <MsgPrefRow label="Play a sound" sub="A short “ba-ding” when a new message arrives." on={prefs.msgSound} onToggle={() => toggle("msgSound")}
           extra={<button onClick={(e) => { e.stopPropagation(); playChime(); }} className="text-xs font-medium" style={{ color: C.em }}>Play it</button>} />
         <MsgPrefRow label="Email me" sub="An email when a candidate replies to you (one per burst of messages), with a link straight to the chat." on={prefs.msgEmail !== false} onToggle={() => toggle("msgEmail")} />
-        {S.role === "recruiter" && <MsgPrefRow label="Activity emails" sub="An email when someone else moves your candidates, books or changes their interviews, gives you a task, assigns you a candidate or leaves a note; plus team placements and congratulations." on={prefs.activityEmail !== false} onToggle={() => toggle("activityEmail")} />}
+        {S.role === "recruiter" && <MsgPrefRow label="Activity emails" sub="An email about your own candidates: when someone else moves them, books or changes their interviews, assigns you a candidate or leaves a note on one." on={prefs.activityEmail !== false} onToggle={() => toggle("activityEmail")} />}
         {S.role === "recruiter" && <MsgPrefRow label="Role emails" sub="An email when a new role opens, when a role goes on hold, reopens or closes, and when a role is added to your worklist." on={prefs.roleEmail !== false} onToggle={() => toggle("roleEmail")} />}
         <MsgPrefRow label="Desktop alerts" sub={deskBlocked ? "Your browser is blocking alerts from ProNext. Allow notifications for this site in your browser settings, then turn this on." : "A pop-up on your computer when a message arrives while ProNext is in another tab."}
           on={prefs.msgDesktop && !deskBlocked} onToggle={() => toggleDesktop("msgDesktop")} />
@@ -12852,6 +12858,7 @@ function UsersPage({ toast, S }) {
   const [editUser, setEditUser] = useState(null);
   const [editName, setEditName] = useState("");
   const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
   const [editBusy, setEditBusy] = useState(false);
   const [pwUser, setPwUser] = useState(null);
   const [pwValue, setPwValue] = useState("");
@@ -12864,12 +12871,19 @@ function UsersPage({ toast, S }) {
   const ROLE_OPTIONS = [["recruiter", "Recruiter"], ["recops", "Rec Ops manager"], ["admin", "Admin"]];
   const adminCount = allUsers.filter((u) => u.roleKey === "admin" && u.status === "Active").length;
   const transferCandidates = allUsers.filter((u) => !u.isOwner && u.status === "Active");
-  const openEdit = (u) => { setEditUser(u); setEditName(u.name); setEditPhone(u.phone || ""); };
-  const saveEdit = () => {
+  const openEdit = (u) => { setEditUser(u); setEditName(u.name); setEditPhone(u.phone || ""); setEditEmail(u.email || ""); };
+  const saveEdit = async () => {
     if (!editName.trim()) { toast("Enter their name"); return; }
+    const email = editEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { toast("Enter a valid email address"); return; }
     setEditBusy(true);
-    S.editUser(editUser.id, { name: editName.trim(), phone: editPhone.trim() })
-      .then(() => { toast("Details updated"); setEditUser(null); }).catch((e) => S.error(e.message)).finally(() => setEditBusy(false));
+    try {
+      // The email first: if it's refused (taken, invalid), nothing else has changed yet.
+      if (email !== (editUser.email || "").toLowerCase()) await S.setUserEmail(editUser.id, email);
+      await S.editUser(editUser.id, { name: editName.trim(), phone: editPhone.trim() });
+      toast("Details updated"); setEditUser(null);
+    } catch (e) { S.error(e.message); }
+    setEditBusy(false);
   };
   const savePassword = () => {
     if (pwValue.length < 8) { toast("Password must be at least 8 characters"); return; }
@@ -13004,6 +13018,9 @@ function UsersPage({ toast, S }) {
       <Modal open={!!editUser} onClose={() => setEditUser(null)} title={editUser ? "Edit " + editUser.name : "Edit user"}>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Full name</label>
         <input value={editName} onChange={(e) => setEditName(e.target.value)} className="w-full mt-1.5 mb-3 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label>
+        <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="name@example.com" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+        <div className="text-xs mt-1 mb-3" style={{ color: C.ink3 }}>{editUser && editEmail.trim().toLowerCase() !== (editUser.email || "").toLowerCase() ? "They'll sign in with the new address from now on. Their old address is told about the change." : "The address they sign in with and get emails at."}</div>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label>
         <input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="optional" className="w-full mt-1.5 mb-4 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
         <Btn kind="primary" full onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Save changes"}</Btn>
@@ -16529,11 +16546,20 @@ export default function App() {
     transferOwnership: (newOwnerId) => { const u = data.users.find((x) => x.id === newOwnerId);
       return sbFetch("/rest/v1/rpc/transfer_ownership", { method: "POST", token: session.token, body: { new_owner_id: newOwnerId } })
         .then(() => { logAudit("ownership transferred", "user", newOwnerId, "-> " + (u ? u.name : "")); reload(); }); },
-    /* Name/phone only — role changes go through updateUserRole, and email/password through the
+    /* Name/phone only — role changes go through updateUserRole, and email (setUserEmail) and password through the
        create-user edge function below (needs the service role, not available to the client). */
     editUser: (id, patch) => { const u = data.users.find((x) => x.id === id);
       return call("/rest/v1/profiles?id=eq." + id, { method: "PATCH", body: { full_name: patch.name, phone: patch.phone || null } })
         .then(() => { logAudit("edited", "user", id, u ? u.name : ""); reload(); }); },
+    /* Changes the email someone signs in with (login and profile together, via create-user). Admins
+       for anyone; anyone for their own account. Their old address is told about the change. */
+    setUserEmail: async (id, email) => {
+      // The audit log entry (old -> new address) is written by create-user.
+      const r = await fetch(SB_URL + "/functions/v1/create-user", { method: "POST", headers: { Authorization: "Bearer " + session.token, "Content-Type": "application/json" }, body: JSON.stringify({ action: "set_email", id, email }) });
+      const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(errOf(j.error, "Could not change the email"));
+      if (id === session.uid) setMe((m) => ({ ...m, email: j.email || email }));
+      reload();
+    },
     /* Sets their password directly (no reset email) — for handing someone a new login on the spot. */
     setUserPassword: async (id, password) => {
       const u = data.users.find((x) => x.id === id);

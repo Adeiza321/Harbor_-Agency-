@@ -17,7 +17,9 @@ import { regionMatch } from "../sourcing/world_regions.ts";
 //   { kind: "response", linkId, actorId }               a candidate accepted / declined a role
 //   { kind: "added", linkId, actorId }                  a candidate was put forward / applied to a role
 //   { kind: "interview", interviewId, op, actorId }     an interview booked, moved, cancelled or decided
-//   { kind: "task", taskId }                            a task given to them by someone else
+//   { kind: "task", taskId }                            a task given to them by someone else (no email:
+//                                                       recruiters' emails are only about their
+//                                                       candidates and job status)
 //   { kind: "assigned", candidateId, actorId }          a candidate assigned to them
 //   { kind: "comment", commentId }                      a teammate's note on their candidate
 //   Team activity (Admins and Rec Ops, plus recruiters where it's theirs):
@@ -27,11 +29,13 @@ import { regionMatch } from "../sourcing/world_regions.ts";
 //                                                       recruiter gets "is now your candidate".
 //   { kind: "applied", applicationId }                  someone applied directly (apply page, outreach
 //                                                       "I'm interested", a job board) or a referral said
-//                                                       yes: Admins, Rec Ops and the role's recruiters
-//                                                       (every active recruiter when it's for no role).
-//   Team wins:
-//   { kind: "placed", cheerId }   a placement: every other active recruiter hears who made it
+//                                                       yes: Admins and Rec Ops (not recruiters: the
+//                                                       applicant isn't their candidate until assigned,
+//                                                       which sends "is now your candidate").
+//   Team wins (no email to recruiters; still shown in ProNext):
+//   { kind: "placed", cheerId }   a placement made by someone else
 //   { kind: "kudos", kudosId }    a teammate congratulated the recruiter on a placement
+// Recruiters' emails are only about their own candidates and the status of jobs.
 // Recruiters never see the client fee; their own incentive is shown when the role has one.
 // Switches in My profile > Notifications: "Role emails" (roles) and "Activity emails" (the rest).
 
@@ -236,17 +240,9 @@ async function activity(admin: any, body: any) {
       (iv.status !== "cancelled" ? p("When: " + esc(when)) : "") + (op === "decision" && iv.feedback ? quote(iv.feedback) : "") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
   }
 
-  if (kind === "task") {
-    const { data: t } = await admin.from("tasks").select("id,title,notes,due_on,assigned_to,created_by").eq("id", uuid(body.taskId)).maybeSingle();
-    if (!t) return { ok: true, skipped: "no task" };
-    // A reassigned task names whoever passed it on; a new one names whoever created it.
-    const passedBy = body.reassigned ? actorId : "";
-    if (!passedBy && t.assigned_to === t.created_by) return { ok: true, skipped: "own task" };
-    if (passedBy && passedBy === t.assigned_to) return { ok: true, skipped: "own task" };
-    const u = await person(t.assigned_to); const from = await nameOf(passedBy || t.created_by);
-    if (!(u?.email && u.status === "Active" && u.role === "recruiter" && (u.notification_prefs || {}).activityEmail !== false)) return { ok: true, skipped: "not for them" };
-    return { ok: true, sent: await send(u, (passedBy ? "Task passed to you" : "New task") + (from ? " from " + from : "") + ": " + t.title, p(`${from ? esc(from) + (passedBy ? " passed you a task" : " gave you a task") : "You have a new task"}: <b>${esc(t.title)}</b>${t.due_on ? " (due " + esc(t.due_on) + ")" : ""}.`) + quote(t.notes || "") + button(brand, APP_URL + "/?page=todo", "Open your To-do")) };
-  }
+  // Tasks and team wins aren't about the recruiter's candidates or job status: no email (they
+  // still show in ProNext).
+  if (kind === "task" || kind === "placed" || kind === "kudos") return { ok: true, skipped: "recruiter emails: candidates and job status only" };
 
   if (kind === "assigned") {
     const { data: c } = await admin.from("candidates").select("id,name,recruiter_id,is_draft").eq("id", uuid(body.candidateId)).maybeSingle();
@@ -265,29 +261,6 @@ async function activity(admin: any, body: any) {
     return { ok: true, sent: await send(u, (from || "A teammate") + " left a note on " + c.name, p(`${esc(from || "A teammate")} left a note on <b>${esc(c.name)}</b>:`) + quote(cm.body || "") + button(brand, candLink(c.id), "Open " + String(c.name).split(" ")[0])) };
   }
 
-  if (kind === "placed") {
-    const { data: ch } = await admin.from("placement_cheers").select("id,recruiter_id,role_title,client").eq("id", uuid(body.cheerId)).maybeSingle();
-    if (!ch) return { ok: true, skipped: "no placement" };
-    const placer = await nameOf(ch.recruiter_id) || "A teammate";
-    const { data: people } = await admin.from("profiles").select(PROFILE).eq("role", "recruiter").eq("status", "Active");
-    let sent = 0;
-    for (const u of (people || []).filter((u: any) => u.email && u.id !== ch.recruiter_id && (u.notification_prefs || {}).activityEmail !== false)) {
-      if (await send(u, "🎉 " + placer + " made a placement", `<div style="font-size:30px;text-align:center;margin:6px 0 10px;">&#127881;</div>` +
-        p(`<b>${esc(placer)}</b> just placed a <b>${esc(ch.role_title || "candidate")}</b>${ch.client ? " at " + esc(ch.client) : ""}.`) + p("Send them a congratulations from your dashboard.") +
-        button(brand, APP_URL + "/?page=overview", "Congratulate " + placer.split(" ")[0]), "You're receiving this because you're on the " + brand.name + " team. Turn these off in ProNext: My profile, Notifications.")) sent++;
-    }
-    return { ok: true, sent };
-  }
-
-  if (kind === "kudos") {
-    const { data: k } = await admin.from("placement_kudos").select("id,from_id,message,placement_cheers(recruiter_id,role_title,client)").eq("id", uuid(body.kudosId)).maybeSingle();
-    if (!k) return { ok: true, skipped: "no kudos" };
-    const ch: any = k.placement_cheers; const u = await person(ch?.recruiter_id);
-    if (!u?.email || u.status !== "Active" || u.id === k.from_id || (u.notification_prefs || {}).activityEmail === false) return { ok: true, skipped: "not for them" };
-    const from = await nameOf(k.from_id) || "A teammate";
-    return { ok: true, sent: await send(u, from + " congratulated you", p(`<b>${esc(from)}</b> congratulated you on your <b>${esc(ch.role_title || "")}</b> placement${ch.client ? " at " + esc(ch.client) : ""}. &#127881;`) + quote(k.message || "") + button(brand, APP_URL + "/?page=myProfile", "See your congratulations"),
-      "You're receiving this because a teammate congratulated you in " + brand.name + ".") };
-  }
   if (kind === "new_candidate") {
     const { data: c } = await admin.from("candidates").select("id,name,role_title,location,source,recruiter_id,is_draft").eq("id", uuid(body.candidateId)).maybeSingle();
     if (!c || c.is_draft) return { ok: true, skipped: "no candidate" };
@@ -323,17 +296,10 @@ async function activity(admin: any, body: any) {
     const SRC: Record<string, string> = { linkedin: "LinkedIn", facebook: "Facebook", whatsapp: "WhatsApp", x: "X (Twitter)", telegram: "Telegram", email: "a job shared by email", instagram: "Instagram", indeed: "Indeed", google_jobs: "Google for Jobs", manual: "added by hand" };
     const src = a.source && !["career_page", "outreach", "referral"].includes(a.source) ? p("Came from: " + esc(SRC[a.source] || a.source)) : "";
     let sent = 0;
-    // Admins and Rec Ops: it's waiting in the Inbox to be assigned.
+    // Admins and Rec Ops: it's waiting in the Inbox to be assigned. Recruiters aren't emailed: the
+    // applicant isn't their candidate yet (they hear "is now your candidate" once assigned).
     for (const u of await team()) {
       if (await send(u, subject, p(`<b>${esc(a.name)}</b> ${esc(how)} ${what}.`) + src + p("It's in the Inbox, waiting to be assigned.") + button(brand, APP_URL + "/?page=inbox", "Open the Inbox"), TEAM_FOOT(brand.name))) sent++;
-    }
-    // Recruiters: the role's recruiters, or every active recruiter when it's for no particular role.
-    let recIds: string[] = [];
-    if (a.job_id) { const { data: jr } = await admin.from("job_recruiters").select("recruiter_id").eq("job_id", a.job_id); recIds = (jr || []).map((r: any) => r.recruiter_id); }
-    const { data: recs } = recIds.length ? await admin.from("profiles").select(PROFILE).in("id", recIds) : a.job_id ? { data: [] } : await admin.from("profiles").select(PROFILE).eq("role", "recruiter").eq("status", "Active");
-    for (const u of (recs || []).filter(okFor)) {
-      if (await send(u, subject, p(`<b>${esc(a.name)}</b> ${esc(how)} ${what}${j ? ", one of your roles" : ""}.`) + p("Admin or Rec Ops will assign them from the Inbox; you'll get an email if they're given to you.") +
-        (j ? button(brand, APP_URL + "/?page=jobDetail&job=" + j.id, "Open the role") : ""))) sent++;
     }
     return { ok: true, sent };
   }
