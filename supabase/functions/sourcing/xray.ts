@@ -26,7 +26,7 @@ import { fitsToPercent, sameCompany, type Settings } from "./common.ts";
 import { broadPlace, judge, reviewHead, REVIEW_SYSTEM, type Judged } from "./xray_rules.ts";
 import { cleanRecentJobs, placeFromJobs, possibleText, splitByArea } from "./area_check.ts";
 import { findGithubEmails } from "./emails.ts";
-import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type Hit, type SiteKey } from "./search.ts";
+import { SITES, githubUsers, profileOf, searchEngines, searchUsage, searchWeb, type GithubPlan, type Hit, type SiteKey } from "./search.ts";
 
 const errMsg = (e: unknown) => String((e as Error)?.message || e);
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
@@ -206,7 +206,7 @@ export function narrowSearchPlaces(q: string, officeCity: string, _nearby: strin
   return r.replace(/\s+/g, " ").trim();
 }
 
-type Plan = { technical: boolean; checklist: string[]; linkedin: string[]; sites: { site: SiteKey; query: string }[]; github: { location?: string; language?: string; keywords?: string } | null;
+type Plan = { technical: boolean; checklist: string[]; linkedin: string[]; sites: { site: SiteKey; query: string }[]; github: GithubPlan | null;
   competitors: string[]; clientNames: string[]; competitorQueries: string[] };
 // A hidden client ("Confidential") has no competitors we can name.
 const knownClient = (job: any) => { const c = String(job?.client || "").trim(); return c.length > 1 && !/^(confidential|undisclosed|n\/?a|client)$/i.test(c) ? c : ""; };
@@ -222,7 +222,7 @@ function guideText(g: XrayGuide | null) {
 async function plan(job: any, area: any, lessons: string[], titles: string[], guide: XrayGuide | null = null): Promise<Plan> {
   const siteList = (Object.keys(SITES) as SiteKey[]).filter((k) => k !== "linkedin").map((k) => `${k} (${SITES[k].label}, query starts "${SITES[k].prefix}")`).join("; ");
   const sys = "You are an expert technical and executive sourcer who writes Google X-ray searches to find people's public profiles for one job. Reply with STRICT JSON only: " +
-    "{\"technical\": boolean, \"checklist\": string[], \"linkedin\": string[], \"sites\": [{\"site\": string, \"query\": string}], \"github\": {\"location\": string, \"language\": string, \"keywords\": string} | null, " +
+    "{\"technical\": boolean, \"checklist\": string[], \"linkedin\": string[], \"sites\": [{\"site\": string, \"query\": string}], \"github\": {\"locations\": string[], \"languages\": string[], \"keywords\": string} | null, " +
     "\"competitors\": string[], \"client_names\": string[]}. " +
     "competitors: when the hiring company is named, 4 to 9 real companies that compete with it directly (same products or services, same customers, hiring the same kind of people), " +
     "biggest employers of this role's people first, preferring ones with staff in the job's country or search area; their usual names as people write them on LinkedIn (e.g. 'Deloitte', not 'Deloitte Touche Tohmatsu Limited'). " +
@@ -234,7 +234,8 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
     "Keep each under 30 words. Spread the locations of the search area across the queries so together they cover it, and vary the title groups and terms so the queries don't repeat each other. Never include the hiring company's name. Use Google syntax: \"A\" OR \"B\" inside parentheses. " +
     "technical: true for software, data, IT, engineering, security, DevOps, ML/AI, product design and similar roles. " +
     `sites: only when technical (otherwise []): up to 4 queries on the sites that suit this role, from: ${siteList}. Each query starts with that site's prefix, then quoted skills/titles and a location term; under 25 words. ` +
-    "github: only when technical and code matters for the role (otherwise null): location = the main city or country to search, language = the role's main programming language as GitHub names it (e.g. 'Python', 'TypeScript', 'Go'), keywords = 0 to 2 plain words likely in names or profiles (usually '').";
+    "github: only when technical and code matters for the role (otherwise null): locations = up to 3 places as people write them on GitHub, for on-site / hybrid roles the office city first then the biggest nearby cities in the search area (e.g. 'Austin', 'Round Rock'), for remote roles the country (e.g. 'Nigeria'); " +
+    "languages = the role's 1 or 2 main programming languages as GitHub names them (e.g. 'Python', 'TypeScript', 'Go'), the one the job description stresses most first; keywords = usually '' (it only matches names, so leave it empty unless told otherwise).";
   const client = knownClient(job);
   const text = jobBrief(job, false) +
     `\nHiring company: ${client || "(not named)"}${job.client_industry || job.industry ? " (industry: " + (job.client_industry || job.industry) + ")" : ""}` +
@@ -290,7 +291,13 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
     checklist: [...new Set((Array.isArray(out?.checklist) ? out.checklist : []).map((c: unknown) => clip(c, 80)).filter(Boolean))].slice(0, 8) as string[],
     linkedin: [...new Set((Array.isArray(out?.linkedin) ? out.linkedin : []).map((q: unknown) => fix(q, SITES.linkedin.prefix)).filter(Boolean))].slice(0, 8) as string[],
     sites: out?.technical ? sites : [],
-    github: out?.technical && out?.github && (out.github.location || out.github.language) ? out.github : null,
+    github: (() => {
+      const g = out?.github;
+      if (!out?.technical || !g) return null;
+      const list = (v: unknown, one: unknown, n: number) => [...new Set([...(Array.isArray(v) ? v : []), one].map((x) => clip(x, 60)).filter(Boolean))].slice(0, n) as string[];
+      const plan: GithubPlan = { locations: list(g.locations, g.location, 3), languages: list(g.languages, g.language, 2), keywords: clip(g.keywords, 60) };
+      return plan.locations!.length || plan.languages!.length ? plan : null;
+    })(),
   };
 }
 
@@ -488,12 +495,23 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
       used[r.engine] = (used[r.engine] || 0) + 1;
       for (const h of r.hits) add(h, queries[qi].q);
     }
-    if (cp.github && !cp.githubDone && people.size < want) {
+    // Technical roles: GitHub always runs (people who actually write the code), whatever the web
+    // searches already found.
+    if (cp.github && !cp.githubDone) {
+      // Near the step's time limit: the next step runs GitHub with a fresh allowance.
+      if (Date.now() - t0 > STEP_BUDGET_MS - 30e3) {
+        cp = { ...keep(), qi };
+        await save({ progress: { step: "search", done: qi, total: queries.length, found: people.size } });
+        await kickXray(admin, jobId, run);
+        return;
+      }
       try {
-        const hits = await githubUsers(cp.github, 30);
+        const g: GithubPlan = cp.github;
+        const hits = await githubUsers(g, 30);
         used.github = (used.github || 0) + 1;
-        for (const h of hits) add(h, `GitHub users: ${[cp.github.keywords, cp.github.location, cp.github.language].filter(Boolean).join(", ")}`);
+        for (const h of hits) add(h, `GitHub users: ${[g.keywords, ...(g.locations || [g.location]), ...(g.languages || [g.language])].filter(Boolean).join(", ")}`);
       } catch (e) { errors.push(errMsg(e).slice(0, 200)); }
+      cp = { ...cp, githubDone: true };
     }
     if (!people.size) {
       const why = searched ? `The searches found nobody new (${dropped} already found for this role or already in ProNext).` : "No search could run. " + (errors.length ? friendlyList(errors).join(" ") : "No search engine was available.");
@@ -503,7 +521,10 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
       return { ok: true, found: 0, message: why };
     }
     // Saved for the review steps: who was found, and what the plan and searches were.
-    const found = [...people.values()].slice(0, Math.min(people.size, perJob + 15));
+    // Up to 12 review places are kept for GitHub people, so web results found first can't crowd them out.
+    const all0 = [...people.values()], cap = Math.min(people.size, perJob + 15);
+    const gh = all0.filter((x) => x.site === "github").slice(0, 12);
+    const found = [...all0.filter((x) => x.site !== "github").slice(0, cap - gh.length), ...gh];
     cp = { stage: "review", technical: cp.technical, checklist: cp.checklist, queries: queries.map((x) => x.q), used, searched, competitors: cp.competitors || [], clientNames: cp.clientNames || [],
       errors: [...new Set(errors)].slice(0, 10), list: found, reviewed: [], next: 0 };
     await prog({ step: "review", done: 0, total: Math.ceil(found.length / REVIEW_BATCH), found: found.length });
