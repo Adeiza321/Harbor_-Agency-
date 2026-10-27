@@ -35,7 +35,7 @@ export const MAX_PER_PITCH = 5;
 // Who we pitch: the Active file (not drafts, with a CV), and the country each one lives in.
 export async function pitchableCandidates(admin: any) {
   const { data } = await admin.from("candidates")
-    .select("id,name,status,email,pay,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,resume_name,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
+    .select("id,name,status,email,pay,work_setup,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,resume_name,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
     .eq("is_draft", false).eq("status", "Active file");
   return (data || []).filter((c: any) => isOpen(c) && !isBusy(c) && (c.resume_path || c.cv_path) && candTitles(c).length && candCountry(c));
 }
@@ -118,7 +118,7 @@ export async function fetchLeads(admin: any, s: Settings) {
   const today = perDay >= ordered.length ? ordered : Array.from({ length: perDay }, (_, k) => ordered[(start + k) % ordered.length]);
   let fetched = 0, added = 0, remote = 0, skipped = 0;
   const errors: string[] = [], found: string[] = [];
-  let noCity = 0, far = 0, noAgency = 0, size = 0;
+  let noCity = 0, far = 0, noAgency = 0, size = 0, remoteOnly = 0;
   const { minEmployees, maxEmployees } = s.leads;
   const sizeOk = (n: number | null) => n == null || ((!minEmployees || n >= minEmployees) && (!maxEmployees || n <= maxEmployees));
   for (const c of today) {
@@ -126,6 +126,10 @@ export async function fetchLeads(admin: any, s: Settings) {
     const cc = area.cc;
     // Strict location: without a city we can't tell what's near them, so they aren't searched.
     if (!area.city) { noCity++; found.push(firstName(c) + " (no city)"); continue; }
+    // Remote only (their confirmed work setup): the feed brings on-site and hybrid roles, never
+    // remote ones, so there's nothing to look for and no credits are spent on them.
+    const ws = Array.isArray(c.work_setup) && c.work_setup.length ? c.work_setup : Array.isArray(c.preferences?.workSetup) ? c.preferences.workSetup : [];
+    if (ws.length && ws.every((x: string) => x === "remote")) { remoteOnly++; found.push(firstName(c) + " (remote only)"); continue; }
     const titles = [...new Set(candTitles(c).map((t) => t.trim()).filter(Boolean))].slice(0, 10);
     let postings: any[] = [];
     const places = [...new Set([...(await commuteTowns(area)), ...area.moves.map((m: string) => placeParts(m).city || m)])].slice(0, 20);
@@ -165,7 +169,7 @@ export async function fetchLeads(admin: any, s: Settings) {
   if (!fetched && errors.length) throw new Error(errors[0]);
   const who = today.length === all.length ? `all ${all.length} Active file candidates` : `${today.length} of ${all.length} Active file candidates (the rest on the next days)`;
   return { ok: true, fetched, added, candidates: found,
-    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${far ? " " + far + " too far from the candidate, left out." : ""}${noAgency ? " " + noAgency + " said no agencies or no unsolicited CVs, left out." : ""}${size ? " " + size + " outside the company sizes we pitch, left out." : ""}${noCity ? " " + noCity + " candidate" + (noCity === 1 ? "" : "s") + " skipped: no city on their profile." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
+    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${far ? " " + far + " too far from the candidate, left out." : ""}${noAgency ? " " + noAgency + " said no agencies or no unsolicited CVs, left out." : ""}${size ? " " + size + " outside the company sizes we pitch, left out." : ""}${noCity ? " " + noCity + " candidate" + (noCity === 1 ? "" : "s") + " skipped: no city on their profile." : ""}${remoteOnly ? " " + remoteOnly + " skipped: remote work only." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
 }
 const firstName = (c: any) => String(c?.name || "").trim().split(/\s+/)[0] || "A candidate";
 

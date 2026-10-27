@@ -448,7 +448,7 @@ function mapAll(d) {
     blind: c.blind_pages ? { pages: c.blind_pages, at: c.blind_at, by: c.blind_by ? pname(c.blind_by) : "", checkedAt: c.blind_checked_at || null, checkedBy: c.blind_checked_by ? pname(c.blind_checked_by) : "" } : null,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
-    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
+    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, workSetup: Array.isArray(c.work_setup) ? c.work_setup : [], emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
     note: c.profile_note || "", noteBy: c.profile_note_by ? pname(c.profile_note_by) : "", noteAt: c.profile_note_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: answersFor(l), extraQA: extraQAFor(l), ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason && ["Rejected", "Withdrawn"].includes(l.stage) ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       blindPages: l.blind_pages || 0, blindAt: l.blind_at || null,
@@ -481,7 +481,7 @@ function mapAll(d) {
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, leadRole: !!j.lead_role, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), at: new Date(a.created_at).getTime(),
     status: a.status || (a.candidate_id || a.assigned_to ? "assigned" : "new"), jobId: a.job_id, candidateId: a.candidate_id, linkedin: a.linkedin || "", hasCv: !!a.resume_path, cvName: a.resume_name || "",
-    answers: Array.isArray(a.answers) ? a.answers : [], note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null,
+    answers: Array.isArray(a.answers) ? a.answers : [], workSetup: Array.isArray(a.work_setup) ? a.work_setup : (a.preferences && Array.isArray(a.preferences.workSetup) ? a.preferences.workSetup : []), note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null,
     interestAt: a.interest_at ? new Date(a.interest_at).getTime() : null, followups: a.followups || 0, lastFollowupAt: a.last_followup_at ? new Date(a.last_followup_at).getTime() : null, handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
     handledBy: a.handled_by ? pname(a.handled_by) : "", viaName: a.via_recruiter ? pname(a.via_recruiter) : "", assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, assignedName: a.assigned_to ? pname(a.assigned_to) : "" }));
   const today = new Date();
@@ -1116,7 +1116,7 @@ const countFollowups = (cands, state) => cands.reduce((n, c) => n + (c.jobLinks 
 // them from the resume when the candidate doesn't already have one on file, so a hardcoded
 // default here would silently block that fill forever. Let the UI show "not set" instead and
 // leave resume + screening answers as the only source of truth.
-const newCandidate = (o) => ({ id: uid(), recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
+const newCandidate = (o) => ({ id: uid(), workSetup: [], recruiterId: null, emailAddr: "", phone: "", portal: "", createdAt: Date.now(), location: "", recruiter: null, recruiterInit: "", status: "In review", ai: 70, email: "Unverified", opens: 0, activity: "Just now", experience: "-", notice: "-", pay: "-", skills: [], strengths: [], gaps: [], endorsed: [], screening: { state: "pending" }, comments: [], timeline: [], matches: [], cv: null, ...o });
 
 /* Desktop detection in JS, so layout never depends on responsive classes being available */
 function useDesktop() {
@@ -5780,7 +5780,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   };
   const note = useProfileNote(candidate, S, toast);
   const [editForm, setEditForm] = useState(null);
-  const openEdit = () => setEditForm({ linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
+  const openEdit = () => setEditForm({ workSetup: candidate.workSetup || [], linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
   const saveEdit = () => {
     if (!editForm.name.trim()) { toast("Name can't be empty"); return; }
     const li = (editForm.linkedin || "").trim();
@@ -5886,6 +5886,9 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Notice</label><input value={editForm.notice} onChange={(e) => setEditForm((f) => ({ ...f, notice: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label><input value={editForm.pay} onChange={(e) => setEditForm((f) => ({ ...f, pay: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             </div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Work setup they'd accept</label>
+              <div className="mt-1.5"><ChoiceRow multi options={WORK_SETUPS} value={editForm.workSetup || []} onChange={(v) => setEditForm((f) => ({ ...f, workSetup: v }))} /></div>
+              <div className="text-xs mt-1" style={{ color: C.ink3 }}>Remote, hybrid or on-site: every option they'd take. Used in screening and when matching them to roles.</div></div>
             <Btn kind="primary" full onClick={saveEdit}>Save changes</Btn>
           </div>
         )}
@@ -6007,10 +6010,13 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
                 )}
               </div>
             )}
-            <div className="grid grid-cols-3 gap-4 mb-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
               {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Salary expectation", candidate.pay]].map(([l, v]) => (
                 <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><Clamp text={v || "-"} className="text-sm font-medium mt-0.5 break-words" /></div>
               ))}
+              <div className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>Work setup</div>
+                {(candidate.workSetup || []).length ? <div className="text-sm font-medium mt-0.5">{wsLabel(candidate.workSetup)}</div>
+                  : <button type="button" onClick={openEdit} className="text-sm font-medium mt-0.5 underline" style={{ color: C.warnFg }} title="Remote, hybrid or on-site: what they'd accept. Used in screening and when matching them to roles.">Not confirmed</button>}</div>
             </div>
             <div className="mb-4">
               <div className="text-xs mb-1.5" style={{ color: C.ink3 }}>SKILLS</div>
@@ -7398,6 +7404,7 @@ function InboxRow({ x, S, toast, canAct }) {
             {detail("Role", job ? job.role + " · " + job.client : x.role)}
             {detail("Came in", (SOURCE_LABEL[x.source] || x.source) + " · " + x.when)}
             {detail("CV", x.hasCv ? x.cvName || "Uploaded" : "Not uploaded yet")}
+            {detail("Work setup", x.workSetup && x.workSetup.length ? wsLabel(x.workSetup) : x.source === "referral" ? "Not confirmed yet (asked when they say they're interested)" : "Not given")}
             {x.referrer && detail("Referred by", x.referrer.name + (x.referrer.email ? " · " + x.referrer.email : ""))}
             {viaOutreach && detail("Outreach", x.referrer.via.prospect_name ? "Referred from our outreach email to " + x.referrer.via.prospect_name + " (Outreach page)" : "Referred from an outreach email")}
             {x.source === "referral" && detail("Interest", x.interestAt ? "Said they're interested, " + fdate(x.interestAt) : "Not confirmed yet" + (x.followups ? " · " + x.followups + " follow-up" + (x.followups > 1 ? "s" : "") + " sent" + (x.lastFollowupAt ? ", last " + fdate(x.lastFollowupAt) : "") : ""))}
@@ -10789,6 +10796,8 @@ const EMPLOYMENT_TYPES = ["Full-time", "Contract", "Part-time", "Temporary"];
 const PAY_PERIODS = [["year", "per year"], ["month", "per month"], ["hour", "per hour"]];
 const AVAILABILITY = ["Immediately", "1 week", "2 weeks", "1 month", "2 months", "3 months or more"];
 const WORK_SETUPS = [["remote", "Remote"], ["hybrid", "Hybrid"], ["onsite", "On-site"]];
+// "Remote, Hybrid" from ["remote", "hybrid"] ('' when none).
+const wsLabel = (v) => (Array.isArray(v) ? v : []).map((k) => (WORK_SETUPS.find((x) => x[0] === k) || [k, k])[1]).join(", ");
 const RELOCATE = [["yes", "Yes"], ["maybe", "Maybe, for the right role"], ["no", "No, I'd stay where I am"]];
 const SPONSOR = [["yes", "Yes"], ["no", "No"], ["unsure", "Not sure"]];
 const LANG_LEVELS = ["Native", "Fluent", "Professional", "Conversational", "Basic"];
@@ -13831,6 +13840,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   const qs = (job && job.screeningQuestions) || [];
   const [answers, setAnswers] = useState([]);
   const [name, setName] = useState("");
+  const [addWs, setAddWs] = useState([]);   // work setups they'd accept
   const [emailAddr, setEmailAddr] = useState("");
   const [phone, setPhone] = useState("");
   const [fileName, setFileName] = useState("");
@@ -13874,7 +13884,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
   const ensureDraft = async () => {
     if (candId) return candId;
     if (!name.trim()) { toast("Enter the candidate's name"); return null; }
-    const c = newCandidate({ name: name.trim(), role: toFile ? (wanted.trim() || "Unspecified") : job ? job.role : "Unspecified", ...(toFile ? { status: "Active file" } : {}), recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
+    const c = newCandidate({ workSetup: addWs, name: name.trim(), role: toFile ? (wanted.trim() || "Unspecified") : job ? job.role : "Unspecified", ...(toFile ? { status: "Active file" } : {}), recruiter: S.me.name, recruiterId: S.me.id, recruiterInit: S.me.init, ai: 0, emailAddr, phone, isDraft: true, timeline: [{ t: "Added by " + S.me.first, d: todayStr(), done: true }] });
     await S.insertCandidateAwait(c);
     setCandId(c.id);
     return c.id;
@@ -13930,7 +13940,7 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
     setSubmitting(false);
   };
 
-  const startOver = () => { setWanted(""); setJobId(""); setAnswers([]); setName(""); setEmailAddr(""); setPhone(""); setFileName(""); setFile(null); setCandId(null); setFit(null); setDup({ state: "idle" }); };
+  const startOver = () => { setAddWs([]); setWanted(""); setJobId(""); setAnswers([]); setName(""); setEmailAddr(""); setPhone(""); setFileName(""); setFile(null); setCandId(null); setFit(null); setDup({ state: "idle" }); };
 
   const FIT_TONE = { "Perfect fit": "em", "Good fit": "em", "Possible fit": "warn", "Possible reject": "danger", "Not a fit": "danger" };
 
@@ -13985,6 +13995,11 @@ function AddCandidate({ setPage, toast, S, initialJobId }) {
               {candId ? "" : !emailAddr.trim() ? (toFile ? "Checked so the same person isn't added twice." : "Checked so the same person isn't submitted to one job twice.") : !emailOk ? "Enter a full email address." : dup.state === "checking" ? "Checking…" : dup.state === "ok" ? (toFile ? ((dup.all || []).length ? "" : "✓ Not in ProNext yet") : job ? "✓ Not on this job yet" : "✓ Pick a job to finish the check") : dup.state === "error" ? "Couldn't check the email right now. It's checked again when you submit." : ""}
             </div>
           </div>
+        </div>
+        <div>
+          <div className="text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>Remote, hybrid or on-site? <span style={{ color: C.ink3 }}>(every option they'd accept)</span></div>
+          <ChoiceRow multi options={WORK_SETUPS} value={addWs} onChange={(v) => { setAddWs(v); if (candId) S.updateCand(candId, { workSetup: v }); }} />
+          <div className="text-xs mt-1" style={{ color: C.ink3 }}>{!toFile && job && job.workSetup ? "This role is " + job.workSetup + ". " : ""}Used in screening and when matching them to roles. Leave it empty if you haven't asked yet.</div>
         </div>
         {!candId && dup.state === "taken" && (
           <div className="rounded-xl p-3 text-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2" style={{ background: TONE.danger.bg }} role="alert">
@@ -14902,6 +14917,7 @@ function ApplyPage({ slug }) {
   const formOpenedAt = React.useRef(Date.now());
   const [ref, setRef] = useState({ name: "", email: "", note: "" });   // the person referring
   const [answers, setAnswers] = useState([]);
+  const [ws, setWs] = useState([]);           // work setups they'd accept: remote / hybrid / onsite
   const [cv, setCv] = useState(null);         // { name, data, size }
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -14918,6 +14934,12 @@ function ApplyPage({ slug }) {
   const rt = params.get("rt") || "";
   const [referral, setReferral] = useState(null);   // { name, email, referrer, interested }
   const [interestBusy, setInterestBusy] = useState(false);
+  // After "I'm interested": how they'd work (remote / hybrid / on-site), saved on their referral.
+  const [refWs, setRefWs] = useState([]);
+  const [refWsBusy, setRefWsBusy] = useState(false);
+  const saveRefWs = () => { if (!refWs.length) return; setRefWsBusy(true);
+    sbFetch("/rest/v1/rpc/referral_work_setup", { method: "POST", body: { p_token: rt, p_setup: refWs } })
+      .then((r) => setReferral((x) => ({ ...x, interested: true, workSetup: (r && r.workSetup) || refWs }))).catch((e) => popError(e)).finally(() => setRefWsBusy(false)); };
   const sayInterested = (confirm) => sbFetch("/rest/v1/rpc/referral_interest", { method: "POST", body: { p_token: rt, p_confirm: confirm } })
     .then((r) => { if (r) { setReferral(r); setForm((f) => ({ ...f, name: f.name || r.name || "", email: f.email || r.email || "" })); } }).catch(() => {});
   useEffect(() => { if (rt) sayInterested(params.get("interested") === "1"); }, [rt]); // eslint-disable-line
@@ -14939,19 +14961,19 @@ function ApplyPage({ slug }) {
   const referring = mode === "refer";
   const valid = referring
     ? ref.name.trim() && okEmail(ref.email) && form.name.trim() && okEmail(form.email) && form.email.trim().toLowerCase() !== ref.email.trim().toLowerCase()
-    : form.name.trim() && okEmail(form.email) && cv && questions.every((_, i) => (answers[i] || "").trim());
+    : form.name.trim() && okEmail(form.email) && cv && ws.length > 0 && questions.every((_, i) => (answers[i] || "").trim());
   const submit = async (e) => {
     e.preventDefault();
     if (!valid) {
       setErr(referring
         ? (okEmail(form.email) && form.email.trim().toLowerCase() === ref.email.trim().toLowerCase() ? "Use your friend's email address, not your own." : "Please fill in your name and email, and your friend's name and email.")
-        : !cv ? "Please attach your CV." : "Please fill in your name, a valid email and every question.");
+        : !cv ? "Please attach your CV." : !ws.length ? "Please choose remote, hybrid or on-site (every one you'd accept)." : "Please fill in your name, a valid email and every question.");
       return;
     }
     setBusy(true); setErr("");
     try {
       const payload = { ft: Date.now() - formOpenedAt.current, link_slug: slug, ref: PUB_REF(), source: referring ? "referral" : source, pt: source === "outreach" ? params.get("pt") || "" : "", via: source === "outreach" ? "outreach" : "", name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), linkedin: form.linkedin.trim(), website: form.website,
-        answers: referring ? [] : answers, ...(cv ? { cv: { name: cv.name, data: cv.data } } : {}),
+        answers: referring ? [] : answers, work_setup: referring ? [] : ws, ...(cv ? { cv: { name: cv.name, data: cv.data } } : {}),
         ...(referring ? { referrer: { name: ref.name.trim(), email: ref.email.trim(), note: ref.note.trim() } } : {}) };
       const r = await fetch(SB_URL + "/functions/v1/submit-application", { method: "POST", headers: { apikey: SB_KEY, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const j = await r.json().catch(() => ({}));
@@ -15016,7 +15038,15 @@ function ApplyPage({ slug }) {
       {referral && (
         <div className="mt-4 rounded-xl px-4 py-3 text-sm" style={{ background: C.emTint, color: C.ink }}>
           {referral.interested
-            ? <>Thanks{referral.name ? ", " + referral.name.split(" ")[0] : ""}! We've let the recruiter know you're interested{referral.referrer ? " (referred by " + referral.referrer + ")" : ""}. Apply below to add your CV and speed things up.</>
+            ? <>Thanks{referral.name ? ", " + referral.name.split(" ")[0] : ""}! We've let the recruiter know you're interested{referral.referrer ? " (referred by " + referral.referrer + ")" : ""}. Apply below to add your CV and speed things up.
+                {!(Array.isArray(referral.workSetup) && referral.workSetup.length) && (
+                  <div className="mt-3 pt-3" style={{ borderTop: "1px solid " + C.line }}>
+                    <div className="font-semibold mb-2">Remote, hybrid or on-site? <span className="font-normal" style={{ color: C.ink2 }}>Choose every option you'd accept.</span></div>
+                    <ChoiceRow multi options={WORK_SETUPS} value={refWs} onChange={setRefWs} />
+                    <button type="button" className="mt-2.5 font-semibold underline" style={{ color: C.em }} disabled={!refWs.length || refWsBusy} onClick={saveRefWs}>{refWsBusy ? "Saving…" : "Save"}</button>
+                  </div>
+                )}
+                {Array.isArray(referral.workSetup) && referral.workSetup.length > 0 && <div className="mt-2 text-xs" style={{ color: C.ink2 }}>Work setup you'd accept: {wsLabel(referral.workSetup)}.</div>}</>
             : <>{referral.referrer || "A friend"} referred you for this role. Interested? <button className="font-semibold underline" style={{ color: C.em }} disabled={interestBusy}
                 onClick={() => { setInterestBusy(true); sayInterested(true).finally(() => setInterestBusy(false)); }}>{interestBusy ? "Saving…" : "Yes, I'm interested"}</button></>}
         </div>
@@ -15063,9 +15093,14 @@ function ApplyPage({ slug }) {
         <FSection n={2} title="Your CV" sub="required">
           <CvDrop cv={cv} onPick={pickCv} label="" />
         </FSection>
+        <FormDivider />
+        <FSection n={3} title="Remote, hybrid or on-site?" sub="required · choose every option you'd accept">
+          <ChoiceRow multi options={WORK_SETUPS} value={ws} onChange={setWs} />
+          {job && job.workSetup && <div className="text-xs mt-2" style={{ color: C.ink3 }}>This role is {String(job.workSetup).toLowerCase() === "onsite" ? "on-site" : String(job.workSetup).toLowerCase()}.</div>}
+        </FSection>
         {questions.length > 0 && <FormDivider />}
         {questions.length > 0 && (
-          <FSection n={3} title="A few questions" sub={"from the employer · " + questions.length}>
+          <FSection n={4} title="A few questions" sub={"from the employer · " + questions.length}>
             {questions.map((q, i) => (
               <FInput key={i} area label={q} required value={answers[i] || ""} onChange={(e) => setAnswers((a) => { const n = a.slice(); n[i] = e.target.value; return n; })} placeholder="Your answer" />
             ))}
@@ -16346,7 +16381,7 @@ export default function App() {
   };
 
   // Local candidate field -> candidates table column, for the fields a person can actually edit.
-  const CAND_FIELD_MAP = { preferences: "preferences", preferencesAt: "preferences_at", status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", linkedin: "linkedin_url", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id", ai_locked: "ai_locked" };
+  const CAND_FIELD_MAP = { workSetup: "work_setup", preferences: "preferences", preferencesAt: "preferences_at", status: "status", name: "name", role: "role_title", location: "location", emailAddr: "email", phone: "phone", linkedin: "linkedin_url", experience: "experience", notice: "notice", pay: "pay", skills: "skills", strengths: "strengths", gaps: "gaps", ai: "ai_score", recruiterId: "recruiter_id", ai_locked: "ai_locked" };
   const updateCand = (id, patch) => {
     const c = data.cands.find((x) => x.id === id); const p = typeof patch === "function" ? patch(c) : patch;
     const body = {}; Object.entries(CAND_FIELD_MAP).forEach(([k, col]) => { if (k in p) body[col] = p[k]; });
@@ -16641,7 +16676,7 @@ export default function App() {
     // Opens Billing with the new billing entry form ready for this candidate.
     startBilling: (id) => { setCandId(null); setBillFor(id); setPage("billing"); },
     billFor, clearBillFor: () => setBillFor(null),
-    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
+    insertCandidateAwait: (c) => call("/rest/v1/candidates", { method: "POST", body: { id: c.id, name: c.name, ...(Array.isArray(c.workSetup) && c.workSetup.length ? { work_setup: c.workSetup } : {}), role_title: c.role, location: c.location || "", recruiter_id: c.recruiterId, status: c.status, ai_score: c.ai || null, email: c.emailAddr || null, phone: c.phone || null, is_draft: !!c.isDraft } }),
     logAudit,
     // On hold takes an optional reason and end date (the role reopens by itself on that date).
     setJobStatus: (id, status, hold) => { const j = data.jobs.find((x) => x.id === id);
