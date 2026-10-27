@@ -27,7 +27,17 @@ import { countryCode, jobCountryNames, regionOf } from "./regions.ts";
 import { contactoutByLinkedIn, contactoutKey } from "./contactout.ts";
 import { bestPdlEmail, pdlByLinkedIn, pdlKey } from "./pdl.ts";
 import { emailHash } from "./send.ts";
-import { anonymizeJd, sameCompany, type Settings } from "./common.ts";
+import { anonymizeJd, historyEmployers, sameCompany, workedAt, type Settings } from "./common.ts";
+
+// The client under every name we know (its own, plus former names, parent, subsidiaries and brands
+// from the X-ray plan), for leaving out the client's own people, now or before.
+const clientNamesOf = (job: any): string[] => [job?.client, ...(Array.isArray(job?.xray?.clientNames) ? job.xray.clientNames : [])].map((x) => String(x || "").trim()).filter((x) => x.length > 1 && !/^(confidential|undisclosed|n\/?a)$/i.test(x));
+// Someone whose work history (from Apollo or People Data Labs) shows they worked at the client: kept
+// out of outreach with the reason, like anyone the X-ray review left out.
+async function skipExClient(admin: any, id: string, data: any, reason: string) {
+  await admin.from("prospects").update({ status: "rejected", data: { ...(data || {}), skipped: { reason, by: "work history check", at: new Date().toISOString() } } })
+    .eq("id", id).in("status", ["found", "approved"]);
+}
 
 const clip = (s: unknown, n: number) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -170,7 +180,7 @@ export async function pdlEmails(admin: any, ids: string[], s: Settings, agencyNa
   if (!pdlKey() || !ids.length || s.pdlEmailsPerDay <= 0) return { tried: 0, found: 0, ids: [] as string[], errors: [] as string[] };
   const left = Math.max(0, s.pdlEmailsPerDay - (await pdlUsedToday(admin)));
   if (!left) return { tried: 0, found: 0, ids: [] as string[], errors: [] as string[], limit: true };
-  const { data: rows } = await admin.from("prospects").select("*,jobs(client)").in("id", ids).is("email", null).eq("status", "found").not("linkedin_url", "is", null).limit(200);
+  const { data: rows } = await admin.from("prospects").select("*,jobs(client,xray)").in("id", ids).is("email", null).eq("status", "found").not("linkedin_url", "is", null).limit(200);
   const list = (rows || []).filter((p: any) => !p.data?.email_lookup?.pdl).slice(0, left);
   const found: string[] = [], errors: string[] = [];
   for (const p of list) {
@@ -179,8 +189,10 @@ export async function pdlEmails(admin: any, ids: string[], s: Settings, agencyNa
     try { m = await pdlByLinkedIn(p.linkedin_url); }
     catch (e) { errors.push(String((e as Error)?.message || e).slice(0, 160)); await admin.from("prospects").update({ data: { ...(p.data || {}), email_lookup: lookup } }).eq("id", p.id); if (/credit|refused|rate/i.test(errors[errors.length - 1])) break; continue; }
     const best = bestPdlEmail(m);
-    const atClient = !!m && (sameCompany(m.company, p.jobs?.client) || false);
-    const good = !!best.email && okEmail(best.email) && !atClient && !(await suppressed(admin, best.email));
+    const names = clientNamesOf(p.jobs);
+    const atClient = !!m && names.some((n) => sameCompany(m.company, n));
+    const exClient = !!m && !atClient && names.some((n) => workedAt([...(m.employers || []), ...historyEmployers(m.history)], n));
+    const good = !!best.email && okEmail(best.email) && !atClient && !exClient && !(await suppressed(admin, best.email));
     const patch: Record<string, unknown> = { data: { ...(p.data || {}), email_lookup: lookup,
       ...(m ? { emails_found: { work: m.work_email ? [m.work_email] : [], personal: m.personal_emails }, ...(m.phones.length ? { phones: m.phones } : {}) } : {}),
       ...(good ? { email_source: "People Data Labs (from their LinkedIn profile)", history: p.data?.history || m.history } : {}) } };
@@ -189,6 +201,7 @@ export async function pdlEmails(admin: any, ids: string[], s: Settings, agencyNa
     const pdlAt = m ? [m.city, m.region, m.country].filter(Boolean).join(", ") : "";
     if (pdlAt && (!p.location || broadPlace(cleanLocation(p.location)) || /\b(area|greater|region)\b/i.test(String(p.location)))) patch.location = pdlAt;
     await admin.from("prospects").update(patch).eq("id", p.id);
+    if (atClient || exClient) await skipExClient(admin, p.id, patch.data, (atClient ? "Works at " : "Worked at ") + names[0] + (atClient ? " now" : " before") + " (People Data Labs work history)");
     if (good) found.push(p.id);
     await sleep(250);
   }
@@ -214,8 +227,8 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   if (list.length && !co && !ap) return { ok: false, message: "No email source is connected. Add the CONTACTOUT_API_KEY or APOLLO_API_KEY secret to look up emails." };
   // Each person's own job (a run can span several jobs), to leave out the client's own staff.
   const jobIds = [...new Set(list.map((p) => p.job_id))];
-  const { data: jobRows } = jobIds.length ? await admin.from("jobs").select("id,client").in("id", jobIds) : { data: [] };
-  const clientOf = new Map((jobRows || []).map((j: any) => [j.id, j.client]));
+  const { data: jobRows } = jobIds.length ? await admin.from("jobs").select("id,client,xray").in("id", jobIds) : { data: [] };
+  const namesOf = new Map<string, string[]>((jobRows || []).map((j: any) => [String(j.id), clientNamesOf(j)]));
   let coFound = 0, coTried = 0, apFound = 0, apTried = 0, credits = 0, noMatch = 0, unverified = 0;
   let coDown = false, apDown = false;
   const found: string[] = [];
@@ -224,11 +237,12 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
   for (const p of list) {
     const lookup: Record<string, string> = { ...tried(p) };
     let best = { email: "", status: "" }, good = false, via = "", m: any = null;
+    let exClient = "";   // their Apollo work history shows the client: no email lookup goes further
     let extra: { work: string[]; personal: string[] } | null = null;
     let seenAt = "";   // where a source says they are, when we didn't know
     const askContactOut = async () => {
       // ContactOut, by their LinkedIn profile (when Apollo, asked first, had nothing usable).
-    if (!good && co && !coDown && !lookup.contactout) {
+    if (!good && !exClient && co && !coDown && !lookup.contactout) {
       coTried++;
       lookup.contactout = new Date().toISOString();
       try {
@@ -253,10 +267,12 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
         // Personal email first; a verified work email when there's no personal one.
         const b = bestEmail(m);
         if (m?.email || b.email) credits++;
-        const atClient = !!m && sameCompany(m.company, clientOf.get(p.job_id));
+        const names = namesOf.get(p.job_id) || [];
+        const atClient = !!m && names.some((n) => sameCompany(m.company, n));
+        if (m && (atClient || names.some((n) => workedAt(historyEmployers(m.history), n)))) exClient = (atClient ? "Works at " : "Worked at ") + names[0] + (atClient ? " now" : " before") + " (Apollo work history)";
         if (m) extra = { work: [...new Set([...(extra?.work || []), ...(m.email ? [m.email] : [])])], personal: [...new Set([...(extra?.personal || []), ...(m.personal_emails || [])])] };
         if (m && !seenAt) seenAt = [m.city, m.state, m.country].filter(Boolean).join(", ");
-        if (b.email && okEmail(b.email) && !atClient && !(await suppressed(admin, b.email)) && !(m.email && m.email !== b.email && await suppressed(admin, m.email))) {
+        if (b.email && okEmail(b.email) && !exClient && !(await suppressed(admin, b.email)) && !(m.email && m.email !== b.email && await suppressed(admin, m.email))) {
           best = b; good = true; via = "Apollo (from their LinkedIn profile)"; apFound++;
         }
         if (!m && !good) noMatch++;
@@ -283,6 +299,7 @@ export async function findEmails(admin: any, o: { jobId?: string | null; ids?: s
     // A source's location replaces a missing or too-broad one ("United Kingdom", "London Area").
     if (seenAt && (!p.location || broadPlace(cleanLocation(p.location)) || /\b(area|greater|region)\b/i.test(String(p.location)))) { patch.location = seenAt; learned.push({ id: p.id, job_id: p.job_id, location: seenAt }); }
     await admin.from("prospects").update(patch).eq("id", p.id);
+    if (exClient) await skipExClient(admin, p.id, patch.data, exClient);
     if (good) found.push(p.id);
     await sleep(400);
   }
