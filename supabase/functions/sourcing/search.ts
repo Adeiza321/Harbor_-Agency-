@@ -235,13 +235,71 @@ export async function checkEngines(admin: any, q = "site:linkedin.com/in recruit
 //   - up to 3 places (office city first, then nearby cities; the country for remote roles) x up to 2
 //     languages, at most 4 searches, merged in turn so every place gets a share
 //   - real working developers, not celebrities or empty accounts: 3 to 3,000 followers, 5+ public repos
-//   - each profile is read for name, bio, employer and location, then (with a GITHUB_TOKEN) their
-//     own most recently pushed repositories: anyone who hasn't pushed code in 12 months is left out,
-//     and what they build (repos, languages, topics, last push) goes into the snippet the AI reviews,
-//     so skills are judged on their code, not just their bio.
-// Without a token GitHub allows 60 requests an hour, so fewer profiles are read and repos aren't.
-export type GithubPlan = { location?: string; locations?: string[]; language?: string; languages?: string[]; keywords?: string };
+//   - with a GITHUB_TOKEN, their own most recently pushed repositories are read: anyone who hasn't
+//     pushed code in 12 months is left out, and what they build (repos, languages, topics, last push)
+//     goes into the snippet the AI reviews, so skills are judged on their code, not just their bio.
+//   - with topics (the role's work, e.g. 'sigma', 'yara', 'threat-hunting' for a SOC role): only people
+//     with at least one repository of their own about that work are kept (name, description or topics),
+//     so a security role gets security people, not every developer in the city. More people are
+//     scanned (repos first, one request each), and the profile is read only for those who match.
+// Without a token GitHub allows 60 requests an hour, so fewer profiles are read, repos aren't, and
+// topics can't be checked.
+export type GithubPlan = { location?: string; locations?: string[]; language?: string; languages?: string[]; topics?: string[]; keywords?: string };
 const STALE_MONTHS = 12;
+const norm = (t: unknown) => String(t || "").toLowerCase().replace(/[_\s]+/g, "-");
+// Text as space-separated words, so a topic only matches whole words ("soc" never matches "social").
+const words = (t: unknown) => " " + String(t || "").toLowerCase().replace(/[^a-z0-9+#]+/g, " ").trim() + " ";
+const hasTopic = (text: string, topic: string) => text.includes(words(topic));
+const GQL = `query($q: String!, $after: String) { search(query: $q, type: USER, first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { ... on User {
+  login name bio company location url websiteUrl isHireable followers { totalCount }
+  repositories(first: 20, ownerAffiliations: OWNER, isFork: false, privacy: PUBLIC, orderBy: { field: PUSHED_AT, direction: DESC }) { totalCount nodes {
+    name description pushedAt stargazerCount primaryLanguage { name } repositoryTopics(first: 6) { nodes { topic { name } } } } } } } } }`;
+async function githubTopicScan(headers: Record<string, string>, places: string[], topics: string[], max: number): Promise<Hit[] | null> {
+  const cutoff = Date.now() - STALE_MONTHS * 30 * 864e5;
+  const found: { score: number; hit: Hit }[] = [];
+  const seen = new Set<string>();
+  let pages = 0;
+  for (const place of places.length ? places : [""]) {
+    let after: string | null = null;
+    for (let page = 0; page < 6 && pages < 12; page++, pages++) {
+      const q = [place ? `location:"${place.replace(/"/g, "")}"` : "", "type:user", "followers:>=1", "repos:>=3"].filter(Boolean).join(" ");
+      const res = await fetch("https://api.github.com/graphql", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ query: GQL, variables: { q, after } }), signal: AbortSignal.timeout(30000) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok || j.errors) { if (!found.length && !pages) throw new Error("GraphQL " + res.status + ": " + JSON.stringify(j.errors || j).slice(0, 160)); break; }
+      const sr = j.data?.search;
+      for (const u of sr?.nodes || []) {
+        if (!u?.login || seen.has(u.login)) continue;
+        seen.add(u.login);
+        const repos: any[] = u.repositories?.nodes || [];
+        const last = repos.map((x: any) => Date.parse(x.pushedAt || "")).filter(Number.isFinite).sort((a, b) => b - a)[0];
+        if (!last || last < cutoff) continue;   // no code pushed in the last 12 months
+        const topicsOf = (x: any) => (x.repositoryTopics?.nodes || []).map((n: any) => n?.topic?.name).filter(Boolean);
+        const about = (x: any) => words([x.name, x.description, ...topicsOf(x)].join(" "));
+        const bio = words([u.bio, u.company].join(" "));
+        const bioHits = topics.filter((t) => hasTopic(bio, t));
+        const repoHits = repos.filter((x: any) => topics.some((t) => hasTopic(about(x), t)));
+        if (!bioHits.length && !repoHits.length) continue;   // nothing about this role's work
+        const matched = [...new Set([...bioHits, ...repoHits.flatMap((x: any) => topics.filter((t) => hasTopic(about(x), t)))])];
+        const tally: Record<string, number> = {};
+        for (const x of repos) if (x.primaryLanguage?.name) tally[x.primaryLanguage.name] = (tally[x.primaryLanguage.name] || 0) + 1;
+        const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k);
+        const show = [...repoHits, ...repos.filter((x: any) => !repoHits.includes(x))].slice(0, 4);
+        const recent = show.map((x: any) => `${x.name}${x.primaryLanguage?.name ? " (" + x.primaryLanguage.name + ")" : ""}${topicsOf(x).length ? " [" + topicsOf(x).slice(0, 3).join(", ") + "]" : ""}${x.description ? ": " + clip(x.description, 70) : ""}${x.stargazerCount ? " " + x.stargazerCount + "★" : ""}`);
+        const work = [matched.length ? "Work on GitHub matching the role: " + matched.join(", ") : "", top.length ? "Languages: " + top.join(", ") : "", recent.length ? "Repos: " + recent.join("; ") : "", "Last pushed code: " + new Date(last).toISOString().slice(0, 7)].filter(Boolean).join(" | ");
+        // Their bio saying so counts most, then how many of their own repositories are about the work.
+        found.push({ score: bioHits.length * 3 + repoHits.length + matched.length, hit: {
+          url: String(u.url || "https://github.com/" + u.login), engine: "github",
+          title: clip(`${u.name || u.login} (${u.login}) · GitHub`, 200),
+          snippet: clip([u.bio, u.company ? "Company: " + u.company : "", u.location ? "Location: " + u.location : "", work, `${u.repositories?.totalCount ?? repos.length} public repos, ${u.followers?.totalCount ?? 0} followers`, u.isHireable ? "Open to work (hireable)" : "", u.websiteUrl ? "Site: " + u.websiteUrl : ""].filter(Boolean).join(" | "), 800),
+        } });
+      }
+      if (!sr?.pageInfo?.hasNextPage) break;
+      after = sr.pageInfo.endCursor;
+    }
+  }
+  return found.sort((a, b) => b.score - a.score).slice(0, max).map((x) => x.hit);
+}
+
 export async function githubUsers(p: GithubPlan, max = 30): Promise<Hit[]> {
   const token = env("GITHUB_TOKEN");
   const headers: Record<string, string> = { Accept: "application/vnd.github+json", "User-Agent": "ProNext-sourcing", "X-GitHub-Api-Version": "2022-11-28", ...(token ? { Authorization: "Bearer " + token } : {}) };
@@ -249,48 +307,72 @@ export async function githubUsers(p: GithubPlan, max = 30): Promise<Hit[]> {
   const uniq = (xs: unknown[], n: number, len: number) => [...new Set(xs.map((x) => clip(x, len)).filter(Boolean))].slice(0, n);
   const places = uniq([...(Array.isArray(p.locations) ? p.locations : []), p.location], 3, 60);
   const langs = uniq([...(Array.isArray(p.languages) ? p.languages : []), p.language], 2, 30);
+  const topics = token ? uniq(Array.isArray(p.topics) ? p.topics : [], 8, 40).map(norm).filter((t) => t.length > 1) : [];
+  const byTopic = topics.length > 0;
+  // With a token and topics: GitHub's GraphQL search reads 100 people a page with their bio and their
+  // own recent repositories in one request, so up to 1,000 people are scanned for the role's work
+  // (bio or repositories). If it fails, the REST scan below is used instead.
+  if (byTopic) {
+    try { const g = await githubTopicScan(headers, places, topics, max); if (g) return g; }
+    catch (e) { console.error("github graphql", String((e as Error)?.message || e).slice(0, 200)); }
+  }
   const combos: { place: string; lang: string }[] = [];
-  for (const place of places.length ? places : [""]) for (const lang of langs.length ? langs : [""]) combos.push({ place, lang });
+  // A topic search casts a wider net (no language filter), then keeps only people whose work matches.
+  for (const place of places.length ? places : [""]) for (const lang of byTopic || !langs.length ? [""] : langs) combos.push({ place, lang });
   const searches = combos.slice(0, 4);
+  const perSearch = byTopic ? 100 : 40;
   // Logins from each search, taken in turn so no single place or language crowds the others out.
   const lists: string[][] = [];
   for (const c of searches) {
-    const q = [clip(p.keywords, 80), c.place ? "location:" + quote(c.place) : "", c.lang ? "language:" + quote(c.lang) : "", "type:user", "followers:3..3000", "repos:>=5"].filter(Boolean).join(" ");
-    const res = await fetch("https://api.github.com/search/users?per_page=40&sort=followers&q=" + encodeURIComponent(q), { headers, signal: AbortSignal.timeout(20000) });
+    const q = [clip(p.keywords, 80), c.place ? "location:" + quote(c.place) : "", c.lang ? "language:" + quote(c.lang) : "", "type:user", "followers:3..3000", byTopic ? "repos:>=3" : "repos:>=5"].filter(Boolean).join(" ");
+    const res = await fetch(`https://api.github.com/search/users?per_page=${perSearch}&sort=followers&q=` + encodeURIComponent(q), { headers, signal: AbortSignal.timeout(20000) });
     if (!res.ok) { if (!lists.length && [401, 403, 422, 429].includes(res.status)) throw new Error("GitHub " + res.status + ": " + (await res.text()).slice(0, 160)); break; }
     lists.push(((await res.json()).items || []).map((it: any) => String(it.login || "")).filter(Boolean));
   }
   const order: string[] = [];
-  for (let i = 0; i < 40; i++) for (const l of lists) if (l[i] && !order.includes(l[i])) order.push(l[i]);
+  for (let i = 0; i < perSearch; i++) for (const l of lists) if (l[i] && !order.includes(l[i])) order.push(l[i]);
   const read = token ? max : Math.min(max, 8);
-  const out: Hit[] = [];
   const cutoff = Date.now() - STALE_MONTHS * 30 * 864e5;
-  for (const login of order) {
-    if (out.length >= read) break;
-    const r = await fetch("https://api.github.com/users/" + encodeURIComponent(login), { headers, signal: AbortSignal.timeout(15000) });
-    if (!r.ok) { if ([403, 429].includes(r.status)) break; continue; }
-    const u = await r.json();
-    if (u.type && u.type !== "User") continue;
-    let work = "";
-    if (token) {
-      // Their own repositories, most recently pushed first: activity and what they actually build.
-      const rr = await fetch("https://api.github.com/users/" + encodeURIComponent(login) + "/repos?type=owner&sort=pushed&per_page=10", { headers, signal: AbortSignal.timeout(15000) });
-      if (rr.ok) {
-        const repos: any[] = ((await rr.json()) || []).filter((x: any) => !x.fork);
-        const last = repos.map((x: any) => Date.parse(x.pushed_at || "")).filter(Number.isFinite).sort((a, b) => b - a)[0];
-        if (!last || last < cutoff) continue;   // no code pushed in the last 12 months
-        const tally: Record<string, number> = {};
-        for (const x of repos) if (x.language) tally[x.language] = (tally[x.language] || 0) + 1;
-        const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k);
-        const recent = repos.slice(0, 4).map((x: any) => `${x.name}${x.language ? " (" + x.language + ")" : ""}${Array.isArray(x.topics) && x.topics.length ? " [" + x.topics.slice(0, 3).join(", ") + "]" : ""}${x.stargazers_count ? " " + x.stargazers_count + "★" : ""}`);
-        work = [top.length ? "Languages: " + top.join(", ") : "", recent.length ? "Recent repos: " + recent.join("; ") : "", "Last pushed code: " + new Date(last).toISOString().slice(0, 7)].filter(Boolean).join(" | ");
-      } else if ([403, 429].includes(rr.status)) break;
+  // What someone builds, from their own repositories (most recently pushed first). null = skip them.
+  const workOf = async (login: string): Promise<{ text: string; matched: string[] } | null | "limit"> => {
+    const rr = await fetch("https://api.github.com/users/" + encodeURIComponent(login) + `/repos?type=owner&sort=pushed&per_page=${byTopic ? 30 : 10}`, { headers, signal: AbortSignal.timeout(15000) });
+    if (!rr.ok) return [403, 429].includes(rr.status) ? "limit" : null;
+    const repos: any[] = ((await rr.json()) || []).filter((x: any) => !x.fork);
+    const last = repos.map((x: any) => Date.parse(x.pushed_at || "")).filter(Number.isFinite).sort((a, b) => b - a)[0];
+    if (!last || last < cutoff) return null;   // no code pushed in the last 12 months
+    const about = (x: any) => words([x.name, x.description, ...(Array.isArray(x.topics) ? x.topics : [])].join(" "));
+    const hits = byTopic ? repos.filter((x: any) => { const a = about(x); return topics.some((t) => hasTopic(a, t)); }) : [];
+    if (byTopic && !hits.length) return null;   // nothing of their own about this role's work
+    const matched = [...new Set(hits.flatMap((x: any) => topics.filter((t) => hasTopic(about(x), t))))];
+    const tally: Record<string, number> = {};
+    for (const x of repos) if (x.language) tally[x.language] = (tally[x.language] || 0) + 1;
+    const top = Object.entries(tally).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k]) => k);
+    const show = [...hits, ...repos.filter((x: any) => !hits.includes(x))].slice(0, 4);
+    const recent = show.map((x: any) => `${x.name}${x.language ? " (" + x.language + ")" : ""}${Array.isArray(x.topics) && x.topics.length ? " [" + x.topics.slice(0, 3).join(", ") + "]" : ""}${x.description ? ": " + clip(x.description, 70) : ""}${x.stargazers_count ? " " + x.stargazers_count + "★" : ""}`);
+    return { matched, text: [matched.length ? "Work on GitHub matching the role: " + matched.join(", ") : "", top.length ? "Languages: " + top.join(", ") : "", recent.length ? (byTopic ? "Repos: " : "Recent repos: ") + recent.join("; ") : "", "Last pushed code: " + new Date(last).toISOString().slice(0, 7)].filter(Boolean).join(" | ") };
+  };
+  const out: Hit[] = [];
+  let stop = false;
+  // Topic searches scan more people, a few at a time; plain searches go one by one as before.
+  const scan = byTopic ? order.slice(0, 150) : order;
+  const batch = byTopic ? 6 : 1;
+  for (let i = 0; i < scan.length && out.length < read && !stop; i += batch) {
+    const group = scan.slice(i, i + batch);
+    const works = token ? await Promise.all(group.map((l) => workOf(l).catch(() => null))) : group.map(() => ({ text: "", matched: [] as string[] }));
+    for (let k = 0; k < group.length && out.length < read; k++) {
+      const w = works[k];
+      if (w === "limit") { stop = true; break; }
+      if (!w) continue;
+      const r = await fetch("https://api.github.com/users/" + encodeURIComponent(group[k]), { headers, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) { if ([403, 429].includes(r.status)) { stop = true; break; } continue; }
+      const u = await r.json();
+      if (u.type && u.type !== "User") continue;
+      out.push({
+        url: String(u.html_url || "https://github.com/" + group[k]), engine: "github",
+        title: clip(`${u.name || u.login} (${u.login}) · GitHub`, 200),
+        snippet: clip([u.bio, u.company ? "Company: " + u.company : "", u.location ? "Location: " + u.location : "", w.text, `${u.public_repos} public repos, ${u.followers} followers`, u.hireable ? "Open to work (hireable)" : "", u.blog ? "Site: " + u.blog : ""].filter(Boolean).join(" | "), 800),
+      });
     }
-    out.push({
-      url: String(u.html_url || "https://github.com/" + login), engine: "github",
-      title: clip(`${u.name || u.login} (${u.login}) · GitHub`, 200),
-      snippet: clip([u.bio, u.company ? "Company: " + u.company : "", u.location ? "Location: " + u.location : "", work, `${u.public_repos} public repos, ${u.followers} followers`, u.hireable ? "Open to work (hireable)" : "", u.blog ? "Site: " + u.blog : ""].filter(Boolean).join(" | "), 700),
-    });
   }
   return out;
 }
