@@ -56,8 +56,11 @@ export type Assessed = {
   n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[]; musts: { item: string; evidence: string; bonus?: boolean }[];
   notMet: string[]; requirements: { item: string; theirs: string; role: string; status: "met" | "discuss" }[]; questions: string[];
   jd: JdCheck[]; confirm: { item: string; q: string }[]; out: string;
+  exEmployer?: boolean;   // their CV shows they've worked at this company (any of its names)
 };
-export type RoleFacts = { summary: string; industry: string; workSetup: string; employmentType: string; seniority: string; hmTitles: string[] };
+// noAgencies: the description's words when it says the employer won't take agency candidates or
+// pay for unsolicited CVs; '' otherwise.
+export type RoleFacts = { summary: string; industry: string; workSetup: string; employmentType: string; seniority: string; hmTitles: string[]; noAgencies: string };
 
 // Too much the CV doesn't show to put someone forward, even after asking.
 export const MAX_TO_CONFIRM = 3;
@@ -84,7 +87,11 @@ async function cvContent(admin: any, c: any): Promise<{ blocks: any[]; text: str
 export async function readJobDescription(lead: any): Promise<{ role: RoleFacts; items: JdItem[]; contacts: Contact[] }> {
   const sys = "You read an employer's job description and pull out exactly what it asks of candidates. Reply with STRICT JSON only: " +
     "{\"role\": {\"summary\": string, \"industry\": string, \"work_setup\": \"On-site\" | \"Hybrid\" | \"Remote\" | \"\", \"employment_type\": \"Full-time\" | \"Part-time\" | \"Contract\" | \"Temporary\" | \"\", \"seniority\": string}, " +
-    "\"requirements\": [{\"item\": string, \"required\": boolean}], \"hiring_manager_titles\": string[], \"contacts\": [{\"name\": string, \"title\": string, \"email\": string}]}. " +
+    "\"requirements\": [{\"item\": string, \"required\": boolean}], \"hiring_manager_titles\": string[], \"contacts\": [{\"name\": string, \"title\": string, \"email\": string}], " +
+    "\"agency_policy\": {\"no_agencies\": boolean, \"quote\": string}}. " +
+    "agency_policy: no_agencies true ONLY when the description says the employer won't work with recruitment agencies, recruiters or third parties, won't accept or pay for unsolicited CVs/resumes, or is 'principals only' " +
+    "(e.g. 'No agencies', 'We do not accept unsolicited resumes', 'Recruiters need not apply', 'not responsible for any fees from unsolicited submissions'); quote = those words (under 15 words). " +
+    "Otherwise no_agencies false and quote ''. A description that merely mentions recruiters or agencies in the duties is NOT no_agencies. " +
     "requirements: every qualification, requirement, skill, licence, certification, degree, years of experience, industry experience, tool, system, language or work authorisation the description asks candidates to have, " +
     "wherever it appears (headings like Requirements, Qualifications, What you'll bring, Must have, About you, Skills, Experience, Preferred, Nice to have, Bonus, or any sentence that reads like one). " +
     "Write each one as the description puts it, under 12 words, one per item (keep 'or' alternatives together, e.g. 'CPA or CMA'). " +
@@ -102,6 +109,7 @@ export async function readJobDescription(lead: any): Promise<{ role: RoleFacts; 
     summary: hideEmployer(scrub(clip(r.summary, 400), []), lead), industry: hideEmployer(clip(r.industry, 80), lead), workSetup: clip(r.work_setup, 20),
     employmentType: clip(r.employment_type, 20), seniority: clip(r.seniority, 40),
     hmTitles: (Array.isArray(out?.hiring_manager_titles) ? out.hiring_manager_titles : []).map((t: unknown) => clip(t, 60)).filter(Boolean).slice(0, 6),
+    noAgencies: out?.agency_policy?.no_agencies === true ? (clip(out.agency_policy.quote, 120) || "yes") : "",
   };
   const seen = new Set<string>();
   const items: JdItem[] = (Array.isArray(out?.requirements) ? out.requirements : []).map((x: any) => ({ item: hideEmployer(clip(x?.item, 100), lead), required: x?.required !== false }))
@@ -119,8 +127,10 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
   if (cv.why) return { ...base, out: cv.why };
   const sys = "You are a senior recruiter checking one candidate against an employer's job description, strictly from the evidence. Their CV is attached; a profile summary and what they're looking for follow. " +
     "Reply with STRICT JSON only: {\"checks\": [{\"n\": number, \"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}], \"confirm\": [{\"n\": number, \"q\": string}], " +
-    "\"industry\": {\"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}, " +
+    "\"industry\": {\"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}, \"worked_at_employer\": boolean, " +
     "\"reason\": string, \"why_role\": string, \"bullets\": string[], \"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": string[]}. " +
+    "worked_at_employer: true when their CV or profile shows they work or have EVER worked at the employer named below for this check, under any of its names " +
+    "(a former name, its parent company, a subsidiary or a brand it trades as), as an employee, contractor or intern; false otherwise. Only what the CV shows: never guess from industry or location. " +
     "industry: whether they have worked in the employer's industry (given below) or a closely related one: 'met' with evidence (e.g. '5 years in manufacturing'), 'not_met' when their CV shows only other industries, 'not_shown' when unclear. This is information only. " +
     "checks: one for EVERY numbered requirement. 'met' only when the CV (or profile) clearly shows it; equivalent wording counts (e.g. 'ACA chartered accountant' for 'professional accounting qualification', 6 years for '5+ years'). " +
     "'not_met' only when the CV clearly shows they don't have it (e.g. 3 years in total where 5+ are required, a different licence where only one specific licence is accepted). " +
@@ -132,7 +142,7 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
     "status 'met' when the role clearly gives them what they want, 'discuss' when it doesn't clearly or isn't stated (negotiable, talked through). Leave out an item only when neither side is known. " +
     "questions: up to 2 short, friendly questions about the 'discuss' items in requirements only (role, level, location, work setup, employment type, pay); never about the job description's requirements (those are asked in confirm) and never repeating a confirm question. [] when none. NEVER name the employer anywhere.";
   const list = items.map((x, i) => `${i + 1}. ${x.item} (${x.required ? "required" : "nice to have"})`).join("\n");
-  const text = `${cv.text}Job: ${lead.job_title}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${role.workSetup ? "\nWork setup: " + role.workSetup : ""}${role.employmentType ? "\nEmployment type: " + role.employmentType : ""}\nWhat the job is: ${role.summary}\n\n` +
+  const text = `${cv.text}Employer (only for the worked_at_employer check; never mention it anywhere else): ${lead.company}${lead.company_domain ? " (" + lead.company_domain + ")" : ""}\n\nJob: ${lead.job_title}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${role.workSetup ? "\nWork setup: " + role.workSetup : ""}${role.employmentType ? "\nEmployment type: " + role.employmentType : ""}\nWhat the job is: ${role.summary}\n\n` +
     `Employer's industry: ${role.industry || "unknown"}\n\nRequirements from the job description:\n${list}\n\nCandidate profile: ${anonSummary(c)}\n${lookingFor(c)}`;
   const out = await askAI(sys, cv.blocks.length ? [...cv.blocks, { type: "text", text }] : text, 3000);
   const byN = new Map<number, any>();
@@ -169,7 +179,9 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
     questions: (Array.isArray(out?.questions) ? out.questions : []).slice(0, 2).map((q: unknown) => hideEmployer(clip(q, 240), lead))
       .filter((q: string) => q && !confirm.some((cq) => overlap(q, cq.item) >= 2)),
   };
-  a.out = notMet.length ? "Doesn't meet: " + notMet.join("; ")
+  a.exEmployer = out?.worked_at_employer === true;
+  a.out = a.exEmployer ? "Has worked at this company before (their CV shows it)"
+    : notMet.length ? "Doesn't meet: " + notMet.join("; ")
     : notShown.length > MAX_TO_CONFIRM ? `Their CV doesn't show ${notShown.length} of the ${req.length} requirements`
     : met.length < notShown.length ? "Their CV shows too few of the requirements" : "";
   return a;
@@ -185,7 +197,8 @@ function overlap(a: string, b: string) {
 // Every candidate against the job description (one CV read each).
 export async function assessForPitch(admin: any, lead: any, cands: any[]): Promise<{ role: RoleFacts; items: JdItem[]; contacts: Contact[]; results: Assessed[] }> {
   const { role, items, contacts } = await readJobDescription(lead);
-  if (!items.some((x) => x.required)) return { role, items, contacts, results: [] };
+  // No agencies, or nothing to screen against: no CV is read.
+  if (role.noAgencies || !items.some((x) => x.required)) return { role, items, contacts, results: [] };
   const results: Assessed[] = [];
   for (let i = 0; i < cands.length; i += 3) {
     const part = await Promise.all(cands.slice(i, i + 3).map((c, k) => checkCandidate(admin, lead, role, items, c, i + k).catch((e) => {

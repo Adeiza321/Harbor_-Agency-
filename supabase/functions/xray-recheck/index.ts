@@ -1,7 +1,7 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { aiCharge, askAI } from "../sourcing/ai.ts";
 import { fitsToPercent } from "../sourcing/common.ts";
-import { judge, reviewHead, REVIEW_SYSTEM } from "../sourcing/xray_rules.ts";
+import { clientContextOf, judge, reviewHead, REVIEW_SYSTEM } from "../sourcing/xray_rules.ts";
 import { splitByArea } from "../sourcing/area_check.ts";
 
 // Re-checks X-ray people already found (status 'found' only — never anyone emailed, queued or
@@ -34,7 +34,9 @@ async function review(admin: any, limit: number) {
     const people = list.filter((r: any) => r.job_id === jobId);
     if (!job) { for (const p of people) await mark(admin, p, null, ["Role no longer exists"]); reviewed += people.length; removed += people.length; continue; }
     const checklist: string[] = Array.isArray(job.xray?.checklist) ? job.xray.checklist : [];
-    const head = reviewHead(job, job.sourcing?.area, checklist);
+    // The client's other names and competitors from the role's last X-ray plan, when it had them.
+    const ctx = clientContextOf(job);
+    const head = reviewHead(job, job.sourcing?.area, checklist, ctx);
     for (let i = 0; i < people.length; i += 10) {
       const b = people.slice(i, i + 10);
       const out = await askAI(REVIEW_SYSTEM, head + b.map((p: any, k: number) =>
@@ -44,7 +46,7 @@ async function review(admin: any, limit: number) {
       for (let k = 0; k < b.length; k++) {
         const p: any = b[k], r: any = byI.get(k);
         if (!r) continue; // tried again next run
-        done.push({ p, r, j: judge(job, { title: p.data?.result_title || "", snippet: p.data?.snippet || "" }, { ...r, location: r.location || p.location || "" }) });
+        done.push({ p, r, j: judge(job, { title: p.data?.result_title || "", snippet: p.data?.snippet || "" }, { ...r, location: r.location || p.location || "" }, ctx) });
       }
       // The place itself, checked against the office in code (same as a new X-ray search).
       const keepers = done.filter((d) => d.j.keep);
@@ -68,7 +70,7 @@ async function mark(admin: any, p: any, j: any, reasons: string[]) {
   const upd: Record<string, unknown> = { data };
   if (keep) {
     // Kept: refreshed with the current reading (location, tags, fit, checklist, notes).
-    Object.assign(data, { ...(p.data?.location_ok ? {} : { location_hold: j.hold || null }), client_history: j.clientHistory, location_source: j.locationSource, remote_worker: j.remote, own_practice: j.ownPractice, checklist: j.checklist, gaps: j.gaps });
+    Object.assign(data, { ...(p.data?.location_ok ? {} : { location_hold: j.hold || null }), client_history: j.clientHistory, ...(j.competitor ? { competitor: j.competitor } : {}), location_source: j.locationSource, remote_worker: j.remote, own_practice: j.ownPractice, checklist: j.checklist, gaps: j.gaps });
     upd.fit = j.fit; upd.verdict = j.verdict; if (j.location) upd.location = j.location;
   }
   await admin.from("prospects").update(upd).eq("id", p.id).eq("status", "found");

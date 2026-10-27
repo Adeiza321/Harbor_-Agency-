@@ -16,7 +16,9 @@ export type Settings = {
   senderName: string; senderTitle: string; businessAddress: string;
   footerName: string;                  // company name in footers: Agency settings' full name, else the agency name
   includePay: boolean;                 // mention the pay range in candidate outreach
-  leads: { enabled: boolean; postingsPerDay: number; maxAgeDays: number };
+  // minEmployees / maxEmployees: the company sizes searched (small and medium companies are likelier to
+  // take an agency's CVs and pay); 0 = no limit on that side.
+  leads: { enabled: boolean; postingsPerDay: number; maxAgeDays: number; minEmployees: number; maxEmployees: number };
   // The contract sent by itself when a company says it's interested in our candidates (client leads).
   contract: { enabled: boolean; subject: string; body: string; url: string };
   retentionDays: number;               // delete prospects nobody engaged with after this long
@@ -56,6 +58,8 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
         enabled: !!o.leads?.enabled,
         postingsPerDay: num(o.leads?.postingsPerDay, 25, 1, 100),
         maxAgeDays: num(o.leads?.maxAgeDays, 1, 1, 14),
+        minEmployees: num(o.leads?.minEmployees, 10, 0, 100000),
+        maxEmployees: num(o.leads?.maxEmployees, 500, 0, 1000000),
       },
       retentionDays: num(o.retentionDays, 90, 14, 365),
       contract: { enabled: !!o.contract?.enabled, subject: String(o.contract?.subject || "").trim().slice(0, 200), body: String(o.contract?.body || "").slice(0, 6000), url: /^https:\/\//.test(String(o.contract?.url || "")) ? String(o.contract.url).trim() : "" },
@@ -133,6 +137,25 @@ export function scrub(text: string, cands: any[]): string {
     }
   }
   return t;
+}
+
+// ---- Employers that don't take agency candidates ----
+// What a job description says when the employer won't take CVs from agencies or pay for unsolicited
+// ones ("No agencies", "We do not accept unsolicited resumes", "Principals only", "We are not
+// responsible for fees related to unsolicited resumes"). The first match is returned, '' when none.
+const NO_AGENCY_RE: RegExp[] = [
+  /\bunsolicited\s+(resumes?|résumés?|cvs?|candidates?|submissions?|profiles?|applications?|referrals?)\b/i,
+  /\bprincipals\s+only\b/i,
+  /\bno\s+(third[\s-]?part(y|ies)|3rd[\s-]?part(y|ies)|outside|external)\s+(recruit\w*|agenc\w*|staffing|candidates?|submissions?|resumes?)/i,
+  /\bno\s+(recruitment\s+|staffing\s+|search\s+)?(agencies|agency\s+(submissions|calls|candidates)|recruiters|headhunters)\b/i,
+  /\b(agencies|recruiters|headhunters|third[\s-]?part(y|ies)|staffing\s+firms)\b.{0,60}\b(need\s+not|should\s+not|shouldn't|do\s+not|don't|will\s+not|won't|must\s+not|are\s+not\s+to)\b.{0,25}\b(apply|contact|call|submit|send|reach)/i,
+  /\b(do(es)?\s+not|don't|will\s+not|won't|cannot|can't|are\s+not|is\s+not)\s+(accept(ing)?|work(ing)?\s+with|engag(e|ing)|us(e|ing)|consider(ing)?)\s+(any\s+)?(unsolicited\s+)?((third[\s-]?party|external|outside|recruitment|staffing)\s+)*(agenc(y|ies)|recruiters|headhunters)/i,
+  /\bnot\s+(be\s+)?(responsible|liable|obligated)\b.{0,50}\b(fees?|unsolicited|agenc(y|ies)|recruiters?)\b/i,
+];
+export function noAgencyText(desc: unknown): string {
+  const t = String(desc || "").replace(/\s+/g, " ");
+  for (const re of NO_AGENCY_RE) { const m = t.match(re); if (m) return m[0].slice(0, 120); }
+  return "";
 }
 
 // ---- Never pitch someone to their own (current or former) employer ----

@@ -7,6 +7,9 @@
 //     against where they live: only roles within about an hour's commute (or in a city they'd move
 //     to) are kept. A candidate without a known city isn't searched. The day's postings are shared out between candidates; when there are more
 //     candidates than the day allows, it works through them in turn over the following days.
+//     Intentional: only small and medium companies (Outreach settings, default 10-500 staff), which
+//     are likelier to take an agency's CVs and pay, and never an employer whose posting says no
+//     agencies / no unsolicited CVs (left out by the feed itself, then checked again here).
 //   processLead (a few per run): the candidate it was found for, screened strictly by the job
 //     description (its requirements and qualifications, read against their CV). Other Active file
 //     candidates in that country with the same title are screened too and join (up to 5 in all).
@@ -25,7 +28,7 @@ import { contactFields, findCompanyContacts, liveContacts, type Contact } from "
 import { COUNTRY_NAMES, countryCode, locationCountry, placeParts, regionOf } from "./regions.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo } from "./brand.ts";
 import { portalBase } from "./queue.ts";
-import { anonSummary, candEmployers, candTitles, fitsToPercent, isBusy, scrub, titlesMatch, workedAt, type Settings } from "./common.ts";
+import { anonSummary, candEmployers, candTitles, fitsToPercent, isBusy, noAgencyText, scrub, titlesMatch, workedAt, type Settings } from "./common.ts";
 
 export const MAX_PER_PITCH = 5;
 
@@ -115,7 +118,9 @@ export async function fetchLeads(admin: any, s: Settings) {
   const today = perDay >= ordered.length ? ordered : Array.from({ length: perDay }, (_, k) => ordered[(start + k) % ordered.length]);
   let fetched = 0, added = 0, remote = 0, skipped = 0;
   const errors: string[] = [], found: string[] = [];
-  let noCity = 0, far = 0;
+  let noCity = 0, far = 0, noAgency = 0, size = 0;
+  const { minEmployees, maxEmployees } = s.leads;
+  const sizeOk = (n: number | null) => n == null || ((!minEmployees || n >= minEmployees) && (!maxEmployees || n <= maxEmployees));
   for (const c of today) {
     const area = candArea(c);
     const cc = area.cc;
@@ -124,7 +129,7 @@ export async function fetchLeads(admin: any, s: Settings) {
     const titles = [...new Set(candTitles(c).map((t) => t.trim()).filter(Boolean))].slice(0, 10);
     let postings: any[] = [];
     const places = [...new Set([...(await commuteTowns(area)), ...area.moves.map((m: string) => placeParts(m).city || m)])].slice(0, 20);
-    try { postings = await searchJobs({ titles, countries: [cc], places, maxAgeDays: s.leads.maxAgeDays, limit: each }); }
+    try { postings = await searchJobs({ titles, countries: [cc], places, maxAgeDays: s.leads.maxAgeDays, limit: each, minEmployees, maxEmployees }); }
     catch (e) {
       const m = String((e as Error)?.message || e);
       errors.push(firstName(c) + " (" + cc + "): " + m.slice(0, 300));
@@ -142,13 +147,16 @@ export async function fetchLeads(admin: any, s: Settings) {
       const pc = countryCode(p.country) || cc;
       if (pc !== cc) continue;
       if (workedAt(employers, p.company)) { skipped++; continue; }
+      // Says no agencies / no unsolicited CVs, or outside the company sizes we pitch.
+      if (noAgencyText(p.description)) { noAgency++; continue; }
+      if (!sizeOk(p.employees)) { size++; continue; }
       const nr = near.get(String(p.location || "").trim());
       if (!nr || !nr.ok) { far++; continue; }
       const { error } = await admin.from("leads").insert({
         source: "theirstack", external_id: p.id, company: p.company, company_domain: p.domain, job_title: p.title,
         location: p.location, country: pc, region: regionOf(pc), url: p.url, posted_at: p.posted_at,
         description: p.description, salary: p.salary, status: "pending",
-        data: { hiring_team: p.hiring_team, remote: p.remote, industry: p.industry || null, for_candidate: c.id, for_titles: titles, for_area: area.home },
+        data: { hiring_team: p.hiring_team, remote: p.remote, industry: p.industry || null, employees: p.employees, for_candidate: c.id, for_titles: titles, for_area: area.home },
       });
       if (!error) { added++; mine++; }  // a posting already found (for anyone) hits the unique external_id and is skipped
     }
@@ -157,7 +165,7 @@ export async function fetchLeads(admin: any, s: Settings) {
   if (!fetched && errors.length) throw new Error(errors[0]);
   const who = today.length === all.length ? `all ${all.length} Active file candidates` : `${today.length} of ${all.length} Active file candidates (the rest on the next days)`;
   return { ok: true, fetched, added, candidates: found,
-    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${far ? " " + far + " too far from the candidate, left out." : ""}${noCity ? " " + noCity + " candidate" + (noCity === 1 ? "" : "s") + " skipped: no city on their profile." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
+    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${far ? " " + far + " too far from the candidate, left out." : ""}${noAgency ? " " + noAgency + " said no agencies or no unsolicited CVs, left out." : ""}${size ? " " + size + " outside the company sizes we pitch, left out." : ""}${noCity ? " " + noCity + " candidate" + (noCity === 1 ? "" : "s") + " skipped: no city on their profile." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
 }
 const firstName = (c: any) => String(c?.name || "").trim().split(/\s+/)[0] || "A candidate";
 
@@ -169,6 +177,10 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   const cands = (await pitchableCandidates(admin)).filter((c: any) => candCountry(c) === cc && !workedAt(candEmployers(c), lead.company));
   const target = forId ? cands.find((c: any) => c.id === forId) : null;
   const ignore = async (why: string) => { await admin.from("leads").update({ status: "ignored", notes: why }).eq("id", lead.id); return { ok: true, kept: false, why }; };
+  // The employer says no agencies / no unsolicited CVs (leads found before this check, or wording
+  // the feed's patterns missed).
+  const said = noAgencyText(lead.description);
+  if (said) return ignore(`The job description says the employer doesn't take agency candidates ("${said}")`);
   if (forId && !target) return ignore("The candidate this role was found for is no longer free to put forward");
   const others = cands.filter((c: any) => c.id !== forId).map((c: any) => ({ c, score: titlesMatch([lead.job_title], candTitles(c)) }))
     .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score).slice(0, target ? 7 : 8).map((x: any) => x.c);
@@ -191,7 +203,13 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   // they're pitched only once they've said yes. Plus how the role meets what each of them wants.
   const { role, items, contacts: named, results } = await assessForPitch(admin, lead, pool);
   // Anyone the job description gives a work email for is kept, to be emailed with the others.
-  const data = { ...(lead.data || {}), role, jd: items, jd_contacts: named };
+  const data: any = { ...(lead.data || {}), role, jd: items, jd_contacts: named };
+  // The AI's read of the job description found the employer won't take agency candidates.
+  if (role.noAgencies) {
+    const why = "The job description says the employer doesn't take agency candidates" + (role.noAgencies.length > 3 ? ` ("${role.noAgencies}")` : "");
+    await admin.from("leads").update({ status: "ignored", notes: why, data }).eq("id", lead.id);
+    return { ok: true, kept: false, why };
+  }
   if (!items.some((x) => x.required)) {
     await admin.from("leads").update({ status: "ignored", notes: "The job description doesn't list any requirements or qualifications to screen against", data }).eq("id", lead.id);
     return { ok: true, kept: false, why: "No requirements in the job description" };
@@ -205,6 +223,10 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   const kept = results.map((a) => ({ a, c: pool[a.n] })).filter((x) => x.c && strongEnough(x.a))
     .sort((x, y) => (target && x.c.id === target.id ? -1 : target && y.c.id === target.id ? 1 : y.a.fit - x.a.fit)).slice(0, MAX_PER_PITCH);
   const whyOut = (c: any) => results.find((a) => pool[a.n]?.id === c.id)?.out || "doesn't meet the job description";
+  // Never pitched to a company they've worked for: the CV's whole work history is read for it in the
+  // screening (any of the company's names), on top of the employers already on their profile.
+  const exStaff = results.filter((a) => a.exEmployer && pool[a.n]).map((a) => pool[a.n]);
+  if (exStaff.length) data.ex_employees = exStaff.map((c: any) => c.id);
   // Found for a candidate: kept only when it fits them.
   if (target && !kept.some((x) => x.c.id === target.id)) return ignoreWith("Not a fit for " + firstName(target) + " by the job description: " + whyOut(target));
   if (!kept.length) return ignoreWith("None of our Active file candidates meet the job description");
@@ -264,7 +286,21 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
     all = all.filter((m: any) => readyIds.has(m.candidate_id));
     if (!all.length) return { ok: true, pitched: false, waitingForCandidates: st.pending.length };
   }
-  const { data: cs } = await admin.from("candidates").select("id,name,current_company,blind_pages,blind_checked_at,status").in("id", all.map((m: any) => m.candidate_id));
+  const { data: cs0 } = await admin.from("candidates").select("id,name,current_company,industries,blind_pages,blind_checked_at,status").in("id", all.map((m: any) => m.candidate_id));
+  // Last check before anyone is pitched: never to a company they've worked for (the employers on
+  // their profile now, and anyone the CV screening found had worked there). They're taken off the pitch.
+  const exIds = new Set<string>(Array.isArray(lead.data?.ex_employees) ? lead.data.ex_employees : []);
+  const exStaff = (cs0 || []).filter((c: any) => exIds.has(c.id) || workedAt(candEmployers(c), lead.company));
+  if (exStaff.length) {
+    await admin.from("lead_offers").update({ status: "removed", removed_at: new Date().toISOString(), note: "Taken off: has worked at this company" })
+      .eq("lead_id", lead.id).in("candidate_id", exStaff.map((c: any) => c.id)).not("status", "in", "(withdrawn,removed)");
+    all = all.filter((m: any) => !exStaff.some((c: any) => c.id === m.candidate_id));
+    if (!all.length) {
+      await admin.from("leads").update({ status: "ignored", notes: "Every candidate on it has worked at this company" }).eq("id", lead.id);
+      return { ok: true, pitched: false, allOut: true };
+    }
+  }
+  const cs = (cs0 || []).filter((c: any) => !exStaff.includes(c));
   // Candidate first: they're on the lead's role now (In review), so their status isn't Active file.
   const ready = all.filter((m: any) => { const c = (cs || []).find((x: any) => x.id === m.candidate_id); return c && blindReady(c) && (candidateFirst || c.status === "Active file"); }).slice(0, MAX_PER_PITCH);
   if (!ready.length) {

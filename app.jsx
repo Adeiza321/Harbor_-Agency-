@@ -9550,8 +9550,9 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
           {d.possible_location && d.possible_location.place && (
             <div className="text-xs mt-1 flex items-center gap-1" style={{ color: C.ink2 }}><MapPin size={12} className="shrink-0" /><span><span className="font-medium">Possible location:</span> {d.possible_location.place}{d.possible_location.company ? " · from their job at " + d.possible_location.company : ""}{d.location_ok ? " · confirmed" : ""}</span></div>
           )}
-          {found && (d.client_history === "past" || d.location_source === "" || d.remote_worker) && (
+          {found && (d.competitor || d.client_history === "past" || d.location_source === "" || d.remote_worker) && (
             <div className="flex flex-wrap gap-1 mt-1.5">
+              {d.competitor && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: TONE.em.bg, color: TONE.em.fg }} title="Works or worked at one of the client's competitors">From a competitor: {d.competitor}</span>}
               {d.client_history === "past" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }}>Worked at {(jobLabel || "").split(",").slice(-1)[0].trim() || "the client"} before</span>}
               {d.location_source === "" && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.canvas, color: C.ink3 }}>Location not confirmed</span>}
               {d.remote_worker && <span className="rounded px-1.5 py-0.5" style={{ fontSize: 11, background: C.warnBg, color: C.warnFg }} title="Their profile may show their employer's country rather than where they live">Works remotely: confirm where they live</span>}
@@ -9876,6 +9877,8 @@ function JobSourcingCard({ job, S, toast }) {
           <div className="text-sm mt-0.5">{!xr ? "Not searched yet" : xrStale ? "Didn't finish: it was cut off before finishing. Search again." : xr.state === "running" ? <XrayProgress p={xr.progress} /> : xr.state === "queued" ? <>Queued: starts by itself in a moment <InlineDots /></> : xr.state === "error" ? (xr.stopped ? xr.error : "Didn't finish: " + (xr.error || "the search hit a problem. Search again in a few minutes.")) : xr.note ? xr.note : <>{plural(xr.found || 0, "person", "people")} found{siteText ? " (" + siteText + ")" : ""} · {xr.searched || 0} free searches · {fdate(xr.at)}</>}</div>
           {xr && xr.state === "done" && xr.early && <div className="text-xs mt-1" style={{ color: C.warnFg }}>{xr.early}</div>}
           {xr && xr.state === "done" && Array.isArray(xr.checklist) && xr.checklist.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Checked against: {xr.checklist.join(" · ")}</div>}
+          {xr && xr.state === "done" && Array.isArray(xr.competitors) && xr.competitors.length > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Searched the client's competitors first: {xr.competitors.join(", ")}{xr.fromCompetitors ? " (" + xr.fromCompetitors + " found there)" : ""}</div>}
+          {xr && xr.state === "done" && xr.exClient > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>{xr.exClient} {xr.exClient === 1 ? "person who works or worked" : "people who work or worked"} at the client left out.</div>}
         </div>
       </div>
       {src.pool && src.pool.matched > 0 && job.status !== "Closed" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>Talent pool: {plural(src.pool.matched, "person", "people")} from earlier roles added for approval · {fdate(src.pool.at)}</div>}
@@ -10339,7 +10342,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
           {expanded && <>
           <div className="pl-6">
             <div className="min-w-0">
-              {l.data && ((l.data.role && l.data.role.industry) || l.data.industry) && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>Industry: {(l.data.role && l.data.role.industry) || l.data.industry}</div>}
+              {l.data && ((l.data.role && l.data.role.industry) || l.data.industry || l.data.employees) && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{[((l.data.role && l.data.role.industry) || l.data.industry) ? "Industry: " + ((l.data.role && l.data.role.industry) || l.data.industry) : "", l.data.employees ? "About " + Number(l.data.employees).toLocaleString() + " staff" : ""].filter(Boolean).join(" · ")}</div>}
               {l.data && l.data.signer && <div className="text-xs mt-0.5 font-medium" style={{ color: C.em }}>Signed our terms: {l.data.signer.name}{l.data.signer.title ? ", " + l.data.signer.title : ""}{l.interested_at ? " · " + fdate(l.interested_at) : ""}</div>}
               {l.data && l.data.timeline && <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Hiring timeline: {l.data.timeline.text}</div>}
               {l.data && l.data.for_candidate && (() => { const fc = S.cands.find((x) => x.id === l.data.for_candidate); return (
@@ -10427,7 +10430,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
   const save = () => {
     setBusy(true);
     const regions = (f.regions || []).filter(Boolean);
-    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, xrayEmailsPerDay: f.xrayEmailsPerDay === "" || f.xrayEmailsPerDay == null ? 40 : Math.max(0, Number(f.xrayEmailsPerDay) || 0), xrayEmailMinFit: f.xrayEmailMinFit === "" || f.xrayEmailMinFit == null ? 60 : Math.max(0, Math.min(100, Number(f.xrayEmailMinFit) || 0)), pdlEmailsPerDay: f.pdlEmailsPerDay === "" || f.pdlEmailsPerDay == null ? 10 : Math.max(0, Math.min(200, Number(f.pdlEmailsPerDay) || 0)), pdlPerSearch: Math.max(5, Math.min(100, Number(f.pdlPerSearch) || 20)), dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1 } } };
+    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, xrayEmailsPerDay: f.xrayEmailsPerDay === "" || f.xrayEmailsPerDay == null ? 40 : Math.max(0, Number(f.xrayEmailsPerDay) || 0), xrayEmailMinFit: f.xrayEmailMinFit === "" || f.xrayEmailMinFit == null ? 60 : Math.max(0, Math.min(100, Number(f.xrayEmailMinFit) || 0)), pdlEmailsPerDay: f.pdlEmailsPerDay === "" || f.pdlEmailsPerDay == null ? 10 : Math.max(0, Math.min(200, Number(f.pdlEmailsPerDay) || 0)), pdlPerSearch: Math.max(5, Math.min(100, Number(f.pdlPerSearch) || 20)), dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1, minEmployees: f.leads.minEmployees === "" || f.leads.minEmployees == null ? 10 : Math.max(0, Number(f.leads.minEmployees) || 0), maxEmployees: f.leads.maxEmployees === "" || f.leads.maxEmployees == null ? 500 : Math.max(0, Number(f.leads.maxEmployees) || 0) } } };
     S.sb("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body }).then(() => { toast("Outreach settings saved"); onSaved(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false));
   };
   const conn = (status && status.connections) || {};
@@ -10507,10 +10510,13 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={f.includePay !== false} onChange={(e) => set("includePay", e.target.checked)} />Mention the job's pay range in candidate emails</label>
           <div className="md:col-span-2 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
             <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!f.leads.enabled} onChange={(e) => setL("enabled", e.target.checked)} />Fetch new job postings every morning (client leads)</label>
-            <div className="text-xs mt-1" style={{ color: C.ink2 }}>Postings are matched to candidates who agreed to be presented anonymously (they opt in on their candidate page).</div>
+            <div className="text-xs mt-1" style={{ color: C.ink2 }}>Postings are matched to candidates who agreed to be presented anonymously (they opt in on their candidate page). Employers whose posting says no agencies or no unsolicited CVs are always left out, and so is anyone who has worked at the company.</div>
           </div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Postings per day (each costs a TheirStack credit)</label><input type="number" min="1" value={f.leads.postingsPerDay ?? 25} onChange={(e) => setL("postingsPerDay", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only postings from the last (days)</label><input type="number" min="1" max="14" value={f.leads.maxAgeDays ?? 1} onChange={(e) => setL("maxAgeDays", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Smallest company to pitch (employees; 0 = no minimum)</label><input type="number" min="0" value={f.leads.minEmployees ?? 10} onChange={(e) => setL("minEmployees", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Largest company to pitch (employees; 0 = no maximum)</label><input type="number" min="0" value={f.leads.maxEmployees ?? 500} onChange={(e) => setL("maxEmployees", e.target.value)} className={inp} style={inpS} />
+            <div className="text-xs mt-1" style={{ color: C.ink3 }}>Small and medium companies are likelier to take an agency's CVs and pay. Companies with no known size aren't searched.</div></div>
         </fieldset>
         {isAdmin && <div className="flex justify-end mt-4"><Btn kind="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</Btn></div>}
       </Card>
