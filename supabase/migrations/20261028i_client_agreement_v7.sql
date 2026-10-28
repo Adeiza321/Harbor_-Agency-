@@ -10,6 +10,7 @@
 --     reasons and evidence for a for-cause ending, and doesn't apply to a false or pretext reason.
 --   * Client = the whole group (holding company, subsidiaries, common control); 6.1 also covers a
 --     third party that learns of the candidate through the client; 6.2 group hires are the client's.
+--   * 7.4: the candidate's acknowledgement is the Agency's authority to represent them.
 --   * 2.5: the client can ask to discuss the terms or suggest changes ("Discuss these terms").
 --   * 14.3: a copy of the signed terms goes to the signer and everyone at the client we contacted
 --     about the role; no objection within 5 business days confirms the signer's authority.
@@ -94,6 +95,7 @@ update public.agency_settings set client_agreement = coalesce(client_agreement, 
 7.1 The Agency takes reasonably practicable steps to make sure that: (a) the Engagement would not be against the interests of the Client or the Candidate; (b) both are aware of any requirements imposed by law or by any professional body; and (c) the Candidate is willing to work in the position.
 7.2 The Client must still satisfy itself that the Candidate is suitable for the position. The Client is responsible for: (a) taking up references before Engaging the Candidate; (b) checking the Candidate's right to work and obtaining any permission to work required by the law of the country where the Candidate will work; (c) any medical checks; and (d) any qualifications, licences or permissions the position requires.
 7.3 So that the Agency can meet clause 7.1, the Client will give the Agency details of the position, including: the type of work; the location and hours; the experience, training, qualifications and authorisations needed; any known health and safety risks and the steps taken to control them; the start date; the likely duration; the minimum Remuneration, expenses and benefits offered; how often pay is made; and the notice period on each side.
+7.4 Authority to represent: the Agency puts a Candidate forward only with the Candidate's agreement, which the Candidate gives electronically (for example, by acknowledging the role on the Agency's candidate page or by email) and which the Agency records with the date and time. That agreement is the Agency's authority to represent the Candidate to the Client and its Group, for the role and for any other role with the Client. The Client accepts that authority, and may not refuse or reduce the Introduction Fee on the ground that the Agency was not authorised to represent the Candidate or, subject to clause 4.14, that the Candidate also applied or was put forward to the Client in another way.
 
 ## 8. Equal opportunities
 8.1 The Agency introduces Candidates without discrimination. The Client will not ask the Agency to act in a way that would breach equality or anti-discrimination law, and will comply with the employment laws that apply to it in its treatment of Candidates.

@@ -388,6 +388,7 @@ ${reqRows}</table>` : "") +
       (js.total ? `You meet ${js.met.length} of the ${js.total} requirements in the employer's job description${js.toConfirm.length ? `; we'll ask you to confirm the other ${js.toConfirm.length === 1 ? "one" : js.toConfirm.length}` : ""}.` : `That's how closely your experience matches what the employer needs.`)) : "") +
     p(`<b>You don't need to do anything.</b> We'll update you as soon as the employer comes back about your profile. If we have any questions we'll reach out${o.questions ? " (we have " + (o.questions === 1 ? "one quick question" : o.questions + " quick questions") + ", which open when you acknowledge)" : ""}, and if you have any, just reply to this email.`) +
     `<div>${button(b, o.ack, "Acknowledge")}</div>` +
+    `<p style="margin:10px 0 0;font-size:13px;line-height:1.6;color:#56605A;">By acknowledging, you agree to us representing you to this employer, for this role and any other role with them, and sharing your profile with them.</p>` +
     `<p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#56605A;">Rather not be put forward for this one? <a href="${esc(o.withdraw)}" style="color:#56605A;">Withdraw my profile</a></p>` +
     p(`<br>${esc(o.recruiter || "The team")}<br><span style="color:#56605A;font-size:13px;">${esc(b.legal || b.name)}</span>`);
   return emailShell(b, o.reminder ? "Reminder: we're putting you forward for " + f.title : "We're putting you forward for " + f.title, body);

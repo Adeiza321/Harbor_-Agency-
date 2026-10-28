@@ -14685,6 +14685,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
             <Btn kind="primary" disabled={!!busy} onClick={ack}>{busy === "ack" ? "Saving…" : "Acknowledge"}</Btn>
             <button type="button" className="text-sm underline" style={{ color: C.ink2 }} disabled={!!busy} onClick={() => setConfirmWithdraw(true)}>Withdraw my profile</button>
           </div>
+          <div className="text-xs mt-2" style={{ color: C.ink3 }}>By acknowledging, you agree to us representing you to this employer, for this role and any other role with them, and sharing your profile with them.</div>
         </div>
       )}
       {confirmWithdraw && !["withdrawn", "removed"].includes(d.status) && (
