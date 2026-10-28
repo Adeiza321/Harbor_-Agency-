@@ -10557,6 +10557,10 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
   const inpS = { borderColor: C.line, background: C.soft };
   const convert = () => S.sourcing("convert_lead", { leadId: l.id }).then(() => { toast("Draft job created. Find it under Jobs."); onChanged(); S.reload && S.reload(); }).catch((e) => S.error(e.message));
   const fu = leadFollowup(l);
+  const [writing, setWriting] = useState(false);
+  const writePitch = () => { setWriting(true); S.sourcing("pitch_lead", { leadId: l.id, force: true })
+    .then((r) => { toast(r && r.pitched ? "Pitch written. It's under Ready to pitch." : (r && r.waitingForBlind) ? "Still waiting for a checked blind resume (Candidates > Blind resumes)." : "Nobody's ready to pitch yet: a candidate has to acknowledge first."); onChanged(); })
+    .catch((e) => S.error(e.message)).finally(() => setWriting(false)); };
   const staff = S && (S.role === "admin" || S.role === "recops");
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
@@ -10646,13 +10650,15 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
             </div>
           )}
           <div className="flex gap-2 mt-2 justify-end flex-wrap">
-            {S && l.pitch_body && <RowMenu label="Email actions" busy={testing} items={[
+            {S && (l.pitch_body || (staff && l.channel === "email" && ["awaiting", "new"].includes(l.status))) && <RowMenu label="Email actions" busy={testing || writing} items={[
+              // No pitch yet (still waiting on candidates or a blind resume): write it now with whoever's ready.
+              { label: "Write the pitch now", icon: Sparkles, onClick: writePitch, hidden: !!l.pitch_body },
               { label: l.status === "queued" ? "Send to client now" : "Send to client", icon: Send, onClick: () => setPanel("send"),
                 hidden: !(l.channel === "email" && ["new", "approved", "queued"].includes(l.status) && leadSendTo(l).length),
                 disabled: dirty, title: dirty ? "Save your changes first" : "" },
               { label: "Review follow-up", icon: Forward, onClick: () => setPanel("followup"), hidden: !(staff && l.channel === "email" && l.status === "contacted") },
-              { label: "Check spam score", icon: ScanSearch, onClick: () => setPanel("spam"), hidden: l.channel !== "email" },
-              { label: "Email me a test", icon: Mail, onClick: sendTest },
+              { label: "Check spam score", icon: ScanSearch, onClick: () => setPanel("spam"), hidden: l.channel !== "email" || !l.pitch_body },
+              { label: "Email me a test", icon: Mail, onClick: sendTest, hidden: !l.pitch_body },
             ]} />}
             {l.channel === "linkedin" && ["new", "approved"].includes(l.status) && <>
               <Btn icon={Copy} onClick={() => { copyText(f.linkedin_message, toast, "Message copied. Paste it on LinkedIn."); if (l.contact_linkedin) window.open(l.contact_linkedin, "_blank"); }}>Copy and open LinkedIn</Btn>
