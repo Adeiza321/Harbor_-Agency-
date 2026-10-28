@@ -12,6 +12,7 @@ import type { ResumeInput } from "./resume.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { cleanPay } from "./profile.ts";
 import { lessonsFor, lessonsPrompt, NO_LESSONS } from "./lessons.ts";
+import { pitchCard } from "../sourcing/pitchcard.ts";
 
 type Ask = (system: string, text: string, resume: ResumeInput | null, maxTokens: number) => Promise<any>;
 type Load = (admin: any, candidate: any) => Promise<{ resume: ResumeInput | null; why?: string }>;
@@ -46,7 +47,8 @@ export const RUBRIC =
   "10) Location and work setup are a must-have line of their own. Onsite or hybrid: the candidate must be based in or near the job's location, or have said in their answers that they will relocate. Remote: they must be in the hiring country (or the time zone the job asks for). Use the candidate's stated location; if it isn't known, mark the line 'partial', never 'met'. Seniority counts too: a candidate clearly more junior or far more senior than the role is a gap. " +
   "10b) Preferred work setup (remote / hybrid / on-site, every option the candidate said they'd accept, given below) is part of the location and work setup line, used judiciously: " +
   "the job's setup is one they accept -> that part is met; they accept ONLY remote and the job is on-site -> 'not met', a real mismatch named in gaps; " +
-  "remote-only for a hybrid job, or on-site / hybrid only for a remote job -> 'partial', to discuss (not a mismatch on its own); not given -> judge location alone and add the gap 'Work setup preference not confirmed', never 'not met'. " +
+  "remote-only for a hybrid job, hybrid (without on-site) for an on-site job, or on-site / hybrid only for a remote job -> 'partial', to discuss (not a mismatch on its own); not given -> judge location alone and add the gap 'Work setup preference not confirmed', never 'not met'. " +
+  "The preferred work setup given below is the latest word: their recruiter keeps it up to date from their conversations, so when an earlier answer to a question says something different about remote, hybrid or on-site work, the preferred work setup wins and that answer is out of date (don't quote it as a gap). " +
   "A work setup mismatch alone is never the reason for the rejection verdict unless they accept only remote and the job is fully on-site. " +
   "11) 'verdict_reason': 1-2 short sentences explaining the verdict by naming the specific must-have requirements that decided it (e.g. 'Meets every must-have: active CPA, 10 yrs Big 4, SEC reporting, ASC 606/718.' or 'Rejected: no active CPA, which the role requires.'). Never give a preferred item as the reason for a rejection. ";
 
@@ -216,7 +218,24 @@ const prefsFacts = (p: any) => {
 const WS_LABEL: Record<string, string> = { remote: "remote", hybrid: "hybrid", onsite: "on-site" };
 const candidateFacts = (c: any) =>
   `Candidate's stated location: ${c.location || "not given"}. Notice period: ${c.notice && c.notice !== "-" ? c.notice : "not given"}. Salary expectation: ${c.pay && c.pay !== "-" ? c.pay : "not given"}. ` +
-  `Preferred work setup (what they'd accept): ${Array.isArray(c.work_setup) && c.work_setup.length ? c.work_setup.map((x: string) => WS_LABEL[x] || x).join(", ") : "not confirmed"}.` + prefsFacts(c.preferences);
+  `Preferred work setup (what they'd accept, the latest word; it wins over older answers about work setup): ${Array.isArray(c.work_setup) && c.work_setup.length ? c.work_setup.map((x: string) => WS_LABEL[x] || x).join(", ") : "not confirmed"}.` + prefsFacts(c.preferences);
+
+// The pitch card, refreshed: the offer's checklist and fit (with what they've confirmed since), their
+// pitch answers, and a "to discuss" note when the role's work setup isn't one they'd accept (shown,
+// not scored: outreach checks the must-haves).
+async function pitchScreen(admin: any, link: any, candidate: any, offer: any) {
+  const { data: lead } = await admin.from("leads").select("data").eq("id", offer.lead_id).maybeSingle();
+  const ai: any = { ...pitchCard(offer), ...(link.ai?.auto ? { auto: link.ai.auto } : {}) };
+  ai.answersUsed = (Array.isArray(link.screening_answers) ? link.screening_answers : []).filter((x: any) => x && String(x.a || "").trim()).length;
+  const norm = (x: unknown) => String(x || "").toLowerCase().replace(/[-\s]/g, "");
+  const role = norm(lead?.data?.role?.workSetup);
+  const ws: string[] = Array.isArray(candidate.work_setup) ? candidate.work_setup.map(norm) : [];
+  if (["remote", "hybrid", "onsite"].includes(role) && ws.length && !ws.includes(role) && !(role === "hybrid" && ws.includes("onsite"))) {
+    ai.gaps = [...(ai.gaps || []), `To discuss: work setup (the role is ${WS_LABEL[role] || role}; they'd accept ${ws.map((x) => WS_LABEL[x] || x).join(" or ")})`];
+  }
+  await admin.from("candidate_jobs").update({ ai, fit: offer.fit ?? null }).eq("id", link.id);
+  return ai;
+}
 
 export async function screenLink(admin: any, linkId: string, askAI: Ask, loadResume: Load) {
   const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", linkId).single();
@@ -230,6 +249,12 @@ export async function screenLink(admin: any, linkId: string, askAI: Ask, loadRes
   const jobOf = (id: string) => (jobs || []).find((j: any) => j.id === id);
   const job = jobOf(link.job_id);
   if (!job) throw new Error("This job no longer exists");
+  // A client-lead role pitched to an employer: the card is the pitch screening (must-haves ticked
+  // against the job description, with their pitch answers), never the evidence screening.
+  if (job.lead_role) {
+    const { data: offer } = await admin.from("lead_offers").select("*").eq("candidate_job_id", link.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (offer && Array.isArray(offer.jd_check) && offer.jd_check.length) return pitchScreen(admin, link, candidate, offer);
+  }
 
   const { resume } = await loadResume(admin, candidate);
   const industries = await ensureIndustries(admin, candidate, resume);
@@ -551,6 +576,8 @@ export async function draftFollowups(admin: any, linkId: string, askAI: Ask) {
   const jobOf = (id: string) => (jobs || []).find((j: any) => j.id === id);
   const job = jobOf(link.job_id);
   if (!job) throw new Error("This job no longer exists");
+  // A pitched client-lead role: everything was asked once, in the pitch email. No second round.
+  if (job.lead_role) throw new Error("This role was pitched to an employer: its questions were all asked in the pitch email, so there's no second round. Message them in the chat instead");
   const jobQs: string[] = (Array.isArray(job.screening_questions) ? job.screening_questions : []).filter(Boolean).map(String);
   const asked = [...askedQuestions(links, jobOf), ...jobQs];
   const answered = links.flatMap((l) => answersOn(l, jobOf(l.job_id)));
