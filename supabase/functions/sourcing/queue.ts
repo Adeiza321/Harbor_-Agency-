@@ -201,7 +201,7 @@ export async function sendLeadSpamCheck(admin: any, leadId: string, to: string, 
     kind: "client", to, toName: "", firstName: r0?.first || "", lastName: "", company: l.company || "",
     subject: l.pitch_subject || `Candidate for your ${l.job_title} role`,
     body: finalBody(leadText(lr), token, "l", region, s, agencyName, "client"), html: leadHtml(lr, token, region, s, agencyName, b),
-    unsubUrl: linkFor(token, "l", "unsubscribe"),
+    unsubUrl: linkFor(token, "l", "unsubscribe"), replyTo: s.replyTo,
   }, s.senderName, "spam-check");
   return { ok: true, to };
 }
@@ -319,7 +319,7 @@ export async function processQueue(admin: any, s: Settings, max = 8, leadId?: st
     }
     try {
       const r = await sendMail({ kind: m.kind, to: m.to_email, toName: m.to_name || "", firstName: first, lastName: last, company, subject: m.subject, body: m.body, html: m.html || undefined,
-        unsubUrl: linkFor(token, m.prospect_id ? "p" : "l", "unsubscribe") }, s.senderName);
+        unsubUrl: linkFor(token, m.prospect_id ? "p" : "l", "unsubscribe"), replyTo: m.kind === "client" ? s.replyTo : "" }, s.senderName);
       const now = new Date().toISOString();
       await admin.from("outreach_messages").update({ status: "sent", provider: r.provider, provider_ref: r.ref, sent_at: now, error: null }).eq("id", m.id);
       if (m.prospect_id) await admin.from("prospects").update({ status: "contacted", contacted_at: now }).eq("id", m.prospect_id).eq("status", "queued");
