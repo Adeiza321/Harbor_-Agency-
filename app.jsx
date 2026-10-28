@@ -10086,7 +10086,7 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
       {!p ? <SkeletonRows n={4} /> : (
         <div className="flex flex-col gap-3">
           <div className="text-xs" style={{ color: C.ink2 }}>To <b>{p.to || "no email on file"}</b>{p.replyTo ? " · replies go to " + p.replyTo : ""} · Subject: <b>{p.subject}</b></div>
-          {!p.canEmail && <div className="text-xs rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{name.split(" ")[0]} can't be emailed (no email, unsubscribed or no candidate page). Put them through or take them off instead.</div>}
+          {!p.canEmail && <div className="text-xs rounded-lg px-3 py-2" style={{ background: C.dangerBg, color: C.dangerText }}>{name.split(" ")[0]} can't be emailed (no email, unsubscribed or no candidate page). Add their email so they can acknowledge, or take them off.</div>}
           {!reminder && (
             <>
               <label className="flex flex-col gap-1"><span className="text-xs font-medium" style={{ color: C.ink2 }}>Why we think it suits them</span>
@@ -10330,7 +10330,8 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
               {o.status === "notified" && o.notified_at && Date.now() - new Date(o.notified_at).getTime() > 2 * 864e5 && <span className="font-semibold" style={{ color: C.warnFg }}>Reminder due</span>}
               {staff && o.status === "draft" && <Btn kind="primary" icon={Mail} disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: false })} className="!py-1.5 !px-3 text-xs">Review and send email</Btn>}
               {staff && ["notified", "reminded"].includes(o.status) && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }}>Remind</button>}
-              {staff && ["draft", "notified", "reminded", "no_email", "acknowledged"].includes(o.status) && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for them"}>Put through</button>}
+              {staff && ["notified", "reminded"].includes(o.status) && <span style={{ color: C.ink2 }}>Waiting for {first} to click Acknowledge{c && c.phone ? <>: <a href={"tel:" + c.phone.replace(/[^\d+]/g, "")} className="font-medium" style={{ color: C.em }}>call {first}</a> to ask them to</> : ""}</span>}
+              {staff && o.status === "acknowledged" && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for their answers"}>Put through without answers</button>}
               {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "w", "offer_withdraw", { offerId: o.id }, "Withdrawn")} style={{ color: C.ink2 }}>Withdraw</button>}
               {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "x", "offer_remove", { offerId: o.id }, "Removed")} style={{ color: C.dangerFg }}>Remove from consideration</button>}
             </div>

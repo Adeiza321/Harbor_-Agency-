@@ -15,8 +15,9 @@
 // first message; their acknowledgement and answers come back to their recruiter there.
 // Nothing is emailed automatically: each candidate's email starts as a draft that Rec Ops / an
 // Admin reviews (edit "why it suits you", drop questions) and sends; a reminder is due after 2
-// days with no response and is sent from the lead card. Then it waits for Rec Ops / an Admin to push them
-// through or take them off. Each candidate has their own status (lead_offers), so a pitch can go
+// days with no response and is sent from the lead card. Nobody goes into a pitch without clicking
+// Acknowledge: Rec Ops / an Admin can call them to ask them to click it, put through someone who
+// acknowledged without waiting for their answers, or take them off. Each candidate has their own status (lead_offers), so a pitch can go
 // with some candidates and not others.
 
 import { askAI, isAiPaused } from "./ai.ts";
@@ -528,17 +529,20 @@ export async function offerAction(admin: any, me: { id: string; name: string }, 
     if (o.status !== "draft") throw new Error("This email has already gone");
     const r = await notifyOffer(admin, o.id);
     if (r.sent) await tl("Pitch email reviewed and sent for " + role);
-    return { ok: true, message: r.sent ? "Email sent" : "Couldn't email them: " + (r.why || "no email") + ". Put them through or take them off." };
+    return { ok: true, message: r.sent ? "Email sent" : "Couldn't email them: " + (r.why || "no email") + ". Add their email so they can acknowledge, or take them off." };
   }
   if (action === "remind") {
     if (!["notified", "reminded"].includes(o.status)) throw new Error("Only someone still waiting can be reminded");
     const r = await notifyOffer(admin, o.id, true);
     return { ok: true, message: r.sent ? "Reminder sent" : "Couldn't send the reminder: " + (r.why || "no email") };
   }
+  // Only after they've clicked Acknowledge (e.g. without waiting for their answers): nobody goes
+  // into a pitch without acknowledging. A call is to get them to click it, not a stand-in for it.
   if (action === "push") {
-    if (OUT.includes(o.status) || o.status === "pitched") throw new Error("They're not waiting");
+    if (OUT.includes(o.status) || ["pitched", "ready"].includes(o.status)) throw new Error("They're not waiting");
+    if (!o.acknowledged_at) throw new Error("They have to click Acknowledge in the email first. Call them and ask them to click it, or send a reminder");
     await admin.from("lead_offers").update({ status: "ready", ready_at: now, note: "Put through by " + (me.name || "Rec Ops") }).eq("id", o.id);
-    await tl("Put through for the pitch for " + role + " without waiting");
+    await tl("Put through for the pitch for " + role + " without waiting for their answers");
     return { ok: true, message: "Ready for the pitch" };
   }
   // Put back someone we took off (by mistake): where they were before, on the lead's role again.
