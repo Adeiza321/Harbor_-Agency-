@@ -13,6 +13,7 @@ import { addQuestion, notifyOffer, offerAction, previewOffer, removeQuestion, st
 import { stepClientFollowups } from "./clientflow.ts";
 import { stepOpenCheckins } from "./opencheck.ts";
 import { followupPause, followupPreview, followupSend, stepFollowupsDue } from "./pitchfollow.ts";
+import { replyOff, replySetup, replyStatus } from "./replies.ts";
 import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadSpamCheck, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
@@ -603,6 +604,12 @@ async function handle(req: Request): Promise<Response> {
       if (!l) return json({ error: "Lead not found" }, 404);
       // force: send now with the candidates who are ready, without waiting for the rest.
       return json(await pitchLead(admin, l, s, body.force === true));
+    }
+    // Client replies (replies.ts): where they go, and turning the reply address on (Admins).
+    if (action === "reply_status") return json(await replyStatus(admin));
+    if (action === "reply_setup" || action === "reply_off") {
+      if (!isAdmin) return json({ error: "Only an Admin can change this" }, 403);
+      return json(action === "reply_off" ? await replyOff(admin) : await replySetup(admin, body.domain ? String(body.domain) : undefined));
     }
     // Follow-ups to a client pitch, reviewed and sent by hand (pitchfollow.ts).
     if (["lead_followup", "lead_followup_send", "lead_followup_pause"].includes(action) && body.leadId) {

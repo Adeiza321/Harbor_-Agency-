@@ -10511,6 +10511,28 @@ function LeadCandidateRows({ l, offers, matches, S, onOpen }) {
   );
 }
 
+// What a client sent back (client replies on): shown on the lead, newest first.
+function LeadReplies({ l }) {
+  const [open, setOpen] = useState("");
+  const list = (Array.isArray(l.client_replies) ? l.client_replies : []).slice().sort((a, b) => String(b.received_at).localeCompare(String(a.received_at))).slice(0, 5);
+  if (!list.length) return null;
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {list.map((r) => (
+        <div key={r.id} className="rounded-lg px-3 py-2 text-xs" style={{ background: r.auto || r.spam ? C.canvas : C.emTint, color: r.auto || r.spam ? C.ink2 : C.emText }}>
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="font-medium"><MessageCircle size={12} className="inline -mt-0.5 mr-1" />{r.auto ? "Automatic reply" : r.spam ? "Likely spam" : "Replied"} · {r.from_name || r.from_email}{r.from_name ? " <" + r.from_email + ">" : ""}</span>
+            <span style={{ color: C.ink3 }}>{ago(r.received_at)}</span>
+          </div>
+          {r.body && <div className="mt-1 whitespace-pre-wrap" style={{ color: C.ink }}>{open === r.id ? r.body : String(r.body).replace(/\s+/g, " ").slice(0, 220) + (String(r.body).length > 220 ? "…" : "")}</div>}
+          {r.body && String(r.body).length > 220 && <button type="button" className="mt-1 font-medium" style={{ color: C.em }} onClick={() => setOpen(open === r.id ? "" : r.id)}>{open === r.id ? "Show less" : "Show all"}</button>}
+        </div>
+      ))}
+      <div className="text-xs" style={{ color: C.ink3 }}>Replies are forwarded to your inbox; answer them there.</div>
+    </div>
+  );
+}
+
 function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
   const [open, setOpen] = useState(false);
   // Collapsed by default: the role, the company and its candidates; open it for everything else.
@@ -10572,6 +10594,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
             </div>
           </div>
           <LeadContacts l={l} S={S} toast={toast} onChanged={onChanged} />
+          <LeadReplies l={l} />
           <ApolloNote data={l.data} />
           {hadPitch ? (offers.some(isPitchOffer) && <LeadPitchCandidates l={l} offers={offers.filter(isPitchOffer)} S={S} toast={toast} onChanged={onChanged} />) : offers.length > 0 ? <LeadOffers l={l} offers={offers} S={S} toast={toast} onChanged={onChanged} /> : matches.length > 0 && (
             <div className="mt-2 flex flex-col gap-1.5">
@@ -10648,6 +10671,76 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
   );
 }
 
+// Client replies (Outreach > Setup): pitches and follow-ups get replies@<reply subdomain> as their
+// reply-to, so Pronext sees each reply, stops that lead's follow-ups, and forwards it to the team.
+function ClientRepliesCard({ S, toast }) {
+  const [st, setSt] = useState(null);
+  const [domain, setDomain] = useState("");
+  const [busy, setBusy] = useState("");
+  const isAdmin = S.role === "admin";
+  const load = () => S.sourcing("reply_status", {}).then((r) => { setSt(r); setDomain((d) => d || r.domain || ""); }).catch(() => setSt({ error: true }));
+  React.useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // While the check email is on its way, look again every 10 seconds.
+  React.useEffect(() => { if (!st || st.status !== "testing") return; const t = setInterval(load, 10000); return () => clearInterval(t); }, [st && st.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  const run = (action, body) => { setBusy(action); S.sourcing(action, body || {}).then((r) => { setSt(r); if (r.status === "dns") toast("The DNS records aren't showing yet"); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  if (!st || st.error) return null;
+  const on = st.status === "on";
+  const tone = on ? "em" : st.status === "testing" ? "info" : st.status === "off" ? "neutral" : "warn";
+  const label = on ? "On" : st.status === "testing" ? "Checking…" : st.status === "test_failed" ? "Check didn't come back" : st.status === "dns" ? "Waiting for DNS" : "Off";
+  const inp = "rounded-lg border px-3 py-2 text-sm outline-none";
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <SectionTitle title="Client replies" sub="When a client replies to a pitch or follow-up, Pronext stops the follow-ups, moves the lead to Replied, tells you, and forwards the reply to your inbox. Out-of-office replies don't stop anything." size="text-xl" />
+        <Pill tone={tone}>{label}</Pill>
+      </div>
+      {on ? (
+        <div className="text-sm mt-3" style={{ color: C.ink2 }}>
+          Client emails go out with <b style={{ color: C.ink }}>{st.address}</b> as the reply address. Replies are forwarded to {st.forwardTo || "whoever sent the pitch"}, and replying there goes straight back to the client.
+          {isAdmin && <div className="mt-2"><Btn onClick={() => run("reply_off")} disabled={!!busy}>Turn off</Btn></div>}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 mt-3 text-sm">
+          <div style={{ color: C.ink2 }}>Until this is on, replies go straight to your mailbox, so Pronext can't see them and you have to stop follow-ups yourself.</div>
+          <div>
+            <div className="font-medium">1. Add these two DNS records where your domain is managed</div>
+            <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>They're only for the reply subdomain, so your normal email isn't affected.</div>
+            <div className="mt-2 rounded-lg overflow-x-auto" style={{ background: C.canvas }}>
+              <table className="text-xs w-full">
+                <thead><tr style={{ color: C.ink2 }}>{["Type", "Host / name", "Priority", "Value / points to"].map((h) => <th key={h} className="text-left font-medium px-3 py-2">{h}</th>)}</tr></thead>
+                <tbody>{(st.records || []).map((r) => (
+                  <tr key={r.value} style={{ borderTop: `1px solid ${C.line}` }}>
+                    <td className="px-3 py-2">{r.type}</td>
+                    <td className="px-3 py-2"><button type="button" onClick={() => copyText(r.host, toast, "Copied")} title="Copy">{r.host}</button></td>
+                    <td className="px-3 py-2">{r.priority}</td>
+                    <td className="px-3 py-2"><button type="button" onClick={() => copyText(r.value, toast, "Copied")} title="Copy">{r.value}</button></td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <div className="text-xs mt-1" style={{ color: C.ink3 }}>Some DNS providers want only "reply" as the host. Changes can take up to a few hours to show.</div>
+          </div>
+          {isAdmin ? (
+            <div>
+              <div className="font-medium">2. Check and turn on</div>
+              <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                <input value={domain} onChange={(e) => setDomain(e.target.value)} className={inp + " min-w-[14rem]"} style={{ borderColor: C.line, background: C.soft }} />
+                <Btn kind="primary" icon={CheckCircle2} onClick={() => run("reply_setup", { domain })} disabled={!!busy || !domain.trim()}>{busy === "reply_setup" ? "Checking…" : "Check and turn on"}</Btn>
+              </div>
+              <div className="text-xs mt-1.5" style={{ color: st.status === "dns" || st.status === "test_failed" ? C.warnFg : C.ink3 }}>
+                {st.status === "dns" ? "The records aren't showing yet" + (st.error ? " (" + st.error + ")" : "") + ". Try again once they've been added for a while."
+                  : st.status === "testing" ? "Sent a check email to the reply address. It turns on by itself when it arrives, usually within a minute."
+                  : st.status === "test_failed" ? "The check email didn't come back. Make sure the records are right, then try again."
+                  : "Pronext checks the records, connects Brevo, and sends a check email. It turns on only once that email comes back."}
+              </div>
+            </div>
+          ) : <div className="text-xs" style={{ color: C.ink3 }}>An Admin turns this on.</div>}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function OutreachSetup({ S, toast, status, onSaved }) {
   const s0 = (status && status.settings) || {};
   const [f, setF] = useState(() => ({ ...s0, leads: { ...(s0.leads || {}) } }));
@@ -10698,6 +10791,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           </div>
         </div>
       </Card>
+      <ClientRepliesCard S={S} toast={toast} />
       <Card>
         <SectionTitle title="Outreach settings" sub={isAdmin ? "Applies to both candidate outreach and client leads." : "Only an Admin can change these."} size="text-xl" />
         <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
@@ -10787,9 +10881,10 @@ function CampaignsPage({ toast, S }) {
   const load = () => {
     S.sourcing("status", {}).then(setStatus).catch(() => setStatus({ error: true }));
     S.sb("/rest/v1/prospects?select=*&order=created_at.desc&limit=2000").then(setProspects).catch(() => setProspects([]));
-    // (Falls back to the older columns if the follow-up column isn't in the database yet.)
-    const leadsQ = (cols) => S.sb("/rest/v1/leads?select=*,lead_offers(*),outreach_messages(" + cols + ")&status=neq.pending&order=created_at.desc&limit=2000");
-    leadsQ("to_email,kind,followup,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at").catch(() => leadsQ("to_email,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at")).then(setLeads).catch(() => setLeads([]));
+    // (Falls back to the older columns if the follow-up column or client replies aren't in the database yet.)
+    const leadsQ = (cols, extra) => S.sb("/rest/v1/leads?select=*,lead_offers(*),outreach_messages(" + cols + ")" + (extra || "") + "&status=neq.pending&order=created_at.desc&limit=2000");
+    const cols = "to_email,kind,followup,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at";
+    leadsQ(cols, ",client_replies(id,from_email,from_name,subject,body,auto,spam,received_at)").catch(() => leadsQ(cols)).catch(() => leadsQ("to_email,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at")).then(setLeads).catch(() => setLeads([]));
     S.sb("/rest/v1/leads?select=id&status=eq.pending").then((r) => setPendingLeads((r || []).length)).catch(() => {});
   };
   React.useEffect(() => { if (canRun) load(); }, []); // eslint-disable-line

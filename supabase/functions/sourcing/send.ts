@@ -74,7 +74,7 @@ export const toHtml = (text: string) => {
 };
 
 export type Attachment = { name: string; type: string; bytes: Uint8Array };
-export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; firstName: string; lastName: string; company: string; subject: string; body: string; html?: string; unsubUrl: string; attachment?: Attachment };
+export type OutMail = { kind: "candidate" | "client"; to: string; toName: string; firstName: string; lastName: string; company: string; subject: string; body: string; html?: string; unsubUrl: string; attachment?: Attachment; replyTo?: string };
 
 async function sendInstantly(m: OutMail): Promise<string> {
   const campaign = m.kind === "client" ? (Deno.env.get("INSTANTLY_CLIENT_CAMPAIGN_ID") || Deno.env.get("INSTANTLY_CAMPAIGN_ID")) : Deno.env.get("INSTANTLY_CAMPAIGN_ID");
@@ -161,7 +161,8 @@ async function sendGmail(m: OutMail, fromName: string): Promise<string> {
 const b64 = (bytes: Uint8Array) => { let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(bin); };
 export async function sendBrevoOutreach(m: OutMail, fromName: string, tag = "client-pitch", extraHeaders: Record<string, string> = {}): Promise<string> {
   const key = Deno.env.get("BREVO_API_KEY")!, senderEmail = Deno.env.get("BREVO_SENDER_EMAIL")!;
-  const replyTo = Deno.env.get("OUTREACH_REPLY_TO") || "";
+  // Client replies on (Outreach > Setup): replies come to Pronext, which forwards them on.
+  const replyTo = m.replyTo || Deno.env.get("OUTREACH_REPLY_TO") || "";
   const html = m.html || `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;">${linkify(esc(m.body)).replace(/\n/g, "<br>")}</div>` +
     (m.unsubUrl ? `<p style="font-size:12px;color:#8A8578;margin-top:24px;"><a href="${esc(m.unsubUrl)}" style="color:#8A8578;">Unsubscribe</a></p>` : "");
   // extraHeaders: e.g. In-Reply-To / References, so a follow-up lands in the same thread. If Brevo

@@ -24,6 +24,9 @@ export type Settings = {
   // The contract sent by itself when a company says it's interested in our candidates (client leads).
   contract: { enabled: boolean; subject: string; body: string; url: string };
   retentionDays: number;               // delete prospects nobody engaged with after this long
+  // Reply-to for client pitches and follow-ups once client replies are on (replies.ts), so Pronext
+  // sees the reply and stops the follow-ups; "" = replies go to OUTREACH_REPLY_TO as before.
+  replyTo: string;
 };
 
 // The address in every outreach and candidate email footer: always the UK office, whatever is set
@@ -31,7 +34,8 @@ export type Settings = {
 export const UK_ADDRESS = "167-169 Great Portland Street, 5th Floor, London W1W 5PF, United Kingdom";
 
 export async function loadSettings(admin: any): Promise<{ s: Settings; agencyName: string }> {
-  const { data } = await admin.from("agency_settings").select("agency_name,company,outreach").limit(1).maybeSingle();
+  const { data } = await admin.from("agency_settings").select("*").limit(1).maybeSingle();
+  const rep = (data?.replies && typeof data.replies === "object") ? data.replies : {};
   const o = (data?.outreach && typeof data.outreach === "object") ? data.outreach : {};
   const company = (data?.company && typeof data.company === "object") ? data.company : {};
   const num = (v: unknown, d: number, lo: number, hi: number) => { const n = Number(v); return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : d; };
@@ -66,6 +70,7 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
         maxEmployees: num(o.leads?.maxEmployees, 500, 0, 1000000),
       },
       retentionDays: num(o.retentionDays, 90, 14, 365),
+      replyTo: rep.status === "on" && rep.domain ? "replies@" + rep.domain : "",
       contract: { enabled: !!o.contract?.enabled, subject: String(o.contract?.subject || "").trim().slice(0, 200), body: String(o.contract?.body || "").slice(0, 6000), url: /^https:\/\//.test(String(o.contract?.url || "")) ? String(o.contract.url).trim() : "" },
     },
   };

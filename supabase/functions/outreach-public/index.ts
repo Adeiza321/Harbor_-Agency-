@@ -110,6 +110,8 @@ Deno.serve(async (req: Request) => {
     if (action === "info") return json({ ok: true, kind, firstName, role: l.job_title, company: l.company, status: l.status });
     if (action === "unsubscribe" || action === "delete") {
       await suppress(email, action === "delete" ? "deleted on request" : "unsubscribed");
+      // Their replies to us go too.
+      if (action === "delete" && email) await admin.from("client_replies").delete().ilike("from_email", email.trim());
       if (who) {
         // Just this person; the lead carries on with the others.
         const list = action === "delete" ? contacts.filter((c) => c.token !== contactToken) : contacts.map((c) => c.token === contactToken ? { ...c, unsubscribed: true } : c);

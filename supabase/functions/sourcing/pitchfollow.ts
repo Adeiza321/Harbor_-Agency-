@@ -8,7 +8,9 @@
 // Follow-ups stop for good when any of these is true:
 //   * the lead moved on (they clicked "We're interested", signed our terms, or someone set the
 //     lead to In talks / Won / Lost: anything but Contacted);
-//   * the follow-ups were paused on the lead ("They replied" / "Stop follow-ups");
+//   * they replied: an email reply (seen once client replies are on, Outreach > Setup; it also moves
+//     the lead to Replied), a reply through Apollo, or a request to discuss our terms;
+//   * the follow-ups were stopped on the lead ("Stop follow-ups");
 //   * nobody is left to email (every contact unsubscribed, bounced or was removed);
 //   * none of the pitched candidates is still in the running;
 //   * all three have been sent.
@@ -95,6 +97,14 @@ export async function followupState(admin: any, l: any): Promise<FollowupState> 
   const ag = await agreementFor(admin, l.company || "");
   if (ag?.signed_at && ag.signed_at > pitch[0].sent_at) return stop("They've signed our terms");
   if (paused) return stop(String(l.data?.followups?.reason || "Follow-ups were stopped"));
+  // Any other sign they've responded since the pitch: a reply to us (client_replies, not an
+  // automatic one), a reply through Apollo, or asking to discuss our terms.
+  const t0s = pitch[0].sent_at;
+  const { data: rep } = await admin.from("client_replies").select("id").eq("lead_id", l.id).eq("auto", false).eq("spam", false).gte("received_at", t0s).limit(1);
+  if (rep?.length) return stop("They replied");
+  const ap = l.data?.apollo;
+  if (ap?.event === "reply" && !ap?.reply?.auto) return stop("They replied (Apollo)");
+  if ((Array.isArray(l.data?.terms_discussions) ? l.data.terms_discussions : []).some((x: any) => String(x?.at || "") > t0s)) return stop("They asked to discuss our terms");
   if (!recipients.length) return stop("Nobody left to email (unsubscribed, bounced or removed)");
   const pitched: string[] = Array.isArray(l.data?.pitched) ? l.data.pitched.map(String) : [];
   if (pitched.length) {
@@ -203,7 +213,7 @@ export async function followupSend(admin: any, me: { id: string }, leadId: strin
   for (const r of to) {
     const { html, plain } = render(b, l, body, subject, r, d.viewUrl, d.viewCount, s, agencyName);
     const mail = { kind: "client" as const, to: r.email, toName: r.name, firstName: r.first, lastName: String(r.name || "").split(" ").slice(1).join(" "), company: l.company || "",
-      subject, body: plain, html, unsubUrl: linkFor(r.token, "l", "unsubscribe") };
+      subject, body: plain, html, unsubUrl: linkFor(r.token, "l", "unsubscribe"), replyTo: s.replyTo };
     try {
       let prov: string = p, ref = "";
       if (p === "brevo" && brevoReady()) ref = await sendBrevoOutreach(mail, s.senderName, "client-followup", r.ref ? { "In-Reply-To": r.ref, References: r.ref } : {});
