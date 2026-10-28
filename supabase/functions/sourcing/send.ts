@@ -23,7 +23,7 @@ export type Provider = "apollo" | "instantly" | "gmail" | "brevo" | "none";
 // Set once per request from Outreach settings (sourcing/index.ts).
 let clientMode: "auto" | "brevo" = "auto";
 export function useClientSender(mode: unknown) { clientMode = mode === "brevo" ? "brevo" : "auto"; }
-const brevoReady = () => !!(Deno.env.get("BREVO_API_KEY") && Deno.env.get("BREVO_SENDER_EMAIL"));
+export const brevoReady = () => !!(Deno.env.get("BREVO_API_KEY") && Deno.env.get("BREVO_SENDER_EMAIL"));
 
 // The sender for one kind of email. Client pitches go through Apollo only with their own
 // sequence (APOLLO_CLIENT_SEQUENCE_ID): the candidate sequence's follow-ups talk about a role and
@@ -159,7 +159,7 @@ async function sendGmail(m: OutMail, fromName: string): Promise<string> {
 // A client pitch through Brevo: the email exactly as written (its own HTML with the candidates
 // button and unsubscribe link), replies to the agency, a one-click unsubscribe header, tagged.
 const b64 = (bytes: Uint8Array) => { let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(bin); };
-async function sendBrevoOutreach(m: OutMail, fromName: string): Promise<string> {
+export async function sendBrevoOutreach(m: OutMail, fromName: string, tag = "client-pitch"): Promise<string> {
   const key = Deno.env.get("BREVO_API_KEY")!, senderEmail = Deno.env.get("BREVO_SENDER_EMAIL")!;
   const replyTo = Deno.env.get("OUTREACH_REPLY_TO") || "";
   const html = m.html || `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;">${linkify(esc(m.body)).replace(/\n/g, "<br>")}</div>` +
@@ -173,7 +173,7 @@ async function sendBrevoOutreach(m: OutMail, fromName: string): Promise<string> 
       ...(replyTo ? { replyTo: { email: replyTo, name: fromName || undefined } } : {}),
       subject: m.subject, htmlContent: html, textContent: m.body,
       ...(m.unsubUrl ? { headers: { "List-Unsubscribe": `<${m.unsubUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } } : {}),
-      tags: ["client-pitch"],
+      tags: [tag],
       ...(m.attachment ? { attachment: [{ name: m.attachment.name, content: b64(m.attachment.bytes) }] } : {}),
     }),
   });

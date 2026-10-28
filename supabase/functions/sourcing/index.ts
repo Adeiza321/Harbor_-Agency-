@@ -12,7 +12,7 @@ import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortl
 import { addQuestion, notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
 import { leadContactsAction } from "./contacts.ts";
-import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
+import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadSpamCheck, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
 import { provider, useClientSender } from "./send.ts";
@@ -528,6 +528,17 @@ async function handle(req: Request): Promise<Response> {
     }
     if (action === "approve_leads") return json({ ok: true, queued: await queueLeads(admin, ids, me.id, s, agencyName) });
     if (action === "send_now") return json({ ok: true, ...(await processQueue(admin, s, 20)) });
+    // "Send to client" on a lead card: approve this one lead's pitch and send it straight away
+    // (one email per contact), instead of waiting for the 10-minute send.
+    if (action === "send_lead") {
+      const id = String(body.id || "");
+      if (!id) return json({ error: "id is required" }, 400);
+      if (provider("client") === "none") return json({ error: "No sender is set up for client pitches yet. In Outreach > Setup, choose Brevo under \"Send client pitches through\"." }, 400);
+      const queued = await queueLeads(admin, [id], me.id, s, agencyName);
+      const r = await processQueue(admin, s, 10, id);
+      if (!queued && !r.sent && !r.failed && !(r as any).capped && !(r as any).held) return json({ error: "Nothing to send: this lead has no contact with an email address, or its pitch was already sent." }, 400);
+      return json({ ok: true, queued, ...r });
+    }
     if (action === "manual_compose" || action === "manual_sent") {
       const kind = body.kind === "l" ? "l" : "p", id = String(body.id || "");
       if (!id) return json({ error: "id is required" }, 400);
@@ -538,6 +549,13 @@ async function handle(req: Request): Promise<Response> {
     // own address so you see exactly what they'd get. Nothing is queued or marked as sent.
     if (action === "preview_email") return json(await previewProspect(admin, String(body.id || ""), s, agencyName));
     if (action === "test_email") {
+      // "Check spam score": the real pitch to a mail-tester.com address (only theirs, so this can't
+      // be used to email anyone else).
+      if (body.kind === "l" && body.spamCheck) {
+        const to = String(body.to || "").trim();
+        if (!/^[^@\s]+@([a-z0-9-]+\.)*mail-tester\.com$/i.test(to)) return json({ error: "Paste the address mail-tester.com shows you (it ends in @srv1.mail-tester.com)" }, 400);
+        return json(await sendLeadSpamCheck(admin, String(body.id || ""), to, s, agencyName));
+      }
       const to = String(me.email || caller.user.email || "");
       if (!to) return json({ error: "Your profile has no email address" }, 400);
       if (body.kind === "l") return json(await sendLeadTest(admin, String(body.id || ""), to, s, agencyName));

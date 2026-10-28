@@ -9461,6 +9461,49 @@ function TestEmailBtn({ kind, id, S, toast }) {
   return <Btn icon={Mail} onClick={go} disabled={busy}>{busy ? "Sending…" : "Email me a test"}</Btn>;
 }
 
+// "Send to client": approves this lead's pitch and sends it now, one email per contact, through the
+// client sender (Brevo for now). Asks once before sending, since an email can't be unsent.
+const leadSendTo = (l) => { const cs = (Array.isArray(l?.data?.contacts) ? l.data.contacts : []).filter((c) => c && c.email && !c.unsubscribed && !c.removed); return cs.length ? cs.map((c) => c.email) : l?.contact_email ? [l.contact_email] : []; };
+function SendToClientBtn({ l, S, toast, onDone, dirty }) {
+  const [ask, setAsk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const to = leadSendTo(l);
+  const go = () => { setBusy(true); S.sourcing("send_lead", { id: l.id }).then((r) => { setAsk(false); toast(r.sent ? "Sent to the client: " + r.message : r.message || "Queued: it goes out within about 10 minutes."); onDone && onDone(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  if (!to.length) return null;
+  if (!ask) return <Btn kind="primary" icon={Send} disabled={dirty} title={dirty ? "Save your changes first" : ""} onClick={() => setAsk(true)}>{l.status === "queued" ? "Send to client now" : "Send to client"}</Btn>;
+  return (
+    <div className="w-full rounded-xl border p-3 text-sm flex flex-wrap items-center gap-2" style={{ borderColor: C.line, background: C.soft }}>
+      <span className="flex-1 min-w-[12rem]">Send this pitch now to {to.length === 1 ? to[0] : to.length + " contacts (" + to.join(", ") + "), each their own email"}? It can't be unsent.</span>
+      <Btn onClick={() => setAsk(false)} disabled={busy}>Cancel</Btn>
+      <Btn kind="primary" icon={Send} onClick={go} disabled={busy}>{busy ? "Sending…" : "Yes, send"}</Btn>
+    </div>
+  );
+}
+
+// "Check spam score": the real pitch (same sender, subject and design) to a mail-tester.com address,
+// which scores out of 10 how likely it is to land in spam and lists what to fix.
+function SpamCheckBtn({ l, S, toast }) {
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const ok = /^[^@\s]+@([a-z0-9-]+\.)*mail-tester\.com$/i.test(to.trim());
+  const go = () => { setBusy(true); S.sourcing("test_email", { kind: "l", id: l.id, spamCheck: true, to: to.trim() }).then(() => { setSent(true); toast("Sent to mail-tester. Check your score there."); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  if (!open) return <Btn icon={ScanSearch} onClick={() => setOpen(true)}>Check spam score</Btn>;
+  return (
+    <div className="w-full rounded-xl border p-3 text-sm space-y-2" style={{ borderColor: C.line, background: C.soft }}>
+      <div className="flex items-center justify-between gap-2"><b>Check spam score</b><IconBtn icon={X} label="Close" size="xs" bare onClick={() => { setOpen(false); setSent(false); }} /></div>
+      <div style={{ color: C.ink2 }}>1. Open <a href="https://www.mail-tester.com" target="_blank" rel="noreferrer" style={{ color: C.em, textDecoration: "underline" }}>mail-tester.com</a> and copy the address it shows you.</div>
+      <div className="flex gap-2 flex-wrap items-center">
+        <span style={{ color: C.ink2 }}>2. Paste it here:</span>
+        <input value={to} onChange={(e) => { setTo(e.target.value); setSent(false); }} placeholder="test-xxxx@srv1.mail-tester.com" className="flex-1 min-w-[14rem] rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.card }} />
+        <Btn kind="primary" icon={Send} onClick={go} disabled={!ok || busy}>{busy ? "Sending…" : sent ? "Send again" : "Send"}</Btn>
+      </div>
+      <div style={{ color: C.ink2 }}>3. Back on mail-tester, click "Then check your score". 9 or 10 out of 10 is safe; under 8, it lists what to fix. This sends exactly what the client would get, from the same sender, but nothing on the lead changes.</div>
+    </div>
+  );
+}
+
 // What came back from Apollo on an email ProNext sent through a sequence (apollo-sync).
 const APOLLO_REPLY = {
   willing_to_meet: "Wants to talk", follow_up_question: "Asked a question", person_referral: "Referred someone else",
@@ -10441,7 +10484,9 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
             </div>
           )}
           <div className="flex gap-2 mt-2 justify-end flex-wrap">
+            {S && l.pitch_body && l.channel === "email" && ["new", "approved", "queued"].includes(l.status) && <SendToClientBtn l={l} S={S} toast={toast} onDone={onChanged} dirty={dirty} />}
             {S && l.pitch_body && <TestEmailBtn kind="l" id={l.id} S={S} toast={toast} />}
+            {S && l.pitch_body && l.channel === "email" && <SpamCheckBtn l={l} S={S} toast={toast} />}
             {l.channel === "email" && l.contact_email && ["new", "approved", "queued"].includes(l.status) && <ManualSend kind="l" id={l.id} S={S} toast={toast} onDone={onChanged} />}
             {l.channel === "linkedin" && ["new", "approved"].includes(l.status) && <>
               <Btn icon={Copy} onClick={() => { copyText(f.linkedin_message, toast, "Message copied. Paste it on LinkedIn."); if (l.contact_linkedin) window.open(l.contact_linkedin, "_blank"); }}>Copy and open LinkedIn</Btn>
