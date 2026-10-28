@@ -25,7 +25,7 @@
 //   The company's "We're interested" sends the contract automatically (stepContracts in index.ts).
 
 import { askAI } from "./ai.ts";
-import { assessForPitch, OUT, PENDING, strongEnough } from "./pitch.ts";
+import { assessForPitch, MAX_PITCH_QUESTIONS, OUT, PENDING, strongEnough } from "./pitch.ts";
 import { searchJobs, theirstackKey } from "./theirstack.ts";
 import { contactFields, findCompanyContacts, liveContacts, type Contact } from "./contacts.ts";
 import { COUNTRY_NAMES, countryCode, locationCountry, placeParts, regionOf } from "./regions.ts";
@@ -265,7 +265,13 @@ export async function processLead(admin: any, lead: any, s: Settings) {
     candidate_id: c.id, verdict: a.verdict, fit: a.fit, reason: a.reason.slice(0, 300),
     bullets: a.bullets, requirements: a.requirements, why_role: a.whyRole, musts: a.musts, jd: a.jd,
     // Yes/no questions for the required items their CV doesn't show first, then any others.
-    questions: [...a.confirm.map((q) => ({ q: q.q, confirm: q.item })), ...a.questions.map((q) => ({ q }))].slice(0, 5),
+    // One email, at most MAX_PITCH_QUESTIONS: the yes/no confirmations first, keeping room for up to
+    // 2 about what they're looking for (pay, work setup...), then the rest of those if there's room.
+    questions: (() => {
+      const looking = a.questions.map((q) => ({ q: q.q, ...(q.field ? { field: q.field } : {}) }));
+      const nConfirm = Math.min(a.confirm.length, MAX_PITCH_QUESTIONS - Math.min(2, looking.length));
+      return [...a.confirm.slice(0, nConfirm).map((q) => ({ q: q.q, confirm: q.item })), ...looking].slice(0, MAX_PITCH_QUESTIONS);
+    })(),
   }));
   const toConfirm = matches.filter((m) => m.questions.some((q: any) => q.confirm)).length;
   await admin.from("leads").update({ status: "awaiting", matches, data,

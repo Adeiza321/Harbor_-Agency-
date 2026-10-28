@@ -10194,13 +10194,13 @@ function LeadContacts({ l, S, toast, onChanged }) {
 
 // What the job description asks for and where one candidate stands on each, from their CV:
 // required items decide (met / to confirm / confirmed / not met); nice-to-haves they meet are a bonus.
-const JD_STATE = { met: ["✓", "Met"], confirmed: ["✓", "Confirmed by them"], not_shown: ["?", "Not on their CV: asked to confirm"], not_met: ["✗", "Not met"] };
+const JD_STATE = { met: ["✓", "Met"], confirmed: ["✓", "Confirmed by them"], partial: ["~", "Likely (counts): asked to confirm"], not_shown: ["?", "Not on their CV: asked to confirm"], not_met: ["✗", "Not met"] };
 function JdCheckList({ checks, open, onToggle }) {
   const list = Array.isArray(checks) ? checks : [];
   if (!list.length) return null;
   const req = list.filter((x) => x.required !== false), nice = list.filter((x) => x.required === false && !x.info), info = list.filter((x) => x.info);
-  const ok = req.filter((x) => x.status === "met" || x.status === "confirmed").length;
-  const ask = req.filter((x) => x.status === "not_shown").length;
+  const ok = req.filter((x) => x.status === "met" || x.status === "confirmed" || x.status === "partial").length;
+  const ask = req.filter((x) => x.status === "not_shown" || x.status === "partial").length;
   const bonus = nice.filter((x) => x.status === "met").length;
   const color = (st) => (st === "met" || st === "confirmed" ? C.em : st === "not_met" ? C.dangerFg : C.warnFg);
   const row = (x, i) => (
@@ -14629,7 +14629,7 @@ function PortalOfferOrPitch({ token, offer, onKind, onDone }) {
 // The job-description check on the candidate's own page: what the employer asks for and how they
 // match it (from their CV). "you": written to the candidate.
 const jdCounts = (jd) => { const l = Array.isArray(jd) ? jd : []; const req = l.filter((x) => x && x.required !== false && !x.info);
-  return { total: req.length, met: req.filter((x) => x.status === "met" || x.status === "confirmed").length, ask: req.filter((x) => x.status === "not_shown").length }; };
+  return { total: req.length, met: req.filter((x) => x.status === "met" || x.status === "confirmed").length, ask: req.filter((x) => x.status === "not_shown" || x.status === "partial").length }; };
 function PitchJdList({ jd, you }) {
   const l = Array.isArray(jd) ? jd : [];
   const req = l.filter((x) => x && x.required !== false && !x.info);
@@ -14645,6 +14645,7 @@ function PitchJdList({ jd, you }) {
     <div className="mt-4">
       <div className="text-sm font-semibold mb-1">{you ? "What the employer asks for, and how you match" : "Their job description"}</div>
       {req.filter((x) => x.status === "met" || x.status === "confirmed").map((x, i) => row("✓", C.em, x.item, x.status === "confirmed" ? (you ? "you confirmed this" : "confirmed") : tidyCut(x.evidence), "m" + i))}
+      {req.filter((x) => x.status === "partial").map((x, i) => row("?", C.warnFg, x.item, (x.evidence ? tidyCut(x.evidence) + ": " : "") + (you ? "we'll ask you to confirm" : "likely, to confirm"), "p" + i))}
       {req.filter((x) => x.status === "not_shown").map((x, i) => row("?", C.warnFg, x.item, you ? "not on your CV, we'll ask you to confirm" : "still to confirm", "a" + i))}
       {extra.map((x, i) => row("+", C.em, x.info ? x.item : "Nice to have: " + x.item, tidyCut(x.evidence), "b" + i))}
     </div>
@@ -14718,7 +14719,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
           </div>
         </div>
       )}
-      {d.fit != null && <div className="text-sm mt-3"><b>Our fit score for you: {d.fit}%</b>{d.verdict ? " (" + d.verdict + ")" : ""}. {(() => { const js = jdCounts(d.jdCheck); return js.total ? "You meet " + js.met + " of the " + js.total + " requirements in the employer's job description" + (js.ask ? "; we'll ask you to confirm the other " + (js.ask === 1 ? "one" : js.ask) : "") + "." : "That's how closely your experience matches what the employer needs."; })()}</div>}
+      {d.fit != null && <div className="text-sm mt-3"><b>Our fit score for you: {d.fit}%</b>{d.verdict ? " (" + d.verdict + ")" : ""}. {(() => { const js = jdCounts(d.jdCheck); return js.total ? "Your CV shows " + js.met + " of the " + js.total + " requirements in the employer's job description" + (js.ask ? "; we'll ask you to confirm the other " + (js.ask === 1 ? "one" : js.ask) : "") + "." : "That's how closely your experience matches what the employer needs."; })()}</div>}
 
       {waiting && !confirmWithdraw && (
         <div className="mt-4">
