@@ -67,6 +67,22 @@ export const MAX_TO_CONFIRM = 3;
 
 // The candidate's CV for the AI: the stored file (PDF as a document, photos as an image, Word and
 // text files as text), the same way screening reads it.
+// What the candidate has already told us on other roles (application questions, follow-ups and
+// earlier pitch questions), so the pitch email never asks them something they've answered.
+async function earlierAnswers(admin: any, candidateId: string): Promise<string> {
+  const { data: links } = await admin.from("candidate_jobs").select("screening_answers,ai,jobs(screening_questions)").eq("candidate_id", candidateId).limit(30);
+  const lines: string[] = [];
+  for (const l of links || []) {
+    const qs: string[] = Array.isArray((l as any).jobs?.screening_questions) ? (l as any).jobs.screening_questions : [];
+    (Array.isArray(l.screening_answers) ? l.screening_answers : []).forEach((a: any, i: number) => {
+      const q = a && typeof a === "object" ? a.q : qs[i], ans = a && typeof a === "object" ? a.a : a;
+      if (q && ans && String(ans).trim()) lines.push(`Q: ${clip(q, 200)}\nA: ${clip(ans, 400)}`);
+    });
+    for (const x of l.ai?.followups?.questions || []) if (x?.q && x?.a && String(x.a).trim()) lines.push(`Q: ${clip(x.q, 200)}\nA: ${clip(x.a, 400)}`);
+  }
+  return [...new Set(lines)].slice(0, 25).join("\n");
+}
+
 async function cvContent(admin: any, c: any): Promise<{ blocks: any[]; text: string; why?: string }> {
   const path = c.resume_path || c.cv_path;
   if (!path) return { blocks: [], text: "", why: "No CV on file" };
@@ -125,6 +141,7 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
   const base: Assessed = { n, fit: 0, verdict: "Not a fit", reason: "", whyRole: "", bullets: [], musts: [], notMet: [], requirements: [], questions: [], jd: [], confirm: [], out: "" };
   const cv = await cvContent(admin, c);
   if (cv.why) return { ...base, out: cv.why };
+  const earlier = await earlierAnswers(admin, c.id).catch(() => "");
   const sys = "You are a senior recruiter checking one candidate against an employer's job description, strictly from the evidence. Their CV is attached; a profile summary and what they're looking for follow. " +
     "Reply with STRICT JSON only: {\"checks\": [{\"n\": number, \"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}], \"confirm\": [{\"n\": number, \"q\": string}], " +
     "\"industry\": {\"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}, \"worked_at_employer\": boolean, " +
@@ -135,6 +152,7 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
     "checks: one for EVERY numbered requirement. 'met' only when the CV (or profile) clearly shows it; equivalent wording counts (e.g. 'ACA chartered accountant' for 'professional accounting qualification', 6 years for '5+ years'). " +
     "'not_met' only when the CV clearly shows they don't have it (e.g. 3 years in total where 5+ are required, a different licence where only one specific licence is accepted). " +
     "'not_shown' when the CV simply doesn't say. Never assume, never infer from the job title. evidence: a few words from the CV for a hiring manager, anonymous (no names of people or employers), e.g. 'Licensed CPA since 2016', '7 years in manufacturing'; for not_shown ''. " +
+    "Their earlier answers to our questions (if given below) count as evidence like the CV: a requirement they already answered is met or not_met from that answer, and NEVER asked again. " +
     "confirm: for each REQUIRED requirement that is not_shown, one short friendly yes/no question to the candidate ('you'), e.g. 'Do you have hands-on experience with NetSuite?'. " +
     "reason: one short sentence on why they fit the employer. why_role: two short sentences to the candidate ('you') on why this role is a great match for THEM (the work, the step up, the setup, the location, the pay). Warm, specific, honest. " +
     "bullets: 3 selling points for the hiring manager, each under 15 words, anonymous. " +
@@ -143,7 +161,8 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
     "questions: up to 2 short, friendly questions about the 'discuss' items in requirements only (role, level, location, work setup, employment type, pay); never about the job description's requirements (those are asked in confirm) and never repeating a confirm question. [] when none. NEVER name the employer anywhere.";
   const list = items.map((x, i) => `${i + 1}. ${x.item} (${x.required ? "required" : "nice to have"})`).join("\n");
   const text = `${cv.text}Employer (only for the worked_at_employer check; never mention it anywhere else): ${lead.company}${lead.company_domain ? " (" + lead.company_domain + ")" : ""}\n\nJob: ${lead.job_title}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${role.workSetup ? "\nWork setup: " + role.workSetup : ""}${role.employmentType ? "\nEmployment type: " + role.employmentType : ""}\nWhat the job is: ${role.summary}\n\n` +
-    `Employer's industry: ${role.industry || "unknown"}\n\nRequirements from the job description:\n${list}\n\nCandidate profile: ${anonSummary(c)}\n${lookingFor(c)}`;
+    `Employer's industry: ${role.industry || "unknown"}\n\nRequirements from the job description:\n${list}\n\nCandidate profile: ${anonSummary(c)}\n${lookingFor(c)}` +
+    (earlier ? `\n\nTheir earlier answers to our questions (never ask these again):\n${earlier}` : "");
   const out = await askAI(sys, cv.blocks.length ? [...cv.blocks, { type: "text", text }] : text, 3000);
   const byN = new Map<number, any>();
   for (const x of Array.isArray(out?.checks) ? out.checks : []) byN.set(Number(x?.n), x);
@@ -240,13 +259,45 @@ export async function leadRoleJob(admin: any, lead: any): Promise<string> {
   lead.converted_job_id = j.id;
   return j.id;
 }
-async function pitchLink(admin: any, jobId: string, candidateId: string): Promise<string | null> {
-  const { data: cur } = await admin.from("candidate_jobs").select("id,stage").eq("job_id", jobId).eq("candidate_id", candidateId).maybeSingle();
+// The role card on the candidate's profile for a pitched role IS the pitch screening: its fit,
+// verdict and requirement checklist (from the job description, read against their CV). Because the
+// card arrives already screened, the automatic AI screening doesn't run again and never drafts a
+// second round of questions: everything we need to ask is in the one pitch email.
+const CARD_VERDICT: Record<string, string> = { "Perfect fit": "Perfect fit", "Good fit": "Good fit", "Not a fit": "Reject" };
+export function pitchCard(o: any) {
+  const checks: any[] = Array.isArray(o?.jd_check) ? o.jd_check : [];
+  const requirements = checks.slice(0, 25).map((c: any) => ({
+    requirement: clip(c?.item, 160), type: c?.required !== false && !c?.info ? "must" : "preferred",
+    status: ["met", "confirmed"].includes(c?.status) ? "met" : c?.status === "not_met" ? "not met" : "partial",
+    evidence: clip(c?.evidence || (c?.status === "not_shown" ? "Not on their CV: asked in the pitch email" : ""), 240),
+  })).filter((r: any) => r.requirement);
+  const toConfirm = checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "not_shown").map((c: any) => "To confirm: " + clip(c.item, 140));
+  const notMet = checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "not_met").map((c: any) => clip(c.item, 160));
+  return {
+    stage: "first", source: "pitch",
+    summary: clip([o?.reason, toConfirm.length ? `Screened against the employer's job description; ${toConfirm.length === 1 ? "one requirement is" : toConfirm.length + " requirements are"} asked in the pitch email.` : "Screened against the employer's job description."].filter(Boolean).join(" "), 1200),
+    strengths: (Array.isArray(o?.bullets) ? o.bullets : []).slice(0, 6).map((b: unknown) => clip(b, 160)),
+    gaps: [...notMet, ...toConfirm].slice(0, 6),
+    score: o?.fit ?? 0, verdict: CARD_VERDICT[o?.verdict] || "Possible fit", verdict_reason: clip(o?.reason, 400),
+    requirements, usedResume: true, answersUsed: 0, updatedAt: new Date().toISOString(), followups: null,
+  };
+}
+// The pitch email's questions, saved on the card as Q&A pairs (answers filled in when they reply).
+export const pitchPairs = (o: any) => (Array.isArray(o?.questions) ? o.questions : [])
+  .map((q: any, i: number) => ({ q: clip(typeof q === "string" ? q : q?.q, 300), a: String((Array.isArray(o?.answers) ? o.answers[i] : "") || "") })).filter((x: any) => x.q);
+
+async function pitchLink(admin: any, jobId: string, candidateId: string, o: any = null): Promise<string | null> {
+  const { data: cur } = await admin.from("candidate_jobs").select("id,stage,ai,screening_answers").eq("job_id", jobId).eq("candidate_id", candidateId).maybeSingle();
   if (cur) {
-    if (["Withdrawn", "Rejected"].includes(cur.stage)) await admin.from("candidate_jobs").update({ stage: "In review" }).eq("id", cur.id);
+    const patch: Record<string, unknown> = {};
+    if (["Withdrawn", "Rejected"].includes(cur.stage)) patch.stage = "In review";
+    if (o && !cur.ai?.stage) { patch.ai = { ...pitchCard(o), ...(cur.ai?.auto ? { auto: cur.ai.auto } : {}) }; patch.fit = o.fit ?? null; }
+    if (o && !(Array.isArray(cur.screening_answers) && cur.screening_answers.length)) patch.screening_answers = pitchPairs(o);
+    if (Object.keys(patch).length) await admin.from("candidate_jobs").update(patch).eq("id", cur.id);
     return cur.id;
   }
-  const { data, error } = await admin.from("candidate_jobs").insert({ candidate_id: candidateId, job_id: jobId, stage: "In review", candidate_response: "accepted", keep_other_roles: true }).select("id").single();
+  const { data, error } = await admin.from("candidate_jobs").insert({ candidate_id: candidateId, job_id: jobId, stage: "In review", candidate_response: "accepted", keep_other_roles: true,
+    ...(o ? { ai: pitchCard(o), fit: o.fit ?? null, screening_answers: pitchPairs(o) } : {}) }).select("id").single();
   if (error) { console.error("pitch link", error.message); return null; }
   return data.id;
 }
@@ -335,7 +386,7 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   // Their own chat for this pitch, with the notice as its first message.
   let linkId = o.candidate_job_id;
   if (!linkId) {
-    try { linkId = await pitchLink(admin, await leadRoleJob(admin, lead), c.id); } catch (e) { console.error("pitch role", String((e as Error)?.message || e)); }
+    try { linkId = await pitchLink(admin, await leadRoleJob(admin, lead), c.id, o); } catch (e) { console.error("pitch role", String((e as Error)?.message || e)); }
     if (linkId) await admin.from("lead_offers").update({ candidate_job_id: linkId }).eq("id", o.id);
   }
   const facts = factsOf(lead);
@@ -400,6 +451,13 @@ export async function updateOffer(admin: any, offerId: string, patch: { whyRole?
   return { ok: true, message: "Saved" };
 }
 
+// The role card on their profile lists the pitch questions (unanswered until they reply): kept in
+// step when a question is added or removed.
+async function syncCardQuestions(admin: any, linkId: string | null, questions: any[]) {
+  if (!linkId) return;
+  await admin.from("candidate_jobs").update({ screening_answers: pitchPairs({ questions }) }).eq("id", linkId);
+}
+
 // Rec Ops / Admin: a question the AI missed, added before the candidate answers. A yes/no
 // question shows Yes / No buttons on their page. Once they've answered (or are already through to
 // the pitch), ask in their chat instead.
@@ -407,26 +465,29 @@ export const MAX_QUESTIONS = 6;
 export async function addQuestion(admin: any, offerId: string, q: unknown, yesno: boolean) {
   const text = String(q || "").trim().slice(0, 240);
   if (text.length < 5) throw new Error("Write the question first");
-  const { data: o } = await admin.from("lead_offers").select("id,status,questions,answers").eq("id", offerId).maybeSingle();
+  const { data: o } = await admin.from("lead_offers").select("id,status,questions,answers,candidate_job_id").eq("id", offerId).maybeSingle();
   if (!o) throw new Error("Not found");
   if (Array.isArray(o.answers) && o.answers.length) throw new Error("They've already answered. Ask in their chat instead");
   if (!["draft", "notified", "reminded", "no_email", "acknowledged"].includes(o.status)) throw new Error("They're already through to the pitch. Ask in their chat instead");
   const qs: any[] = Array.isArray(o.questions) ? o.questions : [];
   if (qs.length >= MAX_QUESTIONS) throw new Error(`Up to ${MAX_QUESTIONS} questions`);
-  await admin.from("lead_offers").update({ questions: [...qs, yesno ? { q: text, yesno: true } : { q: text }] }).eq("id", o.id);
+  const next = [...qs, yesno ? { q: text, yesno: true } : { q: text }];
+  await admin.from("lead_offers").update({ questions: next }).eq("id", o.id);
+  await syncCardQuestions(admin, o.candidate_job_id, next);
   return { ok: true, message: o.status === "draft" ? "Question added" : "Question added. They'll see it when they acknowledge" };
 }
 
 // Rec Ops / Admin: drop a question we don't need. With none left, someone who has acknowledged is
 // ready for the pitch.
 export async function removeQuestion(admin: any, me: { id: string; name: string }, offerId: string, index: number) {
-  const { data: o } = await admin.from("lead_offers").select("id,status,questions,answers").eq("id", offerId).maybeSingle();
+  const { data: o } = await admin.from("lead_offers").select("id,status,questions,answers,candidate_job_id").eq("id", offerId).maybeSingle();
   if (!o) throw new Error("Not found");
   if (Array.isArray(o.answers) && o.answers.length) throw new Error("They've already answered");
   const qs = (Array.isArray(o.questions) ? o.questions : []).filter((_: unknown, i: number) => i !== index);
   const upd: Record<string, unknown> = { questions: qs };
   if (!qs.length && o.status === "acknowledged") Object.assign(upd, { status: "ready", ready_at: new Date().toISOString() });
   await admin.from("lead_offers").update(upd).eq("id", o.id);
+  await syncCardQuestions(admin, o.candidate_job_id, qs);
   return { ok: true, message: qs.length ? "Question removed" : o.status === "acknowledged" ? "Question removed. They're ready for the pitch" : "Question removed" };
 }
 
