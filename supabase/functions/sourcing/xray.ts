@@ -223,7 +223,8 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
   const siteList = (Object.keys(SITES) as SiteKey[]).filter((k) => k !== "linkedin").map((k) => `${k} (${SITES[k].label}, query starts "${SITES[k].prefix}")`).join("; ");
   const sys = "You are an expert technical and executive sourcer who writes Google X-ray searches to find people's public profiles for one job. Reply with STRICT JSON only: " +
     "{\"technical\": boolean, \"checklist\": string[], \"linkedin\": string[], \"sites\": [{\"site\": string, \"query\": string}], \"github\": {\"locations\": string[], \"languages\": string[], \"keywords\": string} | null, " +
-    "\"competitors\": string[], \"client_names\": string[]}. " +
+    "\"competitors\": string[], \"client_names\": string[], \"titles\": string[]}. " +
+    "titles: 3 to 5 title variants people in this job actually write in their LinkedIn headline, most common first (e.g. for 'SOC Analyst L3': 'Senior SOC Analyst', 'SOC Analyst', 'Security Analyst', 'Incident Responder'); never internal levels like 'L3' alone. " +
     "competitors: when the hiring company is named, 4 to 9 real companies that compete with it directly (same products or services, same customers, hiring the same kind of people), " +
     "biggest employers of this role's people first, preferring ones with staff in the job's country or search area; their usual names as people write them on LinkedIn (e.g. 'Deloitte', not 'Deloitte Touche Tohmatsu Limited'). " +
     "Only companies you are confident exist and compete with it; never the hiring company itself, its parent or subsidiaries, and never recruitment agencies. [] when the hiring company isn't named or you don't know it. " +
@@ -234,7 +235,12 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
     "Keep each under 30 words. Spread the locations of the search area across the queries so together they cover it, and vary the title groups and terms so the queries don't repeat each other. Never include the hiring company's name. Use Google syntax: \"A\" OR \"B\" inside parentheses. " +
     "technical: true for software, data, IT, engineering, security, DevOps, ML/AI, product design and similar roles. " +
     `sites: only when technical (otherwise []): up to 4 queries on the sites that suit this role, from: ${siteList}. Each query starts with that site's prefix, then quoted skills/titles and a location term; under 25 words. ` +
-    "github: only when technical and code matters for the role (otherwise null): locations = up to 3 places as people write them on GitHub, for on-site / hybrid roles the office city first then the biggest nearby cities in the search area (e.g. 'Austin', 'Round Rock'), for remote roles the country (e.g. 'Nigeria'); " +
+    "github: only when technical and people doing this job share work on GitHub (software, data, DevOps, ML, and security / SOC / detection / DFIR roles), otherwise null: " +
+    "locations = up to 3 places as people write them on GitHub, for on-site / hybrid roles the office city first then the biggest nearby cities in the search area (e.g. 'Austin', 'Round Rock'), for remote roles the country (e.g. 'Nigeria'); " +
+    "languages = the role's 1 or 2 main programming languages as GitHub names them (e.g. 'Python', 'TypeScript', 'Go'), the one the job description stresses most first, or [] when the job isn't about one language (e.g. SOC and security analysts); " +
+    "topics = 4 to 8 short lowercase words or GitHub topics that would appear in the names, descriptions or topics of repositories by someone doing THIS job, from the job description " +
+    "(e.g. SOC / security: 'sigma', 'yara', 'siem', 'threat-hunting', 'dfir', 'incident-response', 'splunk', 'kql'; data engineer: 'airflow', 'dbt', 'spark', 'etl'; mobile: 'android', 'kotlin', 'jetpack'); " +
+    "keywords = usually '' (it only matches names, so leave it empty unless told otherwise).";
     "languages = the role's 1 or 2 main programming languages as GitHub names them (e.g. 'Python', 'TypeScript', 'Go'), the one the job description stresses most first; keywords = usually '' (it only matches names, so leave it empty unless told otherwise).";
   const client = knownClient(job);
   const text = jobBrief(job, false) +
@@ -269,7 +275,10 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
   // People at the competitors: up to 3 searches, 3 competitors each, with the job's main titles and
   // places (narrowed for on-site / hybrid roles like the other searches).
   const q = (t: string) => `"${t.replace(/"/g, "")}"`;
-  const mainTitles = [...new Set([job.role_title, ...titles].filter(Boolean))].slice(0, 3) as string[];
+  // The titles people actually write (from the plan), not just the job's own title: "SOC Analyst L3"
+  // is rarely in a headline, "Senior SOC Analyst" is.
+  const variants = (Array.isArray(out?.titles) ? out.titles : []).map((t: unknown) => clip(t, 60)).filter(Boolean);
+  const mainTitles = [...new Set([...variants, ...titles, job.role_title].filter(Boolean))].slice(0, 3) as string[];
   const placeList = onsite ? [officeCity, ...((guide?.locations || []) as string[]), ...((area?.locations || []) as string[])].filter((p) => p && !broadPlace(p)) : jobCountryNames(job);
   const placesQ = [...new Set(placeList)].slice(0, 3) as string[];
   const competitorQueries: string[] = [];
@@ -295,8 +304,9 @@ async function plan(job: any, area: any, lessons: string[], titles: string[], gu
       const g = out?.github;
       if (!out?.technical || !g) return null;
       const list = (v: unknown, one: unknown, n: number) => [...new Set([...(Array.isArray(v) ? v : []), one].map((x) => clip(x, 60)).filter(Boolean))].slice(0, n) as string[];
-      const plan: GithubPlan = { locations: list(g.locations, g.location, 3), languages: list(g.languages, g.language, 2), keywords: clip(g.keywords, 60) };
-      return plan.locations!.length || plan.languages!.length ? plan : null;
+      const topics = [...new Set((Array.isArray(g.topics) ? g.topics : []).map((x: unknown) => clip(x, 40).toLowerCase()).filter((x: string) => x.length > 1))].slice(0, 8) as string[];
+      const plan: GithubPlan = { locations: list(g.locations, g.location, 3), languages: list(g.languages, g.language, 2), topics, keywords: clip(g.keywords, 60) };
+      return plan.locations!.length || plan.languages!.length || topics.length ? plan : null;
     })(),
   };
 }
@@ -509,7 +519,7 @@ async function xrayStep(admin: any, jobId: string, s: Settings, run: string) {
         const g: GithubPlan = cp.github;
         const hits = await githubUsers(g, 30);
         used.github = (used.github || 0) + 1;
-        for (const h of hits) add(h, `GitHub users: ${[g.keywords, ...(g.locations || [g.location]), ...(g.languages || [g.language])].filter(Boolean).join(", ")}`);
+        for (const h of hits) add(h, `GitHub users: ${[g.keywords, ...(g.locations || [g.location]), ...(g.languages || [g.language]), ...(g.topics || []).map((t) => "#" + t)].filter(Boolean).join(", ")}`);
       } catch (e) { errors.push(errMsg(e).slice(0, 200)); }
       cp = { ...cp, githubDone: true };
     }
