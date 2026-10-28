@@ -49,10 +49,11 @@ export function pitchCands(l: any, viewUrl: string) {
 }
 // Why the score is what it is, for the client: how many of their job description's requirements the
 // candidate meets (and any still to confirm), and how the role fits what the candidate wants
-// (matches / to discuss, never the candidate's own figures).
+// (only what we've checked matches, never the candidate's own figures). Items still "to discuss"
+// stay between us and the candidate: the client never sees them.
 export function pitchFacts(m: any) {
   const js = jdSummary(m?.jd);
-  const wants: { item: string; ok: boolean }[] = (Array.isArray(m?.requirements) ? m.requirements : []).filter((q: any) => q?.item).map((q: any) => ({ item: String(q.item), ok: q.status === "met" }));
+  const wants: { item: string; ok: boolean }[] = (Array.isArray(m?.requirements) ? m.requirements : []).filter((q: any) => q?.item && q.status === "met").map((q: any) => ({ item: String(q.item), ok: true }));
   return { reqTotal: js.total, reqMet: js.met.length, toConfirm: js.toConfirm.map((x: any) => String(x.item)), wants };
 }
 
@@ -74,7 +75,7 @@ export function leadText(l: any) {
     (c.reqTotal ? `\nMeets ${c.reqMet} of ${c.reqTotal} requirements in your job description${c.fit != null ? " (fit " + c.fit + "%)" : ""}` : "") +
     `\n${c.musts.map((x: string) => "- " + x).join("\n")}` +
     (c.toConfirm.length ? `\nStill to confirm: ${c.toConfirm.join("; ")}` : "") +
-    (c.wants.length ? `\nWhat they're looking for: ${c.wants.map((w) => w.item + (w.ok ? " matches" : " to discuss")).join(", ")}` : "") +
+    (c.wants.length ? `\nWhat they're looking for: ${c.wants.map((w) => w.item + " \u2713").join(", ")}` : "") +
     `\nView the anonymised resume: ${c.url}`).join("\n\n") +
     "\n\nWe don't charge to arrange interviews. We only bill a fee when you hire our candidate.";
 }
