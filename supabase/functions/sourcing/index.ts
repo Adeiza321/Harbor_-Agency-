@@ -160,6 +160,25 @@ async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   return { processed: (pending || []).length, kept, pitched, errors };
 }
 
+// Straight away (database triggers, not the 10-minute run): a candidate's blind resume was checked,
+// or a candidate on a pitch became ready (acknowledged / answered). Every lead still waiting on them
+// gets its pitch written now, and queued if sending is automatic.
+async function pitchReady(admin: any, s: any, agencyName: string, f: { leadId?: string; candidateId?: string }) {
+  let q = admin.from("leads").select("*").or("status.eq.awaiting,and(status.eq.new,pitch_body.is.null)");
+  if (f.leadId) q = q.eq("id", f.leadId);
+  else if (f.candidateId) q = q.contains("matches", [{ candidate_id: f.candidateId }]);
+  else return { pitched: 0 };
+  const { data: leads } = await q.limit(10);
+  let pitched = 0; const errors: string[] = [];
+  for (const l of leads || []) {
+    try {
+      const r: any = await pitchLead(admin, l, s);
+      if (r?.pitched) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [l.id], null, s, agencyName); }
+    } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
+  }
+  return { checked: (leads || []).length, pitched, errors };
+}
+
 // A company said it's interested (the button on the candidates page, or in the email): the contract
 // goes out by itself through the client sender (Outreach > Setup > Contract). Until a contract is
 // set up, every active Admin is told once so they can send it themselves.
@@ -304,6 +323,7 @@ async function handle(req: Request): Promise<Response> {
         return json({ ok: true, ...r, locations: loc });
       }
       if (body.action === "location_sweep") return json({ ok: true, ...(await locationSweep(admin, !!body.dry)) });
+      if (body.action === "pitch_ready") return json({ ok: true, ...(await pitchReady(admin, s, agencyName, { leadId: body.leadId ? String(body.leadId) : undefined, candidateId: body.candidateId ? String(body.candidateId) : undefined })) });
       if (body.action === "apollo_check") return json({ ok: true, ...(await apolloSendCheck()) });
       if (body.action === "search_check") return json({ ok: true, ...(await checkEngines(admin, body.q ? String(body.q) : undefined, String(body.only || ""), Array.isArray(body.models) ? body.models.map(String) : [])) });
       // The talent pool for one job (also checked automatically when a job goes live).
