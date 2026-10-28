@@ -445,7 +445,7 @@ function mapAll(d) {
     // Their one blind resume (made once, reused for every client link and pitch); checked = a Rec Ops/Admin approved it.
     // "Open to new roles" (their candidate page): off = not put forward until THEY turn it back on
     // (open_paused_until is when we email to ask, a year on). looking: their last answer.
-    open: c.open_to_roles !== false, pausedUntil: c.open_to_roles === false ? c.open_paused_until || null : null, looking: c.looking || null,
+    open: c.open_to_roles !== false, pausedUntil: c.open_to_roles === false ? c.open_paused_until || null : null, looking: c.looking || null, optedOut: !!c.email_opt_out,
     blind: c.blind_pages ? { pages: c.blind_pages, at: c.blind_at, by: c.blind_by ? pname(c.blind_by) : "", checkedAt: c.blind_checked_at || null, checkedBy: c.blind_checked_by ? pname(c.blind_checked_by) : "" } : null,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
@@ -5997,7 +5997,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <StatusPill status={status} />
               {candidate.recruiter && <Pill tone="neutral">Sourced by {candidate.recruiter}</Pill>}
               <span title="Whether they agreed, on their candidate page, to be presented anonymously to other employers"><Pill tone={candidate.pitchConsent ? "em" : "neutral"}>{candidate.pitchConsent ? "Open to anonymous pitches" : candidate.pitchAnswered ? "Declined pitches" : "Not asked about pitches yet"}</Pill></span>
-              {candidate.open === false && <span title="'Open to new roles' is off (they turned it off, said no to other roles, didn't answer the last reminder, or started a new job). They aren't put forward until they turn it back on; we email to ask on the date shown"><Pill tone="warn">{"Not active" + (candidate.pausedUntil ? " · we ask again " + new Date(candidate.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "")}</Pill></span>}
+              {candidate.open === false && <span title="'Open to new roles' is off (they turned it off, said no to other roles, didn't answer the last reminder, or started a new job). They aren't put forward until they turn it back on; we email to ask on the date shown"><Pill tone="warn">{"Not active" + (candidate.optedOut ? " · unsubscribed, for good" : "") + (!candidate.optedOut && candidate.pausedUntil ? " · we ask again " + new Date(candidate.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "")}</Pill></span>}
               {candidate.emailOptOut && <span title="They clicked unsubscribe in one of our emails. ProNext no longer emails them; contact them another way."><Pill tone="danger">Unsubscribed from emails</Pill></span>}
             </div>
             {reassign && (
@@ -10269,7 +10269,7 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
       )}
       {offers.slice().sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (b.fit || 0) - (a.fit || 0)).map((o) => {
         const c = S.cands.find((x) => x.id === o.candidate_id);
-        const [label, tone] = o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : o.status === "withdrawn" && o.withdrawn_by === "no_response" ? ["No response", "neutral"] : PITCH_STATE[o.status];
+        const [label, tone] = o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : o.status === "withdrawn" && o.withdrawn_by === "no_response" ? ["No response", "neutral"] : o.status === "withdrawn" && o.withdrawn_by === "unsubscribed" ? ["Unsubscribed", "neutral"] : PITCH_STATE[o.status];
         const reqs = Array.isArray(o.requirements) ? o.requirements : [];
         const rawQs = (Array.isArray(o.questions) ? o.questions : []).filter((q) => (typeof q === "string" ? q : q && q.q));
         const qs = rawQs.map((q) => (typeof q === "string" ? q : q.q));
@@ -10835,14 +10835,30 @@ function EmailChoiceNote({ token, onChanged, onPitchYes }) {
     const clear = () => { const u = new URL(window.location.href); u.searchParams.delete("pitch"); u.searchParams.delete("unsub"); window.history.replaceState({}, "", u.toString()); };
     const fail = () => setMsg({ err: true, text: "We couldn't record that. Please try the link in the email again." });
     if (unsub) {
-      sbFetch("/rest/v1/rpc/candidate_email_prefs", { method: "POST", body: { p_token: token, p_out: true } })
-        .then(() => { clear(); setMsg({ text: "You've been unsubscribed. We won't send you any more emails." }); }).catch(fail);
+      // Asked first: a mail scanner opening the link mustn't unsubscribe anyone.
+      setMsg({ ask: true });
     } else if (pitch === "yes" || pitch === "no") {
       sbFetch("/rest/v1/rpc/candidate_set_pitch_consent", { method: "POST", body: { p_token: token, p_consent: pitch === "yes" } })
         .then(() => { clear(); if (pitch === "yes" && onPitchYes) onPitchYes(); else setMsg({ text: "No problem. We won't pitch your profile to other employers." }); if (onChanged) onChanged(); }).catch(fail);
     }
   }, [token]);
   if (!msg) return null;
+  if (msg.ask) {
+    const clear = () => { const u = new URL(window.location.href); u.searchParams.delete("unsub"); window.history.replaceState({}, "", u.toString()); };
+    const yes = () => { setMsg({ ask: true, busy: true }); sbFetch("/rest/v1/rpc/candidate_email_prefs", { method: "POST", body: { p_token: token, p_out: true } })
+      .then(() => { clear(); setMsg({ text: "You've been unsubscribed. We won't email you or put your profile forward for roles. If you change your mind, turn on Open to new roles on this page." }); if (onChanged) onChanged(); })
+      .catch(() => setMsg({ err: true, text: "We couldn't record that. Please try again." })); };
+    return (
+      <div className="text-sm rounded-xl px-3.5 py-3" style={{ background: C.soft, border: "1px solid " + C.line }}>
+        <div className="font-medium">Unsubscribe from ProNext emails?</div>
+        <div className="mt-0.5" style={{ color: C.ink2 }}>We'll stop emailing you, and we won't put your profile forward for roles.</div>
+        <div className="flex gap-2 mt-2.5">
+          <Btn kind="primary" disabled={!!msg.busy} onClick={yes}>{msg.busy ? "One moment…" : "Yes, unsubscribe"}</Btn>
+          <Btn disabled={!!msg.busy} onClick={() => { clear(); setMsg(null); }}>Keep my emails</Btn>
+        </div>
+      </div>
+    );
+  }
   return <div className="text-sm rounded-xl px-3.5 py-2.5" style={msg.err ? { background: C.dangerBg, color: C.dangerFg } : { background: C.emTint, color: C.em }}>{msg.text}</div>;
 }
 
