@@ -11,9 +11,11 @@ export function pitchCard(o: any) {
   const requirements = checks.slice(0, 25).map((c: any) => ({
     requirement: clip(c?.item, 160), type: c?.required !== false && !c?.info ? "must" : "preferred",
     status: ["met", "confirmed"].includes(c?.status) ? "met" : c?.status === "not_met" ? "not met" : "partial",
-    evidence: clip(c?.evidence || (c?.status === "not_shown" ? "Not on their CV: asked in the pitch email" : ""), 240),
+    evidence: clip(c?.status === "partial" ? (c?.evidence ? c.evidence + ": " : "") + "likely, asked in the pitch email to confirm" : c?.evidence || (c?.status === "not_shown" ? "Not on their CV: asked in the pitch email" : ""), 240),
   })).filter((r: any) => r.requirement);
-  const toConfirm = checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "not_shown").map((c: any) => "To confirm: " + clip(c.item, 140));
+  const toConfirm = [
+    ...checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "partial").map((c: any) => "To confirm (likely, counts): " + clip(c.item, 130)),
+    ...checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "not_shown").map((c: any) => "To confirm: " + clip(c.item, 140))];
   const notMet = checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "not_met").map((c: any) => clip(c.item, 160));
   return {
     stage: "first", source: "pitch",
