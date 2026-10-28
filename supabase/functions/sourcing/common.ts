@@ -13,6 +13,8 @@ export type Settings = {
   pdlEmailsPerDay: number;             // most X-ray people looked up in People Data Labs per day when Apollo had no email (0 = off)
   pdlPerSearch: number;                // most people one People Data Labs search returns (1 credit each)
   dailyCap: number;                    // most outreach emails sent per day
+  clientSender: "auto" | "brevo";      // client pitches: the outreach sender (Apollo...) or Brevo (for now)
+  clientBrevoPerDay: number;           // most client pitch emails through Brevo per day
   senderName: string; senderTitle: string; businessAddress: string;
   footerName: string;                  // company name in footers: Agency settings' full name, else the agency name
   includePay: boolean;                 // mention the pay range in candidate outreach
@@ -49,6 +51,8 @@ export async function loadSettings(admin: any): Promise<{ s: Settings; agencyNam
       emailLookup: ["apollo", "contactout"].includes(o.emailLookup) ? o.emailLookup : "apollo_only",
       pdlPerSearch: num(o.pdlPerSearch, 20, 5, 100),
       dailyCap: num(o.dailyCap, 40, 1, 1000),
+      clientSender: o.clientSender === "brevo" ? "brevo" : "auto",
+      clientBrevoPerDay: num(o.clientBrevoPerDay, 15, 1, 100),
       senderName: String(o.senderName || "").trim(),
       senderTitle: String(o.senderTitle || "").trim(),
       businessAddress: addr,

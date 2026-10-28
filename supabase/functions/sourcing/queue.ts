@@ -268,7 +268,14 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
   if (!room) return { sent: 0, capped: true, message: `Today's limit of ${s.dailyCap} emails is reached; the rest go out tomorrow.` };
   const { data: batch } = await admin.from("outreach_messages").select("*").eq("status", "queued").in("kind", ready).order("created_at").limit(Math.min(max, room));
   let sent = 0, failed = 0;
+  // Client pitches through Brevo share the candidate emails' account: a small daily cap of their own.
+  let brevoLeft = Infinity;
+  if (provider("client") === "brevo") {
+    const { count } = await admin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").eq("provider", "brevo").gte("sent_at", since.toISOString());
+    brevoLeft = Math.max(0, s.clientBrevoPerDay - (count || 0));
+  }
   for (const m of batch || []) {
+    if (m.kind === "client" && provider("client") === "brevo") { if (brevoLeft <= 0) continue; brevoLeft--; }
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(m.to_email)).maybeSingle();
     if (sup) { await admin.from("outreach_messages").update({ status: "skipped", error: "Unsubscribed" }).eq("id", m.id); continue; }
     let first = "", last = "", company = "", token = "";

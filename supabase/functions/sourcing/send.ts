@@ -9,15 +9,27 @@
 //     Sends through the Gmail API from one outreach mailbox.
 //
 // With neither set, approved emails wait in the queue ("Waiting for a sender").
+//
+// Client pitches through Brevo (Outreach settings > "Send client pitches through", for now while
+// Apollo is down): BREVO_API_KEY + BREVO_SENDER_EMAIL, the same account as the candidate emails, so
+// it's kept to a small daily cap (clientBrevoPerDay). Candidate outreach never goes through Brevo.
+// Each send's Brevo message id is kept (provider_ref), so its delivered / opened / clicked /
+// bounced events (brevo-webhook -> email_events) show on the lead and in Email tracking.
 
 import { sendViaApollo } from "./apollo.ts";
 
-export type Provider = "apollo" | "instantly" | "gmail" | "none";
+export type Provider = "apollo" | "instantly" | "gmail" | "brevo" | "none";
+
+// Set once per request from Outreach settings (sourcing/index.ts).
+let clientMode: "auto" | "brevo" = "auto";
+export function useClientSender(mode: unknown) { clientMode = mode === "brevo" ? "brevo" : "auto"; }
+const brevoReady = () => !!(Deno.env.get("BREVO_API_KEY") && Deno.env.get("BREVO_SENDER_EMAIL"));
 
 // The sender for one kind of email. Client pitches go through Apollo only with their own
 // sequence (APOLLO_CLIENT_SEQUENCE_ID): the candidate sequence's follow-ups talk about a role and
 // "your background", which would be wrong for a hiring manager.
 export function provider(kind: "candidate" | "client" = "candidate"): Provider {
+  if (kind === "client" && clientMode === "brevo") return brevoReady() ? "brevo" : "none";
   const apolloSeq = kind === "client" ? Deno.env.get("APOLLO_CLIENT_SEQUENCE_ID") : Deno.env.get("APOLLO_SEQUENCE_ID");
   if (Deno.env.get("APOLLO_API_KEY") && apolloSeq) return "apollo";
   if (Deno.env.get("INSTANTLY_API_KEY") && Deno.env.get("INSTANTLY_CAMPAIGN_ID")) return "instantly";
@@ -144,8 +156,37 @@ async function sendGmail(m: OutMail, fromName: string): Promise<string> {
   return String(data?.id || "");
 }
 
+// A client pitch through Brevo: the email exactly as written (its own HTML with the candidates
+// button and unsubscribe link), replies to the agency, a one-click unsubscribe header, tagged.
+const b64 = (bytes: Uint8Array) => { let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(bin); };
+async function sendBrevoOutreach(m: OutMail, fromName: string): Promise<string> {
+  const key = Deno.env.get("BREVO_API_KEY")!, senderEmail = Deno.env.get("BREVO_SENDER_EMAIL")!;
+  const replyTo = Deno.env.get("OUTREACH_REPLY_TO") || "";
+  const html = m.html || `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;">${linkify(esc(m.body)).replace(/\n/g, "<br>")}</div>` +
+    (m.unsubUrl ? `<p style="font-size:12px;color:#8A8578;margin-top:24px;"><a href="${esc(m.unsubUrl)}" style="color:#8A8578;">Unsubscribe</a></p>` : "");
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json", "api-key": key },
+    body: JSON.stringify({
+      sender: { email: senderEmail, name: fromName || "ProNext" },
+      to: [{ email: m.to, ...(m.toName ? { name: m.toName } : {}) }],
+      ...(replyTo ? { replyTo: { email: replyTo, name: fromName || undefined } } : {}),
+      subject: m.subject, htmlContent: html, textContent: m.body,
+      ...(m.unsubUrl ? { headers: { "List-Unsubscribe": `<${m.unsubUrl}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } } : {}),
+      tags: ["client-pitch"],
+      ...(m.attachment ? { attachment: [{ name: m.attachment.name, content: b64(m.attachment.bytes) }] } : {}),
+    }),
+  });
+  const raw = await res.text().catch(() => "");
+  if (!res.ok) throw new Error("Brevo " + res.status + ": " + raw.slice(0, 200));
+  let id = "";
+  try { id = String(JSON.parse(raw)?.messageId || ""); } catch { /* keep '' */ }
+  return id;
+}
+
 export async function sendMail(m: OutMail, fromName: string): Promise<{ provider: Provider; ref: string }> {
   const p = provider(m.kind);
+  if (p === "brevo") return { provider: p, ref: await sendBrevoOutreach(m, fromName) };
   if (p === "apollo") return { provider: p, ref: await sendViaApollo(m) };
   if (p === "instantly") return { provider: p, ref: await sendInstantly(m) };
   if (p === "gmail") return { provider: p, ref: await sendGmail(m, fromName) };

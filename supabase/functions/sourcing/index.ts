@@ -15,7 +15,7 @@ import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
 import { theirstackKey } from "./theirstack.ts";
-import { provider } from "./send.ts";
+import { provider, useClientSender } from "./send.ts";
 import { requestSpend } from "./approvals.ts";
 import { cleanGuide, friendlyXrayError, runXrayStep, startXray, stepXrayQueue, stopXray, XRAY_STALE_MS } from "./xray.ts";
 import { sourcedInterest, sweepSourcedInterest } from "./sourced.ts";
@@ -229,6 +229,7 @@ async function handle(req: Request): Promise<Response> {
     const charged = aiCharge.getStore();
     if (charged) charged.feature = aiFeatureName(String(body.action || ""));
     const { s, agencyName } = await loadSettings(admin);
+    useClientSender(s.clientSender);
 
     // Scheduled runs.
     const opsKey = req.headers.get("x-harbor-ops") || "";
