@@ -12,6 +12,7 @@ import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortl
 import { addQuestion, notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
 import { stepOpenCheckins } from "./opencheck.ts";
+import { followupPause, followupPreview, followupSend, stepFollowupsDue } from "./pitchfollow.ts";
 import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadSpamCheck, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
@@ -248,6 +249,8 @@ async function handle(req: Request): Promise<Response> {
         try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
         try { out.contracts = await stepContracts(admin, s, agencyName); } catch (e) { out.contractsError = errMsg(e); }
         try { out.clientFollowups = await stepClientFollowups(admin); } catch (e) { out.clientFollowupsError = errMsg(e); }
+        // A pitch follow-up due: tell its sender and the Admins (they review and send it by hand).
+        try { out.pitchFollowups = await stepFollowupsDue(admin); } catch (e) { out.pitchFollowupsError = errMsg(e); }
         // No answer 3 days after the last reminder: off the role, "Open to new roles" off (every tick).
         try { out.noReply = await stepReminders(admin); } catch (e) { out.noReplyError = errMsg(e); }
         // Not active for a year: ask once whether they're looking again (never turned on by itself).
@@ -600,6 +603,14 @@ async function handle(req: Request): Promise<Response> {
       if (!l) return json({ error: "Lead not found" }, 404);
       // force: send now with the candidates who are ready, without waiting for the rest.
       return json(await pitchLead(admin, l, s, body.force === true));
+    }
+    // Follow-ups to a client pitch, reviewed and sent by hand (pitchfollow.ts).
+    if (["lead_followup", "lead_followup_send", "lead_followup_pause"].includes(action) && body.leadId) {
+      if (!isAdmin && me.role !== "recops") return json({ error: "Only Rec Ops or an Admin can do this" }, 403);
+      const id = String(body.leadId);
+      if (action === "lead_followup") return json(await followupPreview(admin, id, s, agencyName, body.subject || body.body ? { subject: body.subject ? String(body.subject) : "", body: body.body ? String(body.body) : "" } : undefined));
+      if (action === "lead_followup_pause") return json(await followupPause(admin, me, id, body.paused !== false, body.reason ? String(body.reason) : undefined));
+      return json(await followupSend(admin, me, id, { step: Number(body.step) || undefined, subject: body.subject, body: body.body, to: Array.isArray(body.to) ? body.to.map(String) : undefined }, s, agencyName));
     }
     // A lead's contacts: find on Apollo again, add by hand, make main, take off.
     if (action === "lead_contacts" && body.leadId) {

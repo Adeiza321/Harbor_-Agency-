@@ -192,7 +192,7 @@ export function templateEmail(m: { brand: Brand; region: Region; text: string; s
 
 // ---- Pieces shared by candidate outreach and client pitches, in the house email style ----
 // The note's first paragraph ("Hi Sarah,") becomes the heading, like every other ProNext email.
-function noteHtml(b: Brand, paragraphs: string[]) {
+export function noteHtml(b: Brand, paragraphs: string[]) {
   const ps = [...paragraphs];
   const hi = ps.length && /^(hi|hello|dear)\b[^.!?]{0,40},?$/i.test(ps[0]) ? ps.shift()! : "";
   return (hi ? `<div style="font-size:20px;margin-bottom:8px;">${esc(hi)}</div>` : "") +
@@ -202,7 +202,7 @@ function noteHtml(b: Brand, paragraphs: string[]) {
       return `<div style="font-size:15px;line-height:1.6;${i || hi ? "margin-top:12px;" : ""}">${esc(lead)}${list}</div>`;
     }).join("\n");
 }
-function signHtml(name: string, title: string, agency: string) {
+export function signHtml(name: string, title: string, agency: string) {
   if (!name) return "";
   const sub = [title, agency].filter(Boolean).join(", ");
   return `<div style="font-size:15px;line-height:1.5;margin-top:20px;">${esc(name)}${sub ? `<br><span style="font-family:Arial,sans-serif;font-size:13px;color:#56605A;">${esc(sub)}</span>` : ""}</div>`;

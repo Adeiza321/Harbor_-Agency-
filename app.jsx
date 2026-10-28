@@ -9501,6 +9501,131 @@ function SpamCheckPanel({ l, S, toast, onClose }) {
   );
 }
 
+// Follow-ups to a client pitch, sent by hand: 2, 5 and 7 business days after the pitch (a late one
+// pushes the next back). The card shows when the next is due; "Review follow-up" opens the drafted
+// email to edit and send. The server makes the final call on whether one can still go (they said
+// they're interested, signed, unsubscribed, bounced, the candidates withdrew, or it was stopped).
+const FOLLOWUP_GAPS = [2, 5, 7];
+const addBizDays = (from, n) => { const d = new Date(from); let left = n; while (left > 0) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w !== 0 && w !== 6) left--; } return d; };
+function leadFollowup(l) {
+  if (!l || l.status !== "contacted" || l.interested_at || (l.data && l.data.followups && l.data.followups.paused)) return null;
+  const ms = (Array.isArray(l.outreach_messages) ? l.outreach_messages : []).filter((m) => m.status === "sent" && m.sent_at && (!m.kind || m.kind === "client"));
+  const pitch = ms.filter((m) => m.followup == null).sort((a, b) => String(a.sent_at).localeCompare(String(b.sent_at)))[0];
+  if (!pitch) return null;
+  const fus = ms.filter((m) => m.followup != null);
+  const sent = fus.reduce((n, m) => Math.max(n, Number(m.followup) || 0), 0);
+  if (sent >= FOLLOWUP_GAPS.length) return null;
+  const step = sent + 1;
+  let due = addBizDays(pitch.sent_at, FOLLOWUP_GAPS[step - 1]);
+  const prev = fus.filter((m) => Number(m.followup) === sent).map((m) => m.sent_at).sort()[0];
+  if (prev) { const min = addBizDays(prev, FOLLOWUP_GAPS[step - 1] - FOLLOWUP_GAPS[step - 2]); if (min > due) due = min; }
+  return { step, due, isDue: due.getTime() <= Date.now() };
+}
+function FollowupChip({ f, onClick }) {
+  if (!f) return null;
+  const today = new Date(); const sameDay = f.due.toDateString() === today.toDateString();
+  return (
+    <button type="button" onClick={onClick} title="Review and send the follow-up" className="inline-flex">
+      <Pill tone={f.isDue ? "warn" : "neutral"}>{"Follow-up " + f.step + " of 3 " + (f.isDue ? (sameDay ? "due today" : "due") : "on " + f.due.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }))}</Pill>
+    </button>
+  );
+}
+const FOLLOWUP_STOPS = ["They replied", "Not interested", "Role filled", "Other"];
+function FollowupReview({ l, S, toast, onDone, onClose }) {
+  const [st, setSt] = useState(null);
+  const [f, setF] = useState(null);
+  const [to, setTo] = useState([]);
+  const [html, setHtml] = useState("");
+  const [view, setView] = useState("edit");
+  const [busy, setBusy] = useState("");
+  const [confirm, setConfirm] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const load = (edit) => S.sourcing("lead_followup", { leadId: l.id, ...(edit || {}) });
+  React.useEffect(() => {
+    load().then((r) => { setSt(r.state); if (r.draft) { setF({ subject: r.draft.subject, body: r.draft.body }); setHtml(r.html || ""); setTo(r.state.recipients.map((x) => x.email)); } })
+      .catch((e) => { S.error(e.message); onClose(); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const preview = () => { setView("preview"); setBusy("preview"); load(f).then((r) => setHtml(r.html || "")).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const send = () => { setBusy("send"); S.sourcing("lead_followup_send", { leadId: l.id, step: st.step, subject: f.subject, body: f.body, to })
+    .then((r) => { toast("Follow-up " + r.step + " sent" + (r.sent > 1 ? " to " + r.sent + " contacts" : "") + (r.errors && r.errors.length ? ". Not sent: " + r.errors.join("; ") : "")); onDone && onDone(); onClose(); })
+    .catch((e) => { S.error(e.message); setConfirm(false); }).finally(() => setBusy("")); };
+  const pause = (paused, reason) => { setBusy("pause"); S.sourcing("lead_followup_pause", { leadId: l.id, paused, reason })
+    .then(() => { toast(paused ? "Follow-ups stopped for " + l.company : "Follow-ups are back on"); onDone && onDone(); onClose(); }).catch((e) => S.error(e.message)).finally(() => setBusy("")); };
+  const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
+  const inpS = { borderColor: C.line, background: C.soft };
+  const fmt = (d) => new Date(d).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  return (
+    <Modal open onClose={onClose} wide title={st && st.step ? "Follow-up " + st.step + " of 3" : "Follow-ups"}>
+      {!st ? <div className="text-sm" style={{ color: C.ink2 }}>Loading…</div> : (
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="text-xs" style={{ color: C.ink2 }}>
+            {l.company} · {l.job_title}{st.pitchSentAt ? " · pitch sent " + fmt(st.pitchSentAt) : ""}
+            {st.history.map((h) => " · follow-up " + h.n + " sent " + fmt(h.at)).join("")}
+          </div>
+          {!st.step ? (
+            <>
+              <div className="rounded-lg px-3 py-2" style={{ background: C.canvas }}>No follow-up to send: {st.stopped}.</div>
+              {st.paused && <div className="flex justify-end"><Btn icon={CirclePlay} onClick={() => pause(false)} disabled={!!busy}>Turn follow-ups back on</Btn></div>}
+            </>
+          ) : (
+            <>
+              <div className="rounded-lg px-3 py-2 text-xs" style={{ background: st.due ? C.warnBg : C.canvas, color: st.due ? C.warnText : C.ink2 }}>
+                {st.due ? "Due now." : "Due " + fmt(st.dueAt) + ". You can send it early."} Nothing goes out until you press Send. It replies in the pitch's email thread, one email per contact, with the unsubscribe link.
+              </div>
+              <div>
+                <div className="text-xs font-medium mb-1" style={{ color: C.ink2 }}>To</div>
+                <div className="flex flex-col gap-1">
+                  {st.recipients.map((r) => (
+                    <label key={r.email} className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={to.includes(r.email)} onChange={(e) => setTo(e.target.checked ? to.concat(r.email) : to.filter((x) => x !== r.email))} />
+                      <span>{r.name ? r.name + " " : ""}<span style={{ color: C.ink2 }}>{"<" + r.email + ">"}</span></span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-1 text-xs">
+                {[["edit", "Edit"], ["preview", "Preview"]].map(([k, t]) => (
+                  <button key={k} type="button" onClick={() => (k === "preview" ? preview() : setView("edit"))} className="rounded-lg px-3 py-1.5 font-medium" style={{ background: view === k ? C.solid : C.canvas, color: view === k ? C.onSide : C.ink2 }}>{t}</button>
+                ))}
+              </div>
+              {view === "edit" ? (
+                <>
+                  <label className="text-xs font-medium" style={{ color: C.ink2 }}>Subject</label>
+                  <input value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} className={inp} style={inpS} />
+                  <label className="text-xs font-medium" style={{ color: C.ink2 }}>Message <span style={{ color: C.ink3 }}>("Hi there," becomes each contact's first name. The button to the candidates and the footer are added underneath.)</span></label>
+                  <textarea rows={13} value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} className={inp} style={inpS} />
+                </>
+              ) : (
+                <div className="rounded-lg border overflow-hidden" style={{ borderColor: C.line }}>
+                  {busy === "preview" ? <div className="p-3 text-xs" style={{ color: C.ink2 }}>Loading preview…</div> : <iframe title="Follow-up preview" srcDoc={html} className="w-full" style={{ height: 460, background: "#fff", border: 0 }} />}
+                </div>
+              )}
+              {stopping ? (
+                <div className="rounded-lg px-3 py-2 flex flex-wrap items-center gap-2" style={{ background: C.canvas }}>
+                  <span className="text-xs" style={{ color: C.ink2 }}>Why stop?</span>
+                  {FOLLOWUP_STOPS.map((x) => <Btn key={x} onClick={() => pause(true, x)} disabled={!!busy}>{x}</Btn>)}
+                  <Btn onClick={() => setStopping(false)}>Cancel</Btn>
+                </div>
+              ) : confirm ? (
+                <div className="rounded-lg px-3 py-2 flex flex-wrap items-center gap-2" style={{ background: C.soft, border: "1px solid " + C.line }}>
+                  <span className="flex-1 min-w-[12rem]">Send follow-up {st.step} to {to.length === 1 ? to[0] : to.length + " contacts, each their own email"}? It can't be unsent.</span>
+                  <Btn onClick={() => setConfirm(false)} disabled={!!busy}>Cancel</Btn>
+                  <Btn kind="primary" icon={Send} onClick={send} disabled={!!busy}>{busy === "send" ? "Sending…" : "Yes, send"}</Btn>
+                </div>
+              ) : (
+                <div className="flex flex-wrap justify-between gap-2">
+                  <Btn icon={CirclePause} onClick={() => setStopping(true)} disabled={!!busy}>Stop follow-ups</Btn>
+                  <Btn kind="primary" icon={Send} onClick={() => setConfirm(true)} disabled={!!busy || !to.length || !f.subject.trim() || !f.body.trim()}>Send follow-up {st.step}</Btn>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // What came back from Apollo on an email ProNext sent through a sequence (apollo-sync).
 const APOLLO_REPLY = {
   willing_to_meet: "Wants to talk", follow_up_question: "Asked a question", person_referral: "Referred someone else",
@@ -10409,6 +10534,8 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
   const inp = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
   const inpS = { borderColor: C.line, background: C.soft };
   const convert = () => S.sourcing("convert_lead", { leadId: l.id }).then(() => { toast("Draft job created. Find it under Jobs."); onChanged(); S.reload && S.reload(); }).catch((e) => S.error(e.message));
+  const fu = leadFollowup(l);
+  const staff = S && (S.role === "admin" || S.role === "recops");
   return (
     <div className="rounded-xl border p-3" style={{ borderColor: C.line }}>
       <div className="flex items-start gap-3">
@@ -10424,6 +10551,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
             </button>
             <div className="flex items-center gap-2 shrink-0">
               <LeadAttention l={l} offers={offers} />
+              {staff && <FollowupChip f={fu} onClick={() => setPanel("followup")} />}
               <Pill tone={l.channel === "email" ? "em" : l.channel === "linkedin" ? "info" : "neutral"}>{l.channel === "email" ? "Email" : l.channel === "linkedin" ? "LinkedIn" : "No contact"}</Pill>
               <select value={l.status} onChange={(e) => patch({ status: e.target.value, ...(e.target.value === "contacted" && !l.contacted_at ? { contacted_at: new Date().toISOString() } : {}) }, "Moved to " + (LEAD_LABEL[e.target.value] || e.target.value))} className="text-xs rounded-lg border px-2 py-1 bg-white" style={{ borderColor: C.line }}>
                 {Object.keys(LEAD_LABEL).map((k) => <option key={k} value={k}>{LEAD_LABEL[k]}</option>)}
@@ -10499,6 +10627,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
               { label: l.status === "queued" ? "Send to client now" : "Send to client", icon: Send, onClick: () => setPanel("send"),
                 hidden: !(l.channel === "email" && ["new", "approved", "queued"].includes(l.status) && leadSendTo(l).length),
                 disabled: dirty, title: dirty ? "Save your changes first" : "" },
+              { label: "Review follow-up", icon: Forward, onClick: () => setPanel("followup"), hidden: !(staff && l.channel === "email" && l.status === "contacted") },
               { label: "Check spam score", icon: ScanSearch, onClick: () => setPanel("spam"), hidden: l.channel !== "email" },
               { label: "Email me a test", icon: Mail, onClick: sendTest },
             ]} />}
@@ -10512,6 +10641,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
             {l.converted_job_id && <Pill tone="em">Job created</Pill>}
           </div>
           </>}
+          {S && panel === "followup" && <FollowupReview l={l} S={S} toast={toast} onDone={onChanged} onClose={() => setPanel("")} />}
         </div>
       </div>
     </div>
@@ -10657,7 +10787,9 @@ function CampaignsPage({ toast, S }) {
   const load = () => {
     S.sourcing("status", {}).then(setStatus).catch(() => setStatus({ error: true }));
     S.sb("/rest/v1/prospects?select=*&order=created_at.desc&limit=2000").then(setProspects).catch(() => setProspects([]));
-    S.sb("/rest/v1/leads?select=*,lead_offers(*),outreach_messages(to_email,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at)&status=neq.pending&order=created_at.desc&limit=2000").then(setLeads).catch(() => setLeads([]));
+    // (Falls back to the older columns if the follow-up column isn't in the database yet.)
+    const leadsQ = (cols) => S.sb("/rest/v1/leads?select=*,lead_offers(*),outreach_messages(" + cols + ")&status=neq.pending&order=created_at.desc&limit=2000");
+    leadsQ("to_email,kind,followup,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at").catch(() => leadsQ("to_email,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at")).then(setLeads).catch(() => setLeads([]));
     S.sb("/rest/v1/leads?select=id&status=eq.pending").then((r) => setPendingLeads((r || []).length)).catch(() => {});
   };
   React.useEffect(() => { if (canRun) load(); }, []); // eslint-disable-line
