@@ -13354,6 +13354,33 @@ function EmailTrackingPage({ S }) {
   );
   return src === "apollo" ? <ApolloTrackingView S={S} sw={sw} /> : <BrevoTrackingView S={S} sw={sw} />;
 }
+// Where an email's links were clicked: one small icon per link, with the number of clicks on top.
+// Grey with a dashed ring: clicked together with other links within seconds (a company's email
+// security checking the links), not the person.
+const CLICK_KIND = {
+  candidates: [Users, "Candidates page"], resume: [FileText, "Anonymised resume"], terms: [ClipboardPen, "Terms of Business"], interested: [ThumbsUp, "We're interested"],
+  unsubscribe: [Ban, "Unsubscribe"], delete: [Trash2, "Delete my details"], acknowledge: [CheckCircle2, "Acknowledge"], withdraw: [UserMinus, "Withdraw my profile"],
+  "candidate page": [UserRound, "Their candidate page"], job: [Briefcase, "Job page"], other: [ExternalLink, "Link"],
+};
+function ClickIcons({ r }) {
+  const list = Array.isArray(r.linkClicks) ? r.linkClicks : [];
+  if (!list.length) return r.clicks > 1 ? <span className="text-xs" style={{ color: C.ink3 }}>×{r.clicks}</span> : null;
+  return (
+    <span className="inline-flex items-center gap-1.5" aria-label="Where the links were clicked">
+      {list.map((x, i) => {
+        const [Icon, label] = CLICK_KIND[x.kind] || CLICK_KIND.other;
+        const bot = x.scan === x.n;
+        const tip = label + ": " + x.n + " click" + (x.n === 1 ? "" : "s") + (x.scan ? (bot ? " (likely the company's email security checking links, not the person)" : ", " + x.scan + " of them likely the email security") : "") + "\n" + x.link;
+        return (
+          <span key={i} title={tip} className="relative inline-flex items-center justify-center rounded-md" style={{ width: 24, height: 24, background: bot ? C.canvas : C.emTint, border: bot ? "1px dashed " + C.line2 : "1px solid transparent", color: bot ? C.ink3 : C.em }}>
+            <Icon size={13} />
+            <span className="absolute -top-1.5 -right-1.5 min-w-[15px] h-[15px] px-0.5 rounded-full text-[9px] font-semibold flex items-center justify-center" style={{ background: bot ? C.ink3 : C.em, color: "#fff" }}>{x.n}</span>
+          </span>
+        );
+      })}
+    </span>
+  );
+}
 function BrevoTrackingView({ S, sw }) {
   const [days, setDays] = useState(30);
   // Candidates (messages, interviews, applications) or Team (welcome emails, update requests, approvals).
@@ -13442,7 +13469,7 @@ function BrevoTrackingView({ S, sw }) {
               { key: "sent", label: "DATE SENT", render: (r) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={when(r.sentAt)}>{when(r.sentAt)}</span> },
               { key: "del", label: "DELIVERED", render: (r) => r.problem && !r.deliveredAt ? <span title={r.problem}><Pill tone="danger">{/blocked/i.test(r.problem) ? "Blocked" : /invalid/i.test(r.problem) ? "Invalid" : /soft/i.test(r.problem) ? "Soft bounce" : "Bounced"}</Pill></span> : mark(r.deliveredAt, "Delivered") },
               { key: "open", label: "OPENED", render: (r) => r.openedAt ? <span className="inline-flex items-center gap-1">{mark(r.openedAt, "First opened")}{r.opens > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.opens}</span>}{r.proxyOnly && <span className="text-xs" style={{ color: C.ink3 }} title="Opened by Apple Mail's privacy protection, which loads emails automatically. The person may not have read it.">*</span>}</span> : mark(null) },
-              { key: "click", label: "CLICKED", render: (r) => r.clickedAt ? <span className="inline-flex items-center gap-1" title={(r.links || []).join("\n")}>{mark(r.clickedAt, "First clicked")}{r.clicks > 1 && <span className="text-xs" style={{ color: C.ink3 }}>×{r.clicks}</span>}</span> : mark(null) },
+              { key: "click", label: "CLICKED", render: (r) => r.clickedAt ? <span className="inline-flex items-center gap-2 flex-wrap">{mark(r.clickedAt, "First clicked")}<ClickIcons r={r} /></span> : mark(null) },
               { key: "view", label: "PREVIEW", render: (r) => String(r.id).startsWith("nomsg|") || r.noPreview ? <span className="text-xs" style={{ color: C.ink3 }} title={r.noPreview ? "Hidden: it contains a private sign-in link" : ""}>—</span> : <button onClick={(e) => { e.stopPropagation(); setPreview(r); }} className="text-xs font-medium whitespace-nowrap" style={{ color: C.em }}>View email</button> },
             ]}
           />
