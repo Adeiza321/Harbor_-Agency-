@@ -141,8 +141,6 @@ async function stepMusts(admin: any, s: any, max = 10, jobId?: string) {
 }
 
 async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
-  // Candidate first: a reminder to anyone told about a pitch 2+ days ago who hasn't responded.
-  try { await stepReminders(admin); } catch (e) { console.error("pitch reminders", errMsg(e)); }
   const { data: pending } = await admin.from("leads").select("*").eq("status", "pending").order("created_at").limit(n);
   let kept = 0, pitched = 0; const errors: string[] = [];
   const queueIfAuto = async (l: any, r: any) => { if (r?.pitched) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [l.id], null, s, agencyName); } };
@@ -249,6 +247,8 @@ async function handle(req: Request): Promise<Response> {
         try { out.sourcedInterest = await sweepSourcedInterest(admin); } catch (e) { out.sourcedInterestError = errMsg(e); }
         try { out.contracts = await stepContracts(admin, s, agencyName); } catch (e) { out.contractsError = errMsg(e); }
         try { out.clientFollowups = await stepClientFollowups(admin); } catch (e) { out.clientFollowupsError = errMsg(e); }
+        // No answer 3 days after the last reminder: off the role, "Open to new roles" off (every tick).
+        try { out.noReply = await stepReminders(admin); } catch (e) { out.noReplyError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });

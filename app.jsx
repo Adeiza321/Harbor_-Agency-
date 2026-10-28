@@ -10029,6 +10029,8 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
 // Candidate first: each candidate on a pitch has their own status. They're told about the role
 // (no employer) and the pitch waits for them; Rec Ops / Admins can remind, put through, withdraw
 // or remove each one, and send the pitch now with whoever is ready.
+// Evidence saved cut at 120 characters: shown up to the last whole word, with "…".
+const tidyCut = (v) => { const t = String(v == null ? "" : v).trim(); if (t.length < 118 || /[.)!?\u2026]$/.test(t)) return t; const i = t.lastIndexOf(" "); return (i > 60 ? t.slice(0, i) : t).replace(/[\s,;:(\-\u2013]+$/, "") + "\u2026"; };
 const PITCH_STATE = { draft: ["Email to review", "warn"], notified: ["Told, waiting to acknowledge", "warn"], reminded: ["Reminded, still waiting", "warn"], no_email: ["Couldn't be emailed", "danger"],
   acknowledged: ["Acknowledged, answering questions", "info"], ready: ["Ready for the pitch", "em"], pitched: ["In the pitch", "em"], withdrawn: ["Withdrew", "neutral"], removed: ["Removed from consideration", "neutral"] };
 const isPitchOffer = (o) => !!PITCH_STATE[o.status];
@@ -10082,7 +10084,7 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
     setBusy("");
   };
   return (
-    <Modal open onClose={onClose} title={(reminder ? "Reminder to " : "Email to ") + name} wide>
+    <Modal open onClose={onClose} title={(reminder ? "Last reminder to " : "Email to ") + name} wide>
       {!p ? <SkeletonRows n={4} /> : (
         <div className="flex flex-col gap-3">
           <div className="text-xs" style={{ color: C.ink2 }}>To <b>{p.to || "no email on file"}</b>{p.replyTo ? " · replies go to " + p.replyTo : ""} · Subject: <b>{p.subject}</b></div>
@@ -10201,7 +10203,7 @@ function JdCheckList({ checks, open, onToggle }) {
   const row = (x, i) => (
     <div key={i} className="grid grid-cols-[16px_1fr_auto] gap-x-2 py-1.5" style={{ borderTop: "1px solid " + C.line }}>
       <span className="font-bold" style={{ color: x.info && x.status !== "met" ? C.ink3 : color(x.status) }}>{x.info && x.status !== "met" ? "·" : (JD_STATE[x.status] || JD_STATE.not_shown)[0]}</span>
-      <span>{x.item}{x.evidence && <span style={{ color: C.ink2 }}> · {x.evidence}</span>}</span>
+      <span>{x.item}{x.evidence && <span style={{ color: C.ink2 }}> · {tidyCut(x.evidence)}</span>}</span>
       <span className="text-[11px] whitespace-nowrap" style={{ color: x.info && x.status !== "met" ? C.ink3 : color(x.status) }}>{x.info ? (x.status === "met" ? "Worked in it" : x.status === "not_met" ? "Other industries" : "Not clear") : x.required === false && x.status !== "met" ? "Not shown" : (JD_STATE[x.status] || JD_STATE.not_shown)[1]}</span>
     </div>
   );
@@ -10264,7 +10266,7 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
       )}
       {offers.slice().sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9) || (b.fit || 0) - (a.fit || 0)).map((o) => {
         const c = S.cands.find((x) => x.id === o.candidate_id);
-        const [label, tone] = o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : PITCH_STATE[o.status];
+        const [label, tone] = o.status === "withdrawn" && o.withdrawn_by === "agency" ? ["Withdrawn by us", "neutral"] : o.status === "withdrawn" && o.withdrawn_by === "no_response" ? ["No response", "neutral"] : PITCH_STATE[o.status];
         const reqs = Array.isArray(o.requirements) ? o.requirements : [];
         const rawQs = (Array.isArray(o.questions) ? o.questions : []).filter((q) => (typeof q === "string" ? q : q && q.q));
         const qs = rawQs.map((q) => (typeof q === "string" ? q : q.q));
@@ -10329,7 +10331,8 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
               {o.note && <span style={{ color: C.ink3 }}>{o.note}</span>}
               {o.status === "notified" && o.notified_at && Date.now() - new Date(o.notified_at).getTime() > 2 * 864e5 && <span className="font-semibold" style={{ color: C.warnFg }}>Reminder due</span>}
               {staff && o.status === "draft" && <Btn kind="primary" icon={Mail} disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: false })} className="!py-1.5 !px-3 text-xs">Review and send email</Btn>}
-              {staff && ["notified", "reminded"].includes(o.status) && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }}>Remind</button>}
+              {staff && o.status === "notified" && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }} title={"The only reminder: if " + first + " doesn't answer within 3 days, they're taken off this role and Open to new roles turns off"}>Send last reminder</button>}
+              {o.status === "reminded" && o.reminded_at && <span style={{ color: C.ink3 }}>Last reminder sent {fdate(o.reminded_at)}</span>}
               {staff && ["notified", "reminded"].includes(o.status) && <span style={{ color: C.ink2 }}>Waiting for {first} to click Acknowledge{c && c.phone ? <>: <a href={"tel:" + c.phone.replace(/[^\d+]/g, "")} className="font-medium" style={{ color: C.em }}>call {first}</a> to ask them to</> : ""}</span>}
               {staff && o.status === "acknowledged" && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for their answers"}>Put through without answers</button>}
               {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "w", "offer_withdraw", { offerId: o.id }, "Withdrawn")} style={{ color: C.ink2 }}>Withdraw</button>}
@@ -11915,7 +11918,7 @@ function ClientPitchPage({ token }) {
                   <div className="mt-3">
                     <div className="text-xs font-semibold mb-1" style={{ color: C.ink3 }}>MUST-HAVES {signed && c.name ? c.name.split(" ")[0].toUpperCase() : "THEY"} MEET{signed && c.name ? "S" : ""}</div>
                     {c.reqTotal > 0 && <div className="text-sm font-medium mb-1.5">Meets {c.reqMet} of {c.reqTotal} requirements in your job description{c.fit != null ? <span className="font-normal" style={{ color: C.ink2 }}> · fit {c.fit}%</span> : null}</div>}
-                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span>{m.bonus && <span className="text-xs font-semibold mr-1" style={{ color: C.ink3 }}>Nice to have:</span>}<b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {m.evidence}</span> : null}</span></li>)}
+                    <ul className="flex flex-col gap-1 text-sm">{c.musts.map((m, k) => <li key={k} className="flex gap-2"><Check size={15} color={C.em} className="shrink-0 mt-0.5" /><span>{m.bonus && <span className="text-xs font-semibold mr-1" style={{ color: C.ink3 }}>Nice to have:</span>}<b className="font-medium">{m.item}</b>{m.evidence ? <span style={{ color: C.ink2 }}>: {tidyCut(m.evidence)}</span> : null}</span></li>)}
                       {(c.toConfirm || []).map((m, k) => <li key={"t" + k} className="flex gap-2"><span className="w-[15px] text-center font-bold shrink-0" style={{ color: C.warnFg }}>?</span><span><b className="font-medium">{m}</b><span style={{ color: C.ink2 }}> · still to confirm</span></span></li>)}</ul>
                   </div>
                 )}
@@ -14607,9 +14610,9 @@ function PitchJdList({ jd, you }) {
   return (
     <div className="mt-4">
       <div className="text-sm font-semibold mb-1">{you ? "What the employer asks for, and how you match" : "Their job description"}</div>
-      {req.filter((x) => x.status === "met" || x.status === "confirmed").map((x, i) => row("✓", C.em, x.item, x.status === "confirmed" ? (you ? "you confirmed this" : "confirmed") : x.evidence, "m" + i))}
+      {req.filter((x) => x.status === "met" || x.status === "confirmed").map((x, i) => row("✓", C.em, x.item, x.status === "confirmed" ? (you ? "you confirmed this" : "confirmed") : tidyCut(x.evidence), "m" + i))}
       {req.filter((x) => x.status === "not_shown").map((x, i) => row("?", C.warnFg, x.item, you ? "not on your CV, we'll ask you to confirm" : "still to confirm", "a" + i))}
-      {extra.map((x, i) => row("+", C.em, x.info ? x.item : "Nice to have: " + x.item, x.evidence, "b" + i))}
+      {extra.map((x, i) => row("+", C.em, x.info ? x.item : "Nice to have: " + x.item, tidyCut(x.evidence), "b" + i))}
     </div>
   );
 }
@@ -14681,7 +14684,7 @@ function PortalPitch({ token, offer, initial, onDone }) {
 
       {waiting && !confirmWithdraw && (
         <div className="mt-4">
-          <div className="text-sm" style={{ color: C.ink2 }}>You don't need to do anything. We'll update you as soon as the employer comes back about your profile. If we have questions we'll ask, and you can reply to our email with yours.</div>
+          <div className="text-sm" style={{ color: C.ink2 }}><b style={{ color: C.ink }}>Please click Acknowledge so we can put you forward.</b> We can't share your profile with the employer until you do. We'll update you as soon as the employer comes back about your profile, and you can reply to our email with any questions.</div>
           <div className="flex gap-2 mt-3 flex-wrap items-center">
             <Btn kind="primary" disabled={!!busy} onClick={ack}>{busy === "ack" ? "Saving…" : "Acknowledge"}</Btn>
             <button type="button" className="text-sm underline" style={{ color: C.ink2 }} disabled={!!busy} onClick={() => setConfirmWithdraw(true)}>Withdraw my profile</button>
@@ -14746,7 +14749,9 @@ function PortalPitch({ token, offer, initial, onDone }) {
         </div>
       )}
       {(d.status === "removed" || (d.status === "withdrawn" && d.withdrawnBy !== "candidate")) && (
-        <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.neutralBg, color: C.ink2 }}>You're no longer being put forward for this role. We'll keep an eye out for roles that suit you.</div>
+        <div className="text-sm rounded-lg px-3 py-2.5 mt-4" style={{ background: C.neutralBg, color: C.ink2 }}>{d.withdrawnBy === "no_response"
+          ? "We didn't hear back from you, so you're no longer being put forward for this role and \"Open to new roles\" is off. Want us to put you forward again? Turn on \"Open to new roles\" on this page."
+          : "You're no longer being put forward for this role. We'll keep an eye out for roles that suit you."}</div>
       )}
     </Card>
   );

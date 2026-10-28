@@ -10,7 +10,7 @@ import { candidateEmail, clientEmail, termsUrl, introOf, mustHavesFor, payText, 
 import { isTemplateBody, templateParts } from "./template.ts";
 import { esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
 import { greet, liveContacts } from "./contacts.ts";
-import { jdSummary } from "./pitch.ts";
+import { jdSummary, tidyCut } from "./pitch.ts";
 
 // Everyone a client pitch goes to, each with their own email: the lead's contacts, or (older leads)
 // its single contact. Each has their own links (the lead's token ~ theirs).
@@ -43,7 +43,7 @@ export function pitchCands(l: any, viewUrl: string) {
   const ms: any[] = Array.isArray(l.matches) ? l.matches : [];
   return ids.map((id, i) => {
     const m = ms.find((x) => x.candidate_id === id) || {};
-    const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => (x.bonus ? "Nice to have: " : "") + x.item + (x.evidence ? ": " + x.evidence : "")) : (m.bullets || [])).slice(0, 8);
+    const musts = (Array.isArray(m.musts) && m.musts.length ? m.musts.map((x: any) => (x.bonus ? "Nice to have: " : "") + x.item + (x.evidence ? ": " + tidyCut(x.evidence) : "")) : (m.bullets || [])).slice(0, 8);
     return { n: i + 1, verdict: m.verdict || "", fit: m.fit ?? null, musts, url: viewUrl ? viewUrl + "&c=" + (i + 1) : "", ...pitchFacts(m) };
   });
 }
