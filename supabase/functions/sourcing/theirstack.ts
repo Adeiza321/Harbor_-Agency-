@@ -25,7 +25,8 @@ export const NO_AGENCY_PATTERNS = [
 
 // TheirStack's free plan returns at most 25 jobs per request, so bigger asks are fetched 25 at a time.
 const PAGE = 25;
-export type JobSearch = { titles: string[]; countries: string[]; places?: string[]; maxAgeDays: number; limit: number; minEmployees?: number; maxEmployees?: number };
+// remote: true = remote roles only, false = on-site / hybrid only, unset = both.
+export type JobSearch = { titles: string[]; countries: string[]; places?: string[]; remote?: boolean; maxAgeDays: number; limit: number; minEmployees?: number; maxEmployees?: number };
 export async function searchJobs(opts: JobSearch): Promise<Posting[]> {
   const want = Math.min(Math.max(opts.limit, 1), 100);
   const out: Posting[] = [];
@@ -63,6 +64,7 @@ async function searchPageOnce(opts: JobSearch, limit: number, page: number, patt
       ...(opts.places && opts.places.length ? { job_location_pattern_or: opts.places.slice(0, 20).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) } : {}),
       posted_at_max_age_days: Math.max(1, opts.maxAgeDays),
       company_type: "direct_employer",            // skip other recruitment agencies
+      ...(typeof opts.remote === "boolean" ? { remote: opts.remote } : {}),
       // Small and medium companies (Outreach settings): more likely to take an agency's CVs and pay.
       ...(opts.minEmployees ? { min_employee_count: opts.minEmployees } : {}),
       ...(opts.maxEmployees ? { max_employee_count: opts.maxEmployees } : {}),

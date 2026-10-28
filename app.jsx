@@ -10348,7 +10348,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
               <ChevronDown size={16} color={C.ink2} className="shrink-0 mt-0.5 transition-transform" style={{ transform: expanded ? "none" : "rotate(-90deg)" }} />
               <span className="min-w-0">
                 <span className="block font-medium text-sm">{l.job_title}</span>
-                <span className="block text-xs" style={{ color: C.ink2 }}>{[l.company, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</span>
+                <span className="block text-xs" style={{ color: C.ink2 }}>{[l.company, l.data && l.data.remote ? "Remote" : null, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</span>
               </span>
             </button>
             <div className="flex items-center gap-2 shrink-0">
