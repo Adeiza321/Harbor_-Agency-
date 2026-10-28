@@ -55,7 +55,46 @@ type Row = {
   deliveredAt: string | null; openedAt: string | null; opens: number; proxyOnly: boolean;
   clickedAt: string | null; clicks: number; links: string[];
   problem: string | null; spam: boolean; unsubscribed: boolean; lastAt: string; name?: string;
+  clickAt?: { link: string; at: string }[];
+  // Where they clicked: one entry per link, with how many clicks and how many of those look like a
+  // company's email security checking the links (several different links within a few seconds).
+  linkClicks?: { link: string; kind: string; n: number; scan: number }[];
+  humanClicks?: number;
 };
+// What a link in our emails is, from its address.
+function linkKind(link: string): string {
+  const l = link || "";
+  if (/[?&]a=unsubscribe\b|[?&]unsub=1\b/.test(l)) return "unsubscribe";
+  if (/[?&]a=delete\b/.test(l)) return "delete";
+  if (/[?&]a=interested\b/.test(l)) return "interested";
+  if (/[?&]terms=1\b/.test(l)) return "terms";
+  if (/[?&]t=s-/.test(l)) return "candidates";
+  if (/[?&]t=/.test(l)) return "resume";
+  if (/[?&]c=.*[?&]offer=.*r=ack/.test(l)) return "acknowledge";
+  if (/[?&]r=withdraw\b/.test(l)) return "withdraw";
+  if (/[?&]c=/.test(l)) return "candidate page";
+  if (/\/jobs?\b|[?&]job=/.test(l)) return "job";
+  return "other";
+}
+// Clicks in a burst (2+ different links within 3 seconds of each other) are a scanner, not a person.
+function clickSummary(list: { link: string; at: string }[]) {
+  const sorted = [...list].sort((a, b) => a.at.localeCompare(b.at));
+  const scan = new Set<number>();
+  let i = 0;
+  while (i < sorted.length) {
+    let j = i;
+    while (j + 1 < sorted.length && Date.parse(sorted[j + 1].at) - Date.parse(sorted[j].at) <= 3000) j++;
+    if (j > i && new Set(sorted.slice(i, j + 1).map((x) => x.link)).size >= 2) for (let k = i; k <= j; k++) scan.add(k);
+    i = j + 1;
+  }
+  const by = new Map<string, { link: string; kind: string; n: number; scan: number }>();
+  sorted.forEach((x, k) => {
+    const e = by.get(x.link) || { link: x.link, kind: linkKind(x.link), n: 0, scan: 0 };
+    e.n++; if (scan.has(k)) e.scan++;
+    by.set(x.link, e);
+  });
+  return { linkClicks: [...by.values()].slice(0, 8), humanClicks: sorted.length - scan.size };
+}
 const STAFF_TYPES = new Set(["Welcome", "Password reset", "Approval", "Test", "Update request"]);
 // Emails that carry a one-time sign-in link or reset code: never shown in a preview.
 const SECRET_TYPES = new Set(["Welcome", "Password reset"]);
@@ -213,7 +252,8 @@ Deno.serve(async (req: Request) => {
         case "opened": row.opens++; row.proxyOnly = false; row.openedAt = earliest(row.openedAt); break;
         case "unique_opened": row.proxyOnly = false; row.openedAt = earliest(row.openedAt); if (!row.opens) row.opens = 1; break;
         case "proxy_open": row.opens++; row.openedAt = earliest(row.openedAt); break;
-        case "click": row.clicks++; row.clickedAt = earliest(row.clickedAt); if (e.link && !row.links.includes(e.link) && row.links.length < 5) row.links.push(String(e.link)); break;
+        case "click": row.clicks++; row.clickedAt = earliest(row.clickedAt); if (e.link && !row.links.includes(e.link) && row.links.length < 5) row.links.push(String(e.link));
+          if (e.link) (row.clickAt ||= []).push({ link: String(e.link), at }); break;
         case "spam": row.spam = true; break;
         case "unsubscribed": row.unsubscribed = true; break;
         default: { const ev = String(e.event || ""); if (BOUNCE[ev] && ev !== "deferred") row.problem = String(e.reason || BOUNCE[ev]).slice(0, 200); }
@@ -244,6 +284,8 @@ Deno.serve(async (req: Request) => {
     }).map((r) => {
       // Opening or clicking also proves it arrived, even if the delivered event is missing.
       if (!r.deliveredAt && (r.openedAt || r.clickedAt)) r.deliveredAt = r.openedAt || r.clickedAt;
+      if (r.clickAt && r.clickAt.length) Object.assign(r, clickSummary(r.clickAt));
+      delete r.clickAt;
       if (!r.sentAt) r.sentAt = r.deliveredAt || r.lastAt;
       if (!r.opens) r.proxyOnly = false;
       if (r.deliveredAt) r.problem = r.problem && /soft|delay/i.test(r.problem) ? null : r.problem;
