@@ -43,6 +43,10 @@ const DEEP = Deno.env.get("ASSISTANT_DEEP_MODEL") || "claude-opus-5-5";
 const PRICE: [string, [number, number]][] = [["haiku-5", [0.1, 0.5]], ["sonnet-5", [2, 10]], ["opus-5", [4, 20]], ["haiku", [1, 5]], ["sonnet", [3, 15]], ["opus", [5, 25]]];
 const priceOf = (m: string) => (PRICE.find(([k]) => m.includes(k)) || PRICE[1])[1];
 const MAX_STEPS = 10;
+// Public links with the person's own referral code (?r=), as the app's Share buttons make them.
+const PORTAL = (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com").replace(/\/+$/, "");
+const applyLink = (slug: string, me: any) => `${PORTAL}/jobs/${slug}/` + (me?.ref_code ? `?r=${me.ref_code}` : "");
+const joinLink = (me: any) => `${PORTAL}/jobs/?join=1` + (me?.ref_code ? `&r=${me.ref_code}` : "");
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : "");
 // Prospect statuses as the app shows them (Outreach tabs and the job's Sourcing tab).
@@ -96,6 +100,10 @@ const READ_TOOLS = [
     input_schema: { type: "object", properties: { status: { type: "string" } } } },
   { name: "recent_activity", description: "What happened in the last N hours (default 24) on the person's own work: their assistant updates (replies, interest, stage changes, client views, interviews, tasks, finished searches), new candidates, pipeline moves, candidate messages, interviews, tasks done, and (Admins and Rec Ops) prospects found, emailed and interested per role. Use it for 'what changed / what moved today', briefs and round-ups.",
     input_schema: { type: "object", properties: { hours: { type: "number", description: "1 to 168, default 24" } } } },
+  { name: "list_leads", description: "Client leads (Admins and Rec Ops): companies with a live job posting that we pitch our candidates to, candidate first. Each with its status as the app shows it (Asking candidates, Ready to pitch, Sending, Contacted, Replied/In talks, Won, Closed), the candidates on it, when it was pitched, whether the email was delivered/opened/clicked, replies, interest and the next follow-up. Filter by status group or a company/role word.",
+    input_schema: { type: "object", properties: { status: { type: "string", enum: ["all", "asking_candidates", "ready_to_pitch", "sending", "contacted", "in_talks", "won", "closed"], description: "Default: everything except closed" }, query: { type: "string", description: "Words to match in company or role" } } } },
+  { name: "get_lead", description: "Everything about one client lead (Admins and Rec Ops): the posting, its contacts, the pitch email (subject and text), each candidate on it (acknowledged, ready, withdrawn and why, fit), every email sent to the client with delivery/opens/clicks, follow-ups sent and the next one due, the client's replies, 'discuss these terms' requests, whether they signed our terms, and notes.",
+    input_schema: { type: "object", properties: { lead_id: { type: "string" } }, required: ["lead_id"] } },
 ];
 const WEB_TOOLS = [
   { type: "web_search_20250305", name: "web_search", max_uses: 5 },
@@ -157,7 +165,7 @@ const RECRUITER_TASK = { name: "propose_task", description: "Propose a reminder 
 const toolFor = (role: string, n: string) => (role === "recruiter" && n === "propose_task" ? RECRUITER_TASK : PROPOSE[n]);
 
 // ---------------------------------------------------------------- lookups (caller's own login: RLS applies)
-async function runRead(db: any, me: any, name: string, input: any): Promise<unknown> {
+async function runRead(db: any, me: any, name: string, input: any, admin?: any): Promise<unknown> {
   const staff = me.role === "admin" || me.role === "recops";
   const feeOf = (j: any) => !staff ? undefined : j.billing_amount ? (j.billing_type === "percent" ? j.billing_amount + "%" : j.billing_amount + " " + (j.billing_currency || "")) + (j.billing_frequency === "Monthly" ? "/month" : "") : "";
   const yourCut = (j: any) => j.incentive_amount ? (j.incentive_type === "percent" ? j.incentive_amount + "%" : j.incentive_amount + " " + (j.incentive_currency || "")) : "";
@@ -183,6 +191,63 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     });
   }
 
+  if (name === "list_leads" || name === "get_lead") {
+    if (!staff) return { error: "Client leads are for Admins and Rec Ops" };
+    const LEAD_LABEL: Record<string, string> = { pending: "Being checked", awaiting: "Asking candidates", new: "Ready to pitch", approved: "Sending", queued: "Sending", contacted: "Contacted", replied: "Replied", meeting: "In talks (meeting)", won: "Won", lost: "Lost", ignored: "Not a fit / closed", unsubscribed: "Unsubscribed" };
+    const GROUPS: Record<string, string[]> = { asking_candidates: ["awaiting"], ready_to_pitch: ["new"], sending: ["approved", "queued"], contacted: ["contacted"], in_talks: ["replied", "meeting"], won: ["won"], closed: ["lost", "ignored", "unsubscribed"] };
+    const OFFER_LABEL: Record<string, string> = { draft: "Email to candidate not sent yet", notified: "Asked, waiting to acknowledge", reminded: "Reminded, waiting", no_email: "No email address", acknowledged: "Acknowledged (said no to something)", ready: "Ready to pitch", pitched: "Pitched to the client", withdrawn: "Withdrew", removed: "Taken off" };
+    const sel = "id,company,job_title,location,country,status,notes,contacted_at,interested_at,client_viewed_at,pitch_subject,url,salary,created_at,data,lead_offers(candidate_id,status,fit,verdict,acknowledged_at,withdrawn_by,note,candidates(name)),outreach_messages(to_email,kind,status,provider_ref,delivery,sent_at,followup,subject)";
+    const evsFor = async (refs: string[]) => {
+      if (!refs.length) return [] as any[];
+      // Delivery reports are service-only (no row access for logins); this is an Admin / Rec Ops lookup.
+      const { data } = await (admin || db).from("email_events").select("message_id,event,link,at").in("message_id", refs.slice(0, 200));
+      return data || [];
+    };
+    const mail = (l: any, evs: any[]) => {
+      const ms = (l.outreach_messages || []).filter((m: any) => m.kind === "client" && m.status === "sent");
+      const mine = (m: any) => evs.filter((e: any) => e.message_id === m.provider_ref);
+      const opened = ms.some((m: any) => mine(m).some((e: any) => /opened/.test(e.event)));
+      const clicked = ms.some((m: any) => mine(m).some((e: any) => e.event === "click"));
+      const bounced = ms.some((m: any) => mine(m).some((e: any) => ["hard_bounce", "blocked", "invalid", "spam"].includes(e.event)));
+      return { sent: ms.length, pitched_on: day(ms.filter((m: any) => m.followup == null).map((m: any) => m.sent_at).sort()[0]), follow_ups_sent: Math.max(0, ...ms.map((m: any) => Number(m.followup) || 0)),
+        delivery: bounced ? "bounced or blocked" : clicked ? "opened and clicked (clicks within seconds can be a mail scanner)" : opened ? "opened" : ms.length ? "sent" : "not sent" };
+    };
+    if (name === "list_leads") {
+      const g = String(input?.status || "");
+      let q = db.from("leads").select(sel).neq("status", "pending").order("updated_at", { ascending: false }).limit(60);
+      if (g && g !== "all" && GROUPS[g]) q = q.in("status", GROUPS[g]);
+      else if (g !== "all") q = q.not("status", "in", "(lost,ignored,unsubscribed)");
+      if (input?.query) { const w = String(input.query).replace(/[%,()]/g, " ").trim(); if (w) q = q.or(`company.ilike.%${w}%,job_title.ilike.%${w}%`); }
+      const { data: ls, error } = await q;
+      if (error) return { error: error.message };
+      const evs = await evsFor((ls || []).flatMap((l: any) => (l.outreach_messages || []).map((m: any) => m.provider_ref).filter(Boolean)));
+      return (ls || []).map((l: any) => ({ lead_id: l.id, company: l.company, role: l.job_title, where: [l.location, l.country].filter(Boolean).join(", "), status: LEAD_LABEL[l.status] || l.status,
+        note: clip(l.notes, 160) || undefined, candidates: (l.lead_offers || []).map((o: any) => `${o.candidates?.name || "?"}: ${OFFER_LABEL[o.status] || o.status}`),
+        email: mail(l, evs), interested: day(l.interested_at) || undefined, last_reply: l.data?.last_reply ? { on: day(l.data.last_reply.at), from: l.data.last_reply.name || l.data.last_reply.from, text: clip(l.data.last_reply.snippet, 200) } : undefined,
+        follow_ups_stopped: l.data?.followups?.paused ? l.data.followups.reason || "yes" : undefined }));
+    }
+    const { data: l, error } = await db.from("leads").select(sel + ",description,pitch_body,linkedin_message,matches").eq("id", input.lead_id).maybeSingle();
+    if (error || !l) return { error: "Lead not found" };
+    const evs = await evsFor((l.outreach_messages || []).map((m: any) => m.provider_ref).filter(Boolean));
+    const { data: reps } = await db.from("client_replies").select("from_email,from_name,subject,body,auto,received_at").eq("lead_id", l.id).order("received_at", { ascending: false }).limit(10);
+    const d = l.data || {};
+    return {
+      lead_id: l.id, company: l.company, role: l.job_title, where: [l.location, l.country].filter(Boolean).join(", "), posting: l.url, posted_pay: l.salary || undefined, status: LEAD_LABEL[l.status] || l.status, note: l.notes || undefined,
+      description: clip(l.description, 2500),
+      contacts: (Array.isArray(d.contacts) ? d.contacts : []).filter((c: any) => !c.removed).map((c: any) => ({ name: c.name, title: c.title || c.role, email: c.email, unsubscribed: !!c.unsubscribed || undefined })),
+      pitch: l.pitch_body ? { subject: l.pitch_subject, text: clip(l.pitch_body, 3000) } : "Not written yet",
+      linkedin_message: l.linkedin_message || undefined,
+      candidates: (l.lead_offers || []).map((o: any) => ({ candidate_id: o.candidate_id, name: o.candidates?.name, status: OFFER_LABEL[o.status] || o.status, fit: o.fit, verdict: o.verdict, acknowledged: day(o.acknowledged_at) || undefined, withdrawn_by: o.withdrawn_by || undefined, note: o.note || undefined })),
+      emails: (l.outreach_messages || []).filter((m: any) => m.kind === "client").map((m: any) => ({ to: m.to_email, subject: m.subject, status: m.status, sent: m.sent_at, follow_up: m.followup || undefined,
+        events: [...new Set(evs.filter((e: any) => e.message_id === m.provider_ref).map((e: any) => e.event))] })),
+      summary: mail(l, evs), client_opened_candidates_page: day(l.client_viewed_at) || undefined, interested: day(l.interested_at) || undefined,
+      signed_terms: d.signer ? `${d.signer.name}${d.signer.title ? ", " + d.signer.title : ""}` : undefined,
+      terms_discussions: (Array.isArray(d.terms_discussions) ? d.terms_discussions : []).map((t: any) => ({ on: day(t.at), from: t.name || t.email, text: clip(t.message || t.note, 400) })),
+      replies: (reps || []).map((r: any) => ({ on: day(r.received_at), from: r.from_name || r.from_email, automatic: r.auto || undefined, text: clip(r.body, 1200) })),
+      follow_ups: d.followups?.paused ? "Stopped: " + (d.followups.reason || "") : "Due 2, 5 and 7 business days after the pitch while the lead is Contacted; sent by hand from the lead card",
+    };
+  }
+
   if (name === "get_job") {
     const { data: j, error } = await db.from("jobs").select("*").eq("id", input.job_id).maybeSingle();
     if (error || !j) return { error: "Job not found or not visible to you" };
@@ -193,6 +258,7 @@ async function runRead(db: any, me: any, name: string, input: any): Promise<unkn
     const ivs = me.scoped ? (ivs0 || []).filter((i: any) => i.recruiter_id === me.id) : ivs0;
     return {
       id: j.id, role: j.role_title, client: j.client, status: j.status, hold: j.hold_reason || undefined, location: j.location, work_setup: j.work_setup, country: j.country,
+      apply_link: j.link_slug ? applyLink(j.link_slug, me) : undefined, send_cv_link: joinLink(me),
       employment_type: j.employment_type, openings: j.headcount || 1, pay: [j.min_pay, j.max_pay].filter(Boolean).join("–") + " " + (j.currency || "") + (j.salary_period ? "/" + j.salary_period : ""),
       fee: feeOf(j), recruiter_incentive: yourCut(j) || undefined, days_open: Math.round((Date.now() - new Date(j.created_at).getTime()) / 864e5),
       description: clip(j.description, 3500), screening_questions: j.screening_questions || [], parallel_titles: j.parallel_titles || [],
@@ -553,6 +619,9 @@ PROSPECTS are people found by X-ray or Apollo for a role; they are not candidate
 For "what changed / what moved today", briefs and round-ups, use recent_activity (and list_jobs / list_interviews) instead of guessing.
 FILES AND VOICE NOTES: the person can attach documents (CVs, job descriptions, client briefs, spreadsheets, screenshots) and send voice notes. They arrive inside <attachment name="…" kind="…"> tags as text read from the file, or as a transcript for a voice note. Treat a voice note exactly like a typed message (it's what they said; transcripts can mishear names, so check a name with find_person before acting on it). Read attachments carefully and work from them: for a CV, say who the person is and how they fit the role in view or the roles they ask about (check get_job for must-haves; a CV alone doesn't make them a candidate in ProNext, so check find_person first and propose adding or routing them only if asked); for a job description or brief, pull out title, location, pay, must-haves and nice-to-haves, and compare with ProNext's open roles; for a spreadsheet, work from the actual rows and give exact counts. Quote figures and names from the file exactly; say if the file looks cut off ("[…shortened]") or a scan was hard to read. On later turns an older file may be shortened; if you need the rest, ask them to attach it again.
 After your lookups and proposals, write your whole answer in your final message: what you found, then what you propose. Don't leave the answer in an earlier message.
+FOLLOWING THE PERSON: keep every instruction they gave in this conversation (listed after your memory) and in your memory, for every later answer, not just the next one. When they paste a message they wrote (for example a LinkedIn message to someone else), it's the model to follow: keep its structure, wording, links and sign-off and change only the person-specific details; it is not a message to resend to the last person. When they paste profile text, it's about the person they want to write to. When they say you forgot a rule or got something wrong, re-read their instructions and memory, say in one line which rule you missed, then give the corrected version; never resend the same text unchanged. If you truly can't tell which rule they mean, ask once.
+LINKS: never leave placeholders such as [APPLY LINK]. Use the job's apply link from the open jobs list (it carries the person's referral code) and the "send us your CV" link for people to pass on.
+CLIENT LEADS (Admins and Rec Ops): companies with a live job posting we pitch our candidates to. Use list_leads and get_lead for anything about a client, a pitch, a lead's candidates, whether the client opened or replied, follow-ups or terms.
 Write plainly and briefly. No markdown headings; short paragraphs or simple "-" lists are fine.`;
   const work = `
 HOW YOU ACT: you cannot change anything yourself. To do something, call the propose_* tools; each becomes a card the person approves. Propose several at once when a plan needs them. Only use real ids from lookups. If something essential is ambiguous (two people with the same name, a missing interview time), ask one short question.
@@ -569,7 +638,8 @@ BRAINSTORM MODE: think with the person. Explore options, challenge assumptions, 
 HELPING PEOPLE USE PRONEXT: when someone asks how to do something, answer for their role (${role}) with numbered steps using the exact names in the guide, and say when something is only for Admins or Rec Ops and who to ask instead. Explain what each page shows from their point of view (a Recruiter only sees their own candidates; Rec Ops and Admins see everyone). If the guide doesn't cover it, say you're not sure rather than invent a button.
 ${GUIDE}`;
   return common + (mode === "brainstorm" ? brainstorm : work) + help + where +
-    `\n\nOpen jobs (id | role | client):\n${jobs.map((j) => `${j.id} | ${j.role_title} | ${j.client}`).join("\n") || "(none)"}` +
+    `\n\nOpen jobs (id | role | client | apply link with ${me.full_name || "their"}'s referral code):\n${jobs.map((j) => `${j.id} | ${j.role_title} | ${j.client} | ${j.link_slug ? applyLink(j.link_slug, me) : "(no public page)"}`).join("\n") || "(none)"}` +
+    `\nGeneral "send us your CV" link: ${joinLink(me)}` +
     `\n\nTeam (id | name | role):\n${users.map((u) => `${u.id} | ${u.full_name} | ${u.role}`).join("\n") || "(none)"}`;
 }
 
@@ -599,11 +669,11 @@ function cached(convo: any[]) {
 }
 
 // One assistant turn: lookups, web and proposals in a loop until it answers. Logs its cost.
-async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: string; messages: any[]; page: any; tz: string; smart?: boolean; forceModel?: string; threadId?: string | null; learn?: boolean }) {
+async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: string; messages: any[]; page: any; tz: string; smart?: boolean; forceModel?: string; threadId?: string | null; learn?: boolean; rules?: string[] }) {
   const { admin, db, me, key, mode, page, tz } = o;
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const [{ data: jobs }, { data: users }, mem] = await Promise.all([
-    db.from("jobs").select("id,role_title,client").in("status", ["Open", "On hold"]).order("created_at", { ascending: false }).limit(80),
+    db.from("jobs").select("id,role_title,client,link_slug").in("status", ["Open", "On hold"]).order("created_at", { ascending: false }).limit(80),
     db.from("profiles").select("id,full_name,role").eq("status", "Active"),
     loadMemories(admin, me).catch(() => ({ mine: [], team: [] })),
   ]);
@@ -619,12 +689,17 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
   const HEAVY = /\b(draft|write|rewrite|email|message to|pitch|plan\w*|strateg\w*|close (the|this)|unblock|brief|compar\w*|analy[sz]\w*|review|assess\w*|recommend\w*|why|explain|negotiat\w*|proposal|summari[sz]\w*|report|brainstorm|x-?ray|source|sourcing)\b/i;
   const size = o.messages.reduce((n: number, m: any) => n + String(typeof m.content === "string" ? m.content : JSON.stringify(m.content)).length, 0);
   const needsSmart = hasFiles || mode === "brainstorm" || HEAVY.test(last) || last.length > 400 || size > 150000;
-  const model = o.forceModel || (o.smart ? DEEP : needsSmart ? SMART : FAST);
+  // Conversations use the stronger model: following instructions across a long chat, reading pasted
+  // examples and corrections is where the fast one fell short. The fast one only answers a bare
+  // "ok / thanks / yes" with nothing to look up.
+  const trivial = !hasFiles && /^(ok(ay)?|thanks?( you)?|cool|great|nice|yes|no|sure|got it|perfect)[.!\s]*$/i.test(last.trim());
+  void needsSmart;
+  const model = o.forceModel || (o.smart ? DEEP : trivial ? FAST : SMART);
   let useFetch = true;
   const tools = () => [...READ_TOOLS, ...MEMORY_TOOLS, ...(useFetch ? WEB_TOOLS : WEB_TOOLS.slice(0, 1)), ...allowed.map((n) => toolFor(me.role, n))];
   // What it has learned (memory.ts) comes after the cached part, so learning something new doesn't undo the cache.
   const system = [{ type: "text", text: systemPrompt(me, mode, today, tz, page || {}, jobs || [], users || []), cache_control: { type: "ephemeral" } },
-    { type: "text", text: memoryPrompt(me, mem) }];
+    { type: "text", text: memoryPrompt(me, mem) + (o.rules && o.rules.length ? "\n\nINSTRUCTIONS THIS PERSON GAVE EARLIER IN THIS CONVERSATION (all still apply unless they changed one later; check every answer against them):\n" + o.rules.map((r) => "- " + r).join("\n") : "") }];
   const convo: any[] = [...o.messages];
   const proposals: any[] = [];
   let text = "", inTok = 0, outTok = 0, searches = 0, steps = 0, error = "", status = 200;
@@ -672,7 +747,7 @@ async function runAgent(o: { admin: any; db: any; me: any; key: string; mode: st
         results.push({ type: "tool_result", tool_use_id: u.id, content: "Proposed. The person will approve or decline it." });
       } else {
         let r: unknown;
-        try { r = ["remember", "forget", "search_conversations"].includes(u.name) ? await runMemoryTool(admin, me, u.name, u.input || {}, o.threadId || null) : await runRead(db, me, u.name, u.input || {}); }
+        try { r = ["remember", "forget", "search_conversations"].includes(u.name) ? await runMemoryTool(admin, me, u.name, u.input || {}, o.threadId || null) : await runRead(db, me, u.name, u.input || {}, admin); }
         catch (e) { r = { error: String((e as Error)?.message || e) }; }
         results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r).slice(0, 12000) });
       }
@@ -752,13 +827,13 @@ Deno.serve(async (req: Request) => {
       if (body.action === "roundup_next") return json(await briefNext(admin, Math.min(Number(body.max) || 5, 10), "roundup"));
       // Read-only preview of one person's brief / round-up (nothing saved or sent).
       if (body.action === "digest_preview" && body.profile) {
-        const { data: p } = await admin.from("profiles").select("id,full_name,role").eq("id", body.profile).single();
+        const { data: p } = await admin.from("profiles").select("id,full_name,role,ref_code").eq("id", body.profile).single();
         if (!p) return json({ error: "No such profile" }, 404);
         return json(await buildDigest(admin, { ...p, scoped: p.role === "recruiter" }, body.kind === "roundup" ? "roundup" : "brief", "Africa/Lagos"));
       }
       if (!key) return json({ error: "The assistant isn't connected (ANTHROPIC_API_KEY)" }, 400);
       if (!body.selftest_profile) return json({ error: "Unknown ops action" }, 400);
-      ({ data: me } = await admin.from("profiles").select("id,full_name,role,status").eq("id", body.selftest_profile).single());
+      ({ data: me } = await admin.from("profiles").select("id,full_name,role,status,ref_code").eq("id", body.selftest_profile).single());
       if (!me) return json({ error: "No such profile" }, 404);
       me.scoped = me.role === "recruiter";
       db = admin;
@@ -767,7 +842,7 @@ Deno.serve(async (req: Request) => {
       const jwt = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
       const { data: caller } = await admin.auth.getUser(jwt);
       if (!caller?.user) return json({ error: "Not signed in" }, 401);
-      ({ data: me } = await admin.from("profiles").select("id,full_name,role,status").eq("id", caller.user.id).single());
+      ({ data: me } = await admin.from("profiles").select("id,full_name,role,status,ref_code").eq("id", caller.user.id).single());
       if (!me || me.status !== "Active") return json({ error: "Your account isn't active" }, 403);
       // Every lookup runs as the person, so row security applies.
       db = createClient(url, Deno.env.get("SUPABASE_ANON_KEY")!, { global: { headers: { Authorization: "Bearer " + jwt } }, auth: { persistSession: false } });
@@ -802,9 +877,16 @@ Deno.serve(async (req: Request) => {
     // message, shortened on older ones (the assistant can ask the person to re-send if it needs more).
     // To keep each turn cheap: the last 12 messages only; the 4 newest in full, older ones shortened
     // (the assistant can look things up again, or search_conversations, if it needs more).
-    const raw: any[] = (Array.isArray(body.messages) ? body.messages : []).slice(-12);
+    // The last 40 messages: the 10 newest in full, older ones shortened. Instructions the person gave
+    // anywhere in the conversation ("don't name the company", "follow our template") are also
+    // pulled out and kept in view, however long the chat gets.
+    const all: any[] = Array.isArray(body.messages) ? body.messages : [];
+    const RULE = /\b(don'?t|do not|never|always|remember|make sure|make it|from now on|going forward|stop\b|only|follow|use (our|this|the|my)|instead of|no need|without|avoid|must|should|add|include|remove|mention)\b/i;
+    const rules = all.slice(0, -1).filter((m: any) => m?.role === "user" && typeof m.content === "string").map((m: any) => m.content.replace(/\s+/g, " ").trim())
+      .filter((t: string) => t.length > 6 && t.length < 600 && RULE.test(t)).slice(-15);
+    const raw: any[] = all.slice(-40);
     const withFiles = (m: any, newest: boolean, recent: boolean) => {
-      const own = String(m.content || "").slice(0, recent ? 6000 : 600);
+      const own = String(m.content || "").slice(0, recent ? 6000 : 1500);
       const files = (Array.isArray(m.attachments) ? m.attachments : []).slice(0, 6).filter((a: any) => a && a.text);
       if (!files.length || m.role === "assistant") return own;
       const lim = newest ? 100000 : recent ? 3000 : 800;
@@ -817,12 +899,12 @@ Deno.serve(async (req: Request) => {
     };
     const lastUser = raw.map((m: any) => m.role).lastIndexOf("user");
     const messages: any[] = raw
-      .map((m: any, i: number) => ({ role: m.role === "assistant" ? "assistant" : "user", content: withFiles(m, i === lastUser, i >= raw.length - 4) }))
+      .map((m: any, i: number) => ({ role: m.role === "assistant" ? "assistant" : "user", content: withFiles(m, i === lastUser, i >= raw.length - 10) }))
       .filter((m: any) => m.content);
     while (messages.length && messages[0].role !== "user") messages.shift();
     if (!messages.length || messages[messages.length - 1].role !== "user") return json({ error: "Ask something first" }, 400);
 
-    const r = await runAgent({ admin, db, me, key, mode, messages, page: body.page || {}, tz, smart: !!body.smart, threadId: typeof body.threadId === "string" ? body.threadId : null, learn: !opsKey });
+    const r = await runAgent({ admin, db, me, key, mode, messages, page: body.page || {}, tz, smart: !!body.smart, threadId: typeof body.threadId === "string" ? body.threadId : null, learn: !opsKey, rules });
     if (r.error) return json({ error: r.error }, r.status);
     return json({ ok: true, text: r.text, proposals: r.proposals, model: r.model });
   } catch (e) {
