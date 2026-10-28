@@ -484,7 +484,7 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
 // Reminders are never sent automatically (every email is reviewed first): the lead card shows
 // "Reminder due" once someone has had 2 days without responding. Kept as a no-op for the tick.
 // No answer NO_REPLY_DAYS after the last reminder (as that email says): taken off the role and
-// "Open to new roles" turned off for a year, as if they'd switched it off themselves.
+// "Open to new roles" turned off, as if they'd switched it off themselves (we ask again in a year).
 export async function stepReminders(admin: any, n = 20) {
   const cutoff = new Date(Date.now() - NO_REPLY_DAYS * 864e5).toISOString();
   const { data: rows } = await admin.from("lead_offers").select("id,candidate_id,lead_id,candidate_job_id").eq("status", "reminded").is("acknowledged_at", null)

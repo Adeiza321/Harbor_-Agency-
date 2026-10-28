@@ -11,6 +11,7 @@ import { jobCountryNames } from "./regions.ts";
 import { fetchLeads, pitchLead, processLead, sendOfferMoving, sendOffers, shortlistUrl } from "./leads.ts";
 import { addQuestion, notifyOffer, offerAction, previewOffer, removeQuestion, stepReminders, updateOffer } from "./pitch.ts";
 import { stepClientFollowups } from "./clientflow.ts";
+import { stepOpenCheckins } from "./opencheck.ts";
 import { leadContactsAction } from "./contacts.ts";
 import { composeProspect, finalBody, manualCompose, markManualSent, previewProspect, processQueue, queueLeads, queueProspects, sendLeadSpamCheck, sendLeadTest, sendTest } from "./queue.ts";
 import { apolloKey, apolloSendCheck, sendViaApollo, stopInSequences } from "./apollo.ts";
@@ -249,6 +250,8 @@ async function handle(req: Request): Promise<Response> {
         try { out.clientFollowups = await stepClientFollowups(admin); } catch (e) { out.clientFollowupsError = errMsg(e); }
         // No answer 3 days after the last reminder: off the role, "Open to new roles" off (every tick).
         try { out.noReply = await stepReminders(admin); } catch (e) { out.noReplyError = errMsg(e); }
+        // Not active for a year: ask once whether they're looking again (never turned on by itself).
+        try { out.openCheckins = await stepOpenCheckins(admin); } catch (e) { out.openCheckinsError = errMsg(e); }
         try { out.send = await processQueue(admin, s); } catch (e) { out.sendError = errMsg(e); }
         try { out.deleted = await cleanup(admin, s.retentionDays); } catch (e) { out.cleanupError = errMsg(e); }
         return json({ ok: true, ...out });
