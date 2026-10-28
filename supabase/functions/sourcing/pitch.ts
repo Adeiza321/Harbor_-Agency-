@@ -32,6 +32,10 @@ export const PENDING = ["draft", "notified", "reminded", "no_email", "acknowledg
 export const OUT = ["withdrawn", "removed"];
 
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+// Cut at a whole word with "…" (evidence quoted from a CV), never mid-word.
+const clipW = (v: unknown, n: number) => { const t = String(v ?? "").replace(/\s+/g, " ").trim(); if (t.length <= n) return t; const i = t.lastIndexOf(" ", n); return t.slice(0, i > n / 2 ? i : n).replace(/[\s,;:(\-\u2013]+$/, "") + "\u2026"; };
+// Evidence saved before that (cut at exactly 120 characters): shown up to the last whole word.
+export const tidyCut = (v: unknown) => { const t = String(v ?? "").trim(); if (t.length < 118 || /[.)!?\u2026]$/.test(t)) return t; const i = t.lastIndexOf(" "); return (i > 60 ? t.slice(0, i) : t).replace(/[\s,;:(\-\u2013]+$/, "") + "\u2026"; };
 
 // What a candidate is looking for, from their job preferences and profile (for the AI).
 export function lookingFor(c: any): string {
@@ -172,12 +176,12 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
   const jd: JdCheck[] = items.map((it, i) => {
     const x = byN.get(i + 1);
     const status = ["met", "not_met", "not_shown"].includes(x?.status) ? x.status : "not_shown";
-    return { ...it, status, evidence: status === "met" ? scrub(clip(x?.evidence, 120), [c]) : "" };
+    return { ...it, status, evidence: status === "met" ? scrub(clipW(x?.evidence, 120), [c]) : "" };
   });
   // Industry: always noted, never deciding (unless the job description itself asks for it, when it's
   // one of the requirements above).
   const ind = out?.industry || {};
-  if (role.industry) jd.push({ item: "Industry: " + role.industry, required: false, info: true, status: ["met", "not_met"].includes(ind.status) ? ind.status : "not_shown", evidence: ind.status === "met" ? scrub(clip(ind.evidence, 120), [c]) : "" } as JdCheck);
+  if (role.industry) jd.push({ item: "Industry: " + role.industry, required: false, info: true, status: ["met", "not_met"].includes(ind.status) ? ind.status : "not_shown", evidence: ind.status === "met" ? scrub(clipW(ind.evidence, 120), [c]) : "" } as JdCheck);
   const asks = new Map<number, string>();
   for (const q of Array.isArray(out?.confirm) ? out.confirm : []) asks.set(Number(q?.n), hideEmployer(clip(q?.q, 200), lead));
   const req = jd.filter((x) => x.required);
@@ -337,6 +341,7 @@ export function factsOf(lead: any): Facts {
 const links = (portalToken: string, offerToken: string) => ({
   ack: `${portalBase()}/?c=${encodeURIComponent(portalToken)}&offer=${encodeURIComponent(offerToken)}&r=ack`,
   withdraw: `${portalBase()}/?c=${encodeURIComponent(portalToken)}&offer=${encodeURIComponent(offerToken)}&r=withdraw`,
+  page: `${portalBase()}/?c=${encodeURIComponent(portalToken)}`,
 });
 
 // The job-description check in short, for emails and pages: required items met (or confirmed),
@@ -356,7 +361,7 @@ export function noticeEmail(b: Brand, o: { first: string; facts: Facts; whyRole?
   const f = o.facts;
   // What the employer's job description asks for, and how they match it (from their CV).
   const js = jdSummary(o.jd);
-  const jdRow = (mark: string, color: string, item: string, note: string) => `<tr><td style="vertical-align:top;padding:4px 8px 4px 0;color:${color};font-weight:700;font-size:14px;">${mark}</td><td style="padding:4px 0;font-size:14px;line-height:1.5;">${esc(item)}${note ? `<span style="color:#56605A;"> · ${esc(note)}</span>` : ""}</td></tr>`;
+  const jdRow = (mark: string, color: string, item: string, note: string) => `<tr><td style="vertical-align:top;padding:4px 8px 4px 0;color:${color};font-weight:700;font-size:14px;">${mark}</td><td style="padding:4px 0;font-size:14px;line-height:1.5;">${esc(item)}${note ? `<span style="color:#56605A;"> · ${esc(tidyCut(note))}</span>` : ""}</td></tr>`;
   const jdHtml = js.total ? `<div style="font-size:15px;font-weight:600;margin:0 0 4px;">What the employer asks for, and how you match</div>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;font-family:Arial,sans-serif;">
 ${js.met.map((x: any) => jdRow("&#10003;", "#1F6F54", x.item, x.status === "confirmed" ? "you confirmed this" : x.evidence || "")).join("")}
@@ -387,18 +392,50 @@ ${f.summary ? `<div style="font-size:14px;line-height:1.55;margin-top:8px;color:
 ${reqRows}</table>` : "") +
     (o.fit != null ? p(`<b>Our fit score for you: ${o.fit}%</b>${o.verdict ? " (" + esc(o.verdict) + ")" : ""}. ` +
       (js.total ? `You meet ${js.met.length} of the ${js.total} requirements in the employer's job description${js.toConfirm.length ? `; we'll ask you to confirm the other ${js.toConfirm.length === 1 ? "one" : js.toConfirm.length}` : ""}.` : `That's how closely your experience matches what the employer needs.`)) : "") +
-    p(`<b>You don't need to do anything.</b> We'll update you as soon as the employer comes back about your profile. If we have any questions we'll reach out${o.questions ? " (we have " + (o.questions === 1 ? "one quick question" : o.questions + " quick questions") + ", which open when you acknowledge)" : ""}, and if you have any, just reply to this email.`) +
+    p(`<b>Please click Acknowledge so we can put you forward.</b> We can't share your profile with the employer until you do.${o.questions ? " We have " + (o.questions === 1 ? "one quick question" : o.questions + " quick questions") + " for you, which open when you acknowledge." : ""} We'll update you as soon as the employer comes back about your profile, and if you have any questions, just reply to this email.`) +
     `<div>${button(b, o.ack, "Acknowledge")}</div>` +
     `<p style="margin:10px 0 0;font-size:13px;line-height:1.6;color:#56605A;">By acknowledging, you agree to us representing you to this employer, for this role and any other role with them, and sharing your profile with them.</p>` +
     `<p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#56605A;">Rather not be put forward for this one? <a href="${esc(o.withdraw)}" style="color:#56605A;">Withdraw my profile</a></p>` +
     p(`<br>${esc(o.recruiter || "The team")}<br><span style="color:#56605A;font-size:13px;">${esc(b.legal || b.name)}</span>`);
   return emailShell(b, o.reminder ? "Reminder: we're putting you forward for " + f.title : "We're putting you forward for " + f.title, body);
 }
+// The one and only reminder: short, no role details. Acknowledge or withdraw; no answer within
+// NO_REPLY_DAYS means they're taken off the role and "Open to new roles" is turned off (they can
+// turn it back on from their candidate page, shown in the email).
+export const NO_REPLY_DAYS = 3;
+const replyBy = (from = new Date()) => new Date(from.getTime() + NO_REPLY_DAYS * 864e5).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+export const lastReminderSubject = (title: string) => "Action required: please acknowledge or withdraw for " + (title || "a role");
+export function lastReminderEmail(b: Brand, o: { first: string; facts: Facts; recruiter: string; ack: string; withdraw: string; page: string; by?: string }) {
+  const f = o.facts;
+  const p = (t: string) => `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;">${t}</p>`;
+  const by = o.by || replyBy();
+  // What their candidate page shows: the "Open to new roles" switch, off and then on.
+  const sw = (on: boolean) => `<td style="vertical-align:middle;padding-left:12px;"><table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:46px;height:26px;border-radius:13px;background:${on ? b.color : "#D9D4C8"};"><tr>${on ? `<td style="width:20px;"></td>` : ""}<td style="padding:3px;"><div style="width:20px;height:20px;border-radius:10px;background:#FFFFFF;"></div></td>${on ? "" : `<td style="width:20px;"></td>`}</tr></table></td>`;
+  const card = (on: boolean) => `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%;border:1px solid #E6E1D6;border-radius:12px;background:#FFFFFF;"><tr><td style="padding:12px 14px;font-family:Arial,sans-serif;"><div style="font-size:14px;font-weight:700;color:#14201B;">Open to new roles</div><div style="font-size:12px;line-height:1.5;color:#56605A;margin-top:2px;">${on ? "We'll put your profile forward, anonymously, for roles that fit you." : "We won't put you forward for new roles, unless you turn this back on."}</div></td>${sw(on)}<td style="width:12px;"></td></tr></table>`;
+  // Stacked (off, then on), so it reads the same on a phone.
+  const example = `<div style="max-width:380px;margin:6px 0 14px;">
+<div style="font-family:Arial,sans-serif;font-size:11px;letter-spacing:1px;color:#8A8578;margin:0 0 6px;">IF IT'S OFF</div>${card(false)}
+<div style="font-family:Arial,sans-serif;font-size:12px;color:${b.color};font-weight:700;margin:8px 0;">&darr; Tap the switch so it turns green</div>${card(true)}
+</div>`;
+  const body = p(`Hi ${esc(o.first)},`) +
+    p(`We don't want to fill your inbox, so <b>this is the last email we'll send you about this role</b>:`) +
+    `<div style="background:#F6F3EC;border-radius:12px;padding:12px 16px;margin:0 0 16px;font-size:16px;font-weight:600;">${esc(f.title)}${f.place ? `<span style="font-weight:400;color:#56605A;font-size:14px;"> &middot; ${esc(f.place)}</span>` : ""}</div>` +
+    p(`<b>Action required:</b> please click <b>Acknowledge</b> so we can put your profile forward, or <b>Withdraw my profile</b> if you'd rather not be put forward for this one.`) +
+    `<div>${button(b, o.ack, "Acknowledge")} &nbsp;<a href="${esc(o.withdraw)}" style="display:inline-block;margin-top:18px;padding:11px 20px;border:1px solid #D9D4C8;color:#14201B;text-decoration:none;border-radius:10px;font-family:Arial,sans-serif;font-size:14px;font-weight:600;white-space:nowrap;">Withdraw my profile</a></div>` +
+    `<p style="margin:10px 0 18px;font-size:13px;line-height:1.6;color:#56605A;">By acknowledging, you agree to us representing you to this employer, for this role and any other role with them, and sharing your profile with them.</p>` +
+    p(`If we don't hear from you by <b>${esc(by)}</b>, we'll assume you don't want your profile put forward. We'll take you off this role and stop emailing you about roles you're a good fit for.`) +
+    p(`Changed your mind later? That's easy: open your candidate page and turn on <b>Open to new roles</b>.`) +
+    example +
+    `<div>${button(b, o.page, "Open my candidate page")}</div>` +
+    p(`<br>${esc(o.recruiter || "The team")}<br><span style="color:#56605A;font-size:13px;">${esc(b.legal || b.name)}</span>`);
+  return emailShell(b, "Action required: acknowledge or withdraw for " + f.title, body);
+}
+const lastReminderText = (facts: Facts) => `Last reminder about ${facts.title}: please click Acknowledge so we can put you forward, or withdraw your profile. If we don't hear from you within ${NO_REPLY_DAYS} days, we'll take you off this role and turn off "Open to new roles" (you can turn it back on from your candidate page any time).`;
 const noticeText = (facts: Facts, fit: number | null, questions: number, whyRole = "") =>
   `We're putting you forward for ${facts.title}${facts.place ? " (" + facts.place + ")" : ""}. The employer's name stays private for now.` +
   (whyRole ? " " + whyRole : "") +
   (fit != null ? ` Our fit score for you: ${fit}%.` : "") +
-  ` You don't need to do anything: we'll update you when the employer comes back about your profile.` +
+  ` Please click Acknowledge so we can put you forward: we can't share your profile with the employer until you do.` +
   (questions ? ` We have ${questions === 1 ? "a quick question" : questions + " quick questions"} for you, which open when you acknowledge.` : "") +
   ` If you'd rather not be put forward for this one, you can withdraw your profile.`;
 
@@ -419,7 +456,7 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   const nq = Array.isArray(o.questions) ? o.questions.length : 0;
   const { data: rec } = c.recruiter_id ? await admin.from("profiles").select("full_name,email").eq("id", c.recruiter_id).maybeSingle() : { data: null };
   if (linkId) {
-    await admin.from("candidate_job_messages").insert({ link_id: linkId, sender: "recruiter", body: (reminder ? "Reminder: " : "") + noticeText(facts, o.fit, nq, reminder ? "" : o.why_role || ""), staff_id: c.recruiter_id || null });
+    await admin.from("candidate_job_messages").insert({ link_id: linkId, sender: "recruiter", body: reminder ? lastReminderText(facts) : noticeText(facts, o.fit, nq, o.why_role || ""), staff_id: c.recruiter_id || null });
   }
   const now = new Date().toISOString();
   if (!c.email || c.email_opt_out || !c.portal_token) {
@@ -428,19 +465,39 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   }
   const b = await loadBrand(admin);
   const l = links(c.portal_token, o.token);
-  const html = noticeEmail(b, { first: String(c.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "", questions: nq,
-    recruiter: String(rec?.full_name || "").split(" ")[0] || "", ack: l.ack, withdraw: l.withdraw, reminder });
-  const subject = (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role");
+  const recFirst = String(rec?.full_name || "").split(" ")[0] || "", first = String(c.name || "").split(" ")[0] || "there";
+  const html = reminder ? lastReminderEmail(b, { first, facts, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, page: l.page })
+    : noticeEmail(b, { first, facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "", questions: nq, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw });
+  const subject = reminder ? lastReminderSubject(facts.title) : "We're putting you forward for " + (facts.title || "a role");
   const sent = await sendBrevo(b, { email: c.email, name: c.name }, subject, html, undefined, { replyTo: rec?.email ? { email: rec.email, name: rec.full_name || undefined } : null });
-  if (reminder) await admin.from("lead_offers").update({ status: sent ? "reminded" : o.status, reminded_at: now }).eq("id", o.id);
+  if (reminder) await admin.from("lead_offers").update({ status: sent ? "reminded" : o.status, reminded_at: now, ...(sent ? { final_reminder_at: now } : {}) }).eq("id", o.id);
   else await admin.from("lead_offers").update({ status: sent ? "notified" : "no_email", notified_at: now, sent_at: now }).eq("id", o.id);
-  await admin.from("candidate_timeline").insert({ candidate_id: c.id, title: (reminder ? "Reminder sent: put forward for " : "Told they're being put forward for ") + facts.title + (sent ? "" : " (email didn't send)"), done: true });
+  await admin.from("candidate_timeline").insert({ candidate_id: c.id, title: (reminder ? "Last reminder sent: put forward for " : "Told they're being put forward for ") + facts.title + (sent ? "" : " (email didn't send)"), done: true });
   return { status: sent ? (reminder ? "reminded" : "notified") : "no_email", sent, ...(sent ? {} : { why: "the email didn't send" }) };
 }
 
 // Reminders are never sent automatically (every email is reviewed first): the lead card shows
 // "Reminder due" once someone has had 2 days without responding. Kept as a no-op for the tick.
-export async function stepReminders(_admin: any, _n = 10) { return { reminded: 0 }; }
+// No answer NO_REPLY_DAYS after the last reminder (as that email says): taken off the role and
+// "Open to new roles" turned off for a year, as if they'd switched it off themselves.
+export async function stepReminders(admin: any, n = 20) {
+  const cutoff = new Date(Date.now() - NO_REPLY_DAYS * 864e5).toISOString();
+  const { data: rows } = await admin.from("lead_offers").select("id,candidate_id,lead_id,candidate_job_id").eq("status", "reminded").is("acknowledged_at", null)
+    .not("final_reminder_at", "is", null).lt("final_reminder_at", cutoff).limit(n);
+  let closed = 0;
+  for (const o of rows || []) {
+    const now = new Date().toISOString();
+    const { data: done } = await admin.from("lead_offers").update({ status: "withdrawn", withdrawn_at: now, withdrawn_by: "no_response", note: "No response to the last reminder" })
+      .eq("id", o.id).eq("status", "reminded").is("acknowledged_at", null).select("id");
+    if (!done || !done.length) continue;
+    if (o.candidate_job_id) await admin.from("candidate_jobs").update({ stage: "Withdrawn" }).eq("id", o.candidate_job_id).not("stage", "in", "(Withdrawn,Rejected,Placed)");
+    await admin.from("candidates").update({ open_to_roles: false, open_paused_until: new Date(Date.now() + 365 * 864e5).toISOString(), open_changed_at: now }).eq("id", o.candidate_id).eq("open_to_roles", true);
+    const { data: lead } = await admin.from("leads").select("job_title").eq("id", o.lead_id).maybeSingle();
+    await admin.from("candidate_timeline").insert({ candidate_id: o.candidate_id, title: `No response to the last reminder about ${lead?.job_title || "a role"}: taken off it, and "Open to new roles" turned off`, done: true });
+    closed++;
+  }
+  return { reminded: 0, closed };
+}
 
 // The email a candidate would get, for review before sending (same as the real one).
 export async function previewOffer(admin: any, offerId: string, reminder = false) {
@@ -452,9 +509,11 @@ export async function previewOffer(admin: any, offerId: string, reminder = false
   const b = await loadBrand(admin);
   const facts = factsOf(lead || {});
   const l = links(c?.portal_token || "preview", o.token);
-  const html = noticeEmail(b, { first: String(c?.name || "").split(" ")[0] || "there", facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "",
-    questions: Array.isArray(o.questions) ? o.questions.length : 0, recruiter: String(rec?.full_name || "").split(" ")[0] || "", ack: l.ack, withdraw: l.withdraw, reminder });
-  return { ok: true, html, subject: (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role"),
+  const first = String(c?.name || "").split(" ")[0] || "there", recFirst = String(rec?.full_name || "").split(" ")[0] || "";
+  const html = reminder ? lastReminderEmail(b, { first, facts, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, page: l.page })
+    : noticeEmail(b, { first, facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "",
+      questions: Array.isArray(o.questions) ? o.questions.length : 0, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw });
+  return { ok: true, html, subject: reminder ? lastReminderSubject(facts.title) : "We're putting you forward for " + (facts.title || "a role"),
     to: c?.email || "", canEmail: !!(c?.email && !c.email_opt_out && c.portal_token), replyTo: rec?.email || "" };
 }
 
@@ -532,7 +591,8 @@ export async function offerAction(admin: any, me: { id: string; name: string }, 
     return { ok: true, message: r.sent ? "Email sent" : "Couldn't email them: " + (r.why || "no email") + ". Add their email so they can acknowledge, or take them off." };
   }
   if (action === "remind") {
-    if (!["notified", "reminded"].includes(o.status)) throw new Error("Only someone still waiting can be reminded");
+    if (o.status === "reminded") throw new Error("They've already had the last reminder. We don't send another");
+    if (o.status !== "notified") throw new Error("Only someone still waiting can be reminded");
     const r = await notifyOffer(admin, o.id, true);
     return { ok: true, message: r.sent ? "Reminder sent" : "Couldn't send the reminder: " + (r.why || "no email") };
   }
