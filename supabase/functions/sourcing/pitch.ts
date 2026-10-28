@@ -52,17 +52,22 @@ export function lookingFor(c: any): string {
     "Work setup they'd accept: " + (ws.length ? ws.join(", ") : "not confirmed (ask, under 'Work setup')"),
     c?.pay && c.pay !== "-" ? "Pay they want: " + clip(c.pay, 80) : "",
     c?.location ? "Lives in: " + clip(c.location, 100) : "",
+    c?.notice && c.notice !== "-" ? "Notice period: " + clip(c.notice, 60) : "Notice period: not known",
+    c?.pay && c.pay !== "-" ? "" : "Pay they want: not known",
   ].filter(Boolean).join(" | ");
 }
 
 export type JdItem = { item: string; required: boolean };
-// How one candidate stands on one item from the job description: met (the CV shows it), not_met
-// (the CV clearly shows they don't have it), not_shown (the CV doesn't say; we ask them), and
-// confirmed (they told us yes).
-export type JdCheck = JdItem & { status: "met" | "not_met" | "not_shown" | "confirmed"; evidence: string; info?: boolean };
+// How one candidate stands on one item from the job description, from the evidence: met (their work
+// history shows it), partial (it's listed or very likely from their roles but not described: we ask
+// them to confirm, and it doesn't count against them), not_shown (the CV doesn't say; we ask them),
+// not_met (the CV clearly shows they don't have it), and confirmed (they told us yes).
+export type JdCheck = JdItem & { status: "met" | "partial" | "not_met" | "not_shown" | "confirmed"; evidence: string; info?: boolean };
+// Most questions in one pitch email: yes/no confirmations first, then what they're looking for.
+export const MAX_PITCH_QUESTIONS = 6;
 export type Assessed = {
   n: number; fit: number; verdict: string; reason: string; whyRole: string; bullets: string[]; musts: { item: string; evidence: string; bonus?: boolean }[];
-  notMet: string[]; requirements: { item: string; theirs: string; role: string; status: "met" | "discuss" }[]; questions: string[];
+  notMet: string[]; requirements: { item: string; theirs: string; role: string; status: "met" | "discuss" }[]; questions: { q: string; field?: string }[];
   jd: JdCheck[]; confirm: { item: string; q: string }[]; out: string;
   exEmployer?: boolean;   // their CV shows they've worked at this company (any of its names)
 };
@@ -151,22 +156,26 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
   if (cv.why) return { ...base, out: cv.why };
   const earlier = await earlierAnswers(admin, c.id).catch(() => "");
   const sys = "You are a senior recruiter checking one candidate against an employer's job description, strictly from the evidence. Their CV is attached; a profile summary and what they're looking for follow. " +
-    "Reply with STRICT JSON only: {\"checks\": [{\"n\": number, \"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}], \"confirm\": [{\"n\": number, \"q\": string}], " +
+    "Reply with STRICT JSON only: {\"checks\": [{\"n\": number, \"status\": \"met\" | \"partial\" | \"not_met\" | \"not_shown\", \"evidence\": string}], \"confirm\": [{\"n\": number, \"q\": string}], " +
     "\"industry\": {\"status\": \"met\" | \"not_met\" | \"not_shown\", \"evidence\": string}, \"worked_at_employer\": boolean, " +
-    "\"reason\": string, \"why_role\": string, \"bullets\": string[], \"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": string[]}. " +
+    "\"reason\": string, \"why_role\": string, \"bullets\": string[], \"requirements\": [{\"item\": string, \"theirs\": string, \"role\": string, \"status\": \"met\" | \"discuss\"}], \"questions\": [{\"q\": string, \"field\": \"pay\" | \"work_setup\" | \"location\" | \"employment_type\" | \"notice\" | \"other\"}]}. " +
     "worked_at_employer: true when their CV or profile shows they work or have EVER worked at the employer named below for this check, under any of its names " +
     "(a former name, its parent company, a subsidiary or a brand it trades as), as an employee, contractor or intern; false otherwise. Only what the CV shows: never guess from industry or location. " +
     "industry: whether they have worked in the employer's industry (given below) or a closely related one: 'met' with evidence (e.g. '5 years in manufacturing'), 'not_met' when their CV shows only other industries, 'not_shown' when unclear. This is information only. " +
-    "checks: one for EVERY numbered requirement. 'met' only when the CV (or profile) clearly shows it; equivalent wording counts (e.g. 'ACA chartered accountant' for 'professional accounting qualification', 6 years for '5+ years'). " +
+    "checks: one for EVERY numbered requirement, from the evidence. 'met' only when their work history clearly shows it (described work, a qualification, the years); equivalent wording counts (e.g. 'ACA chartered accountant' for 'professional accounting qualification', 6 years for '5+ years'). " +
+    "'partial' when they very likely have it but the CV doesn't describe it: it's only in a skills list, implied by a job title or by the roles they've held, or mentioned without any detail (e.g. 'Payroll' in skills but no payroll work described). evidence for partial: what the CV does show, e.g. 'Payroll listed in skills'. " +
     "'not_met' only when the CV clearly shows they don't have it (e.g. 3 years in total where 5+ are required, a different licence where only one specific licence is accepted). " +
-    "'not_shown' when the CV simply doesn't say. Never assume, never infer from the job title. evidence: a few words from the CV for a hiring manager, anonymous (no names of people or employers), e.g. 'Licensed CPA since 2016', '7 years in manufacturing'; for not_shown ''. " +
+    "'not_shown' when the CV simply doesn't say and nothing suggests it. Never mark 'met' from a job title alone. evidence: a few words from the CV for a hiring manager, anonymous (no names of people or employers), e.g. 'Licensed CPA since 2016', '7 years in manufacturing'; for not_shown ''. " +
     "Their earlier answers to our questions (if given below) count as evidence like the CV: a requirement they already answered is met or not_met from that answer, and NEVER asked again. " +
-    "confirm: for each REQUIRED requirement that is not_shown, one short friendly yes/no question to the candidate ('you'), e.g. 'Do you have hands-on experience with NetSuite?'. " +
+    "confirm: for each REQUIRED requirement that is 'partial' or 'not_shown', one short friendly yes/no question to the candidate ('you'), e.g. 'Do you have hands-on experience with NetSuite?'; for a partial one, mention what we can see, e.g. 'Your CV lists payroll in your skills: have you run payroll hands-on?'. " +
     "reason: one short sentence on why they fit the employer. why_role: two short sentences to the candidate ('you') on why this role is a great match for THEM (the work, the step up, the setup, the location, the pay). Warm, specific, honest. " +
     "bullets: 3 selling points for the hiring manager, each under 15 words, anonymous. " +
-    "requirements: how THIS ROLE meets what the CANDIDATE is looking for, one item each for: 'Role', 'Level', 'Location', 'Work setup', 'Employment type', 'Pay' (only when both sides are known). theirs: what they want; role: what this job offers; " +
-    "status 'met' when the role clearly gives them what they want, 'discuss' when it doesn't clearly or isn't stated (negotiable, talked through). Leave out an item only when neither side is known. " +
-    "questions: up to 2 short, friendly questions about the 'discuss' items in requirements only (role, level, location, work setup, employment type, pay); never about the job description's requirements (those are asked in confirm) and never repeating a confirm question. [] when none. NEVER name the employer anywhere.";
+    "requirements: how THIS ROLE meets what the CANDIDATE is looking for, one item each for: 'Role', 'Level', 'Location', 'Work setup', 'Employment type', 'Pay'. theirs: what they want ('Not known' when we don't know); role: what this job offers ('Not stated' when the posting doesn't say); " +
+    "status 'met' when the role clearly gives them what they want, 'discuss' when it doesn't clearly, or either side isn't known (negotiable, talked through). " +
+    "questions: short, friendly questions to settle what's still unknown or doesn't match, at most 4, most important first: " +
+    "pay (ask what salary they're looking for whenever their pay isn't known or the role's pay isn't stated, field 'pay'); work setup (when theirs isn't confirmed or doesn't match the role's, e.g. 'The role is on-site in <city>. Would that work for you, or would you need hybrid?', field 'work_setup'); " +
+    "location (when they don't live near the job: commute or relocation, field 'location'); employment type (when it doesn't match or isn't known, field 'employment_type'); notice period (when not known, field 'notice'). " +
+    "Never about the job description's requirements (those are in confirm), never repeating a confirm question, and never anything their earlier answers already settle. [] when nothing is unknown. NEVER name the employer anywhere.";
   const list = items.map((x, i) => `${i + 1}. ${x.item} (${x.required ? "required" : "nice to have"})`).join("\n");
   const text = `${cv.text}Employer (only for the worked_at_employer check; never mention it anywhere else): ${lead.company}${lead.company_domain ? " (" + lead.company_domain + ")" : ""}\n\nJob: ${lead.job_title}\nLocation: ${lead.location || "?"} (${lead.country || "?"})${lead.salary ? "\nPay: " + lead.salary : ""}${role.workSetup ? "\nWork setup: " + role.workSetup : ""}${role.employmentType ? "\nEmployment type: " + role.employmentType : ""}\nWhat the job is: ${role.summary}\n\n` +
     `Employer's industry: ${role.industry || "unknown"}\n\nRequirements from the job description:\n${list}\n\nCandidate profile: ${anonSummary(c)}\n${lookingFor(c)}` +
@@ -176,8 +185,8 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
   for (const x of Array.isArray(out?.checks) ? out.checks : []) byN.set(Number(x?.n), x);
   const jd: JdCheck[] = items.map((it, i) => {
     const x = byN.get(i + 1);
-    const status = ["met", "not_met", "not_shown"].includes(x?.status) ? x.status : "not_shown";
-    return { ...it, status, evidence: status === "met" ? scrub(clipW(x?.evidence, 120), [c]) : "" };
+    const status = ["met", "partial", "not_met", "not_shown"].includes(x?.status) ? x.status : "not_shown";
+    return { ...it, status, evidence: ["met", "partial"].includes(status) ? scrub(clipW(x?.evidence, 120), [c]) : "" };
   });
   // Industry: always noted, never deciding (unless the job description itself asks for it, when it's
   // one of the requirements above).
@@ -186,10 +195,12 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
   const asks = new Map<number, string>();
   for (const q of Array.isArray(out?.confirm) ? out.confirm : []) asks.set(Number(q?.n), hideEmployer(clip(q?.q, 200), lead));
   const req = jd.filter((x) => x.required);
-  const met = req.filter((x) => x.status === "met");
+  // Partial counts as met (they very likely have it); it's still asked, to confirm.
+  const met = req.filter((x) => x.status === "met" || x.status === "partial");
   const notMet = req.filter((x) => x.status === "not_met").map((x) => x.item);
   const notShown = req.filter((x) => x.status === "not_shown");
-  const confirm = notShown.map((x) => ({ item: x.item, q: asks.get(items.indexOf(items.find((y) => y.item === x.item)!) + 1) || `Do you have this: ${x.item}?` }));
+  const toAsk = req.filter((x) => x.status === "not_shown" || x.status === "partial");
+  const confirm = toAsk.map((x) => ({ item: x.item, q: asks.get(items.indexOf(items.find((y) => y.item === x.item)!) + 1) || (x.status === "partial" ? `Can you confirm you have hands-on experience with: ${x.item}?` : `Do you have this: ${x.item}?`) }));
   const a: Assessed = {
     ...base, jd, notMet, confirm,
     fit: req.length ? Math.round(100 * met.length / req.length) : 0,
@@ -203,8 +214,9 @@ async function checkCandidate(admin: any, lead: any, role: RoleFacts, items: JdI
       item: clip(q?.item, 30), theirs: hideEmployer(clip(q?.theirs, 90), lead), role: hideEmployer(clip(q?.role, 90), lead), status: q?.status === "met" ? "met" : "discuss" as "met" | "discuss",
     })).filter((q: any) => q.item),
     // Never the same thing twice: a question that overlaps a yes/no confirm question is dropped.
-    questions: (Array.isArray(out?.questions) ? out.questions : []).slice(0, 2).map((q: unknown) => hideEmployer(clip(q, 240), lead))
-      .filter((q: string) => q && !confirm.some((cq) => overlap(q, cq.item) >= 2)),
+    questions: (Array.isArray(out?.questions) ? out.questions : []).slice(0, 4)
+      .map((q: any) => ({ q: hideEmployer(clip(typeof q === "string" ? q : q?.q, 240), lead), field: ["pay", "work_setup", "location", "employment_type", "notice"].includes(q?.field) ? q.field : undefined }))
+      .filter((q: any) => q.q && !confirm.some((cq) => overlap(q.q, cq.item) >= 2)),
   };
   a.exEmployer = out?.worked_at_employer === true;
   a.out = a.exEmployer ? "Has worked at this company before (their CV shows it)"
@@ -350,9 +362,10 @@ const links = (portalToken: string, offerToken: string) => ({
 export function jdSummary(jd: unknown) {
   const list: any[] = Array.isArray(jd) ? jd : [];
   const req = list.filter((x) => x && x.required !== false && !x.info);
-  const ok = req.filter((x) => x.status === "met" || x.status === "confirmed");
+  const ok = req.filter((x) => x.status === "met" || x.status === "confirmed" || x.status === "partial");
   return {
     total: req.length, met: ok, toConfirm: req.filter((x) => x.status === "not_shown"), notMet: req.filter((x) => x.status === "not_met"),
+    partial: req.filter((x) => x.status === "partial"),
     bonus: list.filter((x) => x && x.required === false && !x.info && x.status === "met"),
     industry: list.find((x) => x && x.info) || null,
   };
@@ -365,7 +378,8 @@ export function noticeEmail(b: Brand, o: { first: string; facts: Facts; whyRole?
   const jdRow = (mark: string, color: string, item: string, note: string) => `<tr><td style="vertical-align:top;padding:4px 8px 4px 0;color:${color};font-weight:700;font-size:14px;">${mark}</td><td style="padding:4px 0;font-size:14px;line-height:1.5;">${esc(item)}${note ? `<span style="color:#56605A;"> · ${esc(tidyCut(note))}</span>` : ""}</td></tr>`;
   const jdHtml = js.total ? `<div style="font-size:15px;font-weight:600;margin:0 0 4px;">What the employer asks for, and how you match</div>
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:12px;font-family:Arial,sans-serif;">
-${js.met.map((x: any) => jdRow("&#10003;", "#1F6F54", x.item, x.status === "confirmed" ? "you confirmed this" : x.evidence || "")).join("")}
+${js.met.filter((x: any) => x.status !== "partial").map((x: any) => jdRow("&#10003;", "#1F6F54", x.item, x.status === "confirmed" ? "you confirmed this" : x.evidence || "")).join("")}
+${js.partial.map((x: any) => jdRow("?", "#9A6B00", x.item, (x.evidence ? x.evidence + ": " : "") + "we'll ask you to confirm")).join("")}
 ${js.toConfirm.map((x: any) => jdRow("?", "#9A6B00", x.item, "not on your CV, we'll ask you to confirm")).join("")}
 ${js.bonus.map((x: any) => jdRow("+", "#1F6F54", "Nice to have: " + x.item, x.evidence || "")).join("")}
 ${js.industry && js.industry.status === "met" ? jdRow("+", "#1F6F54", js.industry.item, js.industry.evidence || "") : ""}
@@ -392,7 +406,7 @@ ${f.summary ? `<div style="font-size:14px;line-height:1.55;margin-top:8px;color:
 <tr><td style="font-size:11px;color:#8A8578;padding:0 8px 4px 0;">&nbsp;</td><td style="font-size:11px;color:#8A8578;padding:0 8px 4px;">You</td><td style="font-size:11px;color:#8A8578;padding:0 8px 4px;">This role</td><td></td></tr>
 ${reqRows}</table>` : "") +
     (o.fit != null ? p(`<b>Our fit score for you: ${o.fit}%</b>${o.verdict ? " (" + esc(o.verdict) + ")" : ""}. ` +
-      (js.total ? `You meet ${js.met.length} of the ${js.total} requirements in the employer's job description${js.toConfirm.length ? `; we'll ask you to confirm the other ${js.toConfirm.length === 1 ? "one" : js.toConfirm.length}` : ""}.` : `That's how closely your experience matches what the employer needs.`)) : "") +
+      (js.total ? `Your CV shows ${js.met.length - js.partial.length} of the ${js.total} requirements in the employer's job description${js.toConfirm.length + js.partial.length ? `; we'll ask you to confirm the other ${js.toConfirm.length + js.partial.length === 1 ? "one" : js.toConfirm.length + js.partial.length}` : ""}.` : `That's how closely your experience matches what the employer needs.`)) : "") +
     p(`<b>Please click Acknowledge so we can put you forward.</b> We can't share your profile with the employer until you do.${o.questions ? " We have " + (o.questions === 1 ? "one quick question" : o.questions + " quick questions") + " for you, which open when you acknowledge." : ""} We'll update you as soon as the employer comes back about your profile, and if you have any questions, just reply to this email.`) +
     `<div>${button(b, o.ack, "Acknowledge")}</div>` +
     `<p style="margin:10px 0 0;font-size:13px;line-height:1.6;color:#56605A;">By acknowledging, you agree to us representing you to this employer, for this role and any other role with them, and sharing your profile with them.</p>` +
@@ -536,7 +550,7 @@ export async function updateOffer(admin: any, offerId: string, patch: { whyRole?
     const before: any[] = Array.isArray(o.questions) ? o.questions : [];
     upd.questions = patch.questions.map((q, i) => ({ text: String((q as any)?.q ?? q ?? "").trim().slice(0, 240), was: before.find((b) => (b?.q ?? b) === String((q as any)?.q ?? q ?? "").trim()) || ((patch.questions as unknown[]).length === before.length ? before[i] : null) }))
       .map((x, i) => ({ ...x, yesno: !!(patch.questions as any[])[i]?.yesno }))
-      .filter((x) => x.text).slice(0, MAX_QUESTIONS).map((x) => (x.was && typeof x.was === "object" && x.was.confirm ? { q: x.text, confirm: x.was.confirm } : x.yesno ? { q: x.text, yesno: true } : { q: x.text }));
+      .filter((x) => x.text).slice(0, MAX_QUESTIONS).map((x) => (x.was && typeof x.was === "object" && x.was.confirm ? { q: x.text, confirm: x.was.confirm } : { q: x.text, ...(x.yesno ? { yesno: true } : {}), ...(x.was && typeof x.was === "object" && x.was.field ? { field: x.was.field } : {}) }));
   }
   if (Object.keys(upd).length) await admin.from("lead_offers").update(upd).eq("id", o.id);
   return { ok: true, message: "Saved" };
