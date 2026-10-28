@@ -148,7 +148,8 @@ async function stepLeads(admin: any, s: any, agencyName: string, n = 3) {
   let kept = 0, pitched = 0; const errors: string[] = [];
   const queueIfAuto = async (l: any, r: any) => { if (r?.pitched) { pitched++; if (s.approval === "auto" && r.channel === "email" && !sendBlockers(s).length) await queueLeads(admin, [l.id], null, s, agencyName); } };
   // Waiting for blind resumes: pitched as soon as one of their candidates' blind resumes is checked.
-  const { data: waiting } = await admin.from("leads").select("*").eq("status", "awaiting").order("updated_at").limit(n * 3);
+  // (Also a lead moved to New by hand before its pitch was written, which would otherwise never get one.)
+  const { data: waiting } = await admin.from("leads").select("*").or("status.eq.awaiting,and(status.eq.new,pitch_body.is.null)").order("updated_at").limit(n * 3);
   for (const l of waiting || []) {
     try { await queueIfAuto(l, await pitchLead(admin, l, s)); } catch (e) { errors.push(errMsg(e).slice(0, 160)); }
   }
