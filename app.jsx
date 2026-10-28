@@ -10084,7 +10084,7 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
     setBusy("");
   };
   return (
-    <Modal open onClose={onClose} title={(reminder ? "Last reminder to " : "Email to ") + name} wide>
+    <Modal open onClose={onClose} title={(reminder ? (offer.status === "reminded" ? "Last reminder to " : "Reminder to ") : "Email to ") + name} wide>
       {!p ? <SkeletonRows n={4} /> : (
         <div className="flex flex-col gap-3">
           <div className="text-xs" style={{ color: C.ink2 }}>To <b>{p.to || "no email on file"}</b>{p.replyTo ? " · replies go to " + p.replyTo : ""} · Subject: <b>{p.subject}</b></div>
@@ -10330,9 +10330,13 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
               {o.status === "ready" && <span style={{ color: blindOk ? C.em : C.warnFg }}>{blindOk ? "Blind resume checked" : "Needs a checked blind resume"}</span>}
               {o.note && <span style={{ color: C.ink3 }}>{o.note}</span>}
               {o.status === "notified" && o.notified_at && Date.now() - new Date(o.notified_at).getTime() > 2 * 864e5 && <span className="font-semibold" style={{ color: C.warnFg }}>Reminder due</span>}
+              {o.status === "reminded" && !o.final_reminder_at && o.reminded_at && Date.now() - new Date(o.reminded_at).getTime() > 2 * 864e5 && <span className="font-semibold" style={{ color: C.warnFg }}>Last reminder due</span>}
               {staff && o.status === "draft" && <Btn kind="primary" icon={Mail} disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: false })} className="!py-1.5 !px-3 text-xs">Review and send email</Btn>}
-              {staff && o.status === "notified" && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }} title={"The only reminder: if " + first + " doesn't answer within 3 days, they're taken off this role and Open to new roles turns off"}>Send last reminder</button>}
-              {o.status === "reminded" && o.reminded_at && <span style={{ color: C.ink3 }}>Last reminder sent {fdate(o.reminded_at)}</span>}
+              {staff && o.status === "notified" && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }} title={"Reminder 1 of 2: the full email again"}>Send reminder</button>}
+              {o.status === "reminded" && o.reminded_at && !o.final_reminder_at && <span style={{ color: C.ink3 }}>Reminder sent {fdate(o.reminded_at)}</span>}
+              {staff && o.status === "reminded" && !o.final_reminder_at && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }} title={"Reminder 2 of 2, short: if " + first + " doesn't answer within 3 days, they're taken off this role and Open to new roles turns off"}>Send last reminder</button>}
+              {o.status === "reminded" && o.final_reminder_at && <span style={{ color: C.ink3 }}>Last reminder sent {fdate(o.final_reminder_at)} · off the role {fdate(new Date(new Date(o.final_reminder_at).getTime() + 3 * 864e5))} if no answer</span>}
+              {o.status === "withdrawn" && o.withdrawn_by === "candidate" && o.other_roles === false && <span className="font-semibold" style={{ color: C.warnFg }}>Not open to other roles for now</span>}
               {staff && ["notified", "reminded"].includes(o.status) && <span style={{ color: C.ink2 }}>Waiting for {first} to click Acknowledge{c && c.phone ? <>: <a href={"tel:" + c.phone.replace(/[^\d+]/g, "")} className="font-medium" style={{ color: C.em }}>call {first}</a> to ask them to</> : ""}</span>}
               {staff && o.status === "acknowledged" && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for their answers"}>Put through without answers</button>}
               {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "w", "offer_withdraw", { offerId: o.id }, "Withdrawn")} style={{ color: C.ink2 }}>Withdraw</button>}
@@ -14617,12 +14621,16 @@ function PitchJdList({ jd, you }) {
   );
 }
 
+// Quick reasons on "Withdraw my profile" (one tap, so nobody has to type).
+const WITHDRAW_REASONS = ["The pay doesn't work for me", "Location or commute", "Work setup (remote, hybrid or onsite)", "Not the right level for me", "Not the kind of role I want", "I've accepted another job", "I'm not looking right now", "Something else"];
 function PortalPitch({ token, offer, initial, onDone }) {
   const [d, setD] = useState(initial);
   const [busy, setBusy] = useState("");
   const [answers, setAnswers] = useState([]);
   const [yn, setYn] = useState([]);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [wdReason, setWdReason] = useState("");
+  const [wdNote, setWdNote] = useState("");
   const call = (fn, body) => sbFetch("/rest/v1/rpc/" + fn, { method: "POST", body: { p_token: token, p_offer: offer, ...(body || {}) } });
   const reload = () => call("candidate_pitch").then((j) => j && setD(j));
   const run = (key, fn, body) => { setBusy(key); return call(fn, body).then(reload).catch((e) => popError(e)).finally(() => setBusy("")); };
@@ -14696,8 +14704,18 @@ function PortalPitch({ token, offer, initial, onDone }) {
         <div className="mt-4 rounded-xl p-3.5" style={{ background: C.canvas }}>
           <div className="text-sm font-medium">Withdraw your profile from this role?</div>
           <div className="text-sm mt-1" style={{ color: C.ink2 }}>We won't put you forward for it. Your recruiter will be told.</div>
+          <div className="text-sm font-medium mt-3">What's the main reason?</div>
+          <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>One tap helps us send you better roles.</div>
+          <div className="flex flex-wrap gap-1.5 mt-2" role="radiogroup" aria-label="Reason for withdrawing">
+            {WITHDRAW_REASONS.map((r) => (
+              <button key={r} type="button" role="radio" aria-checked={wdReason === r} disabled={!!busy} onClick={() => setWdReason(r)}
+                className="text-sm rounded-full px-3 py-1.5" style={{ border: "1px solid " + (wdReason === r ? C.em : C.line), background: wdReason === r ? C.emTint : C.card, color: wdReason === r ? C.emText : C.ink, fontWeight: wdReason === r ? 600 : 400 }}>{r}</button>
+            ))}
+          </div>
+          <textarea rows={2} value={wdNote} onChange={(e) => setWdNote(e.target.value)} placeholder={wdReason === "Something else" ? "Tell us a little more" : "Anything you'd like to add? (optional)"}
+            className="w-full mt-2 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.card }} />
           <div className="flex gap-2 mt-3">
-            <Btn kind="primary" disabled={!!busy} onClick={() => run("wd", "candidate_pitch_withdraw").then(() => setConfirmWithdraw(false))}>{busy === "wd" ? "Withdrawing…" : "Yes, withdraw"}</Btn>
+            <Btn kind="primary" disabled={!!busy || !wdReason} onClick={() => run("wd", "candidate_pitch_withdraw", { p_reason: wdReason, p_note: wdNote.trim() || null }).then(() => setConfirmWithdraw(false))}>{busy === "wd" ? "Withdrawing…" : "Yes, withdraw"}</Btn>
             <Btn disabled={!!busy} onClick={() => setConfirmWithdraw(false)}>Keep me in</Btn>
           </div>
         </div>

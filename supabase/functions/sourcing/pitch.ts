@@ -14,7 +14,8 @@
 // role, never on the jobs board, the employer never shown to the candidate) and the notice is the
 // first message; their acknowledgement and answers come back to their recruiter there.
 // Nothing is emailed automatically: each candidate's email starts as a draft that Rec Ops / an
-// Admin reviews (edit "why it suits you", drop questions) and sends; a reminder is due after 2
+// Admin reviews (edit "why it suits you", drop questions) and sends; a reminder (the full email again)
+// is due 2 days later and a last, short reminder 2 days after that; a reminder is due after 2
 // days with no response and is sent from the lead card. Nobody goes into a pitch without clicking
 // Acknowledge: Rec Ops / an Admin can call them to ask them to click it, put through someone who
 // acknowledged without waiting for their answers, or take them off. Each candidate has their own status (lead_offers), so a pitch can go
@@ -399,7 +400,8 @@ ${reqRows}</table>` : "") +
     p(`<br>${esc(o.recruiter || "The team")}<br><span style="color:#56605A;font-size:13px;">${esc(b.legal || b.name)}</span>`);
   return emailShell(b, o.reminder ? "Reminder: we're putting you forward for " + f.title : "We're putting you forward for " + f.title, body);
 }
-// The one and only reminder: short, no role details. Acknowledge or withdraw; no answer within
+// Two reminders: the first is the full email again ("A quick reminder about the role below"); the
+// second and last is this one: short, no role details. Acknowledge or withdraw; no answer within
 // NO_REPLY_DAYS means they're taken off the role and "Open to new roles" is turned off (they can
 // turn it back on from their candidate page, shown in the email).
 export const NO_REPLY_DAYS = 3;
@@ -454,9 +456,11 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   }
   const facts = factsOf(lead);
   const nq = Array.isArray(o.questions) ? o.questions.length : 0;
+  // Reminder 1 (full email again) while they're "notified"; reminder 2 (the last one) once reminded.
+  const last = reminder && o.status === "reminded";
   const { data: rec } = c.recruiter_id ? await admin.from("profiles").select("full_name,email").eq("id", c.recruiter_id).maybeSingle() : { data: null };
   if (linkId) {
-    await admin.from("candidate_job_messages").insert({ link_id: linkId, sender: "recruiter", body: reminder ? lastReminderText(facts) : noticeText(facts, o.fit, nq, o.why_role || ""), staff_id: c.recruiter_id || null });
+    await admin.from("candidate_job_messages").insert({ link_id: linkId, sender: "recruiter", body: last ? lastReminderText(facts) : (reminder ? "Reminder: " : "") + noticeText(facts, o.fit, nq, reminder ? "" : o.why_role || ""), staff_id: c.recruiter_id || null });
   }
   const now = new Date().toISOString();
   if (!c.email || c.email_opt_out || !c.portal_token) {
@@ -466,13 +470,14 @@ export async function notifyOffer(admin: any, offerId: string, reminder = false)
   const b = await loadBrand(admin);
   const l = links(c.portal_token, o.token);
   const recFirst = String(rec?.full_name || "").split(" ")[0] || "", first = String(c.name || "").split(" ")[0] || "there";
-  const html = reminder ? lastReminderEmail(b, { first, facts, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, page: l.page })
-    : noticeEmail(b, { first, facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "", questions: nq, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw });
-  const subject = reminder ? lastReminderSubject(facts.title) : "We're putting you forward for " + (facts.title || "a role");
+  const html = last ? lastReminderEmail(b, { first, facts, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, page: l.page })
+    : noticeEmail(b, { first, facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "", questions: nq, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, reminder });
+  const subject = last ? lastReminderSubject(facts.title) : (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role");
   const sent = await sendBrevo(b, { email: c.email, name: c.name }, subject, html, undefined, { replyTo: rec?.email ? { email: rec.email, name: rec.full_name || undefined } : null });
-  if (reminder) await admin.from("lead_offers").update({ status: sent ? "reminded" : o.status, reminded_at: now, ...(sent ? { final_reminder_at: now } : {}) }).eq("id", o.id);
+  if (last) { if (sent) await admin.from("lead_offers").update({ final_reminder_at: now }).eq("id", o.id); }
+  else if (reminder) await admin.from("lead_offers").update({ status: sent ? "reminded" : o.status, reminded_at: now }).eq("id", o.id);
   else await admin.from("lead_offers").update({ status: sent ? "notified" : "no_email", notified_at: now, sent_at: now }).eq("id", o.id);
-  await admin.from("candidate_timeline").insert({ candidate_id: c.id, title: (reminder ? "Last reminder sent: put forward for " : "Told they're being put forward for ") + facts.title + (sent ? "" : " (email didn't send)"), done: true });
+  await admin.from("candidate_timeline").insert({ candidate_id: c.id, title: (last ? "Last reminder sent: put forward for " : reminder ? "Reminder sent: put forward for " : "Told they're being put forward for ") + facts.title + (sent ? "" : " (email didn't send)"), done: true });
   return { status: sent ? (reminder ? "reminded" : "notified") : "no_email", sent, ...(sent ? {} : { why: "the email didn't send" }) };
 }
 
@@ -510,10 +515,11 @@ export async function previewOffer(admin: any, offerId: string, reminder = false
   const facts = factsOf(lead || {});
   const l = links(c?.portal_token || "preview", o.token);
   const first = String(c?.name || "").split(" ")[0] || "there", recFirst = String(rec?.full_name || "").split(" ")[0] || "";
-  const html = reminder ? lastReminderEmail(b, { first, facts, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, page: l.page })
+  const last = reminder && o.status === "reminded";
+  const html = last ? lastReminderEmail(b, { first, facts, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, page: l.page })
     : noticeEmail(b, { first, facts, whyRole: o.why_role || "", requirements: o.requirements || [], jd: o.jd_check, fit: o.fit, verdict: o.verdict || "",
-      questions: Array.isArray(o.questions) ? o.questions.length : 0, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw });
-  return { ok: true, html, subject: reminder ? lastReminderSubject(facts.title) : "We're putting you forward for " + (facts.title || "a role"),
+      questions: Array.isArray(o.questions) ? o.questions.length : 0, recruiter: recFirst, ack: l.ack, withdraw: l.withdraw, reminder });
+  return { ok: true, html, last, subject: last ? lastReminderSubject(facts.title) : (reminder ? "Reminder: we're putting you forward for " : "We're putting you forward for ") + (facts.title || "a role"),
     to: c?.email || "", canEmail: !!(c?.email && !c.email_opt_out && c.portal_token), replyTo: rec?.email || "" };
 }
 
@@ -591,10 +597,11 @@ export async function offerAction(admin: any, me: { id: string; name: string }, 
     return { ok: true, message: r.sent ? "Email sent" : "Couldn't email them: " + (r.why || "no email") + ". Add their email so they can acknowledge, or take them off." };
   }
   if (action === "remind") {
-    if (o.status === "reminded") throw new Error("They've already had the last reminder. We don't send another");
-    if (o.status !== "notified") throw new Error("Only someone still waiting can be reminded");
+    if (o.status === "reminded" && o.final_reminder_at) throw new Error("They've already had the last reminder. We don't send another");
+    if (!["notified", "reminded"].includes(o.status)) throw new Error("Only someone still waiting can be reminded");
+    const lastOne = o.status === "reminded";
     const r = await notifyOffer(admin, o.id, true);
-    return { ok: true, message: r.sent ? "Reminder sent" : "Couldn't send the reminder: " + (r.why || "no email") };
+    return { ok: true, message: r.sent ? (lastOne ? "Last reminder sent" : "Reminder sent") : "Couldn't send the reminder: " + (r.why || "no email") };
   }
   // Only after they've clicked Acknowledge (e.g. without waiting for their answers): nobody goes
   // into a pitch without acknowledging. A call is to get them to click it, not a stand-in for it.
