@@ -301,39 +301,17 @@ export async function leadRoleJob(admin: any, lead: any): Promise<string> {
   lead.converted_job_id = j.id;
   return j.id;
 }
-// The role card on the candidate's profile for a pitched role IS the pitch screening: its fit,
-// verdict and requirement checklist (from the job description, read against their CV). Because the
-// card arrives already screened, the automatic AI screening doesn't run again and never drafts a
-// second round of questions: everything we need to ask is in the one pitch email.
-const CARD_VERDICT: Record<string, string> = { "Perfect fit": "Perfect fit", "Good fit": "Good fit", "Not a fit": "Reject" };
-export function pitchCard(o: any) {
-  const checks: any[] = Array.isArray(o?.jd_check) ? o.jd_check : [];
-  const requirements = checks.slice(0, 25).map((c: any) => ({
-    requirement: clip(c?.item, 160), type: c?.required !== false && !c?.info ? "must" : "preferred",
-    status: ["met", "confirmed"].includes(c?.status) ? "met" : c?.status === "not_met" ? "not met" : "partial",
-    evidence: clip(c?.evidence || (c?.status === "not_shown" ? "Not on their CV: asked in the pitch email" : ""), 240),
-  })).filter((r: any) => r.requirement);
-  const toConfirm = checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "not_shown").map((c: any) => "To confirm: " + clip(c.item, 140));
-  const notMet = checks.filter((c: any) => c?.required !== false && !c?.info && c?.status === "not_met").map((c: any) => clip(c.item, 160));
-  return {
-    stage: "first", source: "pitch",
-    summary: clip([o?.reason, toConfirm.length ? `Screened against the employer's job description; ${toConfirm.length === 1 ? "one requirement is" : toConfirm.length + " requirements are"} asked in the pitch email.` : "Screened against the employer's job description."].filter(Boolean).join(" "), 1200),
-    strengths: (Array.isArray(o?.bullets) ? o.bullets : []).slice(0, 6).map((b: unknown) => clip(b, 160)),
-    gaps: [...notMet, ...toConfirm].slice(0, 6),
-    score: o?.fit ?? 0, verdict: CARD_VERDICT[o?.verdict] || "Possible fit", verdict_reason: clip(o?.reason, 400),
-    requirements, usedResume: true, answersUsed: 0, updatedAt: new Date().toISOString(), followups: null,
-  };
-}
-// The pitch email's questions, saved on the card as Q&A pairs (answers filled in when they reply).
-export const pitchPairs = (o: any) => (Array.isArray(o?.questions) ? o.questions : [])
-  .map((q: any, i: number) => ({ q: clip(typeof q === "string" ? q : q?.q, 300), a: String((Array.isArray(o?.answers) ? o.answers[i] : "") || "") })).filter((x: any) => x.q);
+// The role card for a pitched role IS the pitch screening (pitchcard.ts, shared with ai-screen so a
+// re-screen of that card rebuilds it from the pitch instead of running the evidence screening).
+export { pitchCard, pitchPairs } from "./pitchcard.ts";
+import { pitchCard, pitchPairs } from "./pitchcard.ts";
 
 async function pitchLink(admin: any, jobId: string, candidateId: string, o: any = null): Promise<string | null> {
   const { data: cur } = await admin.from("candidate_jobs").select("id,stage,ai,screening_answers").eq("job_id", jobId).eq("candidate_id", candidateId).maybeSingle();
   if (cur) {
     const patch: Record<string, unknown> = {};
     if (["Withdrawn", "Rejected"].includes(cur.stage)) patch.stage = "In review";
-    if (o && !cur.ai?.stage) { patch.ai = { ...pitchCard(o), ...(cur.ai?.auto ? { auto: cur.ai.auto } : {}) }; patch.fit = o.fit ?? null; }
+    if (o && cur.ai?.source !== "pitch") { patch.ai = { ...pitchCard(o), ...(cur.ai?.auto ? { auto: cur.ai.auto } : {}) }; patch.fit = o.fit ?? null; }
     if (o && !(Array.isArray(cur.screening_answers) && cur.screening_answers.length)) patch.screening_answers = pitchPairs(o);
     if (Object.keys(patch).length) await admin.from("candidate_jobs").update(patch).eq("id", cur.id);
     return cur.id;
