@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { feeLine, feedbackGet, feedbackSubmit, fillTerms, fullResume, loadPoc, relationGet, relationRequest, saveTimeline, shortlistFor, signForLead, termsFor } from "../sourcing/clientflow.ts";
+import { discussTerms, feeLine, feedbackGet, feedbackSubmit, fillTerms, fullResume, loadPoc, relationGet, relationRequest, saveTimeline, shortlistFor, signForLead, termsFor } from "../sourcing/clientflow.ts";
 
 // Signs a resume URL for the client-facing blind-profile page (/?t=<client_token>), and
 // (action "blind") the blind resume's page images. The
@@ -33,7 +33,7 @@ Deno.serve(async (req: Request) => {
 
     // Client sourcing, the client side: the pitch page's candidates (full details once the company
     // has signed), the terms, signing, a full resume, and the hiring timeline.
-    if (["pitch", "terms", "sign", "resume", "timeline"].includes(action)) {
+    if (["pitch", "terms", "sign", "resume", "timeline", "terms_discuss"].includes(action)) {
       const ct = token.replace(/^s-/, "");
       if (!/^[0-9a-f-]{36}$/i.test(ct)) return json({ error: "Link not found" }, 404);
       const { data: l } = await admin.from("leads").select("*").eq("client_token", ct).maybeSingle();
@@ -51,8 +51,10 @@ Deno.serve(async (req: Request) => {
       if (action === "terms") {
         const t = await termsFor(admin, l.company);
         const { agreement } = await shortlistFor(admin, l);
-        if (agreement) return json({ ok: true, title: agreement.title, body: agreement.body, signed: agreement, fee: feeLine(t) });
-        return json({ ok: true, title: t.title, body: fillTerms(t, { client: String(l.company || "the Client").toUpperCase(), clientAddress: "", companyNo: "[company number]", date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) }),
+        const p0 = await loadPoc(admin, l.region || "");
+        const poc = { first: p0.first, name: p0.name, bookingUrl: p0.bookingUrl };
+        if (agreement) return json({ ok: true, title: agreement.title, body: agreement.body, signed: agreement, fee: feeLine(t), poc, email: agreement.signer_email || "", name: agreement.signer_name || "" });
+        return json({ ok: true, poc, title: t.title, body: fillTerms(t, { client: String(l.company || "the Client").toUpperCase(), clientAddress: "", companyNo: "[company number]", date: new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) }),
           fee: feeLine(t), company: l.company || "", email: l.contact_email || "", name: l.contact_name || "" });
       }
       if (action === "sign") {
@@ -62,6 +64,7 @@ Deno.serve(async (req: Request) => {
       }
       if (action === "resume") return json({ ok: true, url: await fullResume(admin, l, Number(body.n) || 1) });
       if (action === "timeline") return json(await saveTimeline(admin, l, String(body.text || "")));
+      if (action === "terms_discuss") return json(await discussTerms(admin, l, body));
     }
 
     // Client leads: the page behind the pitch's "View the candidates" button (/?t=s-<client_token>).

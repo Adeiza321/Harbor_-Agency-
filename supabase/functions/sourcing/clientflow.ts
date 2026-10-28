@@ -17,7 +17,7 @@
 //   make the arrangement permanent (we source every new role free, paid only on hire); permanent
 //   clients get a monthly check-in for new roles.
 
-import { pitchFacts } from "./queue.ts";
+import { pitchFacts, pitchRecipients } from "./queue.ts";
 import { button, emailShell, esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
 import { UK_ADDRESS } from "./common.ts";
 
@@ -81,6 +81,14 @@ export function fillTerms(t: Terms, v: { client: string; clientAddress: string; 
     .replaceAll("{{discount}}", t.firstTime && t.discountPct ? ` As a first-time client, the Client receives a ${pct(t.discountPct)} discount on the Introduction Fee for the first Candidate it Engages under these Terms, so that fee is ${pct(t.effectivePct)} of the Remuneration.` : "");
 }
 const longDate = (d = new Date()) => d.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+
+// The agreement as email HTML (same layout as the page: "## " lines are headings).
+export function termsHtml(body: string) {
+  return String(body || "").split("\n").map((l) => /^##\s/.test(l)
+    ? `<div style="margin:18px 0 6px;padding-bottom:3px;border-bottom:1px solid #E6E1D6;font-family:Georgia,serif;font-size:15px;color:#1F6F54;">${esc(l.replace(/^##\s+/, ""))}</div>`
+    : l.trim() ? `<p style="margin:0 0 8px;font-size:13.5px;line-height:1.6;">${esc(l)}</p>` : "").join("");
+}
+const stamp = (t: unknown) => { try { return new Date(String(t)).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC"; } catch { return String(t || ""); } };
 
 // ---- The pitch page ----------------------------------------------------------------------------
 // The candidates in a lead's pitch, with what the client may see: blind resume pages always;
@@ -211,7 +219,23 @@ async function afterSigned(admin: any, l: any, ag: any, poc: Poc) {
       (portal ? button(b, portal, "Open your candidate page") : "") + p(`<br>${esc(poc.first)}<br><span style="color:#56605A;font-size:13px;">${esc(b.legal || b.name)}</span>`)),
       undefined, { replyTo: reply });
   }
-  // 3. The client: their point of contact, a call or their hiring timeline.
+  // 3. A copy of the signed agreement to the person who signed and everyone at the client we
+  //    pitched the role to (so the company knows it has signed: clause 14.3), the POC copied.
+  try {
+    const to = new Map<string, string>();
+    if (clientEmail) to.set(clientEmail.toLowerCase(), ag.signer_name || "");
+    for (const r of pitchRecipients(l)) if (r.email && !to.has(r.email.toLowerCase())) to.set(r.email.toLowerCase(), r.name || "");
+    const sig = (who: string, name: string, title: string, at: unknown, extra = "") => `<td style="vertical-align:top;padding:10px 12px;border:1px solid #E6E1D6;border-radius:10px;font-size:13px;line-height:1.5;width:50%;"><div style="font-size:11px;letter-spacing:1px;color:#8A8578;">${who}</div><div style="font-family:Georgia,serif;font-size:18px;margin-top:4px;">${esc(name)}</div><div>${esc(title)}</div><div style="color:#56605A;">Signed ${esc(stamp(at))}${extra}</div></td>`;
+    const html = emailShell(b, `Signed: ${ag.title || "Terms of Business"}`,
+      p(`<b>${esc(ag.signer_name)}</b>${ag.signer_title ? " (" + esc(ag.signer_title) + ")" : ""} signed our ${esc(ag.title || "Terms of Business")} on behalf of <b>${esc(client)}</b> on ${esc(stamp(ag.signed_at))}. A copy is below for your records.`) +
+      p(`If anything here is unexpected, or the person who signed wasn't authorised to sign for ${esc(client)}, please reply within 5 business days.`) +
+      `<div style="margin:14px 0;padding:14px 16px;border:1px solid #E6E1D6;border-radius:12px;background:#FFFFFF;">${termsHtml(ag.body)}</div>` +
+      `<table role="presentation" cellpadding="0" cellspacing="6" border="0" style="width:100%;"><tr>${sig("FOR THE AGENCY", ag.agency_signer_name || poc.name, ag.agency_signer_title || poc.title, ag.agency_signed_at || ag.signed_at)}${sig("FOR THE CLIENT", ag.signer_name, [ag.signer_title, client].filter(Boolean).join(", "), ag.signed_at, ag.ip ? " &middot; IP " + esc(ag.ip) : "")}</tr></table>`);
+    for (const [email, name] of to) await sendBrevo(b, { email, name: name || undefined }, `Signed: ${ag.title || "Terms of Business"} (${client})`, html, undefined, { cc: poc.email ? [{ email: poc.email, name: poc.name }] : [], replyTo: reply });
+    await admin.from("client_agreements").update({ copies_sent_to: [...to.keys()], copies_sent_at: new Date().toISOString() }).eq("id", ag.id);
+  } catch (e) { console.error("signed copy", String((e as Error)?.message || e)); }
+
+  // 4. The client: their point of contact, a call or their hiring timeline.
   if (clientEmail) {
     const page = `${portalBase()}/?t=s-${encodeURIComponent(l.client_token)}`;
     const many = ids.length > 1;
@@ -242,6 +266,30 @@ export async function saveTimeline(admin: any, l: any, text: string) {
       p(`${esc(l.company)} shared their hiring timeline for <b>${esc(l.job_title)}</b>:`) + `<div style="padding:12px 14px;background:#F6F3EC;border-radius:10px;font-size:14px;white-space:pre-wrap;">${esc(t)}</div>`), undefined);
   }
   return { ok: true };
+}
+
+// "Discuss these terms": the client asks for a call about the agreement, or suggests a change.
+// Saved on the lead and emailed to the point of contact, who replies straight to the client.
+export async function discussTerms(admin: any, l: any, f: any) {
+  const v = { name: clip(f?.name, 120), email: clip(f?.email, 200).toLowerCase(), when: clip(f?.when, 200), message: String(f?.message || "").trim().slice(0, 3000) };
+  if (v.name.length < 2) throw new Error("Add your name");
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) throw new Error("Add your work email");
+  if (v.message.length < 3) throw new Error("Tell us what you'd like to discuss or change");
+  const at = new Date().toISOString();
+  const list = Array.isArray(l.data?.terms_discussions) ? l.data.terms_discussions : [];
+  await admin.from("leads").update({ data: { ...(l.data || {}), terms_discussions: [...list, { ...v, at }].slice(-20) },
+    notes: [l.notes, `Asked to discuss the terms ${at.slice(0, 10)} (${v.name}): ${v.message.slice(0, 300)}`].filter(Boolean).join("\n") }).eq("id", l.id);
+  const poc = await loadPoc(admin, l.region || "");
+  if (poc.email) {
+    const b = await loadBrand(admin);
+    await sendBrevo(b, { email: poc.email, name: poc.name }, `${l.company}: wants to discuss the terms (${l.job_title})`, emailShell(b, "Discuss the terms",
+      p(`<b>${esc(v.name)}</b> (${esc(v.email)}) at <b>${esc(l.company)}</b> would like to discuss our terms for the <b>${esc(l.job_title)}</b> role.`) +
+      `<div style="padding:12px 14px;background:#F6F3EC;border-radius:10px;font-size:14px;white-space:pre-wrap;">${esc(v.message)}</div>` +
+      (v.when ? p(`<br>Times that suit them: <b>${esc(v.when)}</b>`) : "") +
+      p(`<br>Reply to this email to answer them or arrange a call. Any change we agree must be in writing (clause 2.3).`)),
+      undefined, { replyTo: { email: v.email, name: v.name } });
+  }
+  return { ok: true, poc: poc.first || poc.name };
 }
 
 // ---- After a hire: feedback, permanent arrangement, monthly check-ins ----------------------------
