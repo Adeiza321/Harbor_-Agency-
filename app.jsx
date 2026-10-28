@@ -13345,7 +13345,7 @@ function BrevoTrackingView({ S, sw }) {
   const pickAud = (k) => { setAud(k); try { localStorage.setItem("harbor.emailAud", k); } catch (e) {} };
   const fetcher = React.useCallback((d, r) => S.emailTracking(d, r, aud), [aud]); // eslint-disable-line
   const { res, err, busy, updating, refresh } = useTrackingData("brevo-" + aud, days, fetcher);
-  const team = aud === "staff";
+  const team = aud === "staff", clientsAud = aud === "clients";
   const [filter, setFilter] = useState("all");
   const [type, setType] = useState("");
   const [q, setQ] = useState("");
@@ -13374,7 +13374,7 @@ function BrevoTrackingView({ S, sw }) {
     <div className="flex flex-col gap-5 md:gap-6">
       {sw}
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 -mt-1">
-        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub={team ? "Emails the app sends to your team through Brevo: welcome emails, update requests, approvals and password resets." : "Emails the app sends to candidates through Brevo: messages, interviews, applications and referrals."} />
+        <SectionTitle size="text-3xl md:text-4xl" title="Email tracking" sub={team ? "Emails the app sends to your team through Brevo: welcome emails, update requests, approvals and password resets." : clientsAud ? "Emails to hiring contacts on client leads through Brevo: pitches, signed terms and follow-ups. Clicks on every link within seconds are usually the company's email security checking links, not the person." : "Emails the app sends to candidates through Brevo: messages, interviews, applications and referrals."} />
         <div className="flex gap-2 items-center">
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="text-sm rounded-lg border px-2.5 py-2 bg-white" style={{ borderColor: C.line }}>
             <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option><option value={365}>Last 12 months</option>
@@ -13383,7 +13383,7 @@ function BrevoTrackingView({ S, sw }) {
         </div>
       </div>
       <div className="inline-flex rounded-xl border p-1 self-start -mt-2" style={{ borderColor: C.line, background: C.card }} role="tablist" aria-label="Who the emails went to">
-        {[["candidates", "Candidates"], ["staff", "Team"]].map(([k, l]) => (
+        {[["candidates", "Candidates"], ["clients", "Clients"], ["staff", "Team"]].map(([k, l]) => (
           <button key={k} role="tab" aria-selected={aud === k} onClick={() => { pickAud(k); setType(""); }} className="rounded-lg px-4 py-1.5 text-sm font-medium"
             style={{ background: aud === k ? C.emTint : "transparent", color: aud === k ? C.em : C.ink2 }}>{l}</button>
         ))}
@@ -13419,9 +13419,9 @@ function BrevoTrackingView({ S, sw }) {
             rows={shown}
             pageSize={25}
             onRowClick={(r) => { if (!String(r.id).startsWith("nomsg|") && !r.noPreview) setPreview(r); }}
-            empty={rows.length ? "No emails match these filters." : team ? "No emails sent to your team in this period." : "No emails sent to candidates in this period."}
+            empty={rows.length ? "No emails match these filters." : team ? "No emails sent to your team in this period." : clientsAud ? "No emails sent to clients in this period." : "No emails sent to candidates in this period."}
             columns={[
-              { key: "to", label: team ? "TEAM MEMBER" : "CANDIDATE", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
+              { key: "to", label: team ? "TEAM MEMBER" : clientsAud ? "CLIENT" : "CANDIDATE", render: (r) => <div className="min-w-0"><div className="font-medium" style={{ color: C.ink }}>{r.name || r.to}</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{r.to}</div></div> },
               { key: "subj", label: "EMAIL", render: (r) => <div className="min-w-0"><div className="text-sm truncate" style={{ color: C.ink, maxWidth: 300 }} title={r.subject}>{r.subject || "(no subject)"}</div><div className="text-xs flex items-center gap-1.5 mt-0.5 flex-wrap" style={{ color: C.ink2 }}><Pill>{r.type}</Pill>{r.spam && <Pill tone="danger">Marked spam</Pill>}{r.unsubscribed && <Pill tone="warn">Unsubscribed</Pill>}</div></div> },
               { key: "sent", label: "DATE SENT", render: (r) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={when(r.sentAt)}>{when(r.sentAt)}</span> },
               { key: "del", label: "DELIVERED", render: (r) => r.problem && !r.deliveredAt ? <span title={r.problem}><Pill tone="danger">{/blocked/i.test(r.problem) ? "Blocked" : /invalid/i.test(r.problem) ? "Invalid" : /soft/i.test(r.problem) ? "Soft bounce" : "Bounced"}</Pill></span> : mark(r.deliveredAt, "Delivered") },

@@ -3,15 +3,16 @@ import { storeEvents, toRow } from "./events.ts";
 
 // Admin-only: every email the app sent through Brevo in the chosen period, one row per email, with the
 // recipient's name, whether it was delivered, opened and clicked (or bounced / blocked / marked as spam).
-// Two audiences: "candidates" (the default) and "staff" (welcome emails, update requests, approvals,
-// password resets, assistant updates and tests sent to your own team).
+// Three audiences: "candidates" (the default), "clients" (hiring contacts on client leads: pitches,
+// contracts, follow-ups) and "staff" (welcome emails, update requests, approvals, password resets,
+// assistant updates and tests sent to your own team).
 // A recipient counts as a candidate when their address is on a candidate, an application/referral or
 // a sourced prospect, and isn't a staff account.
 // Events are stored in public.email_events: pushed by Brevo's webhook (brevo-webhook) as they
 // happen, plus a catch-up every 15 minutes (action "sync", scheduler only) that asks Brevo's event
 // log (GET /v3/smtp/statistics/events) only for events since the newest one stored. The page reads
 // the table, so it loads straight away and keeps history after Brevo has dropped it.
-//   POST { days: 7 | 30 | 90 | 365, refresh?, audience?: "candidates" | "staff" }  ->  { rows, totals, days, syncedAt }
+//   POST { days: 7 | 30 | 90 | 365, refresh?, audience?: "candidates" | "clients" | "staff" }  ->  { rows, totals, days, syncedAt }
 //   POST { action: "sync" } + x-harbor-ops      ->  { fetched, stored }
 //   POST { action: "preview", messageId }       ->  { subject, to, date, html }  (the email as sent;
 //        never for welcome or password-reset emails, which carry one-time links and codes)
@@ -35,6 +36,9 @@ function typeOf(subject: string, tag: string): string {
   if (/^An update on /.test(s)) return "Candidate message";
   if (/referred you/i.test(s)) return "Referral";
   if (/^Approval needed/.test(s)) return "Approval";
+  if (tag === "client-pitch") return "Client pitch";
+  if (tag === "spam-check") return "Spam check";
+  if (/^Signed: /.test(s)) return "Signed terms";
   if (tag) return tag;
   return "Outreach & other";
 }
@@ -78,6 +82,28 @@ async function candidateNames(admin: any): Promise<{ names: Map<string, string>;
   const staffNames = new Map<string, string>();
   for (const p of staff) { const k = String(p.email || "").trim().toLowerCase(); if (k) staffNames.set(k, String(p.full_name || "").trim()); }
   return { names, staff: new Set(staffNames.keys()), staffNames };
+}
+
+// email (lowercase) -> "Name · Company" for every hiring contact on a client lead (the lead's contacts,
+// its single older contact field, and whoever signed our terms).
+async function clientNames(admin: any): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const add = (email: unknown, name: unknown, company: unknown) => {
+    const k = String(email || "").trim().toLowerCase();
+    if (k && !out.has(k)) out.set(k, [String(name || "").trim(), String(company || "").trim()].filter(Boolean).join(" \u00b7 "));
+  };
+  for (let from = 0; from < 50000; from += 1000) {
+    const { data } = await admin.from("leads").select("company,contact_email,contact_name,data").range(from, from + 999);
+    for (const l of data || []) {
+      for (const c of Array.isArray(l.data?.contacts) ? l.data.contacts : []) add(c?.email, c?.name, l.company);
+      add(l.contact_email, l.contact_name, l.company);
+      if (l.data?.signer?.email) add(l.data.signer.email, l.data.signer.name, l.company);
+    }
+    if (!data || data.length < 1000) break;
+  }
+  const { data: signed } = await admin.from("client_agreements").select("company,signer_email,signer_name").limit(5000);
+  for (const a of signed || []) add(a.signer_email, a.signer_name, a.company);
+  return out;
 }
 
 // Ask Brevo only for what's new: from the day before the newest stored event (the event log
@@ -143,11 +169,12 @@ Deno.serve(async (req: Request) => {
       const { names, staff, staffNames } = await candidateNames(admin);
       const kind = typeOf(String(meta.subject || ""), "");
       if (SECRET_TYPES.has(kind)) return json({ error: "Welcome and password-reset emails can't be previewed, because they contain a private sign-in link." }, 403);
-      if (!staff.has(k) && !names.has(k)) return json({ error: "This email wasn't sent to a candidate or a team member, so it can't be previewed here." }, 403);
+      if (!staff.has(k) && !names.has(k) && !(await clientNames(admin)).has(k)) return json({ error: "This email wasn't sent to a candidate, a client or a team member, so it can't be previewed here." }, 403);
       const cr = await fetch("https://api.brevo.com/v3/smtp/emails/" + encodeURIComponent(meta.uuid), { headers: h, signal: AbortSignal.timeout(15000) });
       const cj = await cr.json().catch(() => ({}));
+      const cn = names.has(k) || staff.has(k) ? null : await clientNames(admin);
       if (!cr.ok || !cj.body) return json({ error: "Brevo no longer has the content of this email (it keeps it for a limited time)." }, 404);
-      return json({ ok: true, subject: cj.subject || meta.subject || "", to: meta.email || "", name: staffNames.get(k) || names.get(k) || "", date: cj.date || meta.date || "", html: String(cj.body) });
+      return json({ ok: true, subject: cj.subject || meta.subject || "", to: meta.email || "", name: staffNames.get(k) || names.get(k) || cn?.get(k) || "", date: cj.date || meta.date || "", html: String(cj.body) });
     }
 
     const days = [7, 30, 90, 365].includes(Number(body.days)) ? Number(body.days) : 30;
@@ -193,10 +220,18 @@ Deno.serve(async (req: Request) => {
       }
     }
     const { names, staff, staffNames } = await candidateNames(admin);
-    const audience = body.audience === "staff" ? "staff" : "candidates";
+    const audience = body.audience === "staff" ? "staff" : body.audience === "clients" ? "clients" : "candidates";
+    const clients = audience === "clients" ? await clientNames(admin) : null;
     const rows = [...byId.values()].filter((r) => {
       const k = r.to.trim().toLowerCase();
       const isStaff = staff.has(k) || (STAFF_TYPES.has(r.type) && !names.has(k));
+      if (clients) {
+        // Client contacts (a pitch to a hiring manager, the signed terms, follow-ups); never a
+        // candidate's or a team member's own address, and never the spam-score test.
+        if (!clients.has(k) || staff.has(k) || names.has(k) || r.type === "Spam check") return false;
+        r.name = clients.get(k) || "";
+        return true;
+      }
       if (audience === "staff") {
         if (!isStaff) return false;
         r.name = staffNames.get(k) || "";
