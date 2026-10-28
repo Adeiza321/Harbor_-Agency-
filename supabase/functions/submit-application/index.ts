@@ -168,6 +168,10 @@ Deno.serve(async (req: Request) => {
     // Answers to the job's own screening questions, kept as {q, a} so they survive later edits.
     const given = Array.isArray(body.answers) ? body.answers : [];
     const answers = questions.map((q, i) => ({ q, a: String(given[i] ?? "").trim().slice(0, 3000) })).filter((x) => x.a);
+    // Remote, hybrid or on-site: every setup they'd accept (copied to their candidate profile).
+    const WS = ["remote", "hybrid", "onsite"];
+    const wsGiven = (Array.isArray(body.work_setup) ? body.work_setup : []).map((x: unknown) => String(x || "").toLowerCase().replace(/[-\s]/g, ""));
+    const work_setup = WS.filter((x) => wsGiven.includes(x));
 
     // Dedupe: the same person applying twice to the same role (double form submit, a
     // platform resending the same lead) should not create a second Inbox row. The one exception:
@@ -180,7 +184,7 @@ Deno.serve(async (req: Request) => {
       const ex = existing && existing[0];
       if (ex) {
         if (!(ex.source === "referral" && !referrer && ex.status === "new")) return json({ ok: true, duplicate: true });
-        await admin.from("applications").update({ name, phone: phone || undefined, linkedin: linkedin || undefined, ...(answers.length ? { answers } : {}) }).eq("id", ex.id);
+        await admin.from("applications").update({ name, phone: phone || undefined, linkedin: linkedin || undefined, ...(answers.length ? { answers } : {}), ...(work_setup.length ? { work_setup } : {}) }).eq("id", ex.id);
         // Applying themselves is the clearest "I'm interested".
         await admin.from("applications").update({ interest_at: new Date().toISOString() }).eq("id", ex.id).is("interest_at", null);
         data = { id: ex.id }; existingRow = true;
@@ -197,6 +201,7 @@ Deno.serve(async (req: Request) => {
         job_id: resolvedJobId,
         linkedin,
         answers,
+        ...(work_setup.length && !referrer ? { work_setup } : {}),
         referrer,
         referral_token: referrer ? newReferralToken() : null,
         via_recruiter: viaRec?.id || null,

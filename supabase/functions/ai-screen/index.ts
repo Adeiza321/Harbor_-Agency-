@@ -529,7 +529,32 @@ async function handle(req: Request): Promise<Response> {
           && (r.ai?.auto?.tries || 0) < 3 && Date.now() - new Date(r.ai?.auto?.at || 0).getTime() > 10 * 60e3).slice(0, 3);
         const out = [];
         for (const r of due) out.push({ id: r.id, ...(await autoScreen(admin, r.id)) });
-        return json({ ok: true, screened: out });
+        // Answers the candidate gave (follow-up questions) that never made it into their card: the
+        // rescreen right after they answered failed (e.g. the AI was down). Tried again here, up to
+        // 3 times, 10 minutes apart, a couple per run.
+        const { data: answered } = await admin.from("candidate_jobs").select("id,ai,candidate_response,candidates!inner(ai_locked,is_draft)")
+          .eq("ai->followups->>state", "answered").eq("candidates.ai_locked", false).eq("candidates.is_draft", false).limit(60);
+        const stale = (answered || []).filter((r: any) => {
+          const ans = Date.parse(r.ai?.followups?.answeredAt || ""), upd = Date.parse(r.ai?.updatedAt || "");
+          const re = r.ai?.rescreen || {};
+          return (r.candidate_response || "accepted") === "accepted" && Number.isFinite(ans) && (!Number.isFinite(upd) || upd < ans)
+            && (re.tries || 0) < 3 && Date.now() - Date.parse(re.at || "1970-01-01") > 10 * 60e3;
+        }).slice(0, 2);
+        const rescreened = [];
+        for (const r of stale) {
+          const stamp = { tries: (r.ai?.rescreen?.tries || 0) + 1, at: new Date().toISOString() };
+          await admin.from("candidate_jobs").update({ ai: { ...(r.ai || {}), rescreen: stamp } }).eq("id", r.id);
+          try { await screenAs(admin, r.id); rescreened.push({ id: r.id, ok: true }); }
+          catch (e) {
+            const msg = String((e as Error)?.message || e).slice(0, 200);
+            console.error("rescreen after answers", r.id, msg);
+            const { data: cur } = await admin.from("candidate_jobs").select("ai").eq("id", r.id).maybeSingle();
+            await admin.from("candidate_jobs").update({ ai: { ...(cur?.ai || {}), rescreen: { ...stamp, error: msg } } }).eq("id", r.id);
+            rescreened.push({ id: r.id, ok: false, error: msg });
+            if (isAiPaused(e)) break;
+          }
+        }
+        return json({ ok: true, screened: out, rescreened });
       }
       // Learning from status updates happens here, on the backend: the database calls this the moment
       // a card is rejected (by the client or our team, with a reason) or moved to Interview, Offer or

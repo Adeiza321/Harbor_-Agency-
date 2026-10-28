@@ -1,12 +1,15 @@
 // The client machine, Active file first.
 //   fetchLeads (daily, after an Admin approves the credits): candidate by candidate. For each Active
 //     file candidate, new postings in the country they live in for their own job titles (direct
-//     employers, not remote, never a company they work or worked at) -> leads found FOR that
+//     employers, never a company they work or worked at) -> leads found FOR that
 //     candidate. Location is strict: the search is narrowed to the candidate's city and state (and
 //     the cities they'd move to, if they said they'd relocate), then each posting's place is checked
 //     against where they live: only roles within about an hour's commute (or in a city they'd move
 //     to) are kept. A candidate without a known city isn't searched. The day's postings are shared out between candidates; when there are more
 //     candidates than the day allows, it works through them in turn over the following days.
+//     Work setup: on-site / hybrid roles near them for anyone who takes office work (or hasn't
+//     said); remote roles hiring in their own country for people who said they'd take remote work
+//     (no commute check, no city needed). Both: the day's share is split between the two.
 //     Intentional: only small and medium companies (Outreach settings, default 10-500 staff), which
 //     are likelier to take an agency's CVs and pay, and never an employer whose posting says no
 //     agencies / no unsolicited CVs (left out by the feed itself, then checked again here).
@@ -35,7 +38,7 @@ export const MAX_PER_PITCH = 5;
 // Who we pitch: the Active file (not drafts, with a CV), and the country each one lives in.
 export async function pitchableCandidates(admin: any) {
   const { data } = await admin.from("candidates")
-    .select("id,name,status,email,pay,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,resume_name,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
+    .select("id,name,status,email,pay,work_setup,current_title,current_company,parallel_titles,experience,location,notice,skills,strengths,industries,preferences,is_draft,resume_path,resume_name,cv_path,blind_pages,blind_checked_at,open_to_roles,open_paused_until,candidate_jobs(stage,candidate_response)")
     .eq("is_draft", false).eq("status", "Active file");
   return (data || []).filter((c: any) => isOpen(c) && !isBusy(c) && (c.resume_path || c.cv_path) && candTitles(c).length && candCountry(c));
 }
@@ -118,54 +121,74 @@ export async function fetchLeads(admin: any, s: Settings) {
   const today = perDay >= ordered.length ? ordered : Array.from({ length: perDay }, (_, k) => ordered[(start + k) % ordered.length]);
   let fetched = 0, added = 0, remote = 0, skipped = 0;
   const errors: string[] = [], found: string[] = [];
-  let noCity = 0, far = 0, noAgency = 0, size = 0;
+  let noCity = 0, far = 0, noAgency = 0, size = 0, remoteAdded = 0;
   const { minEmployees, maxEmployees } = s.leads;
   const sizeOk = (n: number | null) => n == null || ((!minEmployees || n >= minEmployees) && (!maxEmployees || n <= maxEmployees));
   for (const c of today) {
     const area = candArea(c);
     const cc = area.cc;
-    // Strict location: without a city we can't tell what's near them, so they aren't searched.
-    if (!area.city) { noCity++; found.push(firstName(c) + " (no city)"); continue; }
+    // Their confirmed work setup decides what we look for: on-site / hybrid roles near where they
+    // live (anyone who takes office work, or hasn't told us), and remote roles hiring in their own
+    // country (only people who said they'd take remote work). Both: the day's share is split.
+    const ws: string[] = Array.isArray(c.work_setup) && c.work_setup.length ? c.work_setup : Array.isArray(c.preferences?.workSetup) ? c.preferences.workSetup : [];
+    const wantsRemote = ws.includes("remote");
+    const wantsOffice = !ws.length || ws.some((x) => x !== "remote");
+    // Strict location for office roles: without a city we can't tell what's near them.
+    const office = wantsOffice && !!area.city;
+    if (!office && !wantsRemote) { noCity++; found.push(firstName(c) + " (no city)"); continue; }
+    const remoteShare = wantsRemote ? (office ? Math.max(1, Math.floor(each / 2)) : each) : 0;
+    const officeShare = office ? each - remoteShare : 0;
     const titles = [...new Set(candTitles(c).map((t) => t.trim()).filter(Boolean))].slice(0, 10);
     let postings: any[] = [];
-    const places = [...new Set([...(await commuteTowns(area)), ...area.moves.map((m: string) => placeParts(m).city || m)])].slice(0, 20);
-    try { postings = await searchJobs({ titles, countries: [cc], places, maxAgeDays: s.leads.maxAgeDays, limit: each, minEmployees, maxEmployees }); }
-    catch (e) {
-      const m = String((e as Error)?.message || e);
-      errors.push(firstName(c) + " (" + cc + "): " + m.slice(0, 300));
-      if (/\b401\b/.test(m) || /\b402\b/.test(m) || (/\b403\b/.test(m) && !/free plan/i.test(m))) break;   // key or credits: stop for today
-      continue;
+    let stop = false;
+    const search = async (o: { remote: boolean; limit: number; places?: string[] }) => {
+      try { return (await searchJobs({ titles, countries: [cc], places: o.places, remote: o.remote, maxAgeDays: s.leads.maxAgeDays, limit: o.limit, minEmployees, maxEmployees })).map((p) => ({ ...p, remote: p.remote || o.remote })); }
+      catch (e) {
+        const m = String((e as Error)?.message || e);
+        errors.push(firstName(c) + " (" + cc + (o.remote ? ", remote" : "") + "): " + m.slice(0, 300));
+        if (/\b401\b/.test(m) || /\b402\b/.test(m) || (/\b403\b/.test(m) && !/free plan/i.test(m))) stop = true;   // key or credits: stop for today
+        return [];
+      }
+    };
+    if (officeShare > 0) {
+      const places = [...new Set([...(await commuteTowns(area)), ...area.moves.map((m: string) => placeParts(m).city || m)])].slice(0, 20);
+      postings.push(...await search({ remote: false, limit: officeShare, places }));
     }
+    if (remoteShare > 0 && !stop) postings.push(...await search({ remote: true, limit: remoteShare }));
+    if (stop && !postings.length) break;
     fetched += postings.length;
     const employers = candEmployers(c);
     let mine = 0;
-    const near = await nearCandidate(area, postings.filter((p: any) => !p.remote).map((p: any) => p.location));
+    const near = office ? await nearCandidate(area, postings.filter((p: any) => !p.remote).map((p: any) => p.location)) : new Map();
     for (const p of postings) {
-      // Roles in the candidate's own country only: remote roles are left out, and never a company
-      // they work or worked at.
-      if (p.remote) { remote++; continue; }
+      // Roles in the candidate's own country only (remote ones too: hiring in their country), and
+      // never a company they work or worked at. Remote roles only for people who'd take them.
+      if (p.remote && !wantsRemote) { remote++; continue; }
       const pc = countryCode(p.country) || cc;
       if (pc !== cc) continue;
       if (workedAt(employers, p.company)) { skipped++; continue; }
       // Says no agencies / no unsolicited CVs, or outside the company sizes we pitch.
       if (noAgencyText(p.description)) { noAgency++; continue; }
       if (!sizeOk(p.employees)) { size++; continue; }
-      const nr = near.get(String(p.location || "").trim());
-      if (!nr || !nr.ok) { far++; continue; }
+      if (!p.remote) {
+        const nr = near.get(String(p.location || "").trim());
+        if (!nr || !nr.ok) { far++; continue; }
+      }
       const { error } = await admin.from("leads").insert({
         source: "theirstack", external_id: p.id, company: p.company, company_domain: p.domain, job_title: p.title,
         location: p.location, country: pc, region: regionOf(pc), url: p.url, posted_at: p.posted_at,
         description: p.description, salary: p.salary, status: "pending",
-        data: { hiring_team: p.hiring_team, remote: p.remote, industry: p.industry || null, employees: p.employees, for_candidate: c.id, for_titles: titles, for_area: area.home },
+        data: { hiring_team: p.hiring_team, remote: !!p.remote, industry: p.industry || null, employees: p.employees, for_candidate: c.id, for_titles: titles, for_area: p.remote ? (COUNTRY_NAMES[cc] || cc) + " (remote)" : area.home },
       });
-      if (!error) { added++; mine++; }  // a posting already found (for anyone) hits the unique external_id and is skipped
+      if (!error) { added++; mine++; if (p.remote) remoteAdded++; }  // a posting already found (for anyone) hits the unique external_id and is skipped
     }
     found.push(firstName(c) + " " + mine);
+    if (stop) break;   // the feed refused the key or is out of credits: stop for today
   }
   if (!fetched && errors.length) throw new Error(errors[0]);
   const who = today.length === all.length ? `all ${all.length} Active file candidates` : `${today.length} of ${all.length} Active file candidates (the rest on the next days)`;
   return { ok: true, fetched, added, candidates: found,
-    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads.${remote ? " " + remote + " remote roles left out." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${far ? " " + far + " too far from the candidate, left out." : ""}${noAgency ? " " + noAgency + " said no agencies or no unsolicited CVs, left out." : ""}${size ? " " + size + " outside the company sizes we pitch, left out." : ""}${noCity ? " " + noCity + " candidate" + (noCity === 1 ? "" : "s") + " skipped: no city on their profile." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
+    message: `Looked for roles for ${who}, up to ${each} each: ${fetched} new postings, ${added} new leads${remoteAdded ? " (" + remoteAdded + " remote)" : ""}.${remote ? " " + remote + " remote roles left out (for candidates who haven't said they'd work remotely)." : ""}${skipped ? " " + skipped + " at a company the candidate worked for, left out." : ""}${far ? " " + far + " too far from the candidate, left out." : ""}${noAgency ? " " + noAgency + " said no agencies or no unsolicited CVs, left out." : ""}${size ? " " + size + " outside the company sizes we pitch, left out." : ""}${noCity ? " " + noCity + " candidate" + (noCity === 1 ? "" : "s") + " skipped: no city on their profile." : ""}${errors.length ? " Some searches failed: " + errors.join("; ") : ""}` };
 }
 const firstName = (c: any) => String(c?.name || "").trim().split(/\s+/)[0] || "A candidate";
 
@@ -184,18 +207,25 @@ export async function processLead(admin: any, lead: any, s: Settings) {
   if (forId && !target) return ignore("The candidate this role was found for is no longer free to put forward");
   const others = cands.filter((c: any) => c.id !== forId).map((c: any) => ({ c, score: titlesMatch([lead.job_title], candTitles(c)) }))
     .filter((x: any) => x.score >= 0.6).sort((a: any, b: any) => b.score - a.score).slice(0, target ? 7 : 8).map((x: any) => x.c);
-  // Others join only if the role is within commuting distance of where they live (strict, as for
-  // the candidate it was found for).
+  // Others join only if they could take it: a remote role, people in the same country who said
+  // they'd work remotely; an on-site / hybrid role, people within commuting distance of it (strict,
+  // as for the candidate it was found for).
+  const remoteRole = !!lead.data?.remote;
+  const takesRemote = (c: any) => (Array.isArray(c.work_setup) && c.work_setup.length ? c.work_setup : Array.isArray(c.preferences?.workSetup) ? c.preferences.workSetup : []).includes("remote");
   const near: any[] = [];
   for (const c of others) {
-    const a = candArea(c);
-    if (!a.city) continue;
-    const m = await nearCandidate(a, [lead.location]);
-    if (m.get(String(lead.location || "").trim())?.ok) near.push(c);
+    if (remoteRole) { if (takesRemote(c)) near.push(c); }
+    else {
+      const a = candArea(c);
+      if (!a.city) continue;
+      const m = await nearCandidate(a, [lead.location]);
+      if (m.get(String(lead.location || "").trim())?.ok) near.push(c);
+    }
     if (near.length >= 4) break;
   }
   const pool = target ? [target, ...near] : near;
-  if (!pool.length) return ignore("No Active file candidate near " + (lead.location || lead.country || "there") + " matches this title");
+  if (!pool.length) return ignore(remoteRole ? "No Active file candidate in " + (COUNTRY_NAMES[cc] || lead.country || "that country") + " who works remotely matches this title"
+    : "No Active file candidate near " + (lead.location || lead.country || "there") + " matches this title");
 
   // Screening strictly by the job description (pitch.ts): what it asks for (required / nice to
   // have, nothing assumed), checked against each candidate's CV. Anything required they don't have

@@ -40,8 +40,10 @@ export function lookingFor(c: any): string {
     const v = (p as any)[k];
     if (v != null && v !== "" && !(Array.isArray(v) && !v.length)) pick[k] = v;
   }
+  const ws = Array.isArray(c?.work_setup) && c.work_setup.length ? c.work_setup : Array.isArray((p as any).workSetup) ? (p as any).workSetup : [];
   return [
     Object.keys(pick).length ? "Job preferences: " + JSON.stringify(pick).slice(0, 700) : "Job preferences: not filled in",
+    "Work setup they'd accept: " + (ws.length ? ws.join(", ") : "not confirmed (ask, under 'Work setup')"),
     c?.pay && c.pay !== "-" ? "Pay they want: " + clip(c.pay, 80) : "",
     c?.location ? "Lives in: " + clip(c.location, 100) : "",
   ].filter(Boolean).join(" | ");
@@ -214,13 +216,35 @@ function overlap(a: string, b: string) {
 }
 
 // Every candidate against the job description (one CV read each).
+// The role's work setup as one of remote / hybrid / onsite ('' when unknown).
+export function roleSetup(role: { workSetup?: string } | null, lead: any): string {
+  const w = String(role?.workSetup || "").toLowerCase().replace(/[-\s]/g, "");
+  if (["remote", "hybrid", "onsite"].includes(w)) return w;
+  return lead?.data?.remote ? "remote" : "";
+}
+// Would they take a role with this setup? Judged sensibly, only on what they confirmed: unknown
+// preferences or an unknown setup never rule anyone out (the pitch email asks instead). Someone who
+// takes on-site work takes hybrid too; anyone can be offered a remote role.
+export function setupOk(ws: unknown, setup: string): boolean {
+  const list = Array.isArray(ws) ? ws.map(String) : [];
+  if (!list.length || !setup || setup === "remote") return true;
+  return list.includes(setup) || (setup === "hybrid" && list.includes("onsite"));
+}
+const SETUP_LABEL: Record<string, string> = { remote: "remote", hybrid: "hybrid", onsite: "on-site" };
+export const setupMismatch = (ws: string[], setup: string) => `Work setup: they'd accept ${ws.map((x) => SETUP_LABEL[x] || x).join(" or ")}, and this role is ${SETUP_LABEL[setup] || setup}`;
+
 export async function assessForPitch(admin: any, lead: any, cands: any[]): Promise<{ role: RoleFacts; items: JdItem[]; contacts: Contact[]; results: Assessed[] }> {
   const { role, items, contacts } = await readJobDescription(lead);
   // No agencies, or nothing to screen against: no CV is read.
   if (role.noAgencies || !items.some((x) => x.required)) return { role, items, contacts, results: [] };
   const results: Assessed[] = [];
+  // Anyone whose confirmed work setup rules this role out is left out before their CV is read.
+  const setup = roleSetup(role, lead);
+  const wsOf = (c: any) => (Array.isArray(c?.work_setup) && c.work_setup.length ? c.work_setup : Array.isArray(c?.preferences?.workSetup) ? c.preferences.workSetup : []);
   for (let i = 0; i < cands.length; i += 3) {
-    const part = await Promise.all(cands.slice(i, i + 3).map((c, k) => checkCandidate(admin, lead, role, items, c, i + k).catch((e) => {
+    const part = await Promise.all(cands.slice(i, i + 3).map((c, k) => !setupOk(wsOf(c), setup)
+      ? Promise.resolve({ n: i + k, fit: 0, verdict: "Not a fit", reason: "", whyRole: "", bullets: [], musts: [], notMet: [], requirements: [], questions: [], jd: [], confirm: [], out: setupMismatch(wsOf(c), setup) } as Assessed)
+      : checkCandidate(admin, lead, role, items, c, i + k).catch((e) => {
       if (isAiPaused(e)) throw e;
       return { n: i + k, fit: 0, verdict: "Not a fit", reason: "", whyRole: "", bullets: [], musts: [], notMet: [], requirements: [], questions: [], jd: [], confirm: [], out: "The check failed: " + String((e as Error)?.message || e).slice(0, 120) } as Assessed;
     })));
