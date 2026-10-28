@@ -6,7 +6,7 @@
 import { footerText, regionOf, countryCode, type Region } from "./regions.ts";
 import { brevoReady, emailHash, provider, sendBrevoOutreach, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
-import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceShort, sourceText, templateEmail } from "./outreach.ts";
+import { candidateEmail, clientEmail, termsUrl, introOf, mustHavesFor, payText, sourceShort, sourceText, templateEmail } from "./outreach.ts";
 import { isTemplateBody, templateParts } from "./template.ts";
 import { esc, loadBrand, sendBrevo, type Brand } from "./brand.ts";
 import { greet, liveContacts } from "./contacts.ts";
@@ -77,7 +77,8 @@ export function leadText(l: any) {
     (c.toConfirm.length ? `\nStill to confirm: ${c.toConfirm.join("; ")}` : "") +
     (c.wants.length ? `\nWhat they're looking for: ${c.wants.map((w) => w.item + " \u2713").join(", ")}` : "") +
     `\nView the anonymised resume: ${c.url}`).join("\n\n") +
-    "\n\nWe don't charge to arrange interviews. We only bill a fee when you hire our candidate.";
+    "\n\nWe don't charge to arrange interviews. We only bill a fee when you hire our candidate." +
+    `\nOur candidates are introduced under our Terms of Business, which apply once you unlock a full resume: ${termsUrl(viewUrl)}`;
 }
 
 // Plain-text version of a client pitch, with the footer underneath (sent alongside the HTML).

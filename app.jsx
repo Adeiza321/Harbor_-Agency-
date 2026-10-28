@@ -11834,11 +11834,16 @@ function ClientPitchPage({ token }) {
   const [tlDone, setTlDone] = useState(false);
   const load = () => clientCall(token, "pitch").then(setD).catch((e) => setErr(e.message));
   React.useEffect(() => { load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Discuss these terms" on the agreement: a call or a suggested change, sent to our point of contact.
+  const [disc, setDisc] = useState(null);       // null (closed) | { name, email, message, when, sent }
+  const openDisc = () => setDisc({ name: (terms && terms.name) || f.name || "", email: (terms && terms.email) || f.email || "", message: "", when: "", sent: false });
+  const sendDisc = () => { setBusy("disc"); clientCall(token, "terms_discuss", disc).then((r) => setDisc({ ...disc, sent: r.poc || true })).catch((e) => popError(e)).finally(() => setBusy("")); };
   const list = (d && d.candidates) || [];
   const signed = d && d.signed;
   // The anonymised resume opens straight away; "View full resume" (before signing) brings up the terms.
   const viewBlind = (i) => setOpen(open === i ? -1 : i);
-  const openTerms = () => { setGate(null); clientCall(token, "terms").then((t) => { setTerms(t); setF((x) => ({ ...x, company: x.company || t.company || "", email: x.email || t.email || "", name: x.name || t.name || "" })); }).catch((e) => popError(e)); };
+  const openTerms = () => { setGate(null); setDisc(null); clientCall(token, "terms").then((t) => { setTerms(t); setF((x) => ({ ...x, company: x.company || t.company || "", email: x.email || t.email || "", name: x.name || t.name || "" })); }).catch((e) => popError(e)); };
+  React.useEffect(() => { if (q.get("terms") === "1") openTerms(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
   const sign = () => { setBusy("sign"); clientCall(token, "sign", f).then(() => { setTerms(null); return load(); }).catch((e) => popError(e)).finally(() => setBusy("")); };
   const fullResume = (n) => { setBusy("cv" + n); clientCall(token, "resume", { n }).then((r) => window.open(r.url, "_blank", "noopener")).catch((e) => popError(e)).finally(() => setBusy("")); };
   const sendTl = () => { setBusy("tl"); clientCall(token, "timeline", { text: tl }).then(() => setTlDone(true)).catch((e) => popError(e)).finally(() => setBusy("")); };
@@ -11864,7 +11869,7 @@ function ClientPitchPage({ token }) {
               {signed ? (
                 <div className="text-sm rounded-xl px-3.5 py-3 mt-3" style={{ background: C.emTint, color: C.emText }}>Terms signed by {signed.name}{signed.title ? ", " + signed.title : ""} on {fdate(signed.at)}. The full resumes and contact details are unlocked below.</div>
               ) : (
-                <div className="text-sm mt-3" style={{ color: C.ink2 }}>Review {list.length === 1 ? "the anonymised resume" : "each anonymised resume"} free. We don't charge to arrange interviews: we only bill a fee when you hire our candidate.</div>
+                <div className="text-sm mt-3" style={{ color: C.ink2 }}>Review {list.length === 1 ? "the anonymised resume" : "each anonymised resume"} free. We don't charge to arrange interviews: we only bill a fee when you hire our candidate. <button type="button" className="underline" style={{ color: C.em }} onClick={openTerms}>Read our Terms of Business</button></div>
               )}
             </Card>
             {signed && d.poc && (
@@ -11943,6 +11948,29 @@ function ClientPitchPage({ token }) {
           <div className="flex flex-col gap-4">
             <div className="text-sm rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>Fee only when you hire: {terms.fee}. No charge to review or interview.</div>
             <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 340 }}><AgreementText body={String(terms.body || "").replace("[company address]", f.address.trim() || "[company address]").replace("[company number]", f.companyNo.trim() || "[company number]")} /></div>
+            {!disc ? (
+              <div className="text-sm flex flex-wrap items-center gap-x-3 gap-y-1" style={{ color: C.ink2 }}>
+                <span>Questions about these terms, or a change you'd like to suggest?</span>
+                <button type="button" className="underline font-medium" style={{ color: C.em }} onClick={openDisc}>Discuss these terms{terms.poc && terms.poc.first ? " with " + terms.poc.first : ""}</button>
+              </div>
+            ) : disc.sent ? (
+              <div className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.emTint, color: C.emText }}>Thanks. {typeof disc.sent === "string" ? disc.sent : "We"} will get back to you at {disc.email} to talk it through. Any change we agree is confirmed in writing.</div>
+            ) : (
+              <div className="rounded-xl p-3.5 flex flex-col gap-2.5" style={{ background: C.soft, border: "1px solid " + C.line }}>
+                <div className="text-sm font-medium">Discuss these terms{terms.poc && terms.poc.first ? " with " + terms.poc.first : ""}</div>
+                <div className="grid sm:grid-cols-2 gap-2.5">
+                  <input value={disc.name} onChange={(e) => setDisc({ ...disc, name: e.target.value })} placeholder="Your name" className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#fff" }} />
+                  <input value={disc.email} onChange={(e) => setDisc({ ...disc, email: e.target.value })} placeholder="Work email" className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#fff" }} />
+                </div>
+                <textarea rows={3} value={disc.message} onChange={(e) => setDisc({ ...disc, message: e.target.value })} placeholder="What would you like to discuss or change? You can mention the clause number." className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#fff" }} />
+                <input value={disc.when} onChange={(e) => setDisc({ ...disc, when: e.target.value })} placeholder="When suits you for a call? e.g. Tuesday or Wednesday afternoon, GMT" className="rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: "#fff" }} />
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {terms.poc && terms.poc.bookingUrl && <a href={terms.poc.bookingUrl} target="_blank" rel="noreferrer" className="text-sm underline mr-auto" style={{ color: C.em }}>Or book a call now</a>}
+                  <Btn onClick={() => setDisc(null)}>Cancel</Btn>
+                  <Btn kind="primary" disabled={busy === "disc" || disc.name.trim().length < 2 || !/@/.test(disc.email) || disc.message.trim().length < 3} onClick={sendDisc}>{busy === "disc" ? "Sending…" : "Send"}</Btn>
+                </div>
+              </div>
+            )}
             {terms.signed ? (
               <div className="grid sm:grid-cols-2 gap-4">
                 <TypedSignature party="FOR THE AGENCY" name={terms.signed.agency_signer_name} title={terms.signed.agency_signer_title} at={terms.signed.agency_signed_at} />
@@ -11974,7 +12002,7 @@ function ClientPitchPage({ token }) {
           </div>
         </Modal>
       )}
-      {signed && <div className="max-w-3xl mx-auto px-4 md:px-8 pb-8"><button type="button" className="text-sm underline" style={{ color: C.ink2 }} onClick={() => clientCall(token, "terms").then(setTerms).catch((e) => popError(e))}>View the signed agreement</button></div>}
+      {signed && <div className="max-w-3xl mx-auto px-4 md:px-8 pb-8"><button type="button" className="text-sm underline" style={{ color: C.ink2 }} onClick={openTerms}>View the signed agreement</button></div>}
     </div>
   );
 }

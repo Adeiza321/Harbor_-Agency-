@@ -218,6 +218,10 @@ export function footerHtml(b: Brand, f: { sender: string; agency: string; addres
 // The pitch to a hiring manager, in the same design. Its "Interested? Click here: <link>" line
 // becomes the button; the footer carries the sender details, notice and unsubscribe links.
 // With viewUrl (client leads): "View the N candidates" opens their blind resumes; "We're interested" sits under it.
+// Our Terms of Business, linked from every pitch (they open on the candidates page, where the
+// client can also ask to discuss them before unlocking any full resume).
+export const termsUrl = (viewUrl?: string) => viewUrl ? viewUrl + (viewUrl.includes("?") ? "&" : "?") + "terms=1" : "";
+const termsLine = (b: Brand, viewUrl?: string) => viewUrl ? `<div style="font-size:13px;line-height:1.6;margin-top:8px;color:#56605A;">Our candidates are introduced under our <a href="${esc(termsUrl(viewUrl))}" style="color:${b.color};">Terms of Business</a>, which apply once you unlock a full resume. You can read them, or ask us about them, at any time.</div>` : "";
 type PitchCand = { n: number; verdict: string; fit?: number | null; musts: string[]; url: string; reqTotal?: number; reqMet?: number; toConfirm?: string[]; wants?: { item: string; ok: boolean }[] };
 export function clientEmail(b: Brand, o: { cands?: PitchCand[]; body: string; interestedUrl: string; region: Region; senderName: string; senderTitle: string; agency: string; address: string; unsubUrl: string; deleteUrl: string; subject: string; viewUrl?: string; viewCount?: number }) {
   const { paragraphs, signoff } = introOf(String(o.body || ""));
@@ -235,7 +239,7 @@ ${c.url ? `<a href="${esc(c.url)}" style="display:inline-block;margin-top:10px;p
   if (o.cands && o.cands.length) {
     return emailShell(b, o.subject,
       noteHtml(b, lines) + o.cands.map(candHtml).join("") +
-      `<div style="font-size:14px;line-height:1.6;margin-top:6px;color:#56605A;">We don't charge to arrange interviews. We only bill a fee when you hire our candidate.</div>` +
+      `<div style="font-size:14px;line-height:1.6;margin-top:6px;color:#56605A;">We don't charge to arrange interviews. We only bill a fee when you hire our candidate.</div>` + termsLine(b, o.viewUrl) +
       signHtml(signoff || o.senderName.split(" ")[0] || "", o.senderTitle, o.agency),
       undefined, undefined,
       footerHtml(b, { sender: [o.senderName, o.senderTitle].filter(Boolean).join(", "), agency: o.agency, address: o.address,
@@ -246,7 +250,7 @@ ${c.url ? `<a href="${esc(c.url)}" style="display:inline-block;margin-top:10px;p
     noteHtml(b, lines) +
     (o.viewUrl
       ? button(b, o.viewUrl, n > 1 ? `View the ${n} candidates` : "View the candidate") +
-        `<div style="font-size:14px;line-height:1.6;margin-top:14px;color:#56605A;">Want to talk to ${n > 1 ? "any of them" : "them"}? <a href="${esc(o.interestedUrl)}" style="color:${b.color};font-weight:600;">We're interested</a>, or just reply to this email.</div>`
+        `<div style="font-size:14px;line-height:1.6;margin-top:14px;color:#56605A;">Want to talk to ${n > 1 ? "any of them" : "them"}? <a href="${esc(o.interestedUrl)}" style="color:${b.color};font-weight:600;">We're interested</a>, or just reply to this email.</div>` + termsLine(b, o.viewUrl)
       : button(b, o.interestedUrl, "I'm interested") +
         `<div style="font-size:14px;line-height:1.6;margin-top:16px;color:#56605A;">Or just reply to this email.</div>`) +
     signHtml(signoff || o.senderName.split(" ")[0] || "", o.senderTitle, o.agency),
