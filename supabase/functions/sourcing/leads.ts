@@ -361,9 +361,10 @@ export async function pitchLead(admin: any, lead: any, s: Settings, force = fals
   const n = ready.length;
   const pitchSys = "You write short, specific business-development emails for a recruitment agency to a hiring manager who just posted a job. Reply with STRICT JSON only: " +
     "{\"subject\": string, \"body\": string, \"linkedin\": string}. Rules: never name the candidates or their employers. " +
-    `subject under 70 characters, in this spirit: 'Review ${n === 1 ? "the perfect candidate" : "the " + n + " perfect candidates"} for your <role> role, free'. ` +
+    `subject under 60 characters, plain and specific like a note from a colleague, in this spirit: '${n === 1 ? "<Role> candidate" : n + " <role> candidates"} for <company>'. ` +
+    "Keep spam-filter triggers out of the subject and body: no 'free', 'perfect', 'guaranteed', 'no cost', 'risk-free', exclamation marks, all caps, '$' or '%'. " +
     `body 40-70 words, plain text, start 'Hi <first name>,' (or 'Hi there,' if unknown): mention their open role by title, say we have ${n === 1 ? "a candidate who meets" : n + " candidates who meet"} what they're looking for, ` +
-    `that the must-haves ${n === 1 ? "they meet are" : "each meets are"} listed below with ${n === 1 ? "an anonymised resume" : "anonymised resumes"} they can review free, and that we don't charge to arrange interviews (we only bill when they hire our candidate). ` +
+    `that the must-haves ${n === 1 ? "they meet are" : "each meets are"} listed below with ${n === 1 ? "an anonymised resume" : "anonymised resumes"} they can look at straight away, and that there's no fee to arrange interviews (we only bill when they hire our candidate). ` +
     "No candidate list (it's added below), no sign-off, no links, no footer (added separately). " +
     "linkedin: under 280 characters, friendly, same offer, no links.";
   const pts = ready.map((m: any, i: number) => `Candidate ${i + 1} (${m.verdict}): ${(m.musts || []).map((x: any) => x.item).join("; ") || (m.bullets || []).join("; ")}`).join("\n");

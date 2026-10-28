@@ -4,7 +4,7 @@
 // the must-haves, and "I'm interested" / "Refer someone" buttons to the public job page.
 
 import { footerText, regionOf, countryCode, type Region } from "./regions.ts";
-import { emailHash, provider, sendMail } from "./send.ts";
+import { brevoReady, emailHash, provider, sendBrevoOutreach, sendMail } from "./send.ts";
 import { sendBlockers, type Settings } from "./common.ts";
 import { candidateEmail, clientEmail, introOf, mustHavesFor, payText, sourceShort, sourceText, templateEmail } from "./outreach.ts";
 import { isTemplateBody, templateParts } from "./template.ts";
@@ -181,6 +181,29 @@ export async function sendLeadTest(admin: any, leadId: string, to: string, s: Se
   return { ok: true, to };
 }
 
+// "Check spam score": the pitch exactly as the client would get it (same Brevo sender, subject,
+// design, plain-text part and unsubscribe header), sent to a mail-tester.com address, which scores
+// how likely it is to land in spam and says why. Its links are test links: nothing on the lead
+// changes, no one is unsubscribed, and it doesn't count towards the daily limits.
+export async function sendLeadSpamCheck(admin: any, leadId: string, to: string, s: Settings, agencyName: string) {
+  if (!brevoReady()) throw new Error("Brevo isn't set up for sending yet (BREVO_API_KEY and BREVO_SENDER_EMAIL)");
+  const { data: l } = await admin.from("leads").select("*").eq("id", leadId).maybeSingle();
+  if (!l) throw new Error("Not found");
+  if (!l.pitch_body) throw new Error("This lead has no drafted email yet");
+  const b = await loadBrand(admin);
+  const region = (l.region as Region) || regionOf(countryCode(l.country));
+  const r0 = pitchRecipients(l)[0];
+  const lr = r0 ? { ...l, pitch_body: greet(l.pitch_body, { first_name: r0.first }) } : l;
+  const token = "test-preview";
+  await sendBrevoOutreach({
+    kind: "client", to, toName: "", firstName: r0?.first || "", lastName: "", company: l.company || "",
+    subject: l.pitch_subject || `Candidate for your ${l.job_title} role`,
+    body: finalBody(leadText(lr), token, "l", region, s, agencyName, "client"), html: leadHtml(lr, token, region, s, agencyName, b),
+    unsubUrl: linkFor(token, "l", "unsubscribe"),
+  }, s.senderName, "spam-check");
+  return { ok: true, to };
+}
+
 // Why someone can't be emailed yet (or "" when they can): their location to confirm first, an
 // Apollo person not through the must-have check yet, or one waiting on a full-profile check.
 export function holdReason(p: any): string {
@@ -258,7 +281,7 @@ export async function queueLeads(admin: any, ids: string[], approver: string | n
 
 // Send what's waiting, oldest first, within today's cap. Every address is re-checked against
 // the unsubscribe list right before sending.
-export async function processQueue(admin: any, s: Settings, max = 8) {
+export async function processQueue(admin: any, s: Settings, max = 8, leadId?: string) {
   // Each kind waits for its own sender (client pitches need their own Apollo sequence).
   const ready = (["candidate", "client"] as const).filter((k) => provider(k) !== "none");
   if (!ready.length) return { sent: 0, waiting: true, message: "No outreach sender connected yet; approved emails are waiting in the queue." };
@@ -266,9 +289,18 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
   const { count: sentToday } = await admin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", since.toISOString());
   const room = Math.max(0, s.dailyCap - (sentToday || 0));
   if (!room) return { sent: 0, capped: true, message: `Today's limit of ${s.dailyCap} emails is reached; the rest go out tomorrow.` };
-  const { data: batch } = await admin.from("outreach_messages").select("*").eq("status", "queued").in("kind", ready).order("created_at").limit(Math.min(max, room));
-  let sent = 0, failed = 0;
+  let bq = admin.from("outreach_messages").select("*").eq("status", "queued").in("kind", ready);
+  if (leadId) bq = bq.eq("lead_id", leadId);
+  const { data: batch } = await bq.order("created_at").limit(Math.min(max, room));
+  let sent = 0, failed = 0, overBrevo = 0;
+  // Client pitches through Brevo share the candidate emails' account: a small daily cap of their own.
+  let brevoLeft = Infinity;
+  if (provider("client") === "brevo") {
+    const { count } = await admin.from("outreach_messages").select("id", { count: "exact", head: true }).eq("status", "sent").eq("provider", "brevo").gte("sent_at", since.toISOString());
+    brevoLeft = Math.max(0, s.clientBrevoPerDay - (count || 0));
+  }
   for (const m of batch || []) {
+    if (m.kind === "client" && provider("client") === "brevo") { if (brevoLeft <= 0) { overBrevo++; continue; } brevoLeft--; }
     const { data: sup } = await admin.from("outreach_suppressions").select("email_norm").eq("email_norm", await emailHash(m.to_email)).maybeSingle();
     if (sup) { await admin.from("outreach_messages").update({ status: "skipped", error: "Unsubscribed" }).eq("id", m.id); continue; }
     let first = "", last = "", company = "", token = "";
@@ -296,7 +328,8 @@ export async function processQueue(admin: any, s: Settings, max = 8) {
       await admin.from("outreach_messages").update({ status: "failed", error: String((e as Error)?.message || e).slice(0, 300) }).eq("id", m.id);
     }
   }
-  return { sent, failed, message: `Sent ${sent}${failed ? `, ${failed} failed` : ""}.` };
+  return { sent, failed, held: overBrevo, message: `Sent ${sent}${failed ? `, ${failed} failed` : ""}.` +
+    (overBrevo ? ` ${overBrevo} wait${overBrevo === 1 ? "s" : ""} for tomorrow: today's limit of ${s.clientBrevoPerDay} client pitches through Brevo is reached.` : "") };
 }
 
 // "Send it myself": until an outreach sender (Instantly/Gmail) is connected, a recruiter can send

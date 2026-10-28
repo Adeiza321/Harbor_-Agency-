@@ -9461,6 +9461,49 @@ function TestEmailBtn({ kind, id, S, toast }) {
   return <Btn icon={Mail} onClick={go} disabled={busy}>{busy ? "Sending…" : "Email me a test"}</Btn>;
 }
 
+// "Send to client": approves this lead's pitch and sends it now, one email per contact, through the
+// client sender (Brevo for now). Asks once before sending, since an email can't be unsent.
+const leadSendTo = (l) => { const cs = (Array.isArray(l?.data?.contacts) ? l.data.contacts : []).filter((c) => c && c.email && !c.unsubscribed && !c.removed); return cs.length ? cs.map((c) => c.email) : l?.contact_email ? [l.contact_email] : []; };
+function SendToClientBtn({ l, S, toast, onDone, dirty }) {
+  const [ask, setAsk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const to = leadSendTo(l);
+  const go = () => { setBusy(true); S.sourcing("send_lead", { id: l.id }).then((r) => { setAsk(false); toast(r.sent ? "Sent to the client: " + r.message : r.message || "Queued: it goes out within about 10 minutes."); onDone && onDone(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  if (!to.length) return null;
+  if (!ask) return <Btn kind="primary" icon={Send} disabled={dirty} title={dirty ? "Save your changes first" : ""} onClick={() => setAsk(true)}>{l.status === "queued" ? "Send to client now" : "Send to client"}</Btn>;
+  return (
+    <div className="w-full rounded-xl border p-3 text-sm flex flex-wrap items-center gap-2" style={{ borderColor: C.line, background: C.soft }}>
+      <span className="flex-1 min-w-[12rem]">Send this pitch now to {to.length === 1 ? to[0] : to.length + " contacts (" + to.join(", ") + "), each their own email"}? It can't be unsent.</span>
+      <Btn onClick={() => setAsk(false)} disabled={busy}>Cancel</Btn>
+      <Btn kind="primary" icon={Send} onClick={go} disabled={busy}>{busy ? "Sending…" : "Yes, send"}</Btn>
+    </div>
+  );
+}
+
+// "Check spam score": the real pitch (same sender, subject and design) to a mail-tester.com address,
+// which scores out of 10 how likely it is to land in spam and lists what to fix.
+function SpamCheckBtn({ l, S, toast }) {
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const ok = /^[^@\s]+@([a-z0-9-]+\.)*mail-tester\.com$/i.test(to.trim());
+  const go = () => { setBusy(true); S.sourcing("test_email", { kind: "l", id: l.id, spamCheck: true, to: to.trim() }).then(() => { setSent(true); toast("Sent to mail-tester. Check your score there."); }).catch((e) => S.error(e.message)).finally(() => setBusy(false)); };
+  if (!open) return <Btn icon={ScanSearch} onClick={() => setOpen(true)}>Check spam score</Btn>;
+  return (
+    <div className="w-full rounded-xl border p-3 text-sm space-y-2" style={{ borderColor: C.line, background: C.soft }}>
+      <div className="flex items-center justify-between gap-2"><b>Check spam score</b><IconBtn icon={X} label="Close" size="xs" bare onClick={() => { setOpen(false); setSent(false); }} /></div>
+      <div style={{ color: C.ink2 }}>1. Open <a href="https://www.mail-tester.com" target="_blank" rel="noreferrer" style={{ color: C.em, textDecoration: "underline" }}>mail-tester.com</a> and copy the address it shows you.</div>
+      <div className="flex gap-2 flex-wrap items-center">
+        <span style={{ color: C.ink2 }}>2. Paste it here:</span>
+        <input value={to} onChange={(e) => { setTo(e.target.value); setSent(false); }} placeholder="test-xxxx@srv1.mail-tester.com" className="flex-1 min-w-[14rem] rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.card }} />
+        <Btn kind="primary" icon={Send} onClick={go} disabled={!ok || busy}>{busy ? "Sending…" : sent ? "Send again" : "Send"}</Btn>
+      </div>
+      <div style={{ color: C.ink2 }}>3. Back on mail-tester, click "Then check your score". 9 or 10 out of 10 is safe; under 8, it lists what to fix. This sends exactly what the client would get, from the same sender, but nothing on the lead changes.</div>
+    </div>
+  );
+}
+
 // What came back from Apollo on an email ProNext sent through a sequence (apollo-sync).
 const APOLLO_REPLY = {
   willing_to_meet: "Wants to talk", follow_up_question: "Asked a question", person_referral: "Referred someone else",
@@ -10081,6 +10124,22 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
 // Who the pitch goes to, each their own email: anyone named in the job description, the job's
 // poster, Talent Acquisition, the hiring manager and the CEO (Apollo, or ContactOut per Outreach setup,
 // work emails only). Rec Ops / an Admin can look again, add someone by hand, or take someone off.
+// How a pitch email to one contact is doing: queued / sent, then Brevo's delivered, opened, clicked,
+// or a bounce / block / spam report (outreach_messages.delivery, from Brevo's events).
+const DELIVERY = { sent: ["Sent", "neutral"], deferred: ["Delayed", "warn"], delivered: ["Delivered", "info"], opened: ["Opened", "em"], clicked: ["Clicked", "em"],
+  bounced: ["Bounced", "danger"], blocked: ["Blocked", "danger"], invalid: ["Invalid address", "danger"], spam: ["Marked as spam", "danger"], failed: ["Failed", "danger"] };
+function PitchDelivery({ l, email }) {
+  const msgs = (Array.isArray(l.outreach_messages) ? l.outreach_messages : []).filter((m) => String(m.to_email || "").toLowerCase() === String(email || "").toLowerCase())
+    .sort((a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  const m = msgs[0];
+  if (!m) return null;
+  const [label, tone] = m.status === "queued" ? ["Queued", "neutral"] : m.status === "failed" ? ["Not sent", "danger"] : m.status === "skipped" ? ["Skipped", "neutral"]
+    : m.delivery ? DELIVERY[m.delivery] || [m.delivery, "neutral"] : m.provider === "brevo" ? ["Sent", "neutral"] : ["Sent via " + (m.provider || "outreach"), "neutral"];
+  const when = m.delivery_at || m.sent_at;
+  const title = [m.provider ? "Through " + (m.provider === "brevo" ? "Brevo" : m.provider) : "", when ? new Date(when).toLocaleString() : "", m.delivery_reason || m.error || ""].filter(Boolean).join(" · ");
+  return <span title={title}><Pill tone={tone}>{label}</Pill></span>;
+}
+
 function LeadContacts({ l, S, toast, onChanged }) {
   const [busy, setBusy] = useState("");
   const [adding, setAdding] = useState(false);
@@ -10094,7 +10153,7 @@ function LeadContacts({ l, S, toast, onChanged }) {
   const inp = "rounded-lg border px-2.5 py-1.5 text-xs outline-none min-w-0";
   // Older leads: the single contact from the posting.
   if (!list.length && l.contact_email && !d.contacts_checked_at) return (
-    <div className="text-xs mt-1.5" style={{ color: C.ink2 }}>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name || l.contact_email}</span>{l.contact_role ? ", " + l.contact_role : ""} · {l.contact_email}</div>
+    <div className="text-xs mt-1.5 flex items-center gap-2 flex-wrap" style={{ color: C.ink2 }}><span>Contact: <span className="font-medium" style={{ color: C.ink }}>{l.contact_name || l.contact_email}</span>{l.contact_role ? ", " + l.contact_role : ""} · {l.contact_email}</span><PitchDelivery l={l} email={l.contact_email} /></div>
   );
   return (
     <div className="text-xs mt-1.5 rounded-lg px-2.5 py-2" style={{ background: C.canvas }}>
@@ -10113,6 +10172,7 @@ function LeadContacts({ l, S, toast, onChanged }) {
           <span style={{ color: C.ink2 }}>{[c.title, c.name ? c.email : ""].filter(Boolean).join(" · ")}</span>
           {c.source && <span style={{ color: C.ink3 }}>via {c.source}</span>}
           {c.unsubscribed && <span className="font-medium" style={{ color: C.warnFg }}>Unsubscribed</span>}
+          <PitchDelivery l={l} email={c.email} />
           {c.linkedin && <a href={c.linkedin} target="_blank" rel="noreferrer" style={{ color: C.em }}>LinkedIn</a>}
           {staff && !locked && <button type="button" disabled={!!busy} onClick={() => run("r" + i, { op: "remove", index: i })} className="ml-auto" style={{ color: C.ink3 }}>Take off</button>}
         </div>
@@ -10424,7 +10484,9 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
             </div>
           )}
           <div className="flex gap-2 mt-2 justify-end flex-wrap">
+            {S && l.pitch_body && l.channel === "email" && ["new", "approved", "queued"].includes(l.status) && <SendToClientBtn l={l} S={S} toast={toast} onDone={onChanged} dirty={dirty} />}
             {S && l.pitch_body && <TestEmailBtn kind="l" id={l.id} S={S} toast={toast} />}
+            {S && l.pitch_body && l.channel === "email" && <SpamCheckBtn l={l} S={S} toast={toast} />}
             {l.channel === "email" && l.contact_email && ["new", "approved", "queued"].includes(l.status) && <ManualSend kind="l" id={l.id} S={S} toast={toast} onDone={onChanged} />}
             {l.channel === "linkedin" && ["new", "approved"].includes(l.status) && <>
               <Btn icon={Copy} onClick={() => { copyText(f.linkedin_message, toast, "Message copied. Paste it on LinkedIn."); if (l.contact_linkedin) window.open(l.contact_linkedin, "_blank"); }}>Copy and open LinkedIn</Btn>
@@ -10452,7 +10514,7 @@ function OutreachSetup({ S, toast, status, onSaved }) {
   const save = () => {
     setBusy(true);
     const regions = (f.regions || []).filter(Boolean);
-    const body = { outreach: { ...f, regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, xrayEmailsPerDay: f.xrayEmailsPerDay === "" || f.xrayEmailsPerDay == null ? 40 : Math.max(0, Number(f.xrayEmailsPerDay) || 0), xrayEmailMinFit: f.xrayEmailMinFit === "" || f.xrayEmailMinFit == null ? 60 : Math.max(0, Math.min(100, Number(f.xrayEmailMinFit) || 0)), pdlEmailsPerDay: f.pdlEmailsPerDay === "" || f.pdlEmailsPerDay == null ? 10 : Math.max(0, Math.min(200, Number(f.pdlEmailsPerDay) || 0)), pdlPerSearch: Math.max(5, Math.min(100, Number(f.pdlPerSearch) || 20)), dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1, minEmployees: f.leads.minEmployees === "" || f.leads.minEmployees == null ? 10 : Math.max(0, Number(f.leads.minEmployees) || 0), maxEmployees: f.leads.maxEmployees === "" || f.leads.maxEmployees == null ? 500 : Math.max(0, Number(f.leads.maxEmployees) || 0) } } };
+    const body = { outreach: { ...f, clientSender: f.clientSender === "brevo" ? "brevo" : "auto", clientBrevoPerDay: Math.min(100, Math.max(1, Number(f.clientBrevoPerDay) || 15)), regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, xrayEmailsPerDay: f.xrayEmailsPerDay === "" || f.xrayEmailsPerDay == null ? 40 : Math.max(0, Number(f.xrayEmailsPerDay) || 0), xrayEmailMinFit: f.xrayEmailMinFit === "" || f.xrayEmailMinFit == null ? 60 : Math.max(0, Math.min(100, Number(f.xrayEmailMinFit) || 0)), pdlEmailsPerDay: f.pdlEmailsPerDay === "" || f.pdlEmailsPerDay == null ? 10 : Math.max(0, Math.min(200, Number(f.pdlEmailsPerDay) || 0)), pdlPerSearch: Math.max(5, Math.min(100, Number(f.pdlPerSearch) || 20)), dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1, minEmployees: f.leads.minEmployees === "" || f.leads.minEmployees == null ? 10 : Math.max(0, Number(f.leads.minEmployees) || 0), maxEmployees: f.leads.maxEmployees === "" || f.leads.maxEmployees == null ? 500 : Math.max(0, Number(f.leads.maxEmployees) || 0) } } };
     S.sb("/rest/v1/agency_settings?id=eq.1", { method: "PATCH", body }).then(() => { toast("Outreach settings saved"); onSaved(); }).catch((e) => S.error(e.message)).finally(() => setBusy(false));
   };
   const conn = (status && status.connections) || {};
@@ -10528,6 +10590,13 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most people per People Data Labs search (1 PDL credit each)</label><input type="number" min="5" max="100" value={f.pdlPerSearch ?? 20} onChange={(e) => set("pdlPerSearch", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only find emails for X-ray people with a fit of at least (%)</label><input type="number" min="0" max="100" value={f.xrayEmailMinFit ?? 60} onChange={(e) => set("xrayEmailMinFit", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outreach emails per day</label><input type="number" min="1" value={f.dailyCap ?? 40} onChange={(e) => set("dailyCap", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Send client pitches through</label>
+            <select value={f.clientSender === "brevo" ? "brevo" : "auto"} onChange={(e) => set("clientSender", e.target.value)} className={inp} style={inpS}>
+              <option value="auto">The outreach sender (Apollo sequence)</option>
+              <option value="brevo">Brevo (for now)</option>
+            </select>
+            {f.clientSender === "brevo" && <div className="text-xs mt-1" style={{ color: C.warnFg }}>Brevo also sends your candidate emails and doesn't allow emailing contacts you didn't collect yourself, so keep the daily number low. Each pitch's delivery shows on the lead and in Email tracking.</div>}</div>
+          {f.clientSender === "brevo" && <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most client pitches through Brevo per day</label><input type="number" min="1" max="100" value={f.clientBrevoPerDay ?? 15} onChange={(e) => set("clientBrevoPerDay", e.target.value)} className={inp} style={inpS} /></div>}
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete outside contacts who never engaged after (days)</label><input type="number" min="14" value={f.retentionDays ?? 90} onChange={(e) => set("retentionDays", e.target.value)} className={inp} style={inpS} /></div>
           <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={f.includePay !== false} onChange={(e) => set("includePay", e.target.checked)} />Mention the job's pay range in candidate emails</label>
           <div className="md:col-span-2 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
@@ -10572,7 +10641,7 @@ function CampaignsPage({ toast, S }) {
   const load = () => {
     S.sourcing("status", {}).then(setStatus).catch(() => setStatus({ error: true }));
     S.sb("/rest/v1/prospects?select=*&order=created_at.desc&limit=2000").then(setProspects).catch(() => setProspects([]));
-    S.sb("/rest/v1/leads?select=*,lead_offers(*)&status=neq.pending&order=created_at.desc&limit=2000").then(setLeads).catch(() => setLeads([]));
+    S.sb("/rest/v1/leads?select=*,lead_offers(*),outreach_messages(to_email,status,provider,delivery,delivery_at,delivery_reason,sent_at,error,created_at)&status=neq.pending&order=created_at.desc&limit=2000").then(setLeads).catch(() => setLeads([]));
     S.sb("/rest/v1/leads?select=id&status=eq.pending").then((r) => setPendingLeads((r || []).length)).catch(() => {});
   };
   React.useEffect(() => { if (canRun) load(); }, []); // eslint-disable-line
