@@ -43,7 +43,8 @@ export async function pitchableCandidates(admin: any) {
   return (data || []).filter((c: any) => isOpen(c) && !isBusy(c) && (c.resume_path || c.cv_path) && candTitles(c).length && candCountry(c));
 }
 // "Open to new roles" on their candidate page: off means not for a year, unless they turn it back on.
-export const isOpen = (c: any) => c?.open_to_roles !== false || (!!c?.open_paused_until && Date.parse(c.open_paused_until) < Date.now());
+// Open only while "Open to new roles" is on: a pause that has run its year waits for them to say so.
+export const isOpen = (c: any) => c?.open_to_roles !== false;
 // The country a candidate lives in, as a code: from their job preferences, else the end of their location.
 export function candCountry(c: any): string {
   const p = c?.preferences;

@@ -483,7 +483,7 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
     if (links.some((l: any) => l.job_id === jobId)) return false;          // already on this job
     if (isBusy(c, links)) { busy++; return false; }                          // in an active process elsewhere
     // Turned "Open to new roles" off (or placed): not for a year, unless they turn it back on.
-    if (c.open_to_roles === false && !(c.open_paused_until && Date.parse(c.open_paused_until) < Date.now())) return false;
+    if (c.open_to_roles === false) return false;
     // Their confirmed work setup rules this role out (e.g. remote only for an on-site job).
     if (!setupFits(c.work_setup, job.work_setup)) return false;
     return !!(c.resume_path || c.cv_path) && c.status !== "Rejected";

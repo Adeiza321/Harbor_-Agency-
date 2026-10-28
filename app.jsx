@@ -443,8 +443,9 @@ function mapAll(d) {
     skills: c.skills || [], strengths: c.strengths || [], gaps: c.gaps || [], screening: c.screening || { state: "pending" }, matches: c.matches || [], portal: c.portal_token, photoUrl: c.photo_url || null, source: c.source, cv: c.resume_path || c.cv_path || null, cvName: c.resume_name || null,
     ai_locked: !!c.ai_locked, ai_locked_reason: c.ai_locked_reason || "", isDraft: !!c.is_draft,
     // Their one blind resume (made once, reused for every client link and pitch); checked = a Rec Ops/Admin approved it.
-    // "Open to new roles" (their candidate page): off = not put forward until open_paused_until.
-    open: c.open_to_roles !== false || (!!c.open_paused_until && new Date(c.open_paused_until).getTime() < Date.now()), pausedUntil: c.open_to_roles === false ? c.open_paused_until || null : null,
+    // "Open to new roles" (their candidate page): off = not put forward until THEY turn it back on
+    // (open_paused_until is when we email to ask, a year on). looking: their last answer.
+    open: c.open_to_roles !== false, pausedUntil: c.open_to_roles === false ? c.open_paused_until || null : null, looking: c.looking || null,
     blind: c.blind_pages ? { pages: c.blind_pages, at: c.blind_at, by: c.blind_by ? pname(c.blind_by) : "", checkedAt: c.blind_checked_at || null, checkedBy: c.blind_checked_by ? pname(c.blind_checked_by) : "" } : null,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
@@ -4624,14 +4625,14 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   const fromMs = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
   const toMs = dateTo ? new Date(dateTo + "T23:59:59").getTime() : null;
   const filtered = data.filter((c) =>
-    (tab === "All" || c.status === tab) && hit(c, q.toLowerCase()) && hit(c, gq) &&
+    inTab(c, tab) && hit(c, q.toLowerCase()) && hit(c, gq) &&
     (!recF.length || recF.includes(c.recruiter)) && c.ai >= minAi &&
     (!roleF.length || roleF.includes(c.role)) && (!sourceF.length || sourceF.includes(c.source)) &&
     (!countryF.length || countryF.includes(candidateCountry(c) || "_none")) && (!jobF.length || (c.jobLinks || []).some((l) => jobF.includes(l.jobId))) &&
     (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
   const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, countryF.length > 0, jobF.length > 0, !!dateFrom, !!dateTo].filter(Boolean).length;
-  const onTab = data.filter((c) => tab === "All" || c.status === tab);   // filter options come from what's on this tab
-  const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => c.status === t).length}` }));
+  const onTab = data.filter((c) => inTab(c, tab));   // filter options come from what's on this tab
+  const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed", "Not active"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => inTab(c, t)).length}` }));
   return (
     <div className="flex flex-col gap-5 md:gap-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
@@ -5996,7 +5997,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <StatusPill status={status} />
               {candidate.recruiter && <Pill tone="neutral">Sourced by {candidate.recruiter}</Pill>}
               <span title="Whether they agreed, on their candidate page, to be presented anonymously to other employers"><Pill tone={candidate.pitchConsent ? "em" : "neutral"}>{candidate.pitchConsent ? "Open to anonymous pitches" : candidate.pitchAnswered ? "Declined pitches" : "Not asked about pitches yet"}</Pill></span>
-              {candidate.open === false && <span title="They turned 'Open to new roles' off on their candidate page, or started a new job: they aren't put forward until then, unless they turn it back on"><Pill tone="warn">{"Not open to roles" + (candidate.pausedUntil ? " until " + new Date(candidate.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "")}</Pill></span>}
+              {candidate.open === false && <span title="'Open to new roles' is off (they turned it off, said no to other roles, didn't answer the last reminder, or started a new job). They aren't put forward until they turn it back on; we email to ask on the date shown"><Pill tone="warn">{"Not active" + (candidate.pausedUntil ? " · we ask again " + new Date(candidate.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "")}</Pill></span>}
               {candidate.emailOptOut && <span title="They clicked unsubscribe in one of our emails. ProNext no longer emails them; contact them another way."><Pill tone="danger">Unsubscribed from emails</Pill></span>}
             </div>
             {reassign && (
@@ -10031,6 +10032,8 @@ function LeadOffers({ l, offers, S, toast, onChanged }) {
 // or remove each one, and send the pitch now with whoever is ready.
 // Evidence saved cut at 120 characters: shown up to the last whole word, with "…".
 const tidyCut = (v) => { const t = String(v == null ? "" : v).trim(); if (t.length < 118 || /[.)!?\u2026]$/.test(t)) return t; const i = t.lastIndexOf(" "); return (i > 60 ? t.slice(0, i) : t).replace(/[\s,;:(\-\u2013]+$/, "") + "\u2026"; };
+// Candidates list tabs: a status, or "Not active" ("Open to new roles" off on their page).
+const inTab = (c, t) => t === "All" || (t === "Not active" ? c.open === false : c.status === t);
 const PITCH_STATE = { draft: ["Email to review", "warn"], notified: ["Told, waiting to acknowledge", "warn"], reminded: ["Reminded, still waiting", "warn"], no_email: ["Couldn't be emailed", "danger"],
   acknowledged: ["Acknowledged, answering questions", "info"], ready: ["Ready for the pitch", "em"], pitched: ["In the pitch", "em"], withdrawn: ["Withdrew", "neutral"], removed: ["Removed from consideration", "neutral"] };
 const isPitchOffer = (o) => !!PITCH_STATE[o.status];
@@ -10084,7 +10087,7 @@ function PitchEmailReview({ offer, name, reminder, S, toast, onClose, onChanged 
     setBusy("");
   };
   return (
-    <Modal open onClose={onClose} title={(reminder ? "Last reminder to " : "Email to ") + name} wide>
+    <Modal open onClose={onClose} title={(reminder ? (offer.status === "reminded" ? "Last reminder to " : "Reminder to ") : "Email to ") + name} wide>
       {!p ? <SkeletonRows n={4} /> : (
         <div className="flex flex-col gap-3">
           <div className="text-xs" style={{ color: C.ink2 }}>To <b>{p.to || "no email on file"}</b>{p.replyTo ? " · replies go to " + p.replyTo : ""} · Subject: <b>{p.subject}</b></div>
@@ -10330,9 +10333,13 @@ function LeadPitchCandidates({ l, offers, S, toast, onChanged }) {
               {o.status === "ready" && <span style={{ color: blindOk ? C.em : C.warnFg }}>{blindOk ? "Blind resume checked" : "Needs a checked blind resume"}</span>}
               {o.note && <span style={{ color: C.ink3 }}>{o.note}</span>}
               {o.status === "notified" && o.notified_at && Date.now() - new Date(o.notified_at).getTime() > 2 * 864e5 && <span className="font-semibold" style={{ color: C.warnFg }}>Reminder due</span>}
+              {o.status === "reminded" && !o.final_reminder_at && o.reminded_at && Date.now() - new Date(o.reminded_at).getTime() > 2 * 864e5 && <span className="font-semibold" style={{ color: C.warnFg }}>Last reminder due</span>}
               {staff && o.status === "draft" && <Btn kind="primary" icon={Mail} disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: false })} className="!py-1.5 !px-3 text-xs">Review and send email</Btn>}
-              {staff && o.status === "notified" && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }} title={"The only reminder: if " + first + " doesn't answer within 3 days, they're taken off this role and Open to new roles turns off"}>Send last reminder</button>}
-              {o.status === "reminded" && o.reminded_at && <span style={{ color: C.ink3 }}>Last reminder sent {fdate(o.reminded_at)}</span>}
+              {staff && o.status === "notified" && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }} title={"Reminder 1 of 2: the full email again"}>Send reminder</button>}
+              {o.status === "reminded" && o.reminded_at && !o.final_reminder_at && <span style={{ color: C.ink3 }}>Reminder sent {fdate(o.reminded_at)}</span>}
+              {staff && o.status === "reminded" && !o.final_reminder_at && <button disabled={!!busy} onClick={() => setReview({ offer: o, name: c ? c.name : "candidate", reminder: true })} className="font-medium" style={{ color: C.em }} title={"Reminder 2 of 2, short: if " + first + " doesn't answer within 3 days, they're taken off this role and Open to new roles turns off"}>Send last reminder</button>}
+              {o.status === "reminded" && o.final_reminder_at && <span style={{ color: C.ink3 }}>Last reminder sent {fdate(o.final_reminder_at)} · off the role {fdate(new Date(new Date(o.final_reminder_at).getTime() + 3 * 864e5))} if no answer</span>}
+              {o.status === "withdrawn" && o.withdrawn_by === "candidate" && o.other_roles === false && <span className="font-semibold" style={{ color: C.warnFg }}>Not open to other roles for now</span>}
               {staff && ["notified", "reminded"].includes(o.status) && <span style={{ color: C.ink2 }}>Waiting for {first} to click Acknowledge{c && c.phone ? <>: <a href={"tel:" + c.phone.replace(/[^\d+]/g, "")} className="font-medium" style={{ color: C.em }}>call {first}</a> to ask them to</> : ""}</span>}
               {staff && o.status === "acknowledged" && <button disabled={!!busy} onClick={() => run(o.id + "p", "offer_push", { offerId: o.id }, "Ready for the pitch")} className="font-medium" style={{ color: C.em }} title={"Puts " + first + " in the pitch without waiting for their answers"}>Put through without answers</button>}
               {staff && live && <button disabled={!!busy} onClick={() => run(o.id + "w", "offer_withdraw", { offerId: o.id }, "Withdrawn")} style={{ color: C.ink2 }}>Withdraw</button>}
@@ -11588,9 +11595,36 @@ function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) 
 
 // "Open to new roles": off means we don't put them forward for a year (or until they turn it back
 // on). It goes off by itself when they start a new job through us.
+const OPEN_ANSWERS = [["active", "Yes, I'm actively looking"], ["open", "I'm open to the right role"], ["not_now", "Not right now"]];
 function PortalOpenToggle({ token, state, onChanged }) {
   const [busy, setBusy] = useState(false);
   const on = state.open !== false;
+  // A year on (or from the check-in email: ?open=<answer>), ask whether they're looking again.
+  const fromEmail = (() => { try { return new URLSearchParams(window.location.search).get("open") || ""; } catch (e) { return ""; } })();
+  const [pick, setPick] = useState(OPEN_ANSWERS.some((a) => a[0] === fromEmail) ? fromEmail : "");
+  const [answered, setAnswered] = useState("");
+  const ask = !on && (state.checkinDue || !!fromEmail);
+  const answer = (a) => {
+    setBusy(true);
+    sbFetch("/rest/v1/rpc/candidate_open_answer", { method: "POST", body: { p_token: token, p_answer: a } })
+      .then(() => { setAnswered(a); onChanged && onChanged(); }).catch((e) => popError(e)).finally(() => setBusy(false));
+  };
+  if (answered) return (
+    <Card><div className="text-sm" style={{ color: C.ink2 }}>{answered === "not_now" ? "Thanks for letting us know. We won't put you forward for roles, and we'll check in again in a year. You can turn this on here any time." : "Great, you're open to new roles again. We'll put your profile forward, anonymously, for roles that fit you."}</div></Card>
+  );
+  if (ask) return (
+    <Card>
+      <div className="text-base font-semibold">Are you looking for a new role?</div>
+      <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>It's been a while since we stopped putting you forward for roles. We won't put you forward for anything until you tell us you're open to it.</div>
+      <div className="flex flex-col gap-2 mt-3 max-w-sm">
+        {OPEN_ANSWERS.map(([k, label]) => (
+          <button key={k} type="button" disabled={busy} onClick={() => setPick(k)} className="text-left text-sm rounded-xl px-3.5 py-2.5"
+            style={{ border: "1px solid " + (pick === k ? C.em : C.line), background: pick === k ? C.emTint : C.card, color: pick === k ? C.emText : C.ink, fontWeight: pick === k ? 600 : 400 }}>{label}</button>
+        ))}
+      </div>
+      <div className="mt-3"><Btn kind="primary" disabled={busy || !pick} onClick={() => answer(pick)}>{busy ? "Saving…" : "Confirm"}</Btn></div>
+    </Card>
+  );
   const flip = () => {
     setBusy(true);
     sbFetch("/rest/v1/rpc/candidate_set_open", { method: "POST", body: { p_token: token, p_open: !on } })
@@ -11603,7 +11637,7 @@ function PortalOpenToggle({ token, state, onChanged }) {
           <div className="text-base font-semibold">Open to new roles</div>
           <div className="text-sm mt-0.5" style={{ color: C.ink2 }}>{on
             ? "We'll put your profile forward, anonymously, for roles that fit you. It turns off by itself when you start a new job through us."
-            : "We won't put you forward for new roles" + (state.pausedUntil ? " until " + new Date(state.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : " for a year") + ", unless you turn this back on."}</div>
+            : "We won't put you forward for new roles until you turn this back on." + (state.pausedUntil ? " We'll check in with you around " + new Date(state.pausedUntil).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) + "." : "")}</div>
         </div>
         <button type="button" role="switch" aria-checked={on} aria-label="Open to new roles" disabled={busy} onClick={flip}
           className="relative shrink-0 rounded-full" style={{ width: 52, height: 30, background: on ? C.em : C.line, transition: "background .2s", opacity: busy ? 0.6 : 1 }}>
@@ -14617,12 +14651,16 @@ function PitchJdList({ jd, you }) {
   );
 }
 
+// Quick reasons on "Withdraw my profile" (one tap, so nobody has to type).
+const WITHDRAW_REASONS = ["The pay doesn't work for me", "Location or commute", "Work setup (remote, hybrid or onsite)", "Not the right level for me", "Not the kind of role I want", "I've accepted another job", "I'm not looking right now", "Something else"];
 function PortalPitch({ token, offer, initial, onDone }) {
   const [d, setD] = useState(initial);
   const [busy, setBusy] = useState("");
   const [answers, setAnswers] = useState([]);
   const [yn, setYn] = useState([]);
   const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [wdReason, setWdReason] = useState("");
+  const [wdNote, setWdNote] = useState("");
   const call = (fn, body) => sbFetch("/rest/v1/rpc/" + fn, { method: "POST", body: { p_token: token, p_offer: offer, ...(body || {}) } });
   const reload = () => call("candidate_pitch").then((j) => j && setD(j));
   const run = (key, fn, body) => { setBusy(key); return call(fn, body).then(reload).catch((e) => popError(e)).finally(() => setBusy("")); };
@@ -14696,8 +14734,18 @@ function PortalPitch({ token, offer, initial, onDone }) {
         <div className="mt-4 rounded-xl p-3.5" style={{ background: C.canvas }}>
           <div className="text-sm font-medium">Withdraw your profile from this role?</div>
           <div className="text-sm mt-1" style={{ color: C.ink2 }}>We won't put you forward for it. Your recruiter will be told.</div>
+          <div className="text-sm font-medium mt-3">What's the main reason?</div>
+          <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>One tap helps us send you better roles.</div>
+          <div className="flex flex-wrap gap-1.5 mt-2" role="radiogroup" aria-label="Reason for withdrawing">
+            {WITHDRAW_REASONS.map((r) => (
+              <button key={r} type="button" role="radio" aria-checked={wdReason === r} disabled={!!busy} onClick={() => setWdReason(r)}
+                className="text-sm rounded-full px-3 py-1.5" style={{ border: "1px solid " + (wdReason === r ? C.em : C.line), background: wdReason === r ? C.emTint : C.card, color: wdReason === r ? C.emText : C.ink, fontWeight: wdReason === r ? 600 : 400 }}>{r}</button>
+            ))}
+          </div>
+          <textarea rows={2} value={wdNote} onChange={(e) => setWdNote(e.target.value)} placeholder={wdReason === "Something else" ? "Tell us a little more" : "Anything you'd like to add? (optional)"}
+            className="w-full mt-2 rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.card }} />
           <div className="flex gap-2 mt-3">
-            <Btn kind="primary" disabled={!!busy} onClick={() => run("wd", "candidate_pitch_withdraw").then(() => setConfirmWithdraw(false))}>{busy === "wd" ? "Withdrawing…" : "Yes, withdraw"}</Btn>
+            <Btn kind="primary" disabled={!!busy || !wdReason} onClick={() => run("wd", "candidate_pitch_withdraw", { p_reason: wdReason, p_note: wdNote.trim() || null }).then(() => setConfirmWithdraw(false))}>{busy === "wd" ? "Withdrawing…" : "Yes, withdraw"}</Btn>
             <Btn disabled={!!busy} onClick={() => setConfirmWithdraw(false)}>Keep me in</Btn>
           </div>
         </div>
