@@ -44,6 +44,10 @@ export const RUBRIC =
   "8) Industry alignment: compare the candidate's industry experience (from the looked-up employer list when given, otherwise the CV) with the industry the job asks for. It counts exactly as the job description ranks it (must or preferred). An employer marked 'unsure' is unknown industry: never count it as a match. " +
   "9) If the candidate's current or most recent role is outside the field the job needs, say so in 'gaps'. " +
   "10) Location and work setup are a must-have line of their own. Onsite or hybrid: the candidate must be based in or near the job's location, or have said in their answers that they will relocate. Remote: they must be in the hiring country (or the time zone the job asks for). Use the candidate's stated location; if it isn't known, mark the line 'partial', never 'met'. Seniority counts too: a candidate clearly more junior or far more senior than the role is a gap. " +
+  "10b) Preferred work setup (remote / hybrid / on-site, every option the candidate said they'd accept, given below) is part of the location and work setup line, used judiciously: " +
+  "the job's setup is one they accept -> that part is met; they accept ONLY remote and the job is on-site -> 'not met', a real mismatch named in gaps; " +
+  "remote-only for a hybrid job, or on-site / hybrid only for a remote job -> 'partial', to discuss (not a mismatch on its own); not given -> judge location alone and add the gap 'Work setup preference not confirmed', never 'not met'. " +
+  "A work setup mismatch alone is never the reason for the rejection verdict unless they accept only remote and the job is fully on-site. " +
   "11) 'verdict_reason': 1-2 short sentences explaining the verdict by naming the specific must-have requirements that decided it (e.g. 'Meets every must-have: active CPA, 10 yrs Big 4, SEC reporting, ASC 606/718.' or 'Rejected: no active CPA, which the role requires.'). Never give a preferred item as the reason for a rejection. ";
 
 // Hard guard on the model's own checklist: a verdict or score can't claim more
@@ -207,10 +211,12 @@ const prefsFacts = (p: any) => {
     `work setup they accept: ${(p.workSetup || []).join(", ") || "?"}; based in ${[p.currentCity, p.currentCountry].filter(Boolean).join(", ") || "?"}, ` +
     `would move to another city in their country: ${p.relocate || "?"}${(p.preferredCities || []).length ? " (prefers " + p.preferredCities.join(", ") + ")" : ""}; ` +
     `right to work: ${visa}; languages: ${(p.languages || []).map((l: any) => l.language + " (" + l.level + ")").join(", ") || "?"}; ` +
-    `industry experience they claim: ${(p.industries || []).join(", ") || "?"}. Treat a work setup, location or right-to-work mismatch with this job as a real gap.`;
+    `industry experience they claim: ${(p.industries || []).join(", ") || "?"}. Treat a location or right-to-work mismatch with this job as a real gap; judge work setup as rule 10b says.`;
 };
+const WS_LABEL: Record<string, string> = { remote: "remote", hybrid: "hybrid", onsite: "on-site" };
 const candidateFacts = (c: any) =>
-  `Candidate's stated location: ${c.location || "not given"}. Notice period: ${c.notice && c.notice !== "-" ? c.notice : "not given"}. Salary expectation: ${c.pay && c.pay !== "-" ? c.pay : "not given"}.` + prefsFacts(c.preferences);
+  `Candidate's stated location: ${c.location || "not given"}. Notice period: ${c.notice && c.notice !== "-" ? c.notice : "not given"}. Salary expectation: ${c.pay && c.pay !== "-" ? c.pay : "not given"}. ` +
+  `Preferred work setup (what they'd accept): ${Array.isArray(c.work_setup) && c.work_setup.length ? c.work_setup.map((x: string) => WS_LABEL[x] || x).join(", ") : "not confirmed"}.` + prefsFacts(c.preferences);
 
 export async function screenLink(admin: any, linkId: string, askAI: Ask, loadResume: Load) {
   const { data: link } = await admin.from("candidate_jobs").select("*").eq("id", linkId).single();
@@ -451,13 +457,22 @@ export async function jobParallelTitles(admin: any, job: any, askAI: Ask, force 
   return titles;
 }
 
+// Would they take a job with this setup? Only what they confirmed counts, judged sensibly: unknown
+// never rules anyone out; someone who takes on-site work takes hybrid; anyone can take remote.
+export function setupFits(ws: unknown, jobSetup: unknown): boolean {
+  const list = Array.isArray(ws) ? ws.map(String) : [];
+  const setup = String(jobSetup || "").toLowerCase().replace(/[-\s]/g, "");
+  if (!list.length || !["hybrid", "onsite"].includes(setup)) return true;
+  return list.includes(setup) || (setup === "hybrid" && list.includes("onsite"));
+}
+
 export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResume: Load, max = 5) {
   const { data: job } = await admin.from("jobs").select("*").eq("id", jobId).single();
   if (!job) throw new Error("This job no longer exists");
   let jobTitles: string[] = [job.role_title];
   try { jobTitles = await jobParallelTitles(admin, job, askAI); } catch (e) { console.error("job titles", String((e as Error)?.message || e)); }
   const { data: cands } = await admin.from("candidates")
-    .select("id,name,role_title,current_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,open_to_roles,open_paused_until,candidate_jobs(job_id,stage,candidate_response,fit)")
+    .select("id,name,role_title,current_title,location,status,skills,strengths,experience,industries,matches,parallel_titles,resume_path,cv_path,is_draft,open_to_roles,open_paused_until,work_setup,candidate_jobs(job_id,stage,candidate_response,fit)")
     .eq("is_draft", false);
   // People already put forward for this job who are still in play and scored 60%+.
   const onRole = (cands || []).filter((c: any) => (c.candidate_jobs || []).some((l: any) =>
@@ -469,6 +484,8 @@ export async function benchFits(admin: any, jobId: string, askAI: Ask, loadResum
     if (isBusy(c, links)) { busy++; return false; }                          // in an active process elsewhere
     // Turned "Open to new roles" off (or placed): not for a year, unless they turn it back on.
     if (c.open_to_roles === false && !(c.open_paused_until && Date.parse(c.open_paused_until) < Date.now())) return false;
+    // Their confirmed work setup rules this role out (e.g. remote only for an on-site job).
+    if (!setupFits(c.work_setup, job.work_setup)) return false;
     return !!(c.resume_path || c.cv_path) && c.status !== "Rejected";
   });
   let titled = 0;
