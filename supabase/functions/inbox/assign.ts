@@ -62,6 +62,16 @@ export async function assignApplication(admin: any, app: any, rec: { id: string;
     }
   }
 
+  // Started the form but didn't finish: their answers so far go on the profile as a draft, and fill
+  // what's still blank (location, salary, notice, work setup).
+  if (!app.preferences && app.preferences_draft && typeof app.preferences_draft === "object") {
+    const { data: cur } = await admin.from("candidates").select("preferences").eq("id", candId).single();
+    if (!cur?.preferences) {
+      await admin.from("candidates").update({ preferences_draft: app.preferences_draft, preferences_draft_at: app.preferences_draft_at || now }).eq("id", candId);
+      await admin.rpc("fill_candidate_from_prefs", { p_cand: candId, p: app.preferences_draft });
+    }
+  }
+
   // On the job (starts the automatic AI screening).
   let linkId: string | null = null;
   if (app.job_id) {

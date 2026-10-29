@@ -451,7 +451,7 @@ function mapAll(d) {
     blind: c.blind_pages ? { pages: c.blind_pages, at: c.blind_at, by: c.blind_by ? pname(c.blind_by) : "", checkedAt: c.blind_checked_at || null, checkedBy: c.blind_checked_by ? pname(c.blind_checked_by) : "" } : null,
     industries: Array.isArray(c.industries) ? c.industries : [], industriesAt: c.industries_checked_at || null,
     parallelTitles: Array.isArray(c.parallel_titles) ? c.parallel_titles : [], parallelTitlesAt: c.parallel_titles_at || null,
-    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, workSetup: Array.isArray(c.work_setup) ? c.work_setup : [], emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
+    currentTitle: c.current_title || "", currentCompany: c.current_company || "", linkedin: c.linkedin_url || "", pitchConsent: !!c.pitch_consent, pitchAnswered: !!c.pitch_consent_at, preferences: c.preferences || null, preferencesAt: c.preferences_at || null, preferencesDraft: c.preferences_draft || null, preferencesDraftAt: c.preferences_draft_at || null, workSetup: Array.isArray(c.work_setup) ? c.work_setup : [], emailOptOut: !!c.email_opt_out, profileReadAt: c.profile_read_at || null,
     note: c.profile_note || "", noteBy: c.profile_note_by ? pname(c.profile_note_by) : "", noteAt: c.profile_note_at || null,
     jobLinks: (c.candidate_jobs || []).map((l) => ({ id: l.id, jobId: l.job_id, stage: l.stage, fit: l.fit, screeningAnswers: answersFor(l), extraQA: extraQAFor(l), ai: l.ai || {}, response: l.candidate_response || "accepted", reject: l.reject_reason && ["Rejected", "Withdrawn"].includes(l.stage) ? { kind: l.reject_kind, reason: l.reject_reason, feedback: l.reject_feedback || "", message: l.reject_message || "", at: l.rejected_at, by: pname(l.rejected_by) } : null, createdAt: l.created_at ? new Date(l.created_at).getTime() : 0, addedBy: l.added_by || null, submittedAt: l.submitted_at ? new Date(l.submitted_at).getTime() : null,
       blindPages: l.blind_pages || 0, blindAt: l.blind_at || null,
@@ -484,7 +484,7 @@ function mapAll(d) {
       interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, leadRole: !!j.lead_role, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), at: new Date(a.created_at).getTime(),
     status: a.status || (a.candidate_id || a.assigned_to ? "assigned" : "new"), jobId: a.job_id, candidateId: a.candidate_id, linkedin: a.linkedin || "", hasCv: !!a.resume_path, cvName: a.resume_name || "",
-    answers: Array.isArray(a.answers) ? a.answers : [], workSetup: Array.isArray(a.work_setup) ? a.work_setup : (a.preferences && Array.isArray(a.preferences.workSetup) ? a.preferences.workSetup : []), note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null,
+    answers: Array.isArray(a.answers) ? a.answers : [], prefs: a.preferences || a.preferences_draft || null, prefsDraft: !a.preferences && !!a.preferences_draft, workSetup: Array.isArray(a.work_setup) ? a.work_setup : (a.preferences && Array.isArray(a.preferences.workSetup) ? a.preferences.workSetup : []), note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null,
     interestAt: a.interest_at ? new Date(a.interest_at).getTime() : null, followups: a.followups || 0, lastFollowupAt: a.last_followup_at ? new Date(a.last_followup_at).getTime() : null, handledAt: a.handled_at ? new Date(a.handled_at).getTime() : null,
     handledBy: a.handled_by ? pname(a.handled_by) : "", viaName: a.via_recruiter ? pname(a.via_recruiter) : "", assigned: a.assigned_to ? initialsOf(pname(a.assigned_to)) : null, assignedId: a.assigned_to, assignedName: a.assigned_to ? pname(a.assigned_to) : "" }));
   const today = new Date();
@@ -7486,6 +7486,12 @@ function InboxRow({ x, S, toast, canAct }) {
               {x.answers.map((a, i) => <div key={i}><div className="text-xs font-medium" style={{ color: C.ink2 }}>{a.q}</div><div className="text-sm" style={{ whiteSpace: "pre-wrap" }}>{a.a}</div></div>)}
             </div>
           )}
+          {x.prefs && (
+            <div className="pt-1" style={{ borderTop: `1px solid ${C.line}` }}>
+              <div className="text-xs font-semibold pt-2 mb-1" style={{ color: C.ink2 }}>What they're looking for{x.prefsDraft ? " (they didn't finish the form: answers so far)" : ""}</div>
+              <PreferencesSummary p={x.prefs} staff />
+            </div>
+          )}
           {waiting && <div className="text-xs" style={{ color: C.ink3 }}>This referral can be viewed but not assigned until {x.name.split(" ")[0]} clicks "I'm interested" in the email we sent (or applies). You can send up to two follow-ups, a day apart.</div>}
         </div>
       )}
@@ -11183,8 +11189,14 @@ function CandidatePrefsCard({ candidate, S, toast }) {
         <RowMenu label="Preference actions" items={[{ label: p ? "Edit preferences" : "Fill in for them", icon: Pencil, onClick: () => setEditing(true) }]} />
       </div>
       {p && <div className="mt-3"><PreferencesSummary p={p} staff /></div>}
+      {!p && candidate.preferencesDraft && (
+        <div className="mt-3">
+          <div className="text-xs rounded-lg px-3 py-2 mb-2" style={{ background: C.warnBg, color: C.warnText }}>They started the form{candidate.preferencesDraftAt ? " (" + fdate(candidate.preferencesDraftAt) + ")" : ""} but didn't finish it. These are their answers so far.</div>
+          <PreferencesSummary p={candidate.preferencesDraft} staff />
+        </div>
+      )}
       <Modal open={editing} onClose={() => setEditing(false)} title={"Job preferences: " + candidate.name} wide>
-        <PreferencesForm staff initial={p} known={{ location: candidate.location }} onSave={save} onCancel={() => setEditing(false)} saveLabel="Save preferences" />
+        <PreferencesForm staff initial={p || candidate.preferencesDraft} known={{ location: candidate.location }} onSave={save} onCancel={() => setEditing(false)} saveLabel="Save preferences" />
       </Modal>
     </Card>
   );
@@ -11517,7 +11529,9 @@ const quizInpS = { borderColor: C.line, borderWidth: 1.5 };
 // before: steps asked first, in the same look (the Send-us-your-CV page: their details and CV),
 // { steps: [{ key, title, sub, body: () => JSX, check: () => message | "" }], submitLabel, busyLabel,
 // onDone: async () => prefill }. Once they're done, onDone's prefill fills in the form.
-function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished, preview, before }) {
+// onProgress(prefs): the answers so far, after each step, so nothing they've filled in is lost if
+// they stop before the end (saved as a draft until they finish).
+function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished, preview, before, onProgress }) {
   const [p, setP] = useState(() => withDeviceCountry(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill)));
   // The answers already filled in when the form opened: these go on the review step.
   const [knownKeys, setKnownKeys] = useState(() => (before ? [] : prefsKnownKeys(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill), !!initial)));
@@ -11591,6 +11605,15 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
     try { const saved = prefsToSave(p); await onSave(saved); if (onFinished) onFinished(saved); else setDone(true); } catch (e) { setErr(e.message || "Your answers couldn't be saved. Please try again."); }
     setBusy(false);
   };
+  // The answers so far go to the server each time they move on (not in preview).
+  const progressRef = React.useRef("");
+  useEffect(() => {
+    if (!onProgress || preview || (before && phase !== "main")) return;
+    const draft = prefsToSave(p), key = JSON.stringify(draft);
+    if (key === progressRef.current) return;
+    progressRef.current = key;
+    Promise.resolve(onProgress(draft)).catch(() => {});
+  }, [i, edit]); // eslint-disable-line react-hooks/exhaustive-deps
   const next = () => {
     if (msg) { setTried(true); return; }
     if (inBefore) { if (lastBefore) runBefore(); else setBi(bi + 1); return; }
@@ -11946,7 +11969,8 @@ function PortalPreferences({ token, pitchConsent, openSignal, name, onThanks }) 
       {askCode && <EditCodeModal token={token} emailMasked={state.emailMasked} onClose={() => setAskCode(false)}
         onVerified={(session) => sbFetch("/rest/v1/rpc/candidate_preferences_edit", { method: "POST", body: { p_token: token, p_session: session } })
           .then((d) => { setAskCode(false); setEditing({ session, preferences: d && d.preferences }); setOpen(true); })} />}
-      {open && <PreferencesQuiz key={editing ? "edit" : "new"} initial={editing ? editing.preferences : null} known={{ location: state.location, name }} prefill={editing ? null : prefill || null} onSave={save} onClose={close} onFinished={finished} />}
+      {open && <PreferencesQuiz key={editing ? "edit" : "new"} initial={editing ? editing.preferences : null} known={{ location: state.location, name }} prefill={editing ? null : prefill || null} onSave={save} onClose={close} onFinished={finished}
+        onProgress={editing ? undefined : (draft) => sbFetch("/rest/v1/rpc/candidate_save_progress", { method: "POST", body: { p_token: token, p_prefs: draft } })} />}
     </>
   );
 }
@@ -15834,6 +15858,7 @@ function JoinPage() {
     return Promise.race([ask, new Promise((ok) => setTimeout(() => ok(null), 25000))]);
   };
   const savePrefs = (prefs) => sbFetch("/rest/v1/rpc/application_set_preferences", { method: "POST", body: { p_app: app.current.id, p_token: app.current.token, p_prefs: prefs } });
+  const saveProgress = (prefs) => (app.current ? sbFetch("/rest/v1/rpc/application_save_progress", { method: "POST", body: { p_app: app.current.id, p_token: app.current.token, p_prefs: prefs } }) : null);
   const quizInpIcon = (Icon, props) => (
     <div className="flex items-center gap-3 rounded-2xl border px-4 bg-white" style={quizInpS}><Icon size={18} color={C.ink3} /><input {...props} className="flex-1 py-3.5 text-[15px] outline-none bg-transparent" /></div>
   );
@@ -15861,7 +15886,7 @@ function JoinPage() {
           </div>) },
     ],
   };
-  if (!done) return <PreferencesQuiz initial={null} known={{ name: form.name }} before={before} onSave={savePrefs}
+  if (!done) return <PreferencesQuiz initial={null} known={{ name: form.name }} before={before} onSave={savePrefs} onProgress={saveProgress}
     onClose={() => { if (app.current) { setDone(true); window.scrollTo(0, 0); } else window.location.href = withQ(JOBS_URL(), "r", PUB_REF()); }}
     onFinished={() => { setAnswered(true); setDone(true); window.scrollTo(0, 0); }} />;
   return (
