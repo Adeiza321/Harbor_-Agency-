@@ -208,7 +208,7 @@ const jobText = (job: any) =>
 const prefsFacts = (p: any) => {
   if (!p || typeof p !== "object") return "";
   const visa = p.citizen ? `citizen or permanent resident of ${p.currentCountry || "where they live"}`
-    : `on a ${p.visaType || "visa"}${p.visaExpiry ? " expiring " + p.visaExpiry : ""}${p.sponsorship ? ", needs sponsorship to change employer: " + p.sponsorship : ""}`;
+    : `${p.originCountry ? p.originCountry + " citizen " : ""}on a ${p.visaType || "visa"}${p.visaExpiry ? " expiring " + p.visaExpiry : ""}${p.sponsorship ? ", needs sponsorship to change employer: " + p.sponsorship : ""}`;
   return `\nTheir stated job preferences: wants ${(p.roles || []).join(", ") || "?"} (${p.seniority || "?"}, ${(p.employmentTypes || []).join("/") || "?"}); ` +
     `work setup they accept: ${(p.workSetup || []).join(", ") || "?"}; based in ${[p.currentCity, p.currentCountry].filter(Boolean).join(", ") || "?"}, ` +
     `would move to another city in their country: ${p.relocate || "?"}${(p.preferredCities || []).length ? " (prefers " + p.preferredCities.join(", ") + ")" : ""}; ` +
