@@ -1913,6 +1913,25 @@ const COUNTRY_OPTIONS = [{ value: "Remote – worldwide", label: "Remote – wor
 const CURRENCY_OPTIONS = CURRENCIES.map((c) => ({ value: c, label: c + " – " + CURRENCY_NAMES[c], hint: curSymbol(c) !== c ? curSymbol(c) : "" }));
 // A saved value that isn't in the list (an old job, say) still shows and stays selectable.
 const withValue = (opts, v) => (!v || opts.some((o) => o.value === v) ? opts : [{ value: v, label: v }].concat(opts));
+// A salary expectation as currency + amount for editing ("SAR 25,000–30,000/mo" -> SAR,
+// "25,000–30,000/mo"; "$45–$50/hr" -> USD, "45–50/hr"), and back. With no currency picked, the
+// database adds the one for the country the candidate lives in.
+const PAY_SYMBOL_CUR = { "$": "USD", "£": "GBP", "€": "EUR", "₦": "NGN", "₹": "INR" };
+const PAY_CUR_SYMBOL = { USD: "$", GBP: "£", EUR: "€", NGN: "₦" };
+function splitPay(pay) {
+  const s = String(pay || "").trim() === "-" ? "" : String(pay || "").trim();
+  const code = s.match(/^([A-Z]{3})\s+(.*)$/);
+  if (code && CURRENCIES.includes(code[1])) return { cur: code[1], amt: code[2] };
+  const sym = s.match(/^([$£€₦₹])/);
+  if (sym) return { cur: PAY_SYMBOL_CUR[sym[1]], amt: s.replace(/[$£€₦₹]/g, "") };
+  return { cur: "", amt: s };
+}
+function joinPay(cur, amt) {
+  const a = String(amt || "").trim();
+  if (!a || !cur || !/\d/.test(a)) return a;
+  const sym = PAY_CUR_SYMBOL[cur];
+  return sym ? a.replace(/(^|[–-]\s*)(\d)/g, (_, pre, d) => pre + sym + d) : cur + " " + a;
+}
 
 /* Responsive data table: real table on desktop, cards on mobile */
 // Page numbers to show: first, last, and the pages around the current one, with gaps as "…".
@@ -5781,11 +5800,12 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   };
   const note = useProfileNote(candidate, S, toast);
   const [editForm, setEditForm] = useState(null);
-  const openEdit = () => setEditForm({ workSetup: candidate.workSetup || [], linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
+  const openEdit = () => { const sp = splitPay(candidate.pay); setEditForm({ workSetup: candidate.workSetup || [], linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, payCur: sp.cur, payAmt: sp.amt }); };
   const saveEdit = () => {
     if (!editForm.name.trim()) { toast("Name can't be empty"); return; }
     const li = (editForm.linkedin || "").trim();
-    patch(() => ({ ...editForm, linkedin: li && !/^https?:\/\//i.test(li) ? "https://" + li : li }));
+    const { payCur, payAmt, ...rest } = editForm;
+    patch(() => ({ ...rest, pay: joinPay(payCur, payAmt) || "-", linkedin: li && !/^https?:\/\//i.test(li) ? "https://" + li : li }));
     setEditForm(null); toast("Candidate details updated");
   };
 
@@ -5882,10 +5902,17 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label><input value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>LinkedIn</label><input value={editForm.linkedin} placeholder="linkedin.com/in/…" onChange={(e) => setEditForm((f) => ({ ...f, linkedin: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Experience</label><input value={editForm.experience} onChange={(e) => setEditForm((f) => ({ ...f, experience: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Notice</label><input value={editForm.notice} onChange={(e) => setEditForm((f) => ({ ...f, notice: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label><input value={editForm.pay} onChange={(e) => setEditForm((f) => ({ ...f, pay: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+            </div>
+            <div>
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label>
+              <div className="grid gap-2 mt-1.5" style={{ gridTemplateColumns: "minmax(7rem, 2fr) 3fr" }}>
+                <PickList value={editForm.payCur} onChange={(v) => setEditForm((f) => ({ ...f, payCur: v }))} options={withValue(CURRENCY_OPTIONS, editForm.payCur)} placeholder="Currency" searchPlaceholder="Search currency or code" allowEmpty className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+                <input value={editForm.payAmt} placeholder="e.g. 25,000–30,000/mo" onChange={(e) => setEditForm((f) => ({ ...f, payAmt: e.target.value }))} className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+              </div>
+              <div className="text-xs mt-1" style={{ color: C.ink3 }}>No currency picked: the one for the country they live in is used.</div>
             </div>
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Work setup they'd accept</label>
               <div className="mt-1.5"><ChoiceRow multi options={WORK_SETUPS} value={editForm.workSetup || []} onChange={(v) => setEditForm((f) => ({ ...f, workSetup: v }))} /></div>
