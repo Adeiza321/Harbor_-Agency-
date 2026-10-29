@@ -35,11 +35,12 @@ function tidyRange(part: string) {
   if (!m) return "";
   let range = m[0].replace(/\s*(–|—|-|to)\s*(?=[$₦£€\d])/i, "–").replace(/\s+/g, "").replace(/[.,]+$/, "");
   // A currency written as a code ("USD 150,000", "100000 NGN") becomes its symbol.
-  const code = part.match(/\b(USD|NGN|GBP|EUR|CAD)\b/i);
+  // Other currencies keep their code in front ("SAR 25,000–30,000/mo").
+  const code = part.match(/\b(USD|NGN|GBP|EUR|CAD|SAR|AED|QAR|KWD|BHD|OMR|ZAR|PKR|INR|AUD|EGP|KES|GHS|MYR|PHP)\b/i);
   if (code && !/[$₦£€]/.test(range)) {
     const sym = ({ usd: "$", ngn: "₦", gbp: "£", eur: "€", cad: "CA$" } as Record<string, string>)[code[1].toLowerCase()];
-    range = range.split("–").map((x) => sym + x).join("–");
-  }
+    range = sym ? range.split("–").map((x) => sym + x).join("–") : code[1].toUpperCase() + " " + range;
+  } else if (!/[$₦£€]/.test(range) && /\b(riyals?|sr)\b/i.test(part)) range = "SAR " + range;
   return range + periodOf(part);
 }
 export function cleanPay(v: unknown) {

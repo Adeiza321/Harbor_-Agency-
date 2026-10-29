@@ -158,6 +158,8 @@ const refreshSession = async (s) => toSession(await sbFetch("/auth/v1/token?gran
 const ROLE_KEY_LABEL = { admin: "Admin", recops: "Rec Ops manager", recruiter: "Recruiter" };
 const initialsOf = (n) => (n || "?").split(/[ @.]/).filter(Boolean).map((x) => x[0]).join("").slice(0, 2).toUpperCase();
 const fdate = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+// When a candidate was added: "12 Oct 2026" (always with the year, so older records are clear).
+const addedOn = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "-");
 const ago = (d) => { const m = (Date.now() - new Date(d)) / 60000; return m < 60 ? Math.max(1, Math.round(m)) + "m ago" : m < 1440 ? Math.round(m / 60) + "h ago" : m < 10080 ? Math.round(m / 1440) + "d ago" : fdate(d); };
 // Formats a span of milliseconds as a short duration ("42m", "3.2h", "6.5d") for the job engagement log.
 const formatDuration = (ms) => { const mins = ms / 60000; if (mins < 60) return Math.max(1, Math.round(mins)) + "m"; const hrs = mins / 60; if (hrs < 24) return hrs.toFixed(1) + "h"; return (hrs / 24).toFixed(1) + "d"; };
@@ -1487,26 +1489,46 @@ function FilterPill({ label, value, onChange, options, allValue = "All", searcha
 
 // from / to are "YYYY-MM-DD" strings ("" = open-ended).
 const isoDay = (d) => { const x = new Date(d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
-function DatePill({ label = "Date added", from, to, onChange, align }) {
+// dates: the dates of the records being filtered (ms or anything Date takes). The custom range is
+// limited to the span they cover, and the year dropdown lists only years that have records.
+function DatePill({ label = "Date added", from, to, onChange, align, dates }) {
   const { open, setOpen, ref } = usePopover();
   const today = isoDay(Date.now());
   const preset = (n) => isoDay(Date.now() - (n - 1) * 864e5);
   const which = [7, 30, 90].find((n) => from === preset(n) && (!to || to === today));
-  const fmt = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "…";
+  const monthStart = today.slice(0, 8) + "01";
+  const thisMonth = from === monthStart && (!to || to === today);
+  const yearOf = from && to && /-01-01$/.test(from) && to === from.slice(0, 4) + "-12-31" ? from.slice(0, 4) : "";
+  const fmt = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(d.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}) }) : "…";
   const on = !!(from || to);
+  const pick = (a, b) => { onChange(a, b); setOpen(false); };
+  const ms = (dates || []).map((d) => new Date(d).getTime()).filter((t) => t > 0);
+  const lo = ms.length ? isoDay(Math.min(...ms)) : "", hi = ms.length ? isoDay(Math.max(...ms, Date.now())) : today;
+  const years = [...new Set(ms.map((t) => new Date(t).getFullYear()))].sort((a, b) => b - a).map(String);
   return (
     <div className="relative" ref={ref}>
-      <PillButton label={label} shown={which ? "Last " + which + " days" : fmt(from) + " – " + fmt(to)} on={on} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange("", ""); setOpen(false); }} />
+      <PillButton label={label} shown={which ? "Last " + which + " days" : thisMonth ? "This month" : yearOf ? yearOf : fmt(from) + " – " + fmt(to)} on={on} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange("", ""); setOpen(false); }} />
       {open && (
         <div className={"pn-pop" + (align === "right" ? " right" : "")}>
           <div className="pn-presets">
-            {[7, 30, 90].map((n) => <button key={n} type="button" aria-pressed={which === n} onClick={() => { which === n ? onChange("", "") : onChange(preset(n), ""); setOpen(false); }}>Last {n} days</button>)}
+            {[7, 30, 90].map((n) => <button key={n} type="button" aria-pressed={which === n} onClick={() => (which === n ? pick("", "") : pick(preset(n), ""))}>Last {n} days</button>)}
+            <button type="button" aria-pressed={thisMonth} onClick={() => (thisMonth ? pick("", "") : pick(monthStart, ""))}>This month</button>
           </div>
+          {years.length > 0 && (
+            <div className="flex items-center gap-2 px-1 pt-1.5 text-xs" style={{ color: C.ink3 }}>
+              <span>Year</span>
+              <select value={yearOf} onChange={(e) => (e.target.value ? pick(e.target.value + "-01-01", e.target.value + "-12-31") : pick("", ""))} aria-label="Year" className="flex-1 rounded-lg border px-2 py-1.5 text-xs" style={{ borderColor: C.line, background: C.card, color: C.ink }}>
+                <option value="">Any year</option>
+                {years.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+          )}
           <div className="flex items-center gap-1.5 px-1 pt-1.5 text-xs" style={{ color: C.ink3 }}>
-            <input type="date" value={from} onChange={(e) => onChange(e.target.value, to)} aria-label="From" />
+            <input type="date" value={from} min={lo || undefined} max={to || hi} onChange={(e) => onChange(e.target.value, to)} aria-label="From" />
             <span>to</span>
-            <input type="date" value={to} onChange={(e) => onChange(from, e.target.value)} aria-label="To" />
+            <input type="date" value={to} min={from || lo || undefined} max={hi} onChange={(e) => onChange(from, e.target.value)} aria-label="To" />
           </div>
+          {lo && <div className="px-1 pt-1 text-[11px]" style={{ color: C.ink3 }}>Records from {fmt(lo)} to {fmt(hi)}</div>}
         </div>
       )}
     </div>
@@ -1913,6 +1935,25 @@ const COUNTRY_OPTIONS = [{ value: "Remote – worldwide", label: "Remote – wor
 const CURRENCY_OPTIONS = CURRENCIES.map((c) => ({ value: c, label: c + " – " + CURRENCY_NAMES[c], hint: curSymbol(c) !== c ? curSymbol(c) : "" }));
 // A saved value that isn't in the list (an old job, say) still shows and stays selectable.
 const withValue = (opts, v) => (!v || opts.some((o) => o.value === v) ? opts : [{ value: v, label: v }].concat(opts));
+// A salary expectation as currency + amount for editing ("SAR 25,000–30,000/mo" -> SAR,
+// "25,000–30,000/mo"; "$45–$50/hr" -> USD, "45–50/hr"), and back. With no currency picked, the
+// database adds the one for the country the candidate lives in.
+const PAY_SYMBOL_CUR = { "$": "USD", "£": "GBP", "€": "EUR", "₦": "NGN", "₹": "INR" };
+const PAY_CUR_SYMBOL = { USD: "$", GBP: "£", EUR: "€", NGN: "₦" };
+function splitPay(pay) {
+  const s = String(pay || "").trim() === "-" ? "" : String(pay || "").trim();
+  const code = s.match(/^([A-Z]{3})\s+(.*)$/);
+  if (code && CURRENCIES.includes(code[1])) return { cur: code[1], amt: code[2] };
+  const sym = s.match(/^([$£€₦₹])/);
+  if (sym) return { cur: PAY_SYMBOL_CUR[sym[1]], amt: s.replace(/[$£€₦₹]/g, "") };
+  return { cur: "", amt: s };
+}
+function joinPay(cur, amt) {
+  const a = String(amt || "").trim();
+  if (!a || !cur || !/\d/.test(a)) return a;
+  const sym = PAY_CUR_SYMBOL[cur];
+  return sym ? a.replace(/(^|[–-]\s*)(\d)/g, (_, pre, d) => pre + sym + d) : cur + " " + a;
+}
 
 /* Responsive data table: real table on desktop, cards on mobile */
 // Page numbers to show: first, last, and the pages around the current one, with gaps as "…".
@@ -1939,6 +1980,23 @@ function Pager({ page, pages, size, total, onPage, onSize }) {
         </select>
       </div>
     </nav>
+  );
+}
+
+// A long list a page at a time (25 by default), with the same pager as the tables. Goes back to
+// page 1 when the list or resetKey (a tab, a search, a filter) changes. wrap: props for a wrapping
+// <div> (a grid of cards, say); without it the rows render as they are.
+function Paged({ items, render, resetKey = "", size: initial = 25, wrap }) {
+  const [size, setSize] = useState(initial);
+  const [page, setPage] = useState(1);
+  const n = items.length, pages = Math.max(1, Math.ceil(n / size)), cur = Math.min(page, pages);
+  useEffect(() => { setPage(1); }, [resetKey, n]);
+  const rows = items.slice((cur - 1) * size, cur * size).map(render);
+  return (
+    <>
+      {wrap ? <div {...wrap}>{rows}</div> : rows}
+      {n > 10 && <Pager page={cur} pages={pages} size={size} total={n} onPage={(p) => setPage(Math.max(1, Math.min(pages, p)))} onSize={(v) => { setSize(v); setPage(1); }} />}
+    </>
   );
 }
 
@@ -3877,11 +3935,11 @@ function TodoPage({ toast, S }) {
           {groups.map(([label, list]) => (
             <div key={label} className="mt-2">
               <div className="text-xs font-semibold tracking-widest" style={{ color: label === "Overdue" ? C.dangerFg : C.ink3 }}>{label.toUpperCase()} · {list.length}</div>
-              {list.map((t) => <Row key={t.id} t={t} />)}
+              <Paged items={list} resetKey={view} render={(t) => <Row key={t.id} t={t} />} />
             </div>
           ))}
           {closed.length > 0 && <button onClick={() => setShowClosed((v) => !v)} className="text-xs mt-4" style={{ color: C.em }}>{showClosed ? "Hide" : "Show"} done and dismissed ({closed.length})</button>}
-          {showClosed && closed.map((t) => <Row key={t.id} t={t} />)}
+          {showClosed && <Paged items={closed} resetKey={view} render={(t) => <Row key={t.id} t={t} />} />}
         </div>
       </Card>
     </div>
@@ -4653,7 +4711,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
           <FilterPill label="Country" value={countryF} onChange={setCountryF} options={(() => { const n = {}; onTab.forEach((c) => { const k = candidateCountry(c) || "_none"; n[k] = (n[k] || 0) + 1; }); return Object.keys(n).sort((a, b) => (a === "_none") - (b === "_none") || a.localeCompare(b)).map((k) => ({ value: k, label: k === "_none" ? "Not known" : k, count: n[k] })); })()} />
           <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: onTab.filter((c) => c.role === r).length }))} />
           <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
-          <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} />
+          <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} dates={data.map((c) => c.createdAt)} />
           <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
           <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setCountryF([]); setJobF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
         </div>
@@ -4675,6 +4733,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
             { key: "status", label: "STATUS", render: (c) => <StatusPill status={c.status} /> },
             { key: "ai", label: "AI FIT", render: (c) => <ScoreRing value={c.ai} /> },
             { key: "email", label: "EMAIL", render: (c) => <Pill tone={c.email === "Verified" ? "em" : "warn"}>{c.email}</Pill> },
+            { key: "added", label: "ADDED", render: (c) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={new Date(c.createdAt).toLocaleString()}>{addedOn(c.createdAt)}</span> },
             { key: "activity", label: "ACTIVITY", render: (c) => <span className="text-xs" style={{ color: C.ink2 }}>{c.activity}</span> },
           ]}
         />
@@ -5781,11 +5840,12 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
   };
   const note = useProfileNote(candidate, S, toast);
   const [editForm, setEditForm] = useState(null);
-  const openEdit = () => setEditForm({ workSetup: candidate.workSetup || [], linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, pay: candidate.pay });
+  const openEdit = () => { const sp = splitPay(candidate.pay); setEditForm({ workSetup: candidate.workSetup || [], linkedin: candidate.linkedin || "", name: candidate.name, role: candidate.role, location: candidate.location, emailAddr: candidate.emailAddr, phone: candidate.phone, experience: candidate.experience, notice: candidate.notice, payCur: sp.cur, payAmt: sp.amt }); };
   const saveEdit = () => {
     if (!editForm.name.trim()) { toast("Name can't be empty"); return; }
     const li = (editForm.linkedin || "").trim();
-    patch(() => ({ ...editForm, linkedin: li && !/^https?:\/\//i.test(li) ? "https://" + li : li }));
+    const { payCur, payAmt, ...rest } = editForm;
+    patch(() => ({ ...rest, pay: joinPay(payCur, payAmt) || "-", linkedin: li && !/^https?:\/\//i.test(li) ? "https://" + li : li }));
     setEditForm(null); toast("Candidate details updated");
   };
 
@@ -5882,10 +5942,17 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone</label><input value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>LinkedIn</label><input value={editForm.linkedin} placeholder="linkedin.com/in/…" onChange={(e) => setEditForm((f) => ({ ...f, linkedin: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 gap-3">
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Experience</label><input value={editForm.experience} onChange={(e) => setEditForm((f) => ({ ...f, experience: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
               <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Notice</label><input value={editForm.notice} onChange={(e) => setEditForm((f) => ({ ...f, notice: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
-              <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label><input value={editForm.pay} onChange={(e) => setEditForm((f) => ({ ...f, pay: e.target.value }))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+            </div>
+            <div>
+              <label className="text-xs font-medium" style={{ color: C.ink2 }}>Salary expectation</label>
+              <div className="grid gap-2 mt-1.5" style={{ gridTemplateColumns: "minmax(7rem, 2fr) 3fr" }}>
+                <PickList value={editForm.payCur} onChange={(v) => setEditForm((f) => ({ ...f, payCur: v }))} options={withValue(CURRENCY_OPTIONS, editForm.payCur)} placeholder="Currency" searchPlaceholder="Search currency or code" allowEmpty className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+                <input value={editForm.payAmt} placeholder="e.g. 25,000–30,000/mo" onChange={(e) => setEditForm((f) => ({ ...f, payAmt: e.target.value }))} className="w-full rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+              </div>
+              <div className="text-xs mt-1" style={{ color: C.ink3 }}>No currency picked: the one for the country they live in is used.</div>
             </div>
             <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Work setup they'd accept</label>
               <div className="mt-1.5"><ChoiceRow multi options={WORK_SETUPS} value={editForm.workSetup || []} onChange={(v) => setEditForm((f) => ({ ...f, workSetup: v }))} /></div>
@@ -6012,7 +6079,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Salary expectation", candidate.pay]].map(([l, v]) => (
+              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Salary expectation", candidate.pay], ["Added to ProNext", candidate.createdAt ? addedOn(candidate.createdAt) : ""]].map(([l, v]) => (
                 <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><Clamp text={v || "-"} className="text-sm font-medium mt-0.5 break-words" /></div>
               ))}
               <div className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>Work setup</div>
@@ -7443,7 +7510,7 @@ function InboxPage({ toast, S }) {
         <Card>
           {mine.length === 0
             ? <EmptyState title="Nobody through your links yet" text="Copy your link from a job (or Your links here) and share it. Anyone who applies through it becomes your candidate and shows here." />
-            : mine.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={false} />)}
+            : <Paged items={mine} render={(x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={false} />} />}
         </Card>
         <Modal open={linksOpen} onClose={() => setLinksOpen(false)} title="Your links">
           <ApplyLinks S={S} toast={toast} />
@@ -7456,7 +7523,8 @@ function InboxPage({ toast, S }) {
   const [src, setSrc] = useState([]);
   const fromOutreach = (x) => x.source === "outreach" || !!(x.referrer && x.referrer.via && x.referrer.via.kind === "outreach");
   const srcIs = (x, k) => (k === "outreach" ? fromOutreach(x) : k === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === k);
-  const srcMatch = (x) => !src.length || src.some((k) => srcIs(x, k));
+  const [dFrom, setDFrom] = useState(""), [dTo, setDTo] = useState("");
+  const srcMatch = (x) => (!src.length || src.some((k) => srcIs(x, k))) && (!dFrom || x.at >= new Date(dFrom + "T00:00:00").getTime()) && (!dTo || x.at <= new Date(dTo + "T23:59:59").getTime());
   const fresh = S.inbox.filter((x) => x.status === "new" && srcMatch(x)).sort((a, b) => b.at - a.at);
   const handled = S.inbox.filter((x) => x.status !== "new" && srcMatch(x)).sort((a, b) => (b.handledAt || b.at) - (a.handledAt || a.at));
   const srcCount = (k) => S.inbox.filter((x) => (tab === "new") === (x.status === "new")).filter((x) => k === "outreach" ? fromOutreach(x) : k === "outreach_referral" ? x.source === "referral" && fromOutreach(x) : x.source === k).length;
@@ -7474,12 +7542,12 @@ function InboxPage({ toast, S }) {
       <Card>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <Tabs tabs={[{ key: "new", label: "New (" + fresh.length + ")" }, { key: "handled", label: "Handled (" + handled.length + ")" }]} active={tab} setActive={setTab} />
-          <div className="self-start sm:self-auto"><FilterPill label="Came in from" value={src} onChange={setSrc} align="right" options={srcOpts.map(([k, l]) => ({ value: k, label: l, count: srcCount(k) }))} /></div>
+          <div className="self-start sm:self-auto flex flex-wrap gap-2"><DatePill label="Date applied" from={dFrom} to={dTo} onChange={(a, b) => { setDFrom(a); setDTo(b); }} align="right" dates={S.inbox.map((x) => x.at)} /><FilterPill label="Came in from" value={src} onChange={setSrc} align="right" options={srcOpts.map(([k, l]) => ({ value: k, label: l, count: srcCount(k) }))} /></div>
         </div>
         {!canAct && tab === "new" && fresh.length > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>Rec Ops or an Admin assigns new applications.</div>}
         <div className="mt-2">
           {list.length === 0 && <EmptyState title={src.length ? "Nothing here for this source" : tab === "new" ? "No new applications" : "Nothing handled yet"} text={src.length ? "Try another source or clear the filter." : tab === "new" ? "Share a job's link and new applicants land here automatically." : ""} action={tab === "new" && !src.length ? "Share a job" : null} onAction={() => S.go("ads")} />}
-          {list.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />)}
+          <Paged items={list} resetKey={tab + "|" + src.join(",") + "|" + dFrom + dTo} render={(x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />} />
         </div>
       </Card>
       <Modal open={linksOpen} onClose={() => setLinksOpen(false)} title="Apply links">
@@ -7552,7 +7620,7 @@ function MessagesPage({ toast, S }) {
           </div>
           <div className={"overflow-y-auto " + (openId ? "flex-1 min-h-0" : "max-h-[70vh] md:max-h-[28rem]")}>
             {threads.length === 0 && <EmptyState art="chat" title={search || jobFilter.length ? "No matching conversations" : "No conversations yet"} text={search || jobFilter.length ? "Try another search or job." : "Tap + to message a candidate."} />}
-            {threads.map((t) => (
+            <Paged items={threads} resetKey={search + "|" + jobFilter.join(",")} render={(t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
                 style={{ borderBottom: `1px solid ${C.line}`, background: openId === t.link.id ? C.canvas : "transparent" }}>
                 <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} src={t.cand.photoUrl || undefined} />
@@ -7568,7 +7636,7 @@ function MessagesPage({ toast, S }) {
                   </div>
                 </div>
               </button>
-            ))}
+            )} />
           </div>
         </Card>
         <Card className={(openId ? "flex flex-col md:-mb-24 !p-0 overflow-hidden " : "hidden md:block ") + "flex-1"} style={openId ? (desktop ? fullHeightStyle : { position: "fixed", inset: 0, zIndex: 50, height: "100dvh", borderRadius: 0, border: "none" }) : {}}>
@@ -7589,7 +7657,7 @@ function MessagesPage({ toast, S }) {
           <SearchInput value={composeSearch} onChange={setComposeSearch} placeholder="Search candidates by name, role or client" />
           <div className="max-h-96 overflow-y-auto flex flex-col gap-1">
             {composeList.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{allThreads.filter((t) => !t.hasMsgs).length === 0 ? "Every job-linked candidate already has a conversation." : "No candidates found."}</div>}
-            {composeList.map((t) => (
+            <Paged items={composeList} resetKey={composeSearch} render={(t) => (
               <button key={t.link.id} onClick={() => startNew(t)} className="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-2.5" style={{ background: "transparent" }}
                 onMouseEnter={(e) => e.currentTarget.style.background = C.canvas} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
                 <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} src={t.cand.photoUrl || undefined} />
@@ -7598,7 +7666,7 @@ function MessagesPage({ toast, S }) {
                   <div className="text-xs truncate" style={{ color: C.ink3 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
                 </div>
               </button>
-            ))}
+            )} />
           </div>
         </div>
       </Modal>
@@ -8178,6 +8246,8 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const gq = (S.query || "").toLowerCase();
   const hit = (j, t) => j.role.toLowerCase().includes(t) || j.client.toLowerCase().includes(t);
   const [tab, setTab] = useState("All");
+  const [dFrom, setDFrom] = useState(""), [dTo, setDTo] = useState("");
+  const inDates = (t) => (!dFrom || t >= new Date(dFrom + "T00:00:00").getTime()) && (!dTo || t <= new Date(dTo + "T23:59:59").getTime());
   const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.jobsView") || "list"; } catch (e) { return "list"; } });
   const setView = (v) => { setViewRaw(v); try { localStorage.setItem("pn.jobsView", v); } catch (e) {} };
   const mine = (j) => (j.engagedIds || []).includes(S.me.id);
@@ -8185,7 +8255,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   // for Rec Ops and Admins only: not public, not on recruiters' lists.
   const main = S.jobs.filter((j) => !j.leadRole), leadJobs = S.jobs.filter((j) => j.leadRole);
   const inTab = (j, t) => t === "All" || (t === "Mine" ? mine(j) : j.status === t);
-  const filtered = (tab === "Leads" ? leadJobs : main.filter((j) => inTab(j, tab))).filter((j) => hit(j, q.toLowerCase()) && hit(j, gq));
+  const filtered = (tab === "Leads" ? leadJobs : main.filter((j) => inTab(j, tab))).filter((j) => hit(j, q.toLowerCase()) && hit(j, gq) && inDates(j.createdAt));
   const tabs = [...["All", "Open", "On hold", "Closed", "Mine"].map((t) => ({ key: t, label: (t === "Mine" ? "I'm engaged" : t) + " " + main.filter((j) => inTab(j, t)).length })),
     ...(S.role !== "recruiter" || leadJobs.length ? [{ key: "Leads", label: "Client leads " + leadJobs.length }] : [])];
   return (
@@ -8200,6 +8270,7 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
         {tab === "Leads" && <div className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: C.canvas, color: C.ink2 }}>{S.role === "recruiter" ? "Roles from client leads where one of your candidates is with the employer. View only: you can follow your candidate here, but not engage or add candidates." : "Roles from client leads: an employer agreed to a candidate we pitched to them. Not on the jobs board. Recruiters see one only while one of their candidates is on it, and only to view."}</div>}
         <div className="mb-3 flex items-center gap-3">
           <div className="flex flex-1 min-w-0 sm:flex-none sm:w-72"><SearchInput value={q} onChange={setQ} placeholder="Search roles or clients" /></div>
+          <DatePill label="Date posted" from={dFrom} to={dTo} onChange={(a, b) => { setDFrom(a); setDTo(b); }} dates={S.jobs.map((j) => j.createdAt)} />
           <div className="ml-auto flex rounded-xl p-1 shrink-0" style={{ background: C.neutralBg }} role="group" aria-label="Layout">
             {[["cards", "Cards", LayoutGrid], ["list", "List", ListIcon]].map(([k, l, I]) => (
               <button key={k} type="button" aria-pressed={view === k} title={l + " view"} onClick={() => setView(k)} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium"
@@ -8208,13 +8279,11 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
           </div>
         </div>
         {filtered.length ? (view === "list" ? (
-          <div className="flex flex-col gap-2.5">
-            {filtered.map((j) => <JobCard row key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
-          </div>
+          <Paged items={filtered} resetKey={tab + "|" + q + "|" + gq + "|" + dFrom + dTo} wrap={{ className: "flex flex-col gap-2.5" }}
+            render={(j) => <JobCard row key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />} />
         ) : (
-          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
-            {filtered.map((j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
-          </div>
+          <Paged items={filtered} resetKey={tab + "|" + q + "|" + gq + "|" + dFrom + dTo} size={24} wrap={{ className: "grid gap-3", style: { gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" } }}
+            render={(j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />} />
         )
         ) : <EmptyState title={q || gq ? "No roles match your search" : tab === "Leads" ? "No client lead roles yet" : "No roles here yet"} text={q || gq ? "Try another search or tab." : S.role === "recruiter" ? "Rec Ops posts new roles. They show up here." : "Post a job to start finding candidates."} action={q || gq || S.role === "recruiter" ? null : "Post a job"} onAction={() => setPage("postJob")} />}
       </Card>
@@ -8920,7 +8989,7 @@ function InterviewsPage({ S, toast }) {
             <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: C.ink2 }}>{rs.map(([id, n]) => <span key={id} className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: recColor(id) }} />{n || "Recruiter"}</span>)}</div>) : null; })()}
           {view === "list" && (
             <div className="flex flex-col gap-2">
-              {upcoming.length ? upcoming.map((iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />) : <div className="text-sm" style={{ color: C.ink2 }}>No upcoming interviews.</div>}
+              {upcoming.length ? <Paged items={upcoming} resetKey={rec.join(",") + "|" + client.join(",")} render={(iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />} /> : <div className="text-sm" style={{ color: C.ink2 }}>No upcoming interviews.</div>}
             </div>
           )}
           {view !== "list" && <div className="flex flex-wrap gap-4 text-xs mt-3" style={{ color: C.ink2 }}>
@@ -11162,8 +11231,37 @@ const INDUSTRY_PICK = INDUSTRY_OPTIONS.map((l) => ({ value: l, label: l }));
 const COUNTRY_ONLY_OPTIONS = COUNTRIES.map((n) => ({ value: n, label: n }));
 
 const emptyPrefs = () => ({ roles: [], seniority: "", employmentTypes: [], salary: { min: "", max: "", currency: "", period: "year" }, currentCity: "", currentCountry: "",
-  locationConfirmed: false, relocate: "", preferredCities: [], workSetup: [], citizen: null, visaType: "", visaOther: "", visaExpiry: "", visaNoExpiry: false, sponsorship: "",
+  locationConfirmed: false, relocate: "", preferredCities: [], workSetup: [], citizen: null, originCountry: "", visaType: "", visaOther: "", visaExpiry: "", visaNoExpiry: false, sponsorship: "",
   languages: [{ language: "English", level: "" }], availability: "", industries: [] });
+
+// The country the person filling in the form is probably in, from their device's time zone (no
+// network call), else their browser's language region ("en-GB"). Only a starting point: they confirm it.
+const TZ_COUNTRY = { "Europe/London": "GB", "Europe/Dublin": "IE", "Europe/Berlin": "DE", "Europe/Paris": "FR", "Europe/Madrid": "ES", "Europe/Rome": "IT",
+  "Europe/Amsterdam": "NL", "Europe/Brussels": "BE", "Europe/Lisbon": "PT", "Europe/Vienna": "AT", "Europe/Zurich": "CH", "Europe/Stockholm": "SE", "Europe/Oslo": "NO",
+  "Europe/Copenhagen": "DK", "Europe/Helsinki": "FI", "Europe/Warsaw": "PL", "Europe/Prague": "CZ", "Europe/Budapest": "HU", "Europe/Athens": "GR", "Europe/Bucharest": "RO",
+  "Europe/Sofia": "BG", "Europe/Luxembourg": "LU", "Europe/Malta": "MT", "Asia/Nicosia": "CY", "Europe/Zagreb": "HR", "Europe/Ljubljana": "SI", "Europe/Bratislava": "SK",
+  "Europe/Tallinn": "EE", "Europe/Riga": "LV", "Europe/Vilnius": "LT", "Asia/Riyadh": "SA", "Asia/Dubai": "AE", "Asia/Qatar": "QA", "Asia/Kuwait": "KW", "Asia/Bahrain": "BH",
+  "Asia/Muscat": "OM", "Africa/Lagos": "NG", "Africa/Johannesburg": "ZA", "Africa/Nairobi": "KE", "Africa/Accra": "GH", "Africa/Cairo": "EG", "Asia/Karachi": "PK",
+  "Asia/Kolkata": "IN", "Asia/Calcutta": "IN", "Asia/Kuala_Lumpur": "MY", "Asia/Manila": "PH", "Asia/Singapore": "SG", "Pacific/Auckland": "NZ" };
+function deviceCountry() {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    let iso = TZ_COUNTRY[tz] || "";
+    if (!iso && /^America\/(New_York|Chicago|Denver|Los_Angeles|Phoenix|Anchorage|Detroit|Boise|Indiana|Kentucky|North_Dakota|Menominee|Juneau|Sitka|Nome|Adak)/.test(tz)) iso = "US";
+    if (!iso && tz === "Pacific/Honolulu") iso = "US";
+    if (!iso && /^America\/(Toronto|Vancouver|Edmonton|Winnipeg|Halifax|Regina|St_Johns|Moncton|Whitehorse|Yellowknife|Iqaluit)/.test(tz)) iso = "CA";
+    if (!iso && /^Australia\//.test(tz)) iso = "AU";
+    if (!iso) { const m = String((navigator.languages && navigator.languages[0]) || navigator.language || "").match(/-([A-Z]{2})$/i); if (m) iso = m[1].toUpperCase(); }
+    const name = COUNTRY_BY_ISO[iso] || "";
+    return COUNTRIES.includes(name) ? name : "";
+  } catch (e) { return ""; }
+}
+// A new form with nothing on file about where they live: start from the country their device is in.
+function withDeviceCountry(p) {
+  if (p.currentCountry || p.locationConfirmed) return p;
+  const c = deviceCountry();
+  return c ? { ...p, currentCountry: c, detectedCountry: c, salary: p.salary.currency ? p.salary : { ...p.salary, currency: COUNTRY_CURRENCY[c] || "" } } : p;
+}
 
 // Start from saved answers, or from what we already know (their location) the first time.
 function prefsStart(saved, known) {
@@ -11194,6 +11292,7 @@ const PREF_CHECKS = {
   relocate: (p) => !p.relocate && "Choose one",
   workSetup: (p) => !p.workSetup.length && "Choose at least one",
   citizen: (p) => p.citizen === null && "Choose one",
+  origin: (p) => p.citizen === false && !p.originCountry && "Choose the country you're a citizen of",
   visa: (p) => p.citizen === false && (!p.visaType || (p.visaType === "Other" && !p.visaOther.trim())) && "Choose the visa you're on",
   visaExpiry: (p) => p.citizen === false && !p.visaNoExpiry && !p.visaExpiry && "Add the expiry date, or choose that it doesn't expire",
   sponsorship: (p) => p.citizen === false && !p.sponsorship && "Choose one",
@@ -11213,7 +11312,7 @@ function prefsToSave(p) {
     roles: p.roles.map((r) => r.trim()).filter(Boolean).slice(0, 5), seniority: p.seniority, employmentTypes: p.employmentTypes,
     salary: { min: Number(p.salary.min), max: p.salary.max ? Number(p.salary.max) : null, currency: p.salary.currency, period: p.salary.period || "year" },
     currentCity: p.currentCity.trim(), currentCountry: p.currentCountry, relocate: p.relocate, preferredCities: p.relocate === "no" ? [] : p.preferredCities, workSetup: p.workSetup,
-    citizen: p.citizen, visaType: p.citizen ? "" : (p.visaType === "Other" ? p.visaOther.trim() : p.visaType),
+    citizen: p.citizen, originCountry: p.citizen ? "" : p.originCountry, visaType: p.citizen ? "" : (p.visaType === "Other" ? p.visaOther.trim() : p.visaType),
     visaExpiry: p.citizen || p.visaNoExpiry ? "" : p.visaExpiry, sponsorship: p.citizen ? "" : p.sponsorship,
     languages: p.languages.filter((l) => l.language), availability: p.availability, industries: p.industries,
   };
@@ -11312,18 +11411,18 @@ function prefsWithPrefill(p, pre) {
 // Questions that need the candidate's own clear answer (citizenship and the visa follow-ups, and which
 // cities they'd move to) are always asked, never put on the review step, unless they're changing
 // answers they gave themselves before.
-const PREF_ALWAYS_ASK = ["citizen", "visa", "visaExpiry", "sponsorship", "cities"];
+const PREF_ALWAYS_ASK = ["citizen", "origin", "visa", "visaExpiry", "sponsorship", "cities"];
 function prefsKnownKeys(p, saved) {
-  const order = ["roles", "seniority", "employmentTypes", "salary", "location", "relocate", "cities", "workSetup", "citizen", "visa", "visaExpiry", "sponsorship", "languages", "availability", "industries"];
+  const order = ["roles", "seniority", "employmentTypes", "salary", "location", "relocate", "cities", "workSetup", "citizen", "origin", "visa", "visaExpiry", "sponsorship", "languages", "availability", "industries"];
   return order.filter((k) => {
     if (!saved && PREF_ALWAYS_ASK.includes(k)) return false;
     if (k === "cities") return saved && p.relocate && p.relocate !== "no" && p.preferredCities.length > 0;
-    if (["visa", "visaExpiry", "sponsorship"].includes(k) && p.citizen !== false) return false;
+    if (["origin", "visa", "visaExpiry", "sponsorship"].includes(k) && p.citizen !== false) return false;
     if (k === "visaExpiry") return saved && !PREF_CHECKS.visaExpiry(p);
     return !PREF_CHECKS[k](p);
   });
 }
-const PREF_LABELS = { roles: "Roles you're looking for", seniority: "Level", employmentTypes: "Type of work", salary: "Salary", location: "Where you're based", relocate: "Would you move within your country", cities: "Preferred cities", workSetup: "Remote, hybrid or on-site", citizen: "Citizen or permanent resident", visa: "Visa", visaExpiry: "Visa expiry", sponsorship: "Sponsorship needed", languages: "Languages", availability: "When you could start", industries: "Industries" };
+const PREF_LABELS = { roles: "Roles you're looking for", seniority: "Level", employmentTypes: "Type of work", salary: "Salary", location: "Where you're based", relocate: "Would you move within your country", cities: "Preferred cities", workSetup: "Remote, hybrid or on-site", citizen: "Citizen or permanent resident", origin: "Country of origin", visa: "Visa", visaExpiry: "Visa expiry", sponsorship: "Sponsorship needed", languages: "Languages", availability: "When you could start", industries: "Industries" };
 function prefsAnswerText(k, p) {
   const label = (list, v) => (list.find((x) => x[0] === v) || [v, v])[1];
   const s = p.salary || {};
@@ -11337,6 +11436,7 @@ function prefsAnswerText(k, p) {
     case "cities": return p.preferredCities.join(", ");
     case "workSetup": return p.workSetup.map((v) => label(WORK_SETUPS, v)).join(", ");
     case "citizen": return p.citizen === true ? "Yes" : p.citizen === false ? "No" : "";
+    case "origin": return p.originCountry || "";
     case "visa": return p.visaType === "Other" ? p.visaOther : p.visaType;
     case "visaExpiry": return p.visaNoExpiry ? "Doesn't expire" : p.visaExpiry;
     case "sponsorship": return label(SPONSOR, p.sponsorship);
@@ -11418,7 +11518,7 @@ const quizInpS = { borderColor: C.line, borderWidth: 1.5 };
 // { steps: [{ key, title, sub, body: () => JSX, check: () => message | "" }], submitLabel, busyLabel,
 // onDone: async () => prefill }. Once they're done, onDone's prefill fills in the form.
 function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished, preview, before }) {
-  const [p, setP] = useState(() => prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill));
+  const [p, setP] = useState(() => withDeviceCountry(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill)));
   // The answers already filled in when the form opened: these go on the review step.
   const [knownKeys, setKnownKeys] = useState(() => (before ? [] : prefsKnownKeys(prefsWithPrefill(prefsStart(initial, known), initial ? null : prefill), !!initial)));
   const [phase, setPhase] = useState(before ? "before" : "main");
@@ -11444,13 +11544,15 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
     { key: "seniority", check: "seniority", title: "What level are you at?", sub: "The level you'd like your next role to be.", auto: true },
     { key: "employmentTypes", check: "employmentTypes", title: "What type of work do you want?", sub: "Choose all that apply." },
     { key: "salary", check: "salary", title: "What salary are you looking for?", sub: "A single figure, or a range." },
-    { key: "location", check: "location", title: knownPlace && !changingLoc ? "Is this where you're based?" : "Where are you based?", sub: "We match you to roles in the country you live in." },
+    { key: "location", check: "location", title: p.currentCity && p.currentCountry && !changingLoc ? "Is this where you're based?" : "Where are you based?",
+      sub: "We only put you forward for roles in the country you live in now. We can't help with jobs in another country." },
     { key: "relocate", check: "relocate", title: `Would you move to another city in ${country} for the right role?`, auto: true },
     ...(p.relocate && p.relocate !== "no" ? [{ key: "cities", title: `Any cities in ${country} you'd prefer?`, sub: "Optional. Leave it empty if anywhere works." }] : []),
     { key: "workSetup", check: "workSetup", title: "Remote, hybrid or on-site?", sub: "Choose every option you'd accept." },
     { key: "citizen", check: "citizen", title: `Are you a citizen or permanent resident of ${country}?`, auto: true },
     ...(notCitizen ? [
-      { key: "visa", check: "visa", title: "Which visa are you on?", sub: `Your current visa or permit in ${country}.` },
+      { key: "origin", check: "origin", title: "Which country are you a citizen of?", sub: "Your country of origin (the passport you hold)." },
+      { key: "visa", check: "visa", title: `Which visa or permit lets you work in ${country}?`, sub: `Your current visa or permit in ${country}.` },
       { key: "visaExpiry", check: "visaExpiry", title: "When does your visa expire?" },
       { key: "sponsorship", check: "sponsorship", title: "Would you need sponsorship to change employer?", auto: true },
     ] : []),
@@ -11475,7 +11577,7 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
     setBusy(true); setErr("");
     try {
       const pre = await before.onDone();
-      const fresh = prefsWithPrefill(prefsStart(null, known), pre);
+      const fresh = withDeviceCountry(prefsWithPrefill(prefsStart(null, known), pre));
       setP(fresh); setKnownKeys(prefsKnownKeys(fresh, false)); setPhase("main"); setI(0);
     } catch (e) { setErr(e.message || "That didn't go through. Please try again."); }
     setBusy(false);
@@ -11538,7 +11640,7 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
           </div>
           <div className="grid grid-cols-3 gap-2">{PAY_PERIODS.map(([k, l]) => <button key={k} type="button" onClick={() => set("salary", { ...p.salary, period: k })} className="rounded-2xl py-3 text-sm font-medium" style={p.salary.period === k ? { background: C.solid, color: "#fff" } : { background: C.card, color: C.ink, border: `1.5px solid ${C.line}` }}>{l}</button>)}</div>
         </div>);
-      case "location": return knownPlace && !changingLoc ? (
+      case "location": return p.currentCity && p.currentCountry && !changingLoc ? (
         <div className="flex flex-col gap-2.5">
           <div className="rounded-2xl px-5 py-5 flex items-center gap-3" style={{ background: C.card, border: `1.5px solid ${C.line}` }}><MapPin size={20} color={C.em} /><span className="text-lg font-semibold">{knownPlace}</span></div>
           <QuizOption selected={p.locationConfirmed} onClick={() => { if (PREF_CHECKS.location(p)) { setChangingLoc(true); return; } set("locationConfirmed", true); setTimeout(() => setI((n) => n + 1), 220); }}>Yes, that's right</QuizOption>
@@ -11546,7 +11648,8 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
         </div>
       ) : (
         <div className="flex flex-col gap-2.5">
-          <PickList value={p.currentCountry} onChange={(v) => setP((x) => ({ ...x, currentCountry: v, visaType: "", preferredCities: [], salary: x.salary.min ? x.salary : { ...x.salary, currency: COUNTRY_CURRENCY[v] || x.salary.currency } }))} options={withValue(COUNTRY_ONLY_OPTIONS, p.currentCountry)} placeholder="Country" searchPlaceholder="Search countries" className={quizInp} style={quizInpS} />
+          {p.detectedCountry && p.currentCountry === p.detectedCountry && <div className="text-sm" style={{ color: C.ink2 }}>It looks like you're in {/^(United|Netherlands|Philippines|Czech Republic|Bahamas|Gambia)/.test(p.detectedCountry) ? "the " : ""}{p.detectedCountry}. Change it if that's not right.</div>}
+          <PickList value={p.currentCountry} onChange={(v) => setP((x) => ({ ...x, currentCountry: v, visaType: "", originCountry: x.originCountry === v ? "" : x.originCountry, preferredCities: [], salary: x.salary.min ? x.salary : { ...x.salary, currency: COUNTRY_CURRENCY[v] || x.salary.currency } }))} options={withValue(COUNTRY_ONLY_OPTIONS, p.currentCountry)} placeholder="Country" searchPlaceholder="Search countries" className={quizInp} style={quizInpS} />
           <input value={p.currentCity} onChange={(e) => set("currentCity", e.target.value)} placeholder="City" className={quizInp} style={quizInpS} />
         </div>);
       case "relocate": return <div className="flex flex-col gap-2.5">{RELOCATE.map(([k, l]) => <QuizOption key={k} selected={p.relocate === k} onClick={() => pick("relocate", k)}>{l}</QuizOption>)}</div>;
@@ -11561,6 +11664,10 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
         </div>);
       case "workSetup": return <div className="flex flex-col gap-2.5">{WORK_SETUPS.map(([k, l]) => <QuizOption multi key={k} selected={p.workSetup.includes(k)} hint={{ remote: "Work from home", hybrid: "Some days in the office", onsite: "In the office every day" }[k]} onClick={() => set("workSetup", p.workSetup.includes(k) ? p.workSetup.filter((x) => x !== k) : [...p.workSetup, k])}>{l}</QuizOption>)}</div>;
       case "citizen": return <div className="flex flex-col gap-2.5"><QuizOption selected={p.citizen === true} onClick={() => pick("citizen", true)}>Yes</QuizOption><QuizOption selected={p.citizen === false} onClick={() => pick("citizen", false)}>No, I'm on a visa or permit</QuizOption></div>;
+      case "origin": return (
+        <div className="flex flex-col gap-2.5">
+          <PickList value={p.originCountry} onChange={(v) => set("originCountry", v)} options={withValue(COUNTRY_ONLY_OPTIONS.filter((o) => o.value !== p.currentCountry), p.originCountry)} placeholder="Country" searchPlaceholder="Search countries" className={quizInp} style={quizInpS} />
+        </div>);
       case "visa": return (
         <div className="flex flex-col gap-2.5">
           {visas.map((v) => <QuizOption key={v} selected={p.visaType === v} onClick={() => (v === "Other" ? set("visaType", v) : pick("visaType", v))}>{v === "Other" ? "Something else" : v}</QuizOption>)}
@@ -11696,6 +11803,8 @@ function PreferencesForm({ initial, known, onSave, onCancel, saveLabel = "Save p
         <ChoiceRow options={[[true, "Yes"], [false, "No"]]} value={p.citizen} onChange={(v) => set("citizen", v)} />{E("citizen")}
         {p.citizen === false && (
           <div className="mt-3 rounded-xl p-3.5 flex flex-col gap-3" style={{ background: C.canvas }}>
+            <div><div className="text-sm mb-1.5">Country of origin (citizen of)</div>
+              <PickList value={p.originCountry} onChange={(v) => set("originCountry", v)} options={withValue(COUNTRY_ONLY_OPTIONS.filter((o) => o.value !== p.currentCountry), p.originCountry)} placeholder="Country" searchPlaceholder="Search countries" className={inp} style={inpS} />{E("origin")}</div>
             <div><div className="text-sm mb-1.5">Visa they're on</div>
               <select value={p.visaType} onChange={(e) => set("visaType", e.target.value)} className={inp} style={inpS}><option value="">Choose…</option>{visaListFor(p.currentCountry).map((v) => <option key={v} value={v}>{v}</option>)}</select>
               {p.visaType === "Other" && <input value={p.visaOther} onChange={(e) => set("visaOther", e.target.value)} placeholder="Type the visa or permit" className={inp + " mt-2"} style={inpS} />}{E("visa")}</div>
@@ -11740,7 +11849,7 @@ function PreferencesSummary({ p, staff }) {
   const row = (label, value) => value ? <div className="grid grid-cols-[130px_1fr] gap-3 text-sm py-1.5" style={{ borderTop: `1px solid ${C.line}` }}><div style={{ color: C.ink2 }}>{label}</div><div className="min-w-0 break-words">{value}</div></div> : null;
   const label = (list, k) => (list.find((x) => x[0] === k) || [k, k])[1];
   const visa = p.citizen ? "Citizen or permanent resident" + (p.currentCountry ? " of " + p.currentCountry : "")
-    : [p.visaType, p.visaExpiry ? "expires " + fdate(p.visaExpiry) : "no expiry", p.sponsorship ? "sponsorship to move: " + label(SPONSOR, p.sponsorship).toLowerCase() : ""].filter(Boolean).join(" · ");
+    : [p.originCountry ? p.originCountry + " citizen" : "", p.visaType, p.visaExpiry ? "expires " + fdate(p.visaExpiry) : "no expiry", p.sponsorship ? "sponsorship to move: " + label(SPONSOR, p.sponsorship).toLowerCase() : ""].filter(Boolean).join(" · ");
   const soon = !p.citizen && p.visaExpiry && new Date(p.visaExpiry).getTime() - Date.now() < 180 * 864e5;
   const move = p.relocate ? (p.relocate === "no" ? "Staying in " + (p.currentCity || "their city") : (p.relocate === "yes" ? "Would move" : "Might move") + " within " + (p.currentCountry || "their country") + ((p.preferredCities || []).length ? " (prefers " + p.preferredCities.join(", ") + ")" : "")) : "";
   return (
