@@ -561,6 +561,30 @@ async function handle(req: Request): Promise<Response> {
       // Placed ("learn_link"), and a sweep every 10 minutes picks up anything that slipped through
       // ("learn_pending"). Which updates teach what is decided by public.lesson_kind.
       if (body.action === "learn_link" && body.linkId) return json(await learnLessons(admin, [String(body.linkId)], null));
+      // A candidate's profile filled in from their CV, only where it's blank (never over what they or
+      // the team entered, or their job-preference answers): current title and employer, experience,
+      // location, phone, LinkedIn, notice, pay and skills, plus the related job titles client leads
+      // search with. Run when a CV arrives without a screening (database trigger), e.g. someone who
+      // joined the Active file through "Send us your CV".
+      if (body.action === "fill_profile" && body.candidateId) {
+        const { data: c } = await admin.from("candidates").select("*").eq("id", String(body.candidateId)).maybeSingle();
+        if (!c) return json({ error: "Candidate not found" }, 404);
+        const { resume, why, linkedin: fileLi } = await loadResume(admin, c);
+        if (!resume) { await admin.from("candidates").update({ profile_read_at: new Date().toISOString() }).eq("id", c.id); return json({ ok: false, why }); }
+        const prof = cleanProfile(await askAI("You read a candidate's resume for a recruitment agency and record their profile facts. Reply with STRICT JSON only: " + `{${PROFILE_SHAPE}}. ` + PROFILE_RULES, "The candidate's CV is included.", resume, 1500));
+        const blank = (v: unknown) => v == null || String(v).trim() === "" || String(v).trim() === "-";
+        const patch: Record<string, unknown> = { profile_read_at: new Date().toISOString() };
+        const fill = (col: string, v: unknown) => { if (blank(c[col]) && !blank(v)) patch[col] = v; };
+        fill("current_title", prof.current_title); fill("current_company", prof.current_company); fill("experience", prof.experience);
+        fill("location", prof.location); fill("phone", prof.phone); fill("linkedin_url", prof.linkedin || fileLi);
+        fill("notice", prof.notice); fill("pay", prof.pay);
+        if ((!Array.isArray(c.skills) || !c.skills.length) && prof.skills.length && !c.ai_locked) patch.skills = prof.skills;
+        if ((!c.role_title || /^(Unspecified|Active file)$/i.test(c.role_title)) && prof.current_title) patch.role_title = prof.current_title;
+        await admin.from("candidates").update(patch).eq("id", c.id);
+        let titles: string[] = Array.isArray(c.parallel_titles) ? c.parallel_titles : [];
+        if (!titles.length) { try { titles = await parallelTitles(admin, c.id, askAI, loadResume); } catch { /* titles can be added later */ } }
+        return json({ ok: true, filled: Object.keys(patch).filter((k) => k !== "profile_read_at"), titles: titles.length });
+      }
       // LinkedIn links for candidates who don't have one: the link inside their resume file (also
       // in compressed PDFs), else read from the resume by the AI. Never overwrites one on file.
       if (body.action === "linkedin_backfill") {

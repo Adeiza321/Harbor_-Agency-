@@ -17,6 +17,12 @@ export async function assignApplication(admin: any, app: any, rec: { id: string;
       candId = hit.id; reused = true;
       // Back from being unassigned: they get the new recruiter.
       await admin.from("candidates").update({ recruiter_id: rec.id }).eq("id", hit.id).is("recruiter_id", null);
+      // What they gave on this application fills anything missing on their profile.
+      const { data: cur } = await admin.from("candidates").select("phone,linkedin_url").eq("id", hit.id).single();
+      const fill: Record<string, unknown> = {};
+      if (!cur?.phone && app.phone) fill.phone = app.phone;
+      if (!cur?.linkedin_url && app.linkedin) fill.linkedin_url = app.linkedin;
+      if (Object.keys(fill).length) await admin.from("candidates").update(fill).eq("id", hit.id);
     }
   }
   if (!candId) {
@@ -43,8 +49,8 @@ export async function assignApplication(admin: any, app: any, rec: { id: string;
   // Answers from the Send-us-your-CV form ("Help us match you"): theirs now, unless they've since
   // given newer ones on their candidate page. Joining the Active file means they agreed to be put forward.
   if (app.preferences && typeof app.preferences === "object") {
-    const { data: cur } = await admin.from("candidates").select("preferences,pitch_consent_at").eq("id", candId).single();
-    if (!cur?.preferences) {
+    const { data: cur } = await admin.from("candidates").select("preferences,preferences_at,pitch_consent_at").eq("id", candId).single();
+    if (!cur?.preferences || !cur.preferences_at || new Date(cur.preferences_at) < new Date(app.created_at)) {
       const p = app.preferences, sal = p.salary || {};
       const n = (x: unknown) => Number(x).toLocaleString("en-US");
       const pay = sal.currency && Number(sal.min) > 0 ? sal.currency + " " + n(sal.min) + (Number(sal.max) > Number(sal.min) ? " – " + n(sal.max) : "") + " per " + (sal.period || "year") : null;
