@@ -1,6 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { prepareResume, findLinkedIn, type ResumeInput } from "./resume.ts";
+import { prepareResume, findLinkedIn, normalizeLinkedIn, type ResumeInput } from "./resume.ts";
 import { screenLink, reviewMatch, benchFits, jobParallelTitles, parallelTitles, draftFollowups, dedupeQuestions, answersOn, cleanTitles, PARALLEL_RULE, RUBRIC, REQS_SHAPE, LOCKED_MSG, enforceChecklist } from "./screening.ts";
 import { lookupIndustries, industryText } from "./industry.ts";
 import { PROFILE_SHAPE, PROFILE_RULES, cleanProfile } from "./profile.ts";
@@ -561,6 +561,26 @@ async function handle(req: Request): Promise<Response> {
       // Placed ("learn_link"), and a sweep every 10 minutes picks up anything that slipped through
       // ("learn_pending"). Which updates teach what is decided by public.lesson_kind.
       if (body.action === "learn_link" && body.linkId) return json(await learnLessons(admin, [String(body.linkId)], null));
+      // LinkedIn links for candidates who don't have one: the link inside their resume file (also
+      // in compressed PDFs), else read from the resume by the AI. Never overwrites one on file.
+      if (body.action === "linkedin_backfill") {
+        const { data: cs } = await admin.from("candidates").select("id,name,resume_path,resume_name,cv_path,linkedin_url")
+          .or("linkedin_url.is.null,linkedin_url.eq.").or("resume_path.not.is.null,cv_path.not.is.null").limit(Math.min(Number(body.max) || 40, 80));
+        const out: any[] = [];
+        for (const c of cs || []) {
+          try {
+            const r = await loadResume(admin, c);
+            let li = r.linkedin || "", how = li ? "file" : "";
+            if (!li && r.resume) {
+              const a = await askAI("You read a resume. Reply with STRICT JSON only: {\"linkedin\": string}. The candidate's OWN LinkedIn profile URL exactly as the resume shows it (e.g. linkedin.com/in/jane-doe), or '' if it shows none. Never guess or build one from their name.", "Find the LinkedIn profile URL.", r.resume, 100);
+              li = normalizeLinkedIn(a?.linkedin); how = li ? "ai" : "";
+            }
+            if (li) await admin.from("candidates").update({ linkedin_url: li }).eq("id", c.id).or("linkedin_url.is.null,linkedin_url.eq.");
+            out.push({ name: c.name, linkedin: li || null, how: how || "none" });
+          } catch (e) { out.push({ name: c.name, error: String((e as Error)?.message || e).slice(0, 120) }); }
+        }
+        return json({ ok: true, checked: out.length, found: out.filter((x) => x.linkedin).length, results: out });
+      }
       if (body.action === "learn_pending") {
         const { data: rows, error } = await admin.rpc("lesson_links", { p_pending: true, p_limit: 3 });
         if (error) return json({ ok: false, error: error.message }, 500);

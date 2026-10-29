@@ -277,8 +277,51 @@ export async function findLinkedIn(bytes: Uint8Array, name: string): Promise<str
         const x = await readZipEntry(bytes, e); if (x) hay += new TextDecoder().decode(x) + "\n";
       }
     } else hay = new TextDecoder("latin1").decode(bytes.length > 4_000_000 ? bytes.subarray(0, 4_000_000) : bytes);
-    return normalizeLinkedIn(hay);
+    const found = normalizeLinkedIn(hay.replace(/\\\//g, "/"));
+    if (found || fmt !== "pdf") return found;
+    // Most PDFs made by Word, Google Docs or Canva keep their links inside compressed streams.
+    // (One character per byte: TextDecoder's "latin1" is really windows-1252 and changes some bytes.)
+    const b = bytes.length > 8_000_000 ? bytes.subarray(0, 8_000_000) : bytes;
+    let raw = "";
+    for (let i = 0; i < b.length; i += 0x8000) raw += String.fromCharCode(...b.subarray(i, i + 0x8000));
+    return normalizeLinkedIn((await pdfStreamsText(raw)).replace(/\\\//g, "/"));
   } catch { return ""; }
+}
+// The text inside a PDF's compressed (FlateDecode) streams, where link annotations usually sit.
+async function inflate(bytes: Uint8Array): Promise<string> {
+  let txt = "";
+  try {
+    const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate")).getReader();
+    const dec = new TextDecoder("latin1");
+    for (;;) { const { value, done } = await reader.read(); if (done) break; txt += dec.decode(value, { stream: true }); }
+  } catch { /* not zlib data, or stray bytes after it */ }
+  return txt;
+}
+async function pdfStreamsText(raw: string): Promise<string> {
+  const out: string[] = [];
+  let pos = 0, n = 0;
+  while (n < 400) {
+    const at = raw.indexOf("stream", pos);
+    if (at < 0) break;
+    pos = at + 6;
+    if (raw.slice(at - 3, at) === "end") continue;                 // "endstream"
+    const dict = raw.slice(Math.max(0, at - 600), at);
+    if (!/>>\s*$/.test(dict) || !/FlateDecode/.test(dict)) continue;
+    let start = at + 6;
+    if (raw[start] === "\r") start++;
+    if (raw[start] === "\n") start++;
+    const end = raw.indexOf("endstream", start);
+    if (end < 0 || end - start > 2_000_000) continue;
+    n++;
+    pos = end + 9;
+    // The stream's exact length when the dictionary gives it as a number; else up to "endstream"
+    // without the line break before it (stray bytes after the data make inflating fail).
+    const len = Number((dict.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/) || [])[1]);
+    const body = len > 0 && start + len <= end ? raw.slice(start, start + len) : raw.slice(start, end).replace(/\r?\n$/, "");
+    const txt = await inflate(Uint8Array.from(body, (c) => c.charCodeAt(0) & 0xff));
+    if (/linkedin/i.test(txt)) out.push(txt);
+  }
+  return out.join("\n");
 }
 
 export async function prepareResume(bytes: Uint8Array, name: string): Promise<{ input?: ResumeInput; why?: string }> {
