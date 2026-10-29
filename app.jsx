@@ -158,6 +158,8 @@ const refreshSession = async (s) => toSession(await sbFetch("/auth/v1/token?gran
 const ROLE_KEY_LABEL = { admin: "Admin", recops: "Rec Ops manager", recruiter: "Recruiter" };
 const initialsOf = (n) => (n || "?").split(/[ @.]/).filter(Boolean).map((x) => x[0]).join("").slice(0, 2).toUpperCase();
 const fdate = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+// When a candidate was added: "12 Oct 2026" (always with the year, so older records are clear).
+const addedOn = (d) => (d ? new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "-");
 const ago = (d) => { const m = (Date.now() - new Date(d)) / 60000; return m < 60 ? Math.max(1, Math.round(m)) + "m ago" : m < 1440 ? Math.round(m / 60) + "h ago" : m < 10080 ? Math.round(m / 1440) + "d ago" : fdate(d); };
 // Formats a span of milliseconds as a short duration ("42m", "3.2h", "6.5d") for the job engagement log.
 const formatDuration = (ms) => { const mins = ms / 60000; if (mins < 60) return Math.max(1, Math.round(mins)) + "m"; const hrs = mins / 60; if (hrs < 24) return hrs.toFixed(1) + "h"; return (hrs / 24).toFixed(1) + "d"; };
@@ -1487,20 +1489,28 @@ function FilterPill({ label, value, onChange, options, allValue = "All", searcha
 
 // from / to are "YYYY-MM-DD" strings ("" = open-ended).
 const isoDay = (d) => { const x = new Date(d); return x.getFullYear() + "-" + String(x.getMonth() + 1).padStart(2, "0") + "-" + String(x.getDate()).padStart(2, "0"); };
-function DatePill({ label = "Date added", from, to, onChange, align }) {
+// years: the years to offer as one-click filters (e.g. the years candidates were added in).
+function DatePill({ label = "Date added", from, to, onChange, align, years }) {
   const { open, setOpen, ref } = usePopover();
   const today = isoDay(Date.now());
   const preset = (n) => isoDay(Date.now() - (n - 1) * 864e5);
   const which = [7, 30, 90].find((n) => from === preset(n) && (!to || to === today));
-  const fmt = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "…";
+  const monthStart = today.slice(0, 8) + "01";
+  const thisMonth = from === monthStart && (!to || to === today);
+  const yearOf = from && to && /-01-01$/.test(from) && to === from.slice(0, 4) + "-12-31" ? from.slice(0, 4) : "";
+  const fmt = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", ...(d.slice(0, 4) !== today.slice(0, 4) ? { year: "numeric" } : {}) }) : "…";
   const on = !!(from || to);
+  const pick = (a, b) => { onChange(a, b); setOpen(false); };
+  const ys = (years && years.length ? years : [today.slice(0, 4)]).map(String);
   return (
     <div className="relative" ref={ref}>
-      <PillButton label={label} shown={which ? "Last " + which + " days" : fmt(from) + " – " + fmt(to)} on={on} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange("", ""); setOpen(false); }} />
+      <PillButton label={label} shown={which ? "Last " + which + " days" : thisMonth ? "This month" : yearOf ? yearOf : fmt(from) + " – " + fmt(to)} on={on} open={open} onClick={() => setOpen(!open)} onClear={() => { onChange("", ""); setOpen(false); }} />
       {open && (
         <div className={"pn-pop" + (align === "right" ? " right" : "")}>
           <div className="pn-presets">
-            {[7, 30, 90].map((n) => <button key={n} type="button" aria-pressed={which === n} onClick={() => { which === n ? onChange("", "") : onChange(preset(n), ""); setOpen(false); }}>Last {n} days</button>)}
+            {[7, 30, 90].map((n) => <button key={n} type="button" aria-pressed={which === n} onClick={() => (which === n ? pick("", "") : pick(preset(n), ""))}>Last {n} days</button>)}
+            <button type="button" aria-pressed={thisMonth} onClick={() => (thisMonth ? pick("", "") : pick(monthStart, ""))}>This month</button>
+            {ys.map((y) => <button key={y} type="button" aria-pressed={yearOf === y} onClick={() => (yearOf === y ? pick("", "") : pick(y + "-01-01", y + "-12-31"))}>{y === today.slice(0, 4) ? "This year" : y}</button>)}
           </div>
           <div className="flex items-center gap-1.5 px-1 pt-1.5 text-xs" style={{ color: C.ink3 }}>
             <input type="date" value={from} onChange={(e) => onChange(e.target.value, to)} aria-label="From" />
@@ -1939,6 +1949,23 @@ function Pager({ page, pages, size, total, onPage, onSize }) {
         </select>
       </div>
     </nav>
+  );
+}
+
+// A long list a page at a time (25 by default), with the same pager as the tables. Goes back to
+// page 1 when the list or resetKey (a tab, a search, a filter) changes. wrap: props for a wrapping
+// <div> (a grid of cards, say); without it the rows render as they are.
+function Paged({ items, render, resetKey = "", size: initial = 25, wrap }) {
+  const [size, setSize] = useState(initial);
+  const [page, setPage] = useState(1);
+  const n = items.length, pages = Math.max(1, Math.ceil(n / size)), cur = Math.min(page, pages);
+  useEffect(() => { setPage(1); }, [resetKey, n]);
+  const rows = items.slice((cur - 1) * size, cur * size).map(render);
+  return (
+    <>
+      {wrap ? <div {...wrap}>{rows}</div> : rows}
+      {n > 10 && <Pager page={cur} pages={pages} size={size} total={n} onPage={(p) => setPage(Math.max(1, Math.min(pages, p)))} onSize={(v) => { setSize(v); setPage(1); }} />}
+    </>
   );
 }
 
@@ -3877,11 +3904,11 @@ function TodoPage({ toast, S }) {
           {groups.map(([label, list]) => (
             <div key={label} className="mt-2">
               <div className="text-xs font-semibold tracking-widest" style={{ color: label === "Overdue" ? C.dangerFg : C.ink3 }}>{label.toUpperCase()} · {list.length}</div>
-              {list.map((t) => <Row key={t.id} t={t} />)}
+              <Paged items={list} resetKey={view} render={(t) => <Row key={t.id} t={t} />} />
             </div>
           ))}
           {closed.length > 0 && <button onClick={() => setShowClosed((v) => !v)} className="text-xs mt-4" style={{ color: C.em }}>{showClosed ? "Hide" : "Show"} done and dismissed ({closed.length})</button>}
-          {showClosed && closed.map((t) => <Row key={t.id} t={t} />)}
+          {showClosed && <Paged items={closed} resetKey={view} render={(t) => <Row key={t.id} t={t} />} />}
         </div>
       </Card>
     </div>
@@ -4653,7 +4680,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
           <FilterPill label="Country" value={countryF} onChange={setCountryF} options={(() => { const n = {}; onTab.forEach((c) => { const k = candidateCountry(c) || "_none"; n[k] = (n[k] || 0) + 1; }); return Object.keys(n).sort((a, b) => (a === "_none") - (b === "_none") || a.localeCompare(b)).map((k) => ({ value: k, label: k === "_none" ? "Not known" : k, count: n[k] })); })()} />
           <FilterPill label="Role" value={roleF} onChange={setRoleF} options={roles.map((r) => ({ value: r, label: r, count: onTab.filter((c) => c.role === r).length }))} />
           <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
-          <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} />
+          <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} years={[...new Set(data.map((c) => new Date(c.createdAt).getFullYear()).filter((y) => y > 2000))].sort((a, b) => b - a)} />
           <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
           <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setCountryF([]); setJobF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
         </div>
@@ -4675,6 +4702,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
             { key: "status", label: "STATUS", render: (c) => <StatusPill status={c.status} /> },
             { key: "ai", label: "AI FIT", render: (c) => <ScoreRing value={c.ai} /> },
             { key: "email", label: "EMAIL", render: (c) => <Pill tone={c.email === "Verified" ? "em" : "warn"}>{c.email}</Pill> },
+            { key: "added", label: "ADDED", render: (c) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={new Date(c.createdAt).toLocaleString()}>{addedOn(c.createdAt)}</span> },
             { key: "activity", label: "ACTIVITY", render: (c) => <span className="text-xs" style={{ color: C.ink2 }}>{c.activity}</span> },
           ]}
         />
@@ -6012,7 +6040,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               </div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
-              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Salary expectation", candidate.pay]].map(([l, v]) => (
+              {[["Experience", candidate.experience], ["Notice", candidate.notice], ["Salary expectation", candidate.pay], ["Added to ProNext", candidate.createdAt ? addedOn(candidate.createdAt) : ""]].map(([l, v]) => (
                 <div key={l} className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>{l}</div><Clamp text={v || "-"} className="text-sm font-medium mt-0.5 break-words" /></div>
               ))}
               <div className="min-w-0"><div className="text-xs" style={{ color: C.ink3 }}>Work setup</div>
@@ -7443,7 +7471,7 @@ function InboxPage({ toast, S }) {
         <Card>
           {mine.length === 0
             ? <EmptyState title="Nobody through your links yet" text="Copy your link from a job (or Your links here) and share it. Anyone who applies through it becomes your candidate and shows here." />
-            : mine.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={false} />)}
+            : <Paged items={mine} render={(x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={false} />} />}
         </Card>
         <Modal open={linksOpen} onClose={() => setLinksOpen(false)} title="Your links">
           <ApplyLinks S={S} toast={toast} />
@@ -7479,7 +7507,7 @@ function InboxPage({ toast, S }) {
         {!canAct && tab === "new" && fresh.length > 0 && <div className="text-xs mt-3" style={{ color: C.ink3 }}>Rec Ops or an Admin assigns new applications.</div>}
         <div className="mt-2">
           {list.length === 0 && <EmptyState title={src.length ? "Nothing here for this source" : tab === "new" ? "No new applications" : "Nothing handled yet"} text={src.length ? "Try another source or clear the filter." : tab === "new" ? "Share a job's link and new applicants land here automatically." : ""} action={tab === "new" && !src.length ? "Share a job" : null} onAction={() => S.go("ads")} />}
-          {list.map((x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />)}
+          <Paged items={list} resetKey={tab + "|" + src.join(",")} render={(x) => <InboxRow key={x.id} x={x} S={S} toast={toast} canAct={canAct} />} />
         </div>
       </Card>
       <Modal open={linksOpen} onClose={() => setLinksOpen(false)} title="Apply links">
@@ -7552,7 +7580,7 @@ function MessagesPage({ toast, S }) {
           </div>
           <div className={"overflow-y-auto " + (openId ? "flex-1 min-h-0" : "max-h-[70vh] md:max-h-[28rem]")}>
             {threads.length === 0 && <EmptyState art="chat" title={search || jobFilter.length ? "No matching conversations" : "No conversations yet"} text={search || jobFilter.length ? "Try another search or job." : "Tap + to message a candidate."} />}
-            {threads.map((t) => (
+            <Paged items={threads} resetKey={search + "|" + jobFilter.join(",")} render={(t) => (
               <button key={t.link.id} onClick={() => open(t)} className="w-full text-left px-3.5 py-3 flex items-start gap-2.5"
                 style={{ borderBottom: `1px solid ${C.line}`, background: openId === t.link.id ? C.canvas : "transparent" }}>
                 <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} src={t.cand.photoUrl || undefined} />
@@ -7568,7 +7596,7 @@ function MessagesPage({ toast, S }) {
                   </div>
                 </div>
               </button>
-            ))}
+            )} />
           </div>
         </Card>
         <Card className={(openId ? "flex flex-col md:-mb-24 !p-0 overflow-hidden " : "hidden md:block ") + "flex-1"} style={openId ? (desktop ? fullHeightStyle : { position: "fixed", inset: 0, zIndex: 50, height: "100dvh", borderRadius: 0, border: "none" }) : {}}>
@@ -7589,7 +7617,7 @@ function MessagesPage({ toast, S }) {
           <SearchInput value={composeSearch} onChange={setComposeSearch} placeholder="Search candidates by name, role or client" />
           <div className="max-h-96 overflow-y-auto flex flex-col gap-1">
             {composeList.length === 0 && <div className="text-sm text-center py-6" style={{ color: C.ink3 }}>{allThreads.filter((t) => !t.hasMsgs).length === 0 ? "Every job-linked candidate already has a conversation." : "No candidates found."}</div>}
-            {composeList.map((t) => (
+            <Paged items={composeList} resetKey={composeSearch} render={(t) => (
               <button key={t.link.id} onClick={() => startNew(t)} className="w-full text-left px-3 py-2.5 rounded-lg flex items-center gap-2.5" style={{ background: "transparent" }}
                 onMouseEnter={(e) => e.currentTarget.style.background = C.canvas} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>
                 <Avatar init={initialsOf(t.cand.name)} tone="em" size={32} src={t.cand.photoUrl || undefined} />
@@ -7598,7 +7626,7 @@ function MessagesPage({ toast, S }) {
                   <div className="text-xs truncate" style={{ color: C.ink3 }}>{t.job ? t.job.role + " · " + t.job.client : "Role"}</div>
                 </div>
               </button>
-            ))}
+            )} />
           </div>
         </div>
       </Modal>
@@ -8208,13 +8236,11 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
           </div>
         </div>
         {filtered.length ? (view === "list" ? (
-          <div className="flex flex-col gap-2.5">
-            {filtered.map((j) => <JobCard row key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
-          </div>
+          <Paged items={filtered} resetKey={tab + "|" + q + "|" + gq} wrap={{ className: "flex flex-col gap-2.5" }}
+            render={(j) => <JobCard row key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />} />
         ) : (
-          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" }}>
-            {filtered.map((j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />)}
-          </div>
+          <Paged items={filtered} resetKey={tab + "|" + q + "|" + gq} size={24} wrap={{ className: "grid gap-3", style: { gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))" } }}
+            render={(j) => <JobCard key={j.id} j={j} S={S} mine={mine(j)} onOpen={() => onOpenJob(j.id)} onShare={() => onPromote(j.id)} />} />
         )
         ) : <EmptyState title={q || gq ? "No roles match your search" : tab === "Leads" ? "No client lead roles yet" : "No roles here yet"} text={q || gq ? "Try another search or tab." : S.role === "recruiter" ? "Rec Ops posts new roles. They show up here." : "Post a job to start finding candidates."} action={q || gq || S.role === "recruiter" ? null : "Post a job"} onAction={() => setPage("postJob")} />}
       </Card>
@@ -8920,7 +8946,7 @@ function InterviewsPage({ S, toast }) {
             <div className="flex flex-wrap gap-3 mt-3 text-xs" style={{ color: C.ink2 }}>{rs.map(([id, n]) => <span key={id} className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm" style={{ background: recColor(id) }} />{n || "Recruiter"}</span>)}</div>) : null; })()}
           {view === "list" && (
             <div className="flex flex-col gap-2">
-              {upcoming.length ? upcoming.map((iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />) : <div className="text-sm" style={{ color: C.ink2 }}>No upcoming interviews.</div>}
+              {upcoming.length ? <Paged items={upcoming} resetKey={rec.join(",") + "|" + client.join(",")} render={(iv) => <IvRow key={iv.id} iv={iv} clash={clash.has(iv.id)} onOpen={setOpen} />} /> : <div className="text-sm" style={{ color: C.ink2 }}>No upcoming interviews.</div>}
             </div>
           )}
           {view !== "list" && <div className="flex flex-wrap gap-4 text-xs mt-3" style={{ color: C.ink2 }}>
