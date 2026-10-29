@@ -140,10 +140,16 @@ export async function fetchLeads(admin: any, s: Settings) {
     const remoteShare = wantsRemote ? (office ? Math.max(1, Math.floor(each / 2)) : each) : 0;
     const officeShare = office ? each - remoteShare : 0;
     const titles = [...new Set(candTitles(c).map((t) => t.trim()).filter(Boolean))].slice(0, 10);
+    // Smaller job markets (Saudi Arabia, Pakistan... anywhere but the US, Canada and the UK): far
+    // fewer postings reach the feed, so look back further (at least 14 days) and take companies of
+    // any size above the minimum (big local employers hire through agencies there).
+    const thin = !["US", "CA", "GB"].includes(cc);
+    const age = thin ? Math.max(14, s.leads.maxAgeDays) : s.leads.maxAgeDays;
+    const maxEmp = thin ? 0 : maxEmployees;
     let postings: any[] = [];
     let stop = false;
     const search = async (o: { remote: boolean; limit: number; places?: string[] }) => {
-      try { return (await searchJobs({ titles, countries: [cc], places: o.places, remote: o.remote, maxAgeDays: s.leads.maxAgeDays, limit: o.limit, minEmployees, maxEmployees })).map((p) => ({ ...p, remote: p.remote || o.remote })); }
+      try { return (await searchJobs({ titles, countries: [cc], places: o.places, remote: o.remote, maxAgeDays: age, limit: o.limit, minEmployees, maxEmployees: maxEmp })).map((p) => ({ ...p, remote: p.remote || o.remote })); }
       catch (e) {
         const m = String((e as Error)?.message || e);
         errors.push(firstName(c) + " (" + cc + (o.remote ? ", remote" : "") + "): " + m.slice(0, 300));
@@ -170,7 +176,7 @@ export async function fetchLeads(admin: any, s: Settings) {
       if (workedAt(employers, p.company)) { skipped++; continue; }
       // Says no agencies / no unsolicited CVs, or outside the company sizes we pitch.
       if (noAgencyText(p.description)) { noAgency++; continue; }
-      if (!sizeOk(p.employees)) { size++; continue; }
+      if (!sizeOk(p.employees) && !(thin && (!minEmployees || (p.employees ?? minEmployees) >= minEmployees))) { size++; continue; }
       if (!p.remote) {
         const nr = near.get(String(p.location || "").trim());
         if (!nr || !nr.ok) { far++; continue; }
