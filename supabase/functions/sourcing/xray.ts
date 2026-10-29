@@ -37,7 +37,9 @@ const MAX_COMPETITOR_QUERIES = 3;   // on top of MAX_QUERIES: 3 competitors per 
 export function friendlyXrayError(raw: unknown): string {
   const m = String((raw as Error)?.message ?? raw ?? "");
   if (/X-ray AI budget/.test(m)) return m;
-  if (/out of credit|credit balance|insufficient|billing|payment required|\b402\b/i.test(m)) return "The AI is out of credit, so the people found couldn't be reviewed. Top up the AI credits, then search again.";
+  // Only the AI provider's own billing errors (a bare "insufficient" also matched things like
+  // "insufficient evidence" in an answer, and showed this warning when the AI was fine).
+  if (/out of credit|credit balance|insufficient (credit|funds|balance|quota)|billing_error|payment required|\b402\b|AI is paused/i.test(m)) return "The AI is out of credit, so the people found couldn't be reviewed. Top up the AI credits, then search again.";
   if (/\b429\b|quota|rate.?limit|too many requests|exceeded/i.test(m)) return "A search service is busy or has used up today's free searches. Try again in an hour.";
   if (/cut off|max_tokens|truncat/i.test(m)) return "The AI's answer was cut short, so a few people may not have been reviewed.";
   if (/timeout|timed out|aborted|took too long/i.test(m)) return "A search took too long to answer and was skipped.";
