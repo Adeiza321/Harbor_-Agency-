@@ -4644,30 +4644,6 @@ function HomePipelineValue({ S, mine }) {
     </Card>
   );
 }
-function HomeFollowups({ S }) {
-  const [leads, setLeads] = useState(null);
-  React.useEffect(() => {
-    let live = true;
-    S.sb("/rest/v1/leads?select=id,company,status,interested_at,data,outreach_messages(status,sent_at,kind,followup),client_replies(received_at,auto,spam)&status=in.(contacted,replied)&order=created_at.desc&limit=300")
-      .then((r) => live && setLeads(r || [])).catch(() => live && setLeads([]));
-    return () => { live = false; };
-  }, []); // eslint-disable-line
-  if (!leads) return null;
-  const week = Date.now() - 7 * 864e5;
-  const replied = leads.filter((l) => (l.client_replies || []).some((r) => !r.auto && !r.spam && new Date(r.received_at).getTime() >= week)).slice(0, 3);
-  const due = leads.map((l) => ({ l, f: leadFollowup(l) })).filter((x) => x.f).sort((a, b) => a.f.due - b.f.due).slice(0, 5);
-  if (!replied.length && !due.length) return null;
-  const day = (t) => { const d = new Date(t); return d.toDateString() === new Date().toDateString() ? "today" : d.getTime() < Date.now() ? "due" : d.toLocaleDateString("en-GB", { weekday: "short" }); };
-  return (
-    <Card>
-      <div className="flex items-baseline justify-between gap-2"><div className="text-sm font-semibold">Client follow-ups</div><button type="button" onClick={() => S.go("campaigns")} className="text-xs font-semibold" style={{ color: C.em }}>Outreach</button></div>
-      <div className="flex flex-col gap-2.5 mt-3">
-        {replied.map((l) => <button key={"r" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0 font-semibold" style={{ color: C.emText }}>Replied</span></button>)}
-        {due.map(({ l, f }) => <button key={"f" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0" style={{ color: f.isDue ? C.warnFg : C.ink2 }}>Follow-up {f.step} · {day(f.due)}</span></button>)}
-      </div>
-    </Card>
-  );
-}
 
 function OverviewRecOps({ S }) {
   const checks = useAttentionChecks(S);
@@ -4744,7 +4720,6 @@ function OverviewRecOps({ S }) {
         })()} />
           <HomeGoal S={S} />
           <HomePipelineValue S={S} />
-          <HomeFollowups S={S} />
           <PaceCard S={S} />
         </div>
       </div>
