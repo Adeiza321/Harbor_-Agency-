@@ -235,6 +235,24 @@ Deno.serve(async (req: Request) => {
       } catch (e) { console.error("auto-assign", appId, String((e as Error)?.message || e)); }
     }
 
+    // No recruiter's link: the agency's admin (the owner, else the longest-serving admin) takes it
+    // straight away, so they're on file with a candidate page from the start. Rec Ops can hand them
+    // to a recruiter later; the email doesn't name the admin (received.ts).
+    if (!viaRec && !referrer && !existingRow) {
+      try {
+        const { data: admins } = await admin.from("profiles").select("id,full_name,is_owner,created_at").eq("role", "admin").eq("status", "Active").order("created_at", { ascending: true });
+        const adm = (admins || []).find((p: any) => p.is_owner) || (admins || [])[0];
+        const { data: fresh } = await admin.from("applications").select("*").eq("id", appId).single();
+        if (adm && fresh && fresh.status === "new") {
+          const r = await assignApplication(admin, fresh, adm, { id: adm.id, name: "ProNext (no recruiter link)" });
+          assignedCandidate = r?.candidateId || null;
+          await admin.rpc("push_update", { p_user: adm.id, p_kind: "event", p_title: name + (resolvedJobId ? " applied for " + resolvedRoleTitle : " joined the Active file"),
+            p_body: "No recruiter's link, so they're assigned to you. Give them to a recruiter from their profile if you like.", p_link: { page: "candidates", candidateId: r.candidateId },
+            p_dedupe: "appadmin:" + appId, p_covered: false, p_actor: null });
+        }
+      } catch (e) { console.error("auto-assign to admin", appId, String((e as Error)?.message || e)); }
+    }
+
     // Outreach "Refer someone": the prospect's card shows who they referred.
     if (referringProspect) {
       const list = Array.isArray(referringProspect.data?.referrals) ? referringProspect.data.referrals : [];
