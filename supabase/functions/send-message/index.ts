@@ -250,8 +250,10 @@ Deno.serve(async (req: Request) => {
       if (!cand.email) return json({ ok: true, skipped: "No email on file for this candidate" });
       if (optedOut) return json({ ok: true, sent: false, skipped: "This candidate unsubscribed from ProNext emails" });
       // The candidate's own recruiter (whoever added them may be Rec Ops or an Admin).
-      const { data: rec } = cand.recruiter_id ? await admin.from("profiles").select("full_name").eq("id", cand.recruiter_id).maybeSingle() : { data: null };
+      const { data: rec } = cand.recruiter_id ? await admin.from("profiles").select("full_name,role").eq("id", cand.recruiter_id).maybeSingle() : { data: null };
       const recruiterName = String(rec?.full_name || me.full_name || "").trim() || "one of our recruiters";
+      // Their candidate is with an admin (no recruiter yet): "our team", not the admin's name.
+      const adminOwned = rec?.role === "admin";
       const roleHtml = job ? `the <b>${esc(job.role_title)}</b> role${cl(job) ? ` at <b>${esc(cl(job))}</b>` : ""}` : "the role";
       // Routed (put forward for a role by the team, waiting for them to accept): a "new role for you"
       // email asking them to look and accept, not "your application is under review".
@@ -259,7 +261,7 @@ Deno.serve(async (req: Request) => {
         const subj = job ? `A new role for you: ${job.role_title}` : "A new role for you";
         const routedHtml = emailShell(brand, subj,
           `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
-           <div style="font-size:15px;line-height:1.6;"><b>${esc(recruiterName)}</b> thinks you'd be a strong fit for ${roleHtml} and would like to put you forward.</div>
+           <div style="font-size:15px;line-height:1.6;">${adminOwned ? "We think" : `<b>${esc(recruiterName)}</b> thinks`} you'd be a strong fit for ${roleHtml} and would like to put you forward.</div>
            ${roleCard(job)}
            <div style="font-size:15px;line-height:1.6;margin-top:16px;">${routedNext(link)} Nothing is shared with the employer until you apply.</div>
            ${button(brand, portalUrl + "&role=" + encodeURIComponent(link.id), "See the role and apply")}
@@ -270,8 +272,8 @@ Deno.serve(async (req: Request) => {
       const subject = job ? `Your application for ${job.role_title} is under review` : "Your application is under review";
       const html = emailShell(brand, subject,
         `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
-         <div style="font-size:15px;line-height:1.6;">Good news: you've been assigned a recruiter, <b>${esc(recruiterName)}</b>, for ${roleHtml}, and your application is now under review. Once a decision is made, you'll get another email updating you on its status.</div>
-         <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message ${rec?.full_name || me.full_name ? esc(recruiterName.split(" ")[0]) : "your recruiter"} any time if you have questions or want to stay connected.</div>
+         <div style="font-size:15px;line-height:1.6;">${adminOwned ? `Good news: your application for ${roleHtml} is now under review with our team.` : `Good news: you've been assigned a recruiter, <b>${esc(recruiterName)}</b>, for ${roleHtml}, and your application is now under review.`} Once a decision is made, you'll get another email updating you on its status.</div>
+         <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message ${adminOwned ? "us" : rec?.full_name || me.full_name ? esc(recruiterName.split(" ")[0]) : "your recruiter"} any time if you have questions or want to stay connected.</div>
          <div style="font-size:15px;line-height:1.6;margin-top:12px;">Your candidate page shows your full profile: your details, what you're looking for, the roles you're on and where each one stands.</div>
          ${button(brand, portalUrl, "View your full profile")}
          ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);

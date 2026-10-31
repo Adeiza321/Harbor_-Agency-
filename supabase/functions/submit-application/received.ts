@@ -13,7 +13,9 @@ export function receivedEmail(b: Brand, o: { name: string; role: string | null; 
     ? `<b>${esc(o.recruiter)}</b> is your recruiter and is reviewing ${activeFile ? "your CV" : "your application"} now. You'll hear from them within a few working days.`
     : activeFile
       ? "We keep your CV on file and get in touch as soon as a role matches what you're looking for."
-      : "Our team reviews every application. You'll hear from us within a few working days, whatever the outcome.";
+      : o.portalToken
+        ? "Our team is reviewing your application now. You'll hear from us within a few working days, whatever the outcome."
+        : "Our team reviews every application. You'll hear from us within a few working days, whatever the outcome.";
   const html = emailShell(b, subject,
     `<div style="font-size:20px;margin-bottom:8px;">Hi ${first},</div>
      <div style="font-size:15px;line-height:1.6;">Thanks for ${activeFile ? `sending your CV to ${esc(b.name)}` : `applying for the <b>${esc(o.role)}</b> role`}. We've got it.</div>
@@ -40,8 +42,9 @@ export async function sendReceived(admin: any, b: Brand, o: { email: string; nam
   if (cand) {
     portalToken = cand.portal_token || null;
     if (cand.recruiter_id && o.candidateId) {
-      const { data: r } = await admin.from("profiles").select("full_name").eq("id", cand.recruiter_id).maybeSingle();
-      recruiter = String(r?.full_name || "").trim() || null;
+      const { data: r } = await admin.from("profiles").select("full_name,role").eq("id", cand.recruiter_id).maybeSingle();
+      // Assigned to an admin (no recruiter's link): "our team", not the admin's name.
+      recruiter = r?.role === "admin" ? null : String(r?.full_name || "").trim() || null;
     }
   }
   const m = receivedEmail(b, { name: o.name, role: o.role, recruiter, portalToken });
