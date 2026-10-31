@@ -2041,7 +2041,8 @@ function SwipeRow({ actions, children }) {
     </div>
   );
 }
-function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty = "Nothing here yet.", pageSize = 10, swipe }) {
+// selected (a Set of ids) + onSelect(nextSet): a tick box on each row and "select all on this page".
+function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty = "Nothing here yet.", pageSize = 10, swipe, selected, onSelect }) {
   const desktop = useDesktop();
   const primary = columns[0];
   const rest = columns.slice(1);
@@ -2052,17 +2053,24 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
   const pages = Math.max(1, Math.ceil(allRows.length / size));
   const cur = Math.min(page, pages);
   const rows = allRows.slice((cur - 1) * size, cur * size);
+  const sel = onSelect ? (selected || new Set()) : null;
+  const toggle = (id) => { const n = new Set(sel); if (n.has(id)) n.delete(id); else n.add(id); onSelect(n); };
+  const pageIds = rows.map((r) => r[keyField]);
+  const allOnPage = !!sel && pageIds.length > 0 && pageIds.every((id) => sel.has(id));
+  const tick = (row) => <input type="checkbox" checked={sel.has(row[keyField])} onChange={() => toggle(row[keyField])} onClick={(e) => e.stopPropagation()} aria-label={"Select " + (row.name || "row")} className="w-4 h-4 cursor-pointer" style={{ accentColor: C.em }} />;
   return (
     <div>
       <table className="w-full text-sm" style={{ display: desktop ? "table" : "none" }}>
         <thead>
           <tr className="text-left text-xs font-semibold" style={{ color: C.ink3, borderBottom: `1px solid ${C.line}` }}>
+            {sel && <th className="py-2 pr-3 w-6"><input type="checkbox" checked={allOnPage} onChange={() => { const n = new Set(sel); pageIds.forEach((id) => (allOnPage ? n.delete(id) : n.add(id))); onSelect(n); }} aria-label="Select everyone on this page" className="w-4 h-4 cursor-pointer" style={{ accentColor: C.em }} /></th>}
             {columns.map((c) => <th key={c.key} className="py-2 pr-3 font-semibold">{c.label}</th>)}
           </tr>
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={row[keyField] ?? i} onClick={() => onRowClick && onRowClick(row)} className={onRowClick ? "pn-row" : ""} style={{ borderTop: `1px solid ${C.line}`, cursor: onRowClick ? "pointer" : "default" }}>
+            <tr key={row[keyField] ?? i} onClick={() => onRowClick && onRowClick(row)} className={onRowClick ? "pn-row" : ""} style={{ borderTop: `1px solid ${C.line}`, cursor: onRowClick ? "pointer" : "default", background: sel && sel.has(row[keyField]) ? C.emTint : undefined }}>
+              {sel && <td className="py-3 pr-3 align-top">{tick(row)}</td>}
               {columns.map((c) => <td key={c.key} className="py-3 pr-3 align-top">{c.render(row)}</td>)}
             </tr>
           ))}
@@ -2072,7 +2080,7 @@ function DataTable({ columns, rows: allRows, onRowClick, keyField = "id", empty 
         {rows.map((row, i) => (
           <SwipeRow key={row[keyField] ?? i} actions={swipe ? swipe(row) : null}>
           <div onClick={() => onRowClick && onRowClick(row)} className={"rounded-xl border p-3.5" + (onRowClick ? " pn-row" : "")} style={{ borderColor: C.line, cursor: onRowClick ? "pointer" : "default", background: C.card }}>
-            <div className="mb-2">{primary.render(row)}</div>
+            <div className="mb-2 flex items-start gap-2">{sel && <span className="pt-1">{tick(row)}</span>}<div className="flex-1 min-w-0">{primary.render(row)}</div></div>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5">
               {rest.map((c) => (
                 <div key={c.key} className="text-xs flex items-center gap-1">
@@ -4824,6 +4832,116 @@ function OverviewRecruiter({ S }) {
   );
 }
 
+/* Candidates: Board view (columns by status) and Calendar view (their interviews by day). */
+const BOARD_COLS = ["In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"];
+function CandidateBoard({ rows, openCandidate, onMore }) {
+  const LIMIT = 25;
+  return (
+    <div className="overflow-x-auto -mx-1 px-1 pb-1">
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${BOARD_COLS.length}, minmax(200px, 1fr))`, minWidth: BOARD_COLS.length * 212 }}>
+        {BOARD_COLS.map((col) => {
+          const list = rows.filter((c) => c.status === col).sort((a, b) => (b.ai || 0) - (a.ai || 0));
+          return (
+            <div key={col} className="rounded-xl p-2.5 flex flex-col gap-2 min-w-0" style={{ background: ["Interview", "Offer", "Placed", "Hired"].includes(col) && list.length ? C.emTint : C.neutralBg }}>
+              <div className="flex justify-between gap-2 px-1 text-xs font-semibold" style={{ color: C.ink2 }}><span>{col}</span><span>{list.length}</span></div>
+              {list.slice(0, LIMIT).map((c) => (
+                <button key={c.id} type="button" onClick={() => openCandidate(c)} className="rounded-lg p-3 text-left flex flex-col gap-1 min-w-0" style={{ background: C.card, boxShadow: "0 1px 2px rgba(20,32,27,0.06)" }}>
+                  <span className="text-sm font-semibold truncate">{c.name}</span>
+                  <span className="text-xs truncate" style={{ color: C.ink2 }}>{c.role || "No title yet"}</span>
+                  <span className="flex items-center justify-between gap-2 mt-1">
+                    <span className="text-xs" style={{ color: C.ink2 }}>{c.ai ? "AI fit " + c.ai : "Not screened"}</span>
+                    {c.recruiterInit ? <Avatar init={c.recruiterInit} tone={PEOPLE_TONE[c.recruiterInit] || "em"} size={22} /> : null}
+                  </span>
+                </button>
+              ))}
+              {list.length > LIMIT && <button type="button" onClick={() => onMore(col)} className="text-xs font-semibold px-1 py-1 text-left" style={{ color: C.em }}>+{list.length - LIMIT} more</button>}
+              {!list.length && <div className="text-xs px-1 py-2" style={{ color: C.ink3 }}>No one</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function CandidateCalendar({ rows, S, openCandidate }) {
+  const ids = new Set(rows.map((c) => c.id));
+  const byId = Object.fromEntries(rows.map((c) => [c.id, c]));
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  const from = start.getTime() - 7 * 864e5, to = start.getTime() + 60 * 864e5;
+  const ivs = (S.interviews || []).filter((iv) => ids.has(iv.candidateId) && iv.status !== "cancelled" && iv.start >= from && iv.start < to).sort((a, b) => a.start - b.start);
+  const days = [];
+  ivs.forEach((iv) => { const k = new Date(iv.start).toDateString(); const d = days.find((x) => x.k === k); if (d) d.list.push(iv); else days.push({ k, t: iv.start, list: [iv] }); });
+  const label = (t) => { const d = new Date(t).toDateString(); return d === new Date().toDateString() ? "Today" : d === new Date(Date.now() + 864e5).toDateString() ? "Tomorrow" : new Date(t).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }); };
+  if (!days.length) return <EmptyState title="No interviews for these candidates" text="Interviews from the last week and the next two months show here, by day." />;
+  return (
+    <div className="flex flex-col gap-5">
+      {days.map((d) => (
+        <div key={d.k}>
+          <div className="text-xs font-semibold tracking-wide mb-2" style={{ color: d.t < start.getTime() ? C.ink3 : C.ink2 }}>{label(d.t).toUpperCase()}</div>
+          <div className="flex flex-col rounded-xl border overflow-hidden" style={{ borderColor: C.line }}>
+            {d.list.map((iv, i) => { const c = byId[iv.candidateId]; return (
+              <button key={iv.id} type="button" onClick={() => c && openCandidate(c)} className="flex items-center gap-3 px-4 py-3 text-left" style={{ borderTop: i ? `1px solid ${C.line}` : "none", background: C.card, opacity: iv.start < Date.now() ? 0.7 : 1 }}>
+                <span className="text-sm font-semibold shrink-0" style={{ width: 72, fontVariantNumeric: "tabular-nums" }}>{new Date(iv.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                <span className="flex-1 min-w-0"><span className="block text-sm font-semibold truncate">{iv.candidateName}</span><span className="block text-xs truncate" style={{ color: C.ink2 }}>{[iv.round, iv.roleTitle, iv.client].filter(Boolean).join(" · ")}</span></span>
+                <span className="text-xs shrink-0 hidden sm:block" style={{ color: C.ink2 }}>{iv.recruiter || ""}</span>
+                {iv.status === "done" ? <Pill tone="em">Done</Pill> : iv.confirmed ? <Pill tone="info">Confirmed</Pill> : <Pill tone="warn">Not confirmed</Pill>}
+              </button>
+            ); })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+// Actions on the candidates ticked in the table.
+function CandidateBulkBar({ picked, S, toast, onClear, staff }) {
+  const [ask, setAsk] = useState(null); // "role" | "recruiter"
+  const [val, setVal] = useState("");
+  const [busy, setBusy] = useState(false);
+  const n = picked.length;
+  const jobs = S.jobs.filter((j) => takesCandidates(j));
+  const people = (S.users || []).filter((u) => u.status === "Active");
+  const run = async () => {
+    if (!val) { toast(ask === "role" ? "Pick a role" : "Pick a recruiter"); return; }
+    setBusy(true);
+    try {
+      if (ask === "role") {
+        const todo = picked.filter((c) => !(c.jobLinks || []).some((l) => l.jobId === val));
+        for (const c of todo) await S.linkJob(c.id, val, c.ai || null, [], true);
+        const j = S.jobs.find((x) => x.id === val);
+        toast(plural(todo.length, "candidate") + " added to " + (j ? j.role : "the role") + (todo.length < n ? " (" + (n - todo.length) + " already on it)" : "") + ". Their screening starts now.");
+      } else {
+        const u = val === "_none" ? null : people.find((x) => x.id === val);
+        picked.forEach((c) => S.updateCand(c.id, { recruiterId: u ? u.id : null, recruiter: u ? u.name : null, recruiterInit: u ? initialsOf(u.name) : "" }));
+        toast(plural(n, "candidate") + (u ? " given to " + u.name : " unassigned"));
+      }
+      setAsk(null); setVal(""); onClear();
+    } catch (e) { /* the error is shown already */ }
+    setBusy(false);
+  };
+  const b = "rounded-lg px-3 py-1.5 text-sm font-medium";
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl px-3 py-2.5 mb-3" style={{ background: C.solid, color: "#fff" }} role="region" aria-label="Actions for the selected candidates">
+      <span className="text-sm font-semibold mr-1">{n} selected</span>
+      {staff && <button type="button" className={b} style={{ background: "rgba(255,255,255,.12)" }} onClick={() => { setAsk("role"); setVal(""); }}>Add to role</button>}
+      {staff && <button type="button" className={b} style={{ background: "rgba(255,255,255,.12)" }} onClick={() => { setAsk("recruiter"); setVal(""); }}>Assign recruiter</button>}
+      <button type="button" className={b} style={{ background: "rgba(255,255,255,.12)" }} onClick={() => toast(downloadCSV("candidates-selected-" + new Date().toLocaleDateString("en-CA") + ".csv", picked.map((c) => flat(c, S.jobs))) ? "Exported " + plural(n, "candidate") : "Nothing to export")}>Export</button>
+      <button type="button" className={b + " ml-auto"} style={{ color: "rgba(255,255,255,.8)" }} onClick={onClear}>Clear</button>
+      <Modal open={!!ask} onClose={() => !busy && setAsk(null)} title={ask === "role" ? "Add " + plural(n, "candidate") + " to a role" : "Assign " + plural(n, "candidate")}>
+        <div className="flex flex-col gap-3">
+          <select value={val} onChange={(e) => setVal(e.target.value)} className="w-full rounded-lg border px-3 py-2.5 text-sm" style={{ borderColor: C.line, background: C.soft, color: C.ink }} aria-label={ask === "role" ? "Role" : "Recruiter"}>
+            <option value="">{ask === "role" ? "Pick a role…" : "Pick a recruiter…"}</option>
+            {ask === "role" ? jobs.map((j) => <option key={j.id} value={j.id}>{j.role} · {j.client}</option>)
+              : [...people.map((u) => <option key={u.id} value={u.id}>{u.name}</option>), <option key="_none" value="_none">Nobody (unassigned)</option>]}
+          </select>
+          {ask === "role" && <div className="text-xs" style={{ color: C.ink2 }}>They stay on any other roles they're on. Each is invited to the role's screening straight away; anyone already on it is skipped.</div>}
+          <div className="flex justify-end gap-2"><Btn onClick={() => setAsk(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={run} disabled={busy || !val}>{busy ? <>Working <InlineDots color="#fff" /></> : ask === "role" ? "Add them" : "Assign"}</Btn></div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
 /* Candidates list */
 function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S, toast }) {
   const [rereading, setRereading] = useState(null); // "3/18" while re-reading resumes
@@ -4858,8 +4976,16 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
   const [jobF, setJobF] = useState([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [kwF, setKwF] = useState([]); // words from the AI filter, all of which must appear on the profile
+  const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.candView") || "table"; } catch (e) { return "table"; } });
+  const setView = (v) => { setViewRaw(v); try { localStorage.setItem("pn.candView", v); } catch (e) { /* private window */ } };
+  const [picked, setPicked] = useState(() => new Set());
+  const [aiText, setAiText] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState("");
   const gq = (S.query || "").toLowerCase();
   const hit = (c, t) => c.name.toLowerCase().includes(t) || c.role.toLowerCase().includes(t);
+  const blob = (c) => [c.name, c.role, c.title, c.location, c.experience, (c.skills || []).join(" "), Array.isArray(c.strengths) ? c.strengths.join(" ") : c.strengths, c.notice, c.pay].filter(Boolean).join(" ").toLowerCase();
   const roles = Array.from(new Set(data.map((c) => c.role).filter(Boolean))).sort();
   const sources = Array.from(new Set(data.map((c) => c.source).filter(Boolean))).sort();
   const fromMs = dateFrom ? new Date(dateFrom + "T00:00:00").getTime() : null;
@@ -4869,8 +4995,28 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
     (!recF.length || recF.includes(c.recruiter)) && c.ai >= minAi &&
     (!roleF.length || roleF.includes(c.role)) && (!sourceF.length || sourceF.includes(c.source)) &&
     (!countryF.length || countryF.includes(candidateCountry(c) || "_none")) && (!jobF.length || (c.jobLinks || []).some((l) => jobF.includes(l.jobId))) &&
-    (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs));
-  const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, countryF.length > 0, jobF.length > 0, !!dateFrom, !!dateTo].filter(Boolean).length;
+    (fromMs === null || c.createdAt >= fromMs) && (toMs === null || c.createdAt <= toMs) &&
+    (!kwF.length || (() => { const t = blob(c); return kwF.every((k) => t.includes(k.toLowerCase())); })()));
+  const activeFilterCount = [recF.length > 0, minAi > 0, roleF.length > 0, sourceF.length > 0, countryF.length > 0, jobF.length > 0, !!dateFrom, !!dateTo, kwF.length > 0].filter(Boolean).length;
+  const clearAll = () => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setCountryF([]); setJobF([]); setDateFrom(""); setDateTo(""); setQ(""); setKwF([]); setAiNote(""); };
+  // "Describe who you're looking for": the AI turns it into this page's filters (assistant/filter.ts).
+  const runAi = () => {
+    const text = aiText.trim(); if (!text || aiBusy) return;
+    setAiBusy(true);
+    const context = { statuses: ["In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed", "Not active"],
+      countries: Array.from(new Set(data.map((c) => candidateCountry(c)).filter(Boolean))).sort(),
+      jobs: S.jobs.filter((j) => j.status !== "Draft").map((j) => ({ id: j.id, label: j.role + " · " + j.client })),
+      recruiters: S.team.map((r) => r.name), sources };
+    S.sb("/functions/v1/assistant", { method: "POST", body: { action: "candidate_filter", text, context }, timeout: 60000 }).then((r) => {
+      const f = (r && r.filter) || {};
+      clearAll();
+      setTab(f.status || "All"); setCountryF(f.countries || []); setJobF(f.jobIds || []); setRecF(f.recruiters || []); setSourceF(f.sources || []);
+      setMinAi(f.minAi || 0); setKwF(f.keywords || []);
+      if (f.addedDays) setDateFrom(new Date(Date.now() - (f.addedDays - 1) * 864e5).toLocaleDateString("en-CA"));
+      setAiNote(f.summary || "Filters set");
+    }).catch((e) => S.error(e.message)).finally(() => setAiBusy(false));
+  };
+  const pickedRows = data.filter((c) => picked.has(c.id));
   const onTab = data.filter((c) => inTab(c, tab));   // filter options come from what's on this tab
   const tabs = ["All", "In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed", "Not active"].map((t) => ({ key: t, label: t === "All" ? `All ${data.length}` : `${t} ${data.filter((c) => inTab(c, t)).length}` }));
   return (
@@ -4885,7 +5031,20 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
       </div>
       {blindOpen && <BlindResumesPanel open onClose={() => setBlindOpen(false)} S={S} toast={toast} />}
       <Card>
-        <div className="mb-3 overflow-x-auto"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
+        <form onSubmit={(e) => { e.preventDefault(); runAi(); }} className="flex items-center gap-2 rounded-xl border px-3.5 mb-3" style={{ borderColor: C.line2, background: C.card }}>
+          <Sparkles size={17} color={C.em} className="shrink-0" />
+          <input value={aiText} onChange={(e) => setAiText(e.target.value)} placeholder="Describe who you're looking for: accountants in Lagos with IFRS, added this month" aria-label="Describe who you're looking for" className="bg-transparent outline-none text-sm flex-1 min-w-0 py-3" style={{ color: C.ink }} />
+          <button type="submit" disabled={!aiText.trim() || aiBusy} className="text-sm font-semibold shrink-0 rounded-lg px-3 py-1.5" style={{ color: aiText.trim() ? "#fff" : C.ink3, background: aiText.trim() ? C.em : C.neutralBg }}>{aiBusy ? <>Filtering <InlineDots color="#fff" /></> : "AI filter"}</button>
+        </form>
+        {aiNote && <div className="flex flex-wrap items-center gap-2 text-xs mb-3" style={{ color: C.ink2 }}><Sparkles size={13} color={C.em} /><span><span className="font-semibold" style={{ color: C.ink }}>{aiNote}</span> · {plural(filtered.length, "candidate")}</span>{kwF.map((k) => <button key={k} type="button" onClick={() => setKwF(kwF.filter((x) => x !== k))} className="rounded-md px-2 py-0.5 flex items-center gap-1" style={{ background: C.emTint, color: C.emText }} aria-label={"Remove " + k}>{k}<X size={11} /></button>)}<button type="button" onClick={clearAll} className="font-semibold" style={{ color: C.em }}>Clear</button></div>}
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div className="overflow-x-auto min-w-0"><Tabs tabs={tabs} active={tab} setActive={setTab} /></div>
+          <div className="flex rounded-lg p-0.5 shrink-0" style={{ background: C.neutralBg }} role="group" aria-label="View">
+            {[["table", "Table"], ["board", "Board"], ["calendar", "Calendar"]].map(([k, l]) => (
+              <button key={k} type="button" aria-pressed={view === k} onClick={() => setView(k)} className="rounded-md px-3 py-1.5 text-sm" style={view === k ? { background: C.card, color: C.ink, fontWeight: 600, boxShadow: "0 1px 2px rgba(20,32,27,.08)" } : { color: C.ink2 }}>{l}</button>
+            ))}
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <div className="flex w-full sm:w-60"><SearchInput value={q} onChange={setQ} placeholder="Search candidates" /></div>
           <FilterPill label="Recruiter" value={recF} onChange={setRecF} options={S.team.map((r) => ({ value: r.name, label: r.name, count: onTab.filter((c) => c.recruiter === r.name).length }))} />
@@ -4895,9 +5054,13 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
           <FilterPill label="Source" value={sourceF} onChange={setSourceF} options={sources.map((x) => ({ value: x, label: x, count: onTab.filter((c) => c.source === x).length }))} />
           <DatePill label="Date added" from={dateFrom} to={dateTo} onChange={(a, b) => { setDateFrom(a); setDateTo(b); }} dates={data.map((c) => c.createdAt)} />
           <ScorePill label="AI score" value={minAi} onChange={setMinAi} />
-          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={() => { setRecF([]); setMinAi(0); setRoleF([]); setSourceF([]); setCountryF([]); setJobF([]); setDateFrom(""); setDateTo(""); setQ(""); }} />
+          <ClearFilters show={activeFilterCount > 0 || !!q} onClick={clearAll} />
         </div>
-        <DataTable
+        {view === "table" && picked.size > 0 && <CandidateBulkBar picked={pickedRows} S={S} toast={toast} staff={S.role !== "recruiter"} onClear={() => setPicked(new Set())} />}
+        {view === "board" && <CandidateBoard rows={filtered} openCandidate={openCandidate} onMore={(col) => { setTab(col); setView("table"); }} />}
+        {view === "calendar" && <CandidateCalendar rows={filtered} S={S} openCandidate={openCandidate} />}
+        {view === "table" && <DataTable
+          selected={picked} onSelect={setPicked}
           rows={filtered}
           onRowClick={openCandidate}
           empty="No candidates match this filter."
@@ -4918,7 +5081,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
             { key: "added", label: "ADDED", render: (c) => <span className="text-xs whitespace-nowrap" style={{ color: C.ink2 }} title={new Date(c.createdAt).toLocaleString()}>{addedOn(c.createdAt)}</span> },
             { key: "activity", label: "ACTIVITY", render: (c) => <span className="text-xs" style={{ color: C.ink2 }}>{c.activity}</span> },
           ]}
-        />
+        />}
       </Card>
     </div>
   );
