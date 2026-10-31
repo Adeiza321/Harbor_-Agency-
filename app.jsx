@@ -1231,7 +1231,7 @@ function KPI({ label, value, delta, foot, dark = false, trend }) {
         )}
       </div>
       <div className="flex items-end justify-between gap-2 mb-1">
-        <div className="text-2xl md:text-4xl break-words" style={{ ...SERIF, color: dark ? C.lime : C.ink }}>{value}</div>
+        <div className={(String(value).length > 9 ? "text-xl md:text-2xl" : "text-2xl md:text-4xl") + " break-words"} style={{ ...SERIF, color: dark ? C.lime : C.ink }}>{value}</div>
         {chip && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0 mb-1" style={{ background: chip.bg, color: chip.fg, fontVariantNumeric: "tabular-nums" }} title={"Compared with " + trend.vs}>{chip.t}{chip.t !== "same" ? " vs " + trend.vs : ""}</span>}
       </div>
       {trend && <Sparkline series={trend.series} color={line[0]} fill={line[1]} />}
@@ -4490,6 +4490,155 @@ function RecruiterAuditPage({ S, toast }) {
 }
 
 const PERIOD_VS = { Daily: "yesterday", Weekly: "last week", Monthly: "last month", Yearly: "last year" };
+/* ---- Home: role cards, candidates interviewing, the monthly goal, pipeline value and client
+   follow-ups. mine: only the signed-in recruiter's candidates and roles. */
+const HOME_STAGE_GROUPS = [["In review", ["Sourced", "In review", "Screening"]], ["With client", ["Submitted"]], ["Interview", ["Interview"]], ["Offer", ["Offer"]]];
+function HomeRoles({ S, mine }) {
+  const [all, setAll] = useState(false);
+  const cands = mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands;
+  const roles = S.jobs.filter((j) => j.status !== "Draft" && j.status !== "Closed" && !j.leadRole && (!mine || onWorklist(S, j))).map((j) => {
+    const counts = HOME_STAGE_GROUPS.map(() => 0); let fits = 0;
+    cands.forEach((c) => {
+      const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
+      if (l) { if (isLiveLink(l)) { const g = HOME_STAGE_GROUPS.findIndex(([, st]) => st.includes(l.stage)); if (g >= 0) counts[g]++; } }
+      else if ((c.matches || []).some((m) => m.job_id === j.id && (m.fit || 0) >= 60)) fits++;
+    });
+    return { j, counts, fits, score: counts[3] * 8 + counts[2] * 4 + counts[1] * 2 + counts[0] };
+  }).sort((a, b) => b.score - a.score || (b.j.createdAt || 0) - (a.j.createdAt || 0));
+  if (!roles.length) return null;
+  const shown = all ? roles : roles.slice(0, 4);
+  return (
+    <section aria-label="Your roles" className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-lg" style={SERIF}>{mine ? "Your roles" : "Open roles"} <span className="text-sm font-normal" style={{ color: C.ink2, fontFamily: "inherit", letterSpacing: 0 }}>{roles.length}</span></div>
+        <button type="button" onClick={() => S.go("jobs")} className="text-sm font-semibold" style={{ color: C.em }}>All jobs</button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {shown.map(({ j, counts, fits }) => {
+          const b = suggestBilling(j, null);
+          return (
+            <button key={j.id} type="button" onClick={() => S.openJob(j.id)} className="rounded-2xl border p-4 text-left flex flex-col gap-3 min-w-0" style={{ background: C.card, borderColor: C.line }}>
+              <div className="flex items-start gap-3 min-w-0 w-full">
+                <span className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shrink-0" style={{ background: C.emTint, color: C.emText }}>{initialsOf(j.client)}</span>
+                <span className="flex-1 min-w-0"><span className="block font-semibold truncate">{j.role}</span><span className="block text-xs truncate mt-0.5" style={{ color: C.ink2 }}>{[j.client, j.location, j.workSetup].filter(Boolean).join(" · ")}</span></span>
+                <StatusPill status={j.status} />
+              </div>
+              {(j.minPay || j.maxPay || b.fee) && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                  {(j.minPay || j.maxPay) && !j.commissionOnly && <span><span style={{ color: C.ink2 }}>Salary </span>{j.minPay ? money(j.minPay, j.currency) : "?"}{j.maxPay && j.maxPay !== j.minPay ? " – " + money(j.maxPay, j.currency) : ""} / {(j.salaryPeriod || "Yearly").toLowerCase()}</span>}
+                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>≈ {money(b.fee, b.feeCurrency)}</span> : null}
+                </div>
+              )}
+              <div className="grid grid-cols-4 gap-1.5 w-full">
+                {HOME_STAGE_GROUPS.map(([label], i) => (
+                  <span key={label} className="rounded-lg px-2 py-1.5" style={{ background: i >= 2 && counts[i] ? C.emTint : C.soft }}>
+                    <span className="block text-base font-bold" style={{ color: i >= 2 && counts[i] ? C.emText : C.ink }}>{counts[i]}</span>
+                    <span className="block text-[11px] truncate" style={{ color: i >= 2 && counts[i] ? C.emText : C.ink2 }}>{label}</span>
+                  </span>
+                ))}
+              </div>
+              {fits > 0 && <span className="text-xs flex items-center gap-1.5" style={{ color: C.emText }}><Sparkles size={13} />{plural(fits, "person", "people")} already in ProNext {fits === 1 ? "fits" : "fit"} this role</span>}
+            </button>
+          );
+        })}
+      </div>
+      {roles.length > 4 && <button type="button" onClick={() => setAll((x) => !x)} className="self-start text-sm font-semibold" style={{ color: C.em }}>{all ? "Show fewer" : "Show all " + roles.length}</button>}
+    </section>
+  );
+}
+function HomeInterviewing({ S, mine }) {
+  const now = Date.now();
+  const rows = [];
+  (mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands).forEach((c) => (c.jobLinks || []).forEach((l) => {
+    if (!isLiveLink(l) || !["Interview", "Offer"].includes(l.stage)) return;
+    const j = S.jobs.find((x) => x.id === l.jobId);
+    const next = (S.interviews || []).filter((iv) => iv.linkId === l.id && iv.status === "scheduled" && iv.end >= now).sort((a, b) => a.start - b.start)[0] || null;
+    rows.push({ c, l, j, next });
+  }));
+  rows.sort((a, b) => (a.next ? a.next.start : Infinity) - (b.next ? b.next.start : Infinity));
+  const when = (t) => { const d = new Date(t), today = new Date(); const same = d.toDateString() === today.toDateString(); const tmr = new Date(Date.now() + 864e5).toDateString() === d.toDateString();
+    return (same ? "Today" : tmr ? "Tomorrow" : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })) + ", " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
+  return (
+    <Card className="!p-0">
+      <div className="flex items-baseline justify-between gap-2 px-5 pt-4 pb-3">
+        <div className="text-lg" style={SERIF}>Candidates interviewing <span className="text-sm font-normal" style={{ color: C.ink2, fontFamily: "inherit", letterSpacing: 0 }}>{rows.length}</span></div>
+        <button type="button" onClick={() => S.go("interviews")} className="text-sm font-semibold" style={{ color: C.em }}>Interviews</button>
+      </div>
+      {rows.length === 0 && <div className="px-5 pb-5 text-sm" style={{ color: C.ink2 }}>No one is at interview or offer yet.</div>}
+      {rows.slice(0, 6).map(({ c, l, j, next }) => (
+        <button key={l.id} type="button" onClick={() => S.openCandidate(c.id)} className="w-full flex items-center gap-3 px-5 py-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
+          <Avatar init={initialsOf(c.name)} tone="em" size={34} src={c.photo || undefined} />
+          <span className="flex-1 min-w-0"><span className="block text-sm font-semibold truncate">{c.name}</span><span className="block text-xs truncate" style={{ color: C.ink2 }}>{j ? j.role + (j.client ? " · " + j.client : "") : "Role"}</span></span>
+          <StatusPill status={next && next.round ? l.stage : l.stage} />
+          <span className="text-xs text-right shrink-0 hidden sm:block" style={{ color: C.ink2, width: 128 }}>{next ? (next.round ? next.round + " · " : "") + when(next.start) : l.stage === "Offer" ? "Offer out" : "No interview booked"}</span>
+        </button>
+      ))}
+      {rows.length > 6 && <button type="button" onClick={() => S.go("interviews")} className="w-full px-5 py-3 text-sm font-semibold text-left" style={{ color: C.em, borderTop: `1px solid ${C.line}` }}>See all {rows.length}</button>}
+    </Card>
+  );
+}
+function HomeGoal({ S, recruiterId }) {
+  const d = new Date(), from = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const tm = monthlyTargets(S);
+  const goal = (S.settings && S.settings.revenueGoal) || {};
+  const plc = S.placements.filter((p) => p.createdAt >= from && p.status !== "Fallout" && (!recruiterId || p.recruiterId === recruiterId));
+  const target = Math.max(1, Number(tm.placements) || 1);
+  const pct = Math.min(100, Math.round((plc.length / target) * 100));
+  const earned = recruiterId ? sumByCurrency(plc.filter((p) => p.incentiveNum), "incentiveNum", "incentiveCurrency") : sumByCurrency(plc.filter((p) => p.feeNum), "feeNum", "feeCurrency");
+  const dim = "rgba(242,244,241,.72)";
+  return (
+    <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: C.side, color: C.onSide }}>
+      <div className="text-sm" style={{ color: dim }}>{d.toLocaleDateString("en-GB", { month: "long" })}</div>
+      <div className="flex items-baseline gap-2"><span className="text-4xl" style={{ ...SERIF, color: "#fff" }}>{plc.length}</span><span className="text-sm" style={{ color: dim }}>of {target} placements</span></div>
+      <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,.12)" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Placements against this month's target"><div className="h-2 rounded-full" style={{ width: pct + "%", background: C.lime }} /></div>
+      <div className="flex justify-between gap-3 text-sm"><span style={{ color: dim }}>{recruiterId ? "Your earnings" : "Fees this month"}</span><span className="font-semibold text-right">{earned}</span></div>
+      {!recruiterId && goal.amount ? <div className="text-xs" style={{ color: dim }}>Revenue goal {money(goal.amount, goal.currency || "USD")}{goal.by ? " by " + fdate(goal.by + "T12:00:00") : ""}</div> : null}
+    </div>
+  );
+}
+function HomePipelineValue({ S, mine }) {
+  const totals = {}; let n = 0;
+  (mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands).forEach((c) => (c.jobLinks || []).forEach((l) => {
+    if (!isLiveLink(l) || !["Interview", "Offer"].includes(l.stage)) return;
+    const j = S.jobs.find((x) => x.id === l.jobId); if (!j) return;
+    const b = suggestBilling(j, null);
+    const v = Number(mine ? b.incentive : b.fee) || 0, cur = mine ? b.incentiveCurrency : b.feeCurrency;
+    n++; if (v) totals[cur] = (totals[cur] || 0) + v;
+  }));
+  const entries = Object.entries(totals);
+  return (
+    <Card>
+      <div className="text-sm" style={{ color: C.ink2 }}>{mine ? "Your earnings in play" : "Pipeline value"}</div>
+      <div className="text-2xl mt-1" style={SERIF}>{entries.length ? entries.map(([cur, v]) => money(v, cur)).join(" + ") : money(0, (S.settings.revenueGoal || {}).currency || "USD")}</div>
+      <div className="text-xs mt-1" style={{ color: C.ink2 }}>{n ? (mine ? "Your incentive on " : "Fees on ") + plural(n, "candidate") + " at interview or offer" : "Nobody at interview or offer yet"}</div>
+    </Card>
+  );
+}
+function HomeFollowups({ S }) {
+  const [leads, setLeads] = useState(null);
+  React.useEffect(() => {
+    let live = true;
+    S.sb("/rest/v1/leads?select=id,company,status,interested_at,data,outreach_messages(status,sent_at,kind,followup),client_replies(received_at,auto,spam)&status=in.(contacted,replied)&order=created_at.desc&limit=300")
+      .then((r) => live && setLeads(r || [])).catch(() => live && setLeads([]));
+    return () => { live = false; };
+  }, []); // eslint-disable-line
+  if (!leads) return null;
+  const week = Date.now() - 7 * 864e5;
+  const replied = leads.filter((l) => (l.client_replies || []).some((r) => !r.auto && !r.spam && new Date(r.received_at).getTime() >= week)).slice(0, 3);
+  const due = leads.map((l) => ({ l, f: leadFollowup(l) })).filter((x) => x.f).sort((a, b) => a.f.due - b.f.due).slice(0, 5);
+  if (!replied.length && !due.length) return null;
+  const day = (t) => { const d = new Date(t); return d.toDateString() === new Date().toDateString() ? "today" : d.getTime() < Date.now() ? "due" : d.toLocaleDateString("en-GB", { weekday: "short" }); };
+  return (
+    <Card>
+      <div className="flex items-baseline justify-between gap-2"><div className="text-sm font-semibold">Client follow-ups</div><button type="button" onClick={() => S.go("campaigns")} className="text-xs font-semibold" style={{ color: C.em }}>Outreach</button></div>
+      <div className="flex flex-col gap-2.5 mt-3">
+        {replied.map((l) => <button key={"r" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0 font-semibold" style={{ color: C.emText }}>Replied</span></button>)}
+        {due.map(({ l, f }) => <button key={"f" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0" style={{ color: f.isDue ? C.warnFg : C.ink2 }}>Follow-up {f.step} · {day(f.due)}</span></button>)}
+      </div>
+    </Card>
+  );
+}
+
 function OverviewRecOps({ S }) {
   const checks = useAttentionChecks(S);
   const [period, setPeriod] = useState("Monthly");
@@ -4537,9 +4686,9 @@ function OverviewRecOps({ S }) {
         <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
-        <SubmissionsCard S={S} />
-        <AttentionList title="Needs attention" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
+        <div className="flex flex-col gap-5 min-w-0">
+          <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const drafts = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "draft");
           const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
           const unassigned = S.inbox.filter((x) => x.status === "new").map((x) => ({ id: null, name: x.name, sub: x.role, go: "inbox" }));
@@ -4555,15 +4704,22 @@ function OverviewRecOps({ S }) {
             { icon: AlertTriangle, t: "Placements in guarantee", s: plural(guarantee.length, "placement"), tone: "danger", people: guarantee, go: "billing" },
           ];
         })()} />
+          <HomeRoles S={S} />
+          <HomeInterviewing S={S} />
+          <SubmissionsCard S={S} />
+          <RolePicker S={S} />
+          <Card>
+            <RecruiterPerformanceChart S={S} />
+          </Card>
+          <TeamToday S={S} />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
+          <HomeGoal S={S} />
+          <HomePipelineValue S={S} />
+          <HomeFollowups S={S} />
+          <PaceCard S={S} />
+        </div>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <PaceCard S={S} />
-        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
-      </div>
-      <Card>
-        <RecruiterPerformanceChart S={S} />
-      </Card>
-      <TeamToday S={S} />
     </div>
   );
 }
@@ -4620,9 +4776,9 @@ function OverviewRecruiter({ S }) {
         <KPI label="My interviews" value={st.interviews} foot="in interview now" />
         <KPI label="My earnings" value={sumByCurrency(S.placements.filter((p) => p.recruiterId === S.me.id && ["Ready", "Invoiced", "Paid"].includes(p.status) && p.incentiveNum), "incentiveNum", "incentiveCurrency")} foot="your incentive, after guarantee" />
       </KPIGrid>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
-        <AttentionList title="Needs attention" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
+        <div className="flex flex-col gap-5 min-w-0">
+          <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
           const routed = linkPeople(S, (l) => l.response === "pending");
@@ -4633,10 +4789,15 @@ function OverviewRecruiter({ S }) {
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
           ];
         })()} />
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <PaceCard S={S} recruiterId={S.me.id} />
-        <div className="lg:col-span-2 min-w-0"><MyEngagedRoles S={S} /></div>
+          <MyEngagedRoles S={S} />
+          <HomeInterviewing S={S} mine />
+          <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
+          <HomeGoal S={S} recruiterId={S.me.id} />
+          <HomePipelineValue S={S} mine />
+          <PaceCard S={S} recruiterId={S.me.id} />
+        </div>
       </div>
     </div>
   );
