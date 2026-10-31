@@ -4807,8 +4807,9 @@ function OverviewRecruiter({ S }) {
 
 /* Candidates: Board view (columns by status) and Calendar view (their interviews by day). */
 const BOARD_COLS = ["In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"];
+// Each column shows its first 10 (best AI fit first); "View all" opens the table on that status.
 function CandidateBoard({ rows, openCandidate, onMore }) {
-  const LIMIT = 25;
+  const LIMIT = 10;
   return (
     <div className="overflow-x-auto -mx-1 px-1 pb-1">
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${BOARD_COLS.length}, minmax(200px, 1fr))`, minWidth: BOARD_COLS.length * 212 }}>
@@ -4827,7 +4828,7 @@ function CandidateBoard({ rows, openCandidate, onMore }) {
                   </span>
                 </button>
               ))}
-              {list.length > LIMIT && <button type="button" onClick={() => onMore(col)} className="text-xs font-semibold px-1 py-1 text-left" style={{ color: C.em }}>+{list.length - LIMIT} more</button>}
+              {list.length > LIMIT && <button type="button" onClick={() => onMore(col)} className="text-xs font-semibold px-1 py-1 text-left" style={{ color: C.em }}>View all {list.length}</button>}
               {!list.length && <div className="text-xs px-1 py-2" style={{ color: C.ink3 }}>No one</div>}
             </div>
           );
