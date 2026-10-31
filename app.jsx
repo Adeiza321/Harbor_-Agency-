@@ -8212,6 +8212,22 @@ function CheckinReply({ token, onDone }) {
     </div>
   );
 }
+/* The job description first on the Role page, laid out like the public job page (JobDescription:
+   lists, headings, paragraphs). Long ones fold after the first part. */
+function RoleDescription({ text }) {
+  const [open, setOpen] = useState(false);
+  const long = String(text || "").length > 1600;
+  return (
+    <Card>
+      <SectionTitle title="About the role" size="text-xl" />
+      <div className="mt-3 relative" style={!open && long ? { maxHeight: 520, overflow: "hidden" } : undefined}>
+        <JobDescription text={text} />
+        {!open && long && <div className="absolute left-0 right-0 bottom-0 h-24" style={{ background: `linear-gradient(to bottom, transparent, ${C.card})` }} />}
+      </div>
+      {long && <button type="button" onClick={() => setOpen((x) => !x)} className="mt-3 text-sm font-semibold" style={{ color: C.em }}>{open ? "Show less" : "Show the full description"}</button>}
+    </Card>
+  );
+}
 function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddCandidate }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reasonOpen, setReasonOpen] = useState(false);
@@ -8334,6 +8350,8 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             {S.role !== "recruiter" && <Btn onClick={() => setStatus("Open")} className="shrink-0">Reopen</Btn>}
           </div>
         )}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
+        <div className="flex flex-col gap-5 min-w-0">
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
           <div className="rounded-xl border px-3.5 py-3" style={{ background: C.card, borderColor: C.line }}><div className="text-xs" style={{ color: C.ink2 }}>Submitted</div><div className="text-lg font-semibold mt-0.5">{job.submitted}</div></div>
           <div className="rounded-xl border px-3.5 py-3" style={{ background: C.card, borderColor: C.line }}><div className="text-xs" style={{ color: C.ink2 }}>Interview</div><div className="text-lg font-semibold mt-0.5">{job.interview}</div></div>
@@ -8342,6 +8360,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           <div className="rounded-xl border px-3.5 py-3" style={{ background: C.card, borderColor: C.line }}><div className="text-xs" style={{ color: C.ink2 }}>Applications</div><div className="text-lg font-semibold mt-0.5">{views.apps}{views.referrals ? <span className="font-normal" style={{ color: C.ink3 }}> · {views.referrals} referred</span> : null}</div></div>
           <div title="Applications as a share of job views" className="rounded-xl border px-3.5 py-3" style={{ background: C.card, borderColor: C.line }}><div className="text-xs" style={{ color: C.ink2 }}>Viewers who applied</div><div className="text-lg font-semibold mt-0.5">{views.total ? Math.round((views.apps / views.total) * 100) + "%" : "-"}</div></div>
         </div>
+          {job.description ? <RoleDescription text={job.description} /> : <Card><SectionTitle title="About the role" size="text-xl" /><div className="text-sm mt-2" style={{ color: C.ink2 }}>No job description yet.{S.role !== "recruiter" ? " Add one with Edit job." : ""}</div></Card>}
       {(() => {
         const groups = [["In review", ["Sourced", "In review", "Screening"]], ["With client", ["Submitted"]], ["Interview", ["Interview"]], ["Offer", ["Offer"]], ["Placed", ["Placed"]]];
         const live = candidates.filter((c) => c.link && c.link.response === "accepted");
@@ -8366,8 +8385,6 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           </div>
         );
       })()}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
-        <div className="flex flex-col gap-5 min-w-0">
         <Card>
           <SectionTitle title="Candidates on this role" sub={activeCount + " active \u00b7 " + candidates.length + " total"} size="text-xl" />
           {rejectFor && <RejectModal candidate={S.cands.find((x) => x.id === rejectFor.cand.id) || rejectFor.cand} kind={rejectFor.kind} linkId={rejectFor.linkId} S={S} toast={toast} onClose={() => setRejectFor(null)} />}
@@ -8493,9 +8510,6 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
               <div className="text-sm font-semibold mb-2">Apply link (applications land in the Inbox)</div>
               <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm" style={{ background: C.canvas }}><Send size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate flex-1">{myLink(job.link)}</span><Copy size={15} color={C.ink2} className="cursor-pointer shrink-0" onClick={copyLink} /></div>
             </Card>
-          )}
-          {job.description && (
-            <Card><SectionTitle title="About the role" size="text-xl" /><div className="mt-3 text-sm whitespace-pre-wrap leading-relaxed" style={{ color: C.ink2 }}>{job.description}</div></Card>
           )}
         {!job.leadRole && <JobCheckins job={job} S={S} toast={toast} />}
           {job.seo && (job.seo.keywords || []).length > 0 && (
