@@ -210,7 +210,8 @@ const curSymbol = (cur) => { try { return new Intl.NumberFormat(undefined, { sty
 // A job's pay over a year or a month, whatever period it's quoted in (an hourly rate counts 40 hours
 // a week, the same as contract payouts). A percentage fee billed once is a share of a year's pay; a
 // percentage fee billed monthly is a share of a month's pay.
-const PAY_PER_YEAR = { Hourly: 2080, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
+// Hourly roles: 40 hours a week x 4 weeks a month (160 hours a month, 1,920 a year).
+const PAY_PER_YEAR = { Hourly: 1920, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
 const payOver = (job, per, pay) => { const p = Number(pay) || Number(job.maxPay) || Number(job.minPay) || 0; const y = p * (PAY_PER_YEAR[job.salaryPeriod] || 1); return per === "month" ? y / 12 : y; };
 function suggestBilling(job, candidatePay) {
   if (!job) return { fee: "", feeCurrency: "NGN", incentive: "", incentiveCurrency: "NGN" };
@@ -4526,7 +4527,7 @@ const HOME_STAGE_GROUPS = [["In review", ["Sourced", "In review", "Screening"]],
 function HomeRoles({ S, mine }) {
   const [all, setAll] = useState(false);
   const cands = mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands;
-  const roles = S.jobs.filter((j) => j.status !== "Draft" && j.status !== "Closed" && !j.leadRole && (!mine || onWorklist(S, j))).map((j) => {
+  const roles = S.jobs.filter((j) => j.status === "Open" && !j.leadRole && (!mine || onWorklist(S, j))).map((j) => {
     const counts = HOME_STAGE_GROUPS.map(() => 0); let fits = 0;
     cands.forEach((c) => {
       const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
@@ -4541,7 +4542,7 @@ function HomeRoles({ S, mine }) {
     <section aria-label="Your roles" className="flex flex-col gap-3">
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-lg" style={SERIF}>{mine ? "Your roles" : "Open roles"} <span className="text-sm font-normal" style={{ color: C.ink2, fontFamily: "inherit", letterSpacing: 0 }}>{roles.length}</span></div>
-        <button type="button" onClick={() => S.go("jobs")} className="text-sm font-semibold" style={{ color: C.em }}>All jobs</button>
+        <button type="button" onClick={() => { try { sessionStorage.setItem("pn.jobsTab", mine ? "Mine" : "Open"); } catch (e) { /* private window */ } S.go("jobs"); }} className="text-sm font-semibold" style={{ color: C.em }}>{mine ? "All your roles" : "All open roles"}</button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {shown.map(({ j, counts, fits }) => {
@@ -4735,12 +4736,6 @@ function OverviewRecOps({ S }) {
         })()} />
           <HomeRoles S={S} />
           <HomeInterviewing S={S} />
-          <SubmissionsCard S={S} />
-          <RolePicker S={S} />
-          <Card>
-            <RecruiterPerformanceChart S={S} />
-          </Card>
-          <TeamToday S={S} />
         </div>
         <div className="flex flex-col gap-5 min-w-0">
           <HomeGoal S={S} />
@@ -4748,6 +4743,12 @@ function OverviewRecOps({ S }) {
           <HomeFollowups S={S} />
           <PaceCard S={S} />
         </div>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        <RolePicker S={S} />
+        <Card>
+          <RecruiterPerformanceChart S={S} />
+        </Card>
       </div>
     </div>
   );
@@ -4820,7 +4821,6 @@ function OverviewRecruiter({ S }) {
         })()} />
           <MyEngagedRoles S={S} />
           <HomeInterviewing S={S} mine />
-          <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
         </div>
         <div className="flex flex-col gap-5 min-w-0">
           <HomeGoal S={S} recruiterId={S.me.id} />
@@ -8596,7 +8596,8 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const [q, setQ] = useState("");
   const gq = (S.query || "").toLowerCase();
   const hit = (j, t) => j.role.toLowerCase().includes(t) || j.client.toLowerCase().includes(t);
-  const [tab, setTab] = useState("All");
+  // Arriving from Home's "All open roles" opens on that tab.
+  const [tab, setTab] = useState(() => { try { const t = sessionStorage.getItem("pn.jobsTab"); sessionStorage.removeItem("pn.jobsTab"); return t || "All"; } catch (e) { return "All"; } });
   const [dFrom, setDFrom] = useState(""), [dTo, setDTo] = useState("");
   const inDates = (t) => (!dFrom || t >= new Date(dFrom + "T00:00:00").getTime()) && (!dTo || t <= new Date(dTo + "T23:59:59").getTime());
   const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.jobsView") || "list"; } catch (e) { return "list"; } });
@@ -13085,11 +13086,11 @@ const BILLING_STATUSES = [["Guarantee", "In guarantee"], ["Ready", "Ready to inv
 
 /* ---- Payouts --------------------------------------------------------------------------------
    Permanent (one_off): one payout of the fee when the guarantee clears (start + guarantee days).
-   Contract (monthly):  hourly rate x hours a week x 52 / 12 each month, for contract_months
+   Contract (monthly):  hourly rate x hours a week x 4 weeks each month, for contract_months
    (default 6), paid a month in arrears; stops at ended_on (the last month is pro-rated). */
 const CONTRACT_DEFAULT_MONTHS = 6;
 const addMonths = (ymd, n) => { const d = new Date((ymd || ymdToday()) + "T00:00:00"); const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); return ymdOf(d); };
-const contractMonthly = (rate, hoursPerWeek) => Math.round((Number(rate) || 0) * (Number(hoursPerWeek) || 40) * 52 / 12 * 100) / 100;
+const contractMonthly = (rate, hoursPerWeek) => Math.round((Number(rate) || 0) * (Number(hoursPerWeek) || 40) * 4 * 100) / 100;
 const placementMonthly = (p) => contractMonthly(p.hourlyRate, p.hoursPerWeek);
 function payoutSchedule(p, todayYmd = ymdToday()) {
   const start = p.startDate || (p.createdAt ? ymdOf(new Date(p.createdAt)) : todayYmd);

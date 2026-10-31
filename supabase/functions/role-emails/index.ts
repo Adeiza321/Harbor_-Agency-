@@ -50,7 +50,7 @@ function money(n: number | null, cur: string) {
 // What the recruiter earns, in money (same sums as the app's recruiterEarning): a percentage fee
 // billed once is a share of a year's pay, billed monthly a share of a month's pay (an hourly rate
 // counts 40 hours a week); a percentage incentive is a share of that fee.
-const PAY_PER_YEAR: Record<string, number> = { Hourly: 2080, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
+const PAY_PER_YEAR: Record<string, number> = { Hourly: 1920, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
 function earning(j: any) {
   if (!j.incentive_amount) return "";
   const monthlyBill = j.billing_frequency === "Monthly";

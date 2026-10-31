@@ -171,7 +171,7 @@ export function bonusEstimate(salary: unknown, feePct: number): string | null {
   const nums = [...s.replace(/,/g, "").matchAll(/(\d+(?:\.\d+)?)\s*(k)?/gi)].map((m) => Number(m[1]) * (m[2] ? 1000 : 1)).filter((n) => n > 0);
   if (!nums.length) return null;
   let mid = nums.length > 1 ? (nums[0] + nums[1]) / 2 : nums[0];
-  if (/hour|\/\s*hr|hourly/i.test(s)) mid *= 2080;
+  if (/hour|\/\s*hr|hourly/i.test(s)) mid *= 1920; // 40 hours x 4 weeks x 12
   else if (/month/i.test(s)) mid *= 12;
   else if (/week/i.test(s)) mid *= 52;
   if (mid < 5000) return null;
