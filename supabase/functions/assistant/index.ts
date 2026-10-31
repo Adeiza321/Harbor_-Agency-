@@ -168,12 +168,12 @@ const toolFor = (role: string, n: string) => (role === "recruiter" && n === "pro
 // ---------------------------------------------------------------- lookups (caller's own login: RLS applies)
 async function runRead(db: any, me: any, name: string, input: any, admin?: any): Promise<unknown> {
   const staff = me.role === "admin" || me.role === "recops";
-  const feeOf = (j: any) => !staff ? undefined : j.billing_amount ? (j.billing_type === "percent" ? j.billing_amount + "%" : j.billing_amount + " " + (j.billing_currency || "")) + (j.billing_frequency === "Monthly" ? "/month" : "") : "";
-  const yourCut = (j: any) => j.incentive_amount ? (j.incentive_type === "percent" ? j.incentive_amount + "%" : j.incentive_amount + " " + (j.incentive_currency || "")) : "";
+  const feeOf = (j: any) => !staff ? undefined : j.billing_amount ? (j.billing_type === "percent" ? j.billing_amount + "%" : j.billing_type === "hourly" ? j.billing_amount + " " + (j.billing_currency || "") + "/hour worked (x160 hours a month)" : j.billing_amount + " " + (j.billing_currency || "")) + (j.billing_frequency === "Monthly" || j.billing_type === "hourly" ? "/month for " + (j.billing_months || 6) + " months" : "") : "";
+  const yourCut = (j: any) => j.incentive_amount ? (j.incentive_type === "percent" ? j.incentive_amount + "%" : j.incentive_type === "hourly" ? j.incentive_amount + " " + (j.incentive_currency || "") + "/hour worked (x160 hours a month)" : j.incentive_amount + " " + (j.incentive_currency || "")) + (j.incentive_frequency === "Monthly" || j.incentive_type === "hourly" ? " for " + (j.incentive_months || 6) + " months" : "") : "";
 
   if (name === "list_jobs") {
     const status = String(input?.status || "Open");
-    let q = db.from("jobs").select("id,role_title,client,status,location,work_setup,country,created_at,headcount,billing_type,billing_amount,billing_currency,billing_frequency,incentive_type,incentive_amount,incentive_currency,hold_reason").order("created_at", { ascending: false }).limit(80);
+    let q = db.from("jobs").select("id,role_title,client,status,location,work_setup,country,created_at,headcount,billing_type,billing_amount,billing_currency,billing_frequency,billing_months,incentive_type,incentive_amount,incentive_currency,incentive_frequency,incentive_months,hold_reason").order("created_at", { ascending: false }).limit(80);
     if (status !== "All") q = q.eq("status", status);
     if (input?.client) q = q.ilike("client", "%" + input.client + "%");
     const { data: jobs, error } = await q;

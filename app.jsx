@@ -213,30 +213,52 @@ const curSymbol = (cur) => { try { return new Intl.NumberFormat(undefined, { sty
 // Hourly roles: 40 hours a week x 4 weeks a month (160 hours a month, 1,920 a year).
 const PAY_PER_YEAR = { Hourly: 1920, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
 const payOver = (job, per, pay) => { const p = Number(pay) || Number(job.maxPay) || Number(job.minPay) || 0; const y = p * (PAY_PER_YEAR[job.salaryPeriod] || 1); return per === "month" ? y / 12 : y; };
+// Contract roles paid by the hour: 40 hours a week x 4 weeks = 160 hours a month.
+const CONTRACT_HOURS_MONTH = 160;
+// The agency fee and the recruiter incentive per payment: a one-off amount, or a month's worth on a
+// monthly (contract) role. "hourly" = an amount per hour worked, billed monthly (rate x 160).
 function suggestBilling(job, candidatePay) {
   if (!job) return { fee: "", feeCurrency: "NGN", incentive: "", incentiveCurrency: "NGN" };
+  const hourlyFee = job.billingType === "hourly";
   // The candidate's pay, when given, is taken to be in the same period as the job's.
-  const salary = payOver(job, job.billingFrequency === "Monthly" ? "month" : "year", num(candidatePay) || null);
-  const fee = job.billingType === "flat" ? (job.billingAmount || 0) : Math.round((salary * (job.billingAmount || 0)) / 100);
-  const feeCurrency = job.billingType === "flat" ? (job.billingCurrency || "NGN") : (job.currency || "NGN");
-  const incentive = job.incentiveType === "flat" ? (job.incentiveAmount || 0) : Math.round((fee * (job.incentiveAmount || 0)) / 100);
-  const incentiveCurrency = job.incentiveType === "flat" ? (job.incentiveCurrency || "NGN") : feeCurrency;
+  const salary = payOver(job, hourlyFee || job.billingFrequency === "Monthly" ? "month" : "year", num(candidatePay) || null);
+  const fee = hourlyFee ? Math.round((Number(job.billingAmount) || 0) * CONTRACT_HOURS_MONTH * 100) / 100
+    : job.billingType === "flat" ? (job.billingAmount || 0) : Math.round((salary * (job.billingAmount || 0)) / 100);
+  const feeCurrency = job.billingType === "percent" || !job.billingType ? (job.currency || "NGN") : (job.billingCurrency || "NGN");
+  const incentive = job.incentiveType === "hourly" ? Math.round((Number(job.incentiveAmount) || 0) * CONTRACT_HOURS_MONTH * 100) / 100
+    : job.incentiveType === "flat" ? (job.incentiveAmount || 0) : Math.round((fee * (job.incentiveAmount || 0)) / 100);
+  const incentiveCurrency = job.incentiveType === "flat" || job.incentiveType === "hourly" ? (job.incentiveCurrency || "NGN") : feeCurrency;
   return { fee: fee || "", feeCurrency, incentive: incentive || "", incentiveCurrency };
+}
+// The agency's and the recruiter's money on a role, each on its own timeline (set separately on the
+// job: the agency may bill 6 months while the recruiter is paid for 3).
+function roleMoney(job, candidatePay) {
+  const s = suggestBilling(job, candidatePay);
+  const feeMonthly = !!job && (job.billingType === "hourly" || job.billingFrequency === "Monthly");
+  const feeMonths = feeMonthly ? (Number(job.billingMonths) || CONTRACT_DEFAULT_MONTHS) : 1;
+  const pctInc = !!job && job.incentiveType !== "flat" && job.incentiveType !== "hourly";
+  const incMonthly = !!job && (job.incentiveType === "hourly" || job.incentiveFrequency === "Monthly" || (pctInc && feeMonthly));
+  // A percentage of a monthly fee with no months of its own follows the agency's months.
+  const incMonths = incMonthly ? (Number(job.incentiveMonths) || (job.incentiveFrequency === "Monthly" || job.incentiveType === "hourly" ? CONTRACT_DEFAULT_MONTHS : feeMonths)) : 1;
+  const fee = Number(s.fee) || 0, inc = Number(s.incentive) || 0;
+  return { fee, feeCurrency: s.feeCurrency, feeMonthly, feeMonths, feeTotal: fee * feeMonths,
+    inc, incCurrency: s.incentiveCurrency, incMonthly, incMonths, incTotal: inc * incMonths };
 }
 // What a recruiter earns on a role, in money, for the role page, their Overview and role emails:
 // { amount, currency, monthly, months, upTo (pay is a range), basis, missing (no fee or incentive set) }.
 function recruiterEarning(job) {
   if (!job) return null;
-  const s = suggestBilling(job, null);
-  const pctIncentive = job.incentiveType !== "flat";
-  const missing = !job.incentiveAmount || (pctIncentive && !s.fee);
-  const monthly = job.incentiveFrequency === "Monthly" || (pctIncentive && job.billingFrequency === "Monthly");
-  const months = monthly ? (job.incentiveMonths || job.billingMonths || CONTRACT_DEFAULT_MONTHS) : null;
-  const upTo = pctIncentive && job.billingType !== "flat" && job.minPay && job.maxPay && Number(job.minPay) < Number(job.maxPay);
-  return { amount: Number(s.incentive) || 0, currency: s.incentiveCurrency, monthly, months, upTo, missing,
-    basis: pctIncentive && job.incentiveAmount ? job.incentiveAmount + "% of the client fee" : "" };
+  const m = roleMoney(job, null);
+  const pctIncentive = job.incentiveType !== "flat" && job.incentiveType !== "hourly";
+  const missing = !job.incentiveAmount || (pctIncentive && !m.fee);
+  const monthly = m.incMonthly;
+  const months = monthly ? m.incMonths : null;
+  const upTo = pctIncentive && job.billingType === "percent" && job.minPay && job.maxPay && Number(job.minPay) < Number(job.maxPay);
+  return { amount: m.inc, currency: m.incCurrency, monthly, months, upTo, missing, total: m.incTotal,
+    basis: job.incentiveType === "hourly" && job.incentiveAmount ? money(job.incentiveAmount, m.incCurrency) + " per hour worked × 160 hours a month"
+      : pctIncentive && job.incentiveAmount ? job.incentiveAmount + "% of the client fee" : "" };
 }
-const earningText = (e) => !e || e.missing || !e.amount ? "" : (e.upTo ? "Up to " : "") + money(e.amount, e.currency) + (e.monthly ? " a month" + (e.months ? " for " + e.months + " months" : "") : "");
+const earningText = (e) => !e || e.missing || !e.amount ? "" : (e.upTo ? "Up to " : "") + money(e.amount, e.currency) + (e.monthly ? " a month" + (e.months ? " for " + e.months + " month" + (e.months === 1 ? "" : "s") + " (" + money(e.amount * e.months, e.currency) + " in all)" : "") : "");
 /* Resume formats the AI reads (see supabase/functions/ai-screen/resume.ts). */
 const RESUME_ACCEPT = ".pdf,.doc,.docx,.odt,.rtf,.txt,.jpg,.jpeg,.png,.webp,.heic,.heif";
 const RESUME_TYPES = { pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", odt: "application/vnd.oasis.opendocument.text", rtf: "application/rtf", txt: "text/plain", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", heic: "image/heic", heif: "image/heif" };
@@ -4085,10 +4107,10 @@ function PaceCard({ S, recruiterId }) {
 function rolePicks(S, earnings, from, to) {
   const inP = (t) => !from || (t && t >= from && t < to);
   return S.jobs.filter((j) => j.status !== "Draft" && (j.createdAt || 0) < (to || Infinity)).map((j) => {
-    const s = suggestBilling(j, null);
-    const monthlyJob = earnings ? j.incentiveFrequency === "Monthly" : j.billingFrequency === "Monthly";
-    const months = earnings ? (j.incentiveMonths || CONTRACT_DEFAULT_MONTHS) : (j.billingMonths || CONTRACT_DEFAULT_MONTHS);
-    const value = (Number(earnings ? s.incentive : s.fee) || 0) * (monthlyJob ? months : 1);
+    const rm = roleMoney(j, null);
+    const s = { incentiveCurrency: rm.incCurrency, feeCurrency: rm.feeCurrency };
+    const monthlyJob = earnings ? rm.incMonthly : rm.feeMonthly;
+    const value = earnings ? rm.incTotal : rm.feeTotal;
     let active = 0, late = 0, fits = 0;
     S.cands.forEach((c) => {
       const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
@@ -4546,7 +4568,7 @@ function HomeRoles({ S, mine }) {
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {shown.map(({ j, counts, fits }) => {
-          const b = suggestBilling(j, null);
+          const rm = roleMoney(j, null); const b = { fee: rm.feeTotal, feeCurrency: rm.feeCurrency };
           return (
             <button key={j.id} type="button" onClick={() => S.openJob(j.id)} className="rounded-2xl border p-4 text-left flex flex-col gap-3 min-w-0" style={{ background: C.card, borderColor: C.line }}>
               <div className="flex items-start gap-3 min-w-0 w-full">
@@ -4557,7 +4579,7 @@ function HomeRoles({ S, mine }) {
               {(j.minPay || j.maxPay || b.fee) && (
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                   {(j.minPay || j.maxPay) && !j.commissionOnly && <span><span style={{ color: C.ink2 }}>Salary </span>{j.minPay ? money(j.minPay, j.currency) : "?"}{j.maxPay && j.maxPay !== j.minPay ? " – " + money(j.maxPay, j.currency) : ""} / {(j.salaryPeriod || "Yearly").toLowerCase()}</span>}
-                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>≈ {money(b.fee, b.feeCurrency)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
+                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>≈ {rm.feeMonthly ? money(rm.fee, rm.feeCurrency) + "/mo × " + rm.feeMonths + " = " : ""}{money(b.fee, b.feeCurrency)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
                 </div>
               )}
               <div className="grid grid-cols-4 gap-1.5 w-full">
@@ -4632,8 +4654,8 @@ function HomePipelineValue({ S, mine }) {
   (mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands).forEach((c) => (c.jobLinks || []).forEach((l) => {
     if (!isLiveLink(l) || !["Interview", "Offer"].includes(l.stage)) return;
     const j = S.jobs.find((x) => x.id === l.jobId); if (!j) return;
-    const b = suggestBilling(j, null);
-    const v = Number(mine ? b.incentive : b.fee) || 0, cur = mine ? b.incentiveCurrency : b.feeCurrency;
+    const rm = roleMoney(j, null);
+    const v = mine ? rm.incTotal : rm.feeTotal, cur = mine ? rm.incCurrency : rm.feeCurrency;
     n++; if (v) totals[cur] = (totals[cur] || 0) + v;
   }));
   return (
@@ -8431,8 +8453,8 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
               {S.role !== "recruiter" && (
                 <div>
                   <div className="text-xs" style={{ color: C.ink3 }}>Client billing</div>
-                  <div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div>
-                  {job.billingAmount && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{job.billingFrequency === "Monthly" ? "Monthly" + (job.billingMonths ? ", for " + job.billingMonths + " month" + (job.billingMonths === 1 ? "" : "s") : "") : "One-off, on placement"}</div>}
+                  <div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "hourly" ? money(job.billingAmount, job.billingCurrency) + " per hour worked" : job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div>
+                  {job.billingAmount && (() => { const rm = roleMoney(job, null); return <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{rm.feeMonthly ? (rm.fee ? "≈ " + money(rm.fee, rm.feeCurrency) + " a month" + (job.billingType === "hourly" ? " (160 hours)" : "") + ", for " + rm.feeMonths + " month" + (rm.feeMonths === 1 ? "" : "s") + " · ≈ " + money(rm.feeTotal, rm.feeCurrency) + " in all" : "Monthly, for " + rm.feeMonths + " months") : "One-off, on placement"}</div>; })()}
                 </div>
               )}
               <div>
@@ -8692,6 +8714,10 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
   const [incentiveCurrency, setIncentiveCurrency] = useState(editJob ? (editJob.incentiveCurrency || "NGN") : (S.settings.defaultCurrency || "NGN"));
   const [incentiveFrequency, setIncentiveFrequency] = useState(editJob ? (editJob.incentiveFrequency || "One-off") : "One-off");
   const [incentiveMonths, setIncentiveMonths] = useState(editJob && editJob.incentiveMonths != null ? String(editJob.incentiveMonths) : "");
+  // The form's fee and incentive as a job, for the live "≈ … a month × … months" lines.
+  const formMoneyJob = { billingType, billingAmount: num(billingAmount), billingCurrency, billingFrequency: billingType === "hourly" ? "Monthly" : billingFrequency, billingMonths: num(billingMonths),
+    incentiveType, incentiveAmount: num(incentiveAmount), incentiveCurrency, incentiveFrequency: incentiveType === "hourly" ? "Monthly" : incentiveFrequency, incentiveMonths: num(incentiveMonths),
+    currency, salaryPeriod, minPay: num(minPay), maxPay: num(maxPay) };
   // Questions every applicant must be asked before their answers get recorded on their profile.
   const [questions, setQuestions] = useState(editJob && editJob.screeningQuestions && editJob.screeningQuestions.length ? editJob.screeningQuestions : [""]);
   const setQ = (i, v) => setQuestions((qs) => qs.map((q, idx) => (idx === i ? v : q)));
@@ -8746,8 +8772,8 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     const link = applyUrl(slug);
     S.setJobs((l) => [{ id, role: title, client, location, workSetup, employmentType, headcount: num(headcount) || 1,
       salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
-      billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency, billingMonths: billingFrequency === "Monthly" ? (num(billingMonths) || null) : null,
-      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" ? (num(incentiveMonths) || null) : null,
+      billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency: billingType === "hourly" ? "Monthly" : billingFrequency, billingMonths: billingFrequency === "Monthly" || billingType === "hourly" ? (num(billingMonths) || null) : null,
+      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency: incentiveType === "hourly" ? "Monthly" : incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" || incentiveType === "hourly" ? (num(incentiveMonths) || null) : null,
       screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
       recruiters: [], submitted: 0, interview: 0, days: 0, status, slug, link }, ...l]);
     setDone({ link, id, status, title, client });
@@ -8761,8 +8787,8 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     S.updateJob(editJob.id, {
       role: title, client, location, workSetup, employmentType, headcount: num(headcount) || 1,
       salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
-      billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency, billingMonths: billingFrequency === "Monthly" ? (num(billingMonths) || null) : null,
-      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" ? (num(incentiveMonths) || null) : null,
+      billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency: billingType === "hourly" ? "Monthly" : billingFrequency, billingMonths: billingFrequency === "Monthly" || billingType === "hourly" ? (num(billingMonths) || null) : null,
+      incentiveType, incentiveAmount: num(incentiveAmount) || null, incentiveCurrency, incentiveFrequency: incentiveType === "hourly" ? "Monthly" : incentiveFrequency, incentiveMonths: incentiveFrequency === "Monthly" || incentiveType === "hourly" ? (num(incentiveMonths) || null) : null,
       screeningQuestions: questions.map((q) => q.trim()).filter(Boolean),
     }).then(() => { toast("Job updated"); setPage("jobDetail"); }).catch(() => {}).finally(() => setBusy(false));
   };
@@ -8884,16 +8910,17 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>Type</label>
-                <select value={billingType} onChange={(e) => setBillingType(e.target.value)} className={inp} style={inpStyle}>
+                <select value={billingType} onChange={(e) => { const v = e.target.value; setBillingType(v); if (v === "hourly") setBillingFrequency("Monthly"); }} className={inp} style={inpStyle}>
                   <option value="percent">% of salary</option>
                   <option value="flat">Flat fee</option>
+                  <option value="hourly">Per hour worked (contract)</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs font-medium" style={{ color: C.ink2 }}>{billingType === "percent" ? "Percentage" : "Amount"}</label>
-                <input value={billingAmount} onChange={(e) => setBillingAmount(e.target.value)} placeholder={billingType === "percent" ? "e.g. 15" : "e.g. 3000000"} className={inp} style={inpStyle} />
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>{billingType === "percent" ? "Percentage" : billingType === "hourly" ? "Per hour" : "Amount"}</label>
+                <input value={billingAmount} onChange={(e) => setBillingAmount(e.target.value)} placeholder={billingType === "percent" ? "e.g. 15" : billingType === "hourly" ? "e.g. 4" : "e.g. 3000000"} className={inp} style={inpStyle} />
               </div>
-              {billingType === "flat" && (
+              {billingType !== "percent" && (
                 <div>
                   <label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label>
                   <PickList value={billingCurrency} onChange={setBillingCurrency} options={withValue(CURRENCY_OPTIONS, billingCurrency)} searchPlaceholder="Search currency or code" className={inp} style={inpStyle} />
@@ -8903,31 +8930,33 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>Billed</label>
-                <select value={billingFrequency} onChange={(e) => setBillingFrequency(e.target.value)} className={inp} style={inpStyle}>
+                <select value={billingType === "hourly" ? "Monthly" : billingFrequency} disabled={billingType === "hourly"} onChange={(e) => setBillingFrequency(e.target.value)} className={inp} style={inpStyle}>
                   <option value="One-off">One-off, on placement</option>
                   <option value="Monthly">Monthly</option>
                 </select>
               </div>
-              {billingFrequency === "Monthly" && (
-                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months</label><input value={billingMonths} onChange={(e) => setBillingMonths(e.target.value)} placeholder="e.g. 12" className={inp} style={inpStyle} /></div>
+              {(billingFrequency === "Monthly" || billingType === "hourly") && (
+                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months</label><input value={billingMonths} onChange={(e) => setBillingMonths(e.target.value)} placeholder="e.g. 6" className={inp} style={inpStyle} /></div>
               )}
             </div>
+            {(() => { const rm = roleMoney(formMoneyJob, null); return rm.fee && rm.feeMonthly ? <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>≈ <b>{money(rm.fee, rm.feeCurrency)}</b> a month{billingType === "hourly" ? " (" + num(billingAmount) + " × 40 hours × 4 weeks)" : ""} × {rm.feeMonths} month{rm.feeMonths === 1 ? "" : "s"} = <b>{money(rm.feeTotal, rm.feeCurrency)}</b> to the agency</div> : null; })()}
           </div>
           <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
             <SectionTitle title="Recruiter incentive" sub="What the recruiter earns for placing a candidate on this role." size="text-base" />
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>Type</label>
-                <select value={incentiveType} onChange={(e) => setIncentiveType(e.target.value)} className={inp} style={inpStyle}>
+                <select value={incentiveType} onChange={(e) => { const v = e.target.value; setIncentiveType(v); if (v === "hourly") setIncentiveFrequency("Monthly"); }} className={inp} style={inpStyle}>
                   <option value="percent">% of the client fee</option>
                   <option value="flat">Flat bonus</option>
+                  <option value="hourly">Per hour worked (contract)</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs font-medium" style={{ color: C.ink2 }}>{incentiveType === "percent" ? "Percentage" : "Amount"}</label>
-                <input value={incentiveAmount} onChange={(e) => setIncentiveAmount(e.target.value)} placeholder={incentiveType === "percent" ? "e.g. 10" : "e.g. 200000"} className={inp} style={inpStyle} />
+                <label className="text-xs font-medium" style={{ color: C.ink2 }}>{incentiveType === "percent" ? "Percentage" : incentiveType === "hourly" ? "Per hour" : "Amount"}</label>
+                <input value={incentiveAmount} onChange={(e) => setIncentiveAmount(e.target.value)} placeholder={incentiveType === "percent" ? "e.g. 10" : incentiveType === "hourly" ? "e.g. 1" : "e.g. 200000"} className={inp} style={inpStyle} />
               </div>
-              {incentiveType === "flat" && (
+              {incentiveType !== "percent" && (
                 <div>
                   <label className="text-xs font-medium" style={{ color: C.ink2 }}>Currency</label>
                   <PickList value={incentiveCurrency} onChange={setIncentiveCurrency} options={withValue(CURRENCY_OPTIONS, incentiveCurrency)} searchPlaceholder="Search currency or code" className={inp} style={inpStyle} />
@@ -8937,15 +8966,16 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-2">
               <div>
                 <label className="text-xs font-medium" style={{ color: C.ink2 }}>Paid</label>
-                <select value={incentiveFrequency} onChange={(e) => setIncentiveFrequency(e.target.value)} className={inp} style={inpStyle}>
+                <select value={incentiveType === "hourly" ? "Monthly" : incentiveFrequency} disabled={incentiveType === "hourly"} onChange={(e) => setIncentiveFrequency(e.target.value)} className={inp} style={inpStyle}>
                   <option value="One-off">One-off, on placement</option>
                   <option value="Monthly">Monthly</option>
                 </select>
               </div>
-              {incentiveFrequency === "Monthly" && (
-                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months</label><input value={incentiveMonths} onChange={(e) => setIncentiveMonths(e.target.value)} placeholder="e.g. 12" className={inp} style={inpStyle} /></div>
+              {(incentiveFrequency === "Monthly" || incentiveType === "hourly") && (
+                <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months (the recruiter's own)</label><input value={incentiveMonths} onChange={(e) => setIncentiveMonths(e.target.value)} placeholder="e.g. 3" className={inp} style={inpStyle} /></div>
               )}
             </div>
+            {(() => { const rm = roleMoney(formMoneyJob, null); return rm.inc ? <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>≈ <b>{money(rm.inc, rm.incCurrency)}</b>{rm.incMonthly ? <> a month{incentiveType === "hourly" ? " (" + num(incentiveAmount) + " × 40 hours × 4 weeks)" : ""} × {rm.incMonths} month{rm.incMonths === 1 ? "" : "s"} = <b>{money(rm.incTotal, rm.incCurrency)}</b></> : " on placement"} to the recruiter</div> : null; })()}
           </div>
           <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
             <SectionTitle title="Screening questions" sub="Every recruiter on this role asks applicants these before recording their answers." size="text-base" />
@@ -13001,7 +13031,12 @@ function NewBillingModal({ open, onClose, toast, S, presetId }) {
     termsFrom(j);
   };
   const termsFrom = (j) => {
-    if (j && j.billingFrequency === "Monthly") { setPayType("monthly"); setMonths(String(j.billingMonths || CONTRACT_DEFAULT_MONTHS)); }
+    if (j && (j.billingFrequency === "Monthly" || j.billingType === "hourly")) {
+      setPayType("monthly"); setMonths(String(j.billingMonths || CONTRACT_DEFAULT_MONTHS));
+      if (j.billingType === "hourly" && j.billingAmount) { setRate(String(j.billingAmount)); setFeeCur(j.billingCurrency || "NGN"); }
+      // The recruiter's incentive over their own months (it can differ from the agency's).
+      const rm = roleMoney(j, null); if (rm.incTotal) { setIncentive(String(Math.round(rm.incTotal * 100) / 100)); setIncentiveCur(rm.incCurrency); }
+    }
     else if (j) setPayType("one_off");
   };
   const pickJob = (id) => {
