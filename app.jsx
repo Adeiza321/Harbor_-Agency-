@@ -1332,7 +1332,7 @@ function SearchInput({ value, onChange, placeholder }) {
    - ClearFilters: "Clear all", only shown while something is set. */
 const FILTER_CSS = `
 .pn-search:focus-within{border-color:${C.em}!important;box-shadow:0 0 0 3px ${C.emTint}}
-.pn-track{position:relative;display:inline-flex;flex-wrap:wrap;max-width:100%;min-width:0;gap:2px;background:${DARK ? "#0F1C17" : "#F1EDE4"};border-radius:12px;padding:4px}
+.pn-track{position:relative;display:inline-flex;flex-wrap:wrap;max-width:100%;min-width:0;gap:2px;background:${DARK ? "#1C2320" : "#EFEFEC"};border-radius:10px;padding:4px}
 .pn-track-mark{position:absolute;top:0;left:0;background:${C.card};border-radius:9px;box-shadow:0 1px 2px rgba(20,32,27,.08),0 2px 8px -4px rgba(20,32,27,.18);transition:transform .35s cubic-bezier(.3,.8,.3,1),width .35s cubic-bezier(.3,.8,.3,1),height .35s}
 .pn-track button{position:relative;z-index:1;flex:0 0 auto;border:0;background:none;font-size:13px;color:${C.ink2};padding:6px 12px;border-radius:9px;white-space:nowrap;display:flex;gap:6px;align-items:center;cursor:pointer}
 .pn-track button[aria-pressed="true"]{color:${C.ink};font-weight:600}
