@@ -175,12 +175,31 @@ function downloadCsv(filename, headers, rows) {
 }
 // Sums placement fees per currency (mixed-currency totals can't be added together) and
 // joins them for display, e.g. "\u20A64,000,000" or "\u20A64,000,000 + $1,200" when currencies differ.
+/* The agency currency (Agency settings): every total in ProNext is shown in it, other currencies
+   converted at today's rate (ExchangeRate-API's daily feed, see useFxRates; set by App). A rate
+   that isn't known yet leaves the amounts in their own currencies, side by side. */
+let FX_RATES = null, AGENCY_CUR = "USD";
+const fxConvert = (n, from, to = AGENCY_CUR) => {
+  const v = Number(n) || 0;
+  if (!v || !from || from === to) return v;
+  const r = FX_RATES && FX_RATES.rates;
+  return r && r[from] && r[to] ? (v / r[from]) * r[to] : null;
+};
+// { NGN: 2000000, SAR: 47520 } as one amount in the agency currency ("NGN 2,000,000 + SAR 47,520"
+// if a rate is missing).
+const moneyTotal = (totals) => {
+  const entries = Object.entries(totals || {}).filter(([, v]) => v);
+  if (!entries.length) return money(0, AGENCY_CUR);
+  const conv = entries.map(([cur, v]) => fxConvert(v, cur));
+  if (conv.every((x) => x != null)) return money(conv.reduce((a, x) => a + x, 0), AGENCY_CUR);
+  return entries.map(([cur, v]) => money(v, cur)).join(" + ");
+};
+// "≈ $1,780" beside an amount in another currency (nothing when it's already the agency currency).
+const approxAgency = (n, cur) => { if (!n || !cur || cur === AGENCY_CUR) return ""; const v = fxConvert(n, cur); return v == null ? "" : "≈ " + money(v, AGENCY_CUR); };
 const sumByCurrency = (placements, numKey, curKey) => {
   const totals = {};
   placements.forEach((p) => { const cur = p[curKey] || "NGN"; totals[cur] = (totals[cur] || 0) + (p[numKey] || 0); });
-  const entries = Object.entries(totals).filter(([, v]) => v);
-  if (entries.length === 0) return naira(0);
-  return entries.map(([cur, v]) => money(v, cur)).join(" + ");
+  return moneyTotal(totals);
 };
 /* Money in a job's own currency (jobs.currency, ISO code). Falls back to naira. */
 const money = (n, cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "NGN", maximumFractionDigits: 0 }).format(Number(n || 0)); } catch (e) { return naira(n); } };
@@ -4068,7 +4087,10 @@ function rolePicks(S, earnings, from, to) {
       else if ((c.matches || []).some((m) => m.job_id === j.id && (m.fit || 0) >= 60)) fits++;
     });
     const chance = Math.min(0.85, 0.08 + active * 0.1 + fits * 0.05 + (late ? 0.2 : 0));
-    return { j, value, currency: earnings ? s.incentiveCurrency : s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
+    const currency = earnings ? s.incentiveCurrency : s.feeCurrency;
+    const conv = fxConvert(value, currency);
+    // Ranked in the agency currency, so a naira fee doesn't outrank a bigger dollar one.
+    return { j, value, currency, active, late, fits, chance, expected: (conv == null ? value : conv) * chance, contract: monthlyJob };
   }).filter((x) => x.j.status === "Open" || x.active > 0).sort((a, b) => b.expected - a.expected || b.value - a.value);
 }
 // A recruiter's Overview: the roles they're engaged on (their worklist), open ones first, with
@@ -4125,7 +4147,7 @@ function RolePicker({ S, earnings }) {
               <div className="text-xs truncate" style={{ color: C.ink2 }}>{plural(x.active, "candidate")} in play{x.late ? ", " + x.late + " at interview or later" : ""}{x.fits ? " · " + plural(x.fits, "strong fit") + " not put forward yet" : ""}</div>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-sm font-medium" style={{ fontVariantNumeric: "tabular-nums" }}>{x.value ? money(x.value, x.currency) : earnings ? "Incentive not set" : "Fee not set"}</div>
+              <div className="text-sm font-medium" style={{ fontVariantNumeric: "tabular-nums" }}>{x.value ? money(x.value, x.currency) : earnings ? "Incentive not set" : "Fee not set"}{x.value && approxAgency(x.value, x.currency) ? <span className="block text-xs font-normal" style={{ color: C.ink3 }}>{approxAgency(x.value, x.currency)}</span> : null}</div>
               <div className="text-xs" style={{ color: C.ink3 }}>{x.contract ? "contract · " : ""}{Math.round(x.chance * 100)}% chance</div>
             </div>
           </button>
@@ -4206,7 +4228,7 @@ function useFxRates() {
   const [fx, setFx] = useState(() => { try { const c = JSON.parse(localStorage.getItem(FX_KEY) || "null"); return c && c.rates ? c : null; } catch (e) { return null; } });
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (fx && Date.now() - fx.at < 12 * 3600e3) return;
+    if (fx && Date.now() - fx.at < 6 * 3600e3 && new Date(fx.at).toDateString() === new Date().toDateString()) return;
     fetch("https://open.er-api.com/v6/latest/USD").then((r) => r.json()).then((d) => {
       if (d && d.result === "success" && d.rates) { const v = { at: Date.now(), rates: d.rates, updated: d.time_last_update_utc || "" }; setFx(v); try { localStorage.setItem(FX_KEY, JSON.stringify(v)); } catch (e) { /* private window */ } }
       else setFailed(true);
@@ -4229,7 +4251,7 @@ function RecruiterAuditPage({ S, toast }) {
   const baseCur = goal.currency || "USD";
   // The currency the page is shown in (remembered in this browser); every amount, whatever it was
   // entered in, is converted to it at today's rate.
-  const [cur, setCurRaw] = useState(() => { try { return localStorage.getItem("pronext-audit-cur") || baseCur; } catch (e) { return baseCur; } });
+  const [cur, setCurRaw] = useState(() => { try { return localStorage.getItem("pronext-audit-cur") || AGENCY_CUR; } catch (e) { return AGENCY_CUR; } });
   const setCur = (c) => { setCurRaw(c); try { localStorage.setItem("pronext-audit-cur", c); } catch (e) { /* private window */ } };
   const { fx, failed: fxFailed, convert } = useFxRates();
   const missed = new Set(); // currencies we couldn't convert (left out)
@@ -4526,7 +4548,7 @@ function HomeRoles({ S, mine }) {
               {(j.minPay || j.maxPay || b.fee) && (
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                   {(j.minPay || j.maxPay) && !j.commissionOnly && <span><span style={{ color: C.ink2 }}>Salary </span>{j.minPay ? money(j.minPay, j.currency) : "?"}{j.maxPay && j.maxPay !== j.minPay ? " – " + money(j.maxPay, j.currency) : ""} / {(j.salaryPeriod || "Yearly").toLowerCase()}</span>}
-                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>≈ {money(b.fee, b.feeCurrency)}</span> : null}
+                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>≈ {money(b.fee, b.feeCurrency)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
                 </div>
               )}
               <div className="grid grid-cols-4 gap-1.5 w-full">
@@ -4592,7 +4614,7 @@ function HomeGoal({ S, recruiterId }) {
       <div className="flex items-baseline gap-2"><span className="text-4xl" style={{ ...SERIF, color: "#fff" }}>{plc.length}</span><span className="text-sm" style={{ color: dim }}>of {target} placements</span></div>
       <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,.12)" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Placements against this month's target"><div className="h-2 rounded-full" style={{ width: pct + "%", background: C.lime }} /></div>
       <div className="flex justify-between gap-3 text-sm"><span style={{ color: dim }}>{recruiterId ? "Your earnings" : "Fees this month"}</span><span className="font-semibold text-right">{earned}</span></div>
-      {!recruiterId && goal.amount ? <div className="text-xs" style={{ color: dim }}>Revenue goal {money(goal.amount, goal.currency || "USD")}{goal.by ? " by " + fdate(goal.by + "T12:00:00") : ""}</div> : null}
+      {!recruiterId && goal.amount ? <div className="text-xs" style={{ color: dim }}>Revenue goal {(() => { const v = fxConvert(goal.amount, goal.currency || "USD"); return v == null ? money(goal.amount, goal.currency || "USD") : money(v, AGENCY_CUR); })()}{goal.by ? " by " + fdate(goal.by + "T12:00:00") : ""}</div> : null}
     </div>
   );
 }
@@ -4605,11 +4627,10 @@ function HomePipelineValue({ S, mine }) {
     const v = Number(mine ? b.incentive : b.fee) || 0, cur = mine ? b.incentiveCurrency : b.feeCurrency;
     n++; if (v) totals[cur] = (totals[cur] || 0) + v;
   }));
-  const entries = Object.entries(totals);
   return (
     <Card>
       <div className="text-sm" style={{ color: C.ink2 }}>{mine ? "Your earnings in play" : "Pipeline value"}</div>
-      <div className="text-2xl mt-1" style={SERIF}>{entries.length ? entries.map(([cur, v]) => money(v, cur)).join(" + ") : money(0, (S.settings.revenueGoal || {}).currency || "USD")}</div>
+      <div className="text-2xl mt-1" style={SERIF}>{moneyTotal(totals)}</div>
       <div className="text-xs mt-1" style={{ color: C.ink2 }}>{n ? (mine ? "Your incentive on " : "Fees on ") + plural(n, "candidate") + " at interview or offer" : "Nobody at interview or offer yet"}</div>
     </Card>
   );
@@ -13026,7 +13047,7 @@ function EarningsCard({ list }) {
         <div key={x.key} className="flex items-center gap-3 py-2" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
           <div className="w-14 shrink-0 text-xs" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{fdate(x.date + "T12:00:00")}</div>
           <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{x.p.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{x.p.role}</div></div>
-          <div className="text-sm font-medium shrink-0" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}</div>
+          <div className="text-sm font-medium shrink-0 text-right" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}{approxAgency(x.amount, x.currency) ? <span className="block text-xs font-normal" style={{ color: C.ink3 }}>{approxAgency(x.amount, x.currency)}</span> : null}</div>
         </div>
       ))}
     </Card>
@@ -13040,21 +13061,23 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
   const [busy, setBusy] = useState(false);
   const today = ymdToday();
   const items = list.flatMap((p) => payoutSchedule(p, today));
-  const cur = goal.currency || "USD";
-  const mine = items.filter((x) => x.currency === cur);
-  const otherCur = [...new Set(items.filter((x) => x.currency !== cur).map((x) => x.currency))];
+  // In the agency currency: the goal and every payout converted at today's rate (any that can't be
+  // converted yet are left out and named).
+  const cur = AGENCY_CUR;
+  const mine = items.map((x) => { const v = fxConvert(x.amount, x.currency, cur); return v == null ? null : { ...x, amount: v }; }).filter(Boolean);
+  const otherCur = [...new Set(items.filter((x) => fxConvert(x.amount, x.currency, cur) == null).map((x) => x.currency))];
   // Locked in: everything owed on placements that started by the goal date (paid out later or not).
   const startedBy = (x) => (x.p.startDate || today) <= goal.by;
   const sum = (arr) => arr.reduce((a, x) => a + (x.amount || 0), 0);
   const received = sum(mine.filter((x) => x.received));
   const locked = sum(mine.filter(startedBy));
   const arrivesByGoal = sum(mine.filter((x) => x.date <= goal.by));
-  const target = Number(goal.amount) || 0;
+  const target = Number(fxConvert(goal.amount, goal.currency || "USD", cur) ?? goal.amount) || 0;
   const pctRecv = target ? Math.min(100, (received / target) * 100) : 0;
   const pctLocked = target ? Math.min(100, (locked / target) * 100) : 0;
   const upcoming = items.filter((x) => !x.received).sort((a, b) => (a.date < b.date ? -1 : 1)).slice(0, 6);
-  const activeContracts = list.filter((p) => p.payType === "monthly" && payoutSchedule(p, today).some((x) => !x.received) && !(p.startDate && p.startDate > today) && p.feeCurrency === cur);
-  const monthlyNow = activeContracts.reduce((a, p) => a + placementMonthly(p), 0);
+  const activeContracts = list.filter((p) => p.payType === "monthly" && payoutSchedule(p, today).some((x) => !x.received) && !(p.startDate && p.startDate > today) && fxConvert(1, p.feeCurrency || "NGN", cur) != null);
+  const monthlyNow = activeContracts.reduce((a, p) => a + (fxConvert(placementMonthly(p), p.feeCurrency || "NGN", cur) || 0), 0);
   const save = () => {
     const amount = num(g.amount);
     if (!amount || !g.by) { toast("Enter an amount and a date"); return; }
@@ -13099,7 +13122,7 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
             <div key={x.key} className="flex items-center gap-3 py-2" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
               <div className="w-14 shrink-0 text-xs" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{fdate(x.date + "T12:00:00")}</div>
               <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{x.p.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{x.label}</div></div>
-              <div className="text-sm font-medium shrink-0" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}</div>
+              <div className="text-sm font-medium shrink-0 text-right" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}{approxAgency(x.amount, x.currency) ? <span className="block text-xs font-normal" style={{ color: C.ink3 }}>{approxAgency(x.amount, x.currency)}</span> : null}</div>
             </div>
           ))}
         </div>
@@ -13108,7 +13131,7 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
           <div className="text-xl" style={{ fontVariantNumeric: "tabular-nums" }}>{money(monthlyNow, cur)}<span className="text-sm" style={{ color: C.ink3 }}> a month</span></div>
           <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{activeContracts.length ? "From " + plural(activeContracts.length, "active contractor") + ", paid monthly." : "No active contractors yet. Add one with New billing entry → Contract."}</div>
           <div className="text-xs mt-3" style={{ color: C.ink3 }}>Contract months count as received once each month has passed. Permanent payouts count as received when marked Paid.</div>
-          {otherCur.length > 0 && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Placements in {otherCur.join(", ")} aren't added to the {cur} goal.</div>}
+          {otherCur.length > 0 && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Placements in {otherCur.join(", ")} aren't counted yet: today's exchange rate hasn't loaded.</div>}
         </div>
       </div>
     </Card>
@@ -14287,8 +14310,9 @@ function AgencyTab({ toast, S }) {
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default currency</label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency currency</label>
           <PickList value={defaultCurrency} onChange={setDefaultCurrency} options={withValue(CURRENCY_OPTIONS, defaultCurrency)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+          <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>Every total in ProNext is shown in this currency, other currencies converted at today's exchange rate. New jobs start in it too.</div>
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default hiring country</label>
@@ -16815,6 +16839,7 @@ export default function App() {
   const [status, setStatus] = useState(session ? "loading" : "signedout"); // loading | signedout | pending | ready | error
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
+  const fxr = useFxRates();
   const [rerouteAsk, setRerouteAsk] = useState(null); // { name, roles, label, resolve }
   const [tourOpen, setTourOpen] = useState(false);
   const [errMsg, setErrMsg] = useState("");
@@ -17164,6 +17189,7 @@ export default function App() {
     const roles = live.map((l) => { const j = data.jobs.find((x) => x.id === l.jobId); return j ? j.role + (j.client ? ", " + j.client : "") + " (" + l.stage + ")" : "Another role (" + l.stage + ")"; });
     setRerouteAsk({ name: c.name, roles, label: label || ((data.jobs.find((x) => x.id === jobId) || {}).role || "the new role"), resolve });
   });
+  FX_RATES = fxr.fx; AGENCY_CUR = (data.settings && data.settings.defaultCurrency) || "USD";
   const S = {
     role, me: myMe, query, toast, error: showError, go: setPage,
     cands: data.cands, updateCand, askReroute,
