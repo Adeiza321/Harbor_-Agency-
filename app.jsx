@@ -8429,12 +8429,23 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
             const tabs = [{ key: "jd", label: "Job description" }, { key: "pipe", label: "Pipeline " + live }, { key: "ai", label: "AI recommendation" },
               ...(S.role !== "recruiter" && takesCandidates(job) ? [{ key: "bench", label: "Bench" + (fits.length ? " " + fits.length : "") }] : []),
               ...(S.role !== "recruiter" || !job.leadRole ? [{ key: "src", label: "Sourcing" }] : []),
-              { key: "sq", label: "Screening " + (job.screeningQuestions || []).length }];
+];
             const cur = tabs.some((t) => t.key === roleTab) ? roleTab : "jd";
             return <div className="flex flex-col gap-3">
               <div className="overflow-x-auto"><Tabs tabs={tabs} active={cur} setActive={setRoleTab} /></div>
               {cur === "jd" && <>
           {job.description ? <RoleDescription text={job.description} /> : <Card><SectionTitle title="About the role" size="text-xl" /><div className="text-sm mt-2" style={{ color: C.ink2 }}>No job description yet.{S.role !== "recruiter" ? " Add one with Edit job." : ""}</div></Card>}
+        {(job.screeningQuestions || []).length > 0 && (
+          <Card>
+            <div className="flex items-start justify-between gap-3">
+              <SectionTitle title="Screening questions" sub="Ask every applicant these before recording their answers on the candidate's profile." size="text-xl" />
+              <IconBtn icon={Copy} label="Copy all questions" onClick={copyQuestions} className="!w-10 !h-10 !rounded-xl" />
+            </div>
+            <div className="flex flex-col gap-2 mt-3">
+              {job.screeningQuestions.map((q, i) => <div key={i} className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.canvas, color: C.ink }}>{i + 1}. {q}</div>)}
+            </div>
+          </Card>
+        )}
               </>}
               {cur === "pipe" && <>
       {(() => {
@@ -8533,20 +8544,6 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
               {cur === "src" && <>
         {S.role !== "recruiter" && <JobSourcingCard job={job} S={S} toast={toast} />}
         {S.role === "recruiter" && !job.leadRole && <RecruiterSourcingCard job={job} S={S} toast={toast} engaged={!!myOpenEngagement || onWorklist(S, job)} />}
-              </>}
-              {cur === "sq" && <>
-        {(job.screeningQuestions || []).length > 0 && (
-          <Card>
-            <div className="flex items-start justify-between gap-3">
-              <SectionTitle title="Screening questions" sub="Ask every applicant these before recording their answers on the candidate's profile." size="text-xl" />
-              <IconBtn icon={Copy} label="Copy all questions" onClick={copyQuestions} className="!w-10 !h-10 !rounded-xl" />
-            </div>
-            <div className="flex flex-col gap-2 mt-3">
-              {job.screeningQuestions.map((q, i) => <div key={i} className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.canvas, color: C.ink }}>{i + 1}. {q}</div>)}
-            </div>
-          </Card>
-        )}
-                {!(job.screeningQuestions || []).length && <Card><div className="text-sm" style={{ color: C.ink2 }}>No screening questions on this role yet.{S.role !== "recruiter" ? " Add them with Edit job." : ""}</div></Card>}
               </>}
             </div>;
           })()}
