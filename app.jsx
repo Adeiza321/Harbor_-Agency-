@@ -6343,8 +6343,8 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
         </div>
       </Modal>
       {rejectKind && <RejectModal candidate={candidate} kind={rejectKind} S={S} toast={toast} onClose={() => setRejectKind(null)} onDone={afterReject} />}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
-        <div className="md:col-span-2 flex flex-col gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-5 items-start">
+        <div className="flex flex-col gap-5 min-w-0">
           <ProfileHeader candidate={candidate} status={status} path={endedPath(candidate, status, S)} verified={verified} note={note} />
           {note.modal}
           <Card>
@@ -6433,6 +6433,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
             </div>
           </Card>
 
+          <CandidatePrefsCard candidate={candidate} S={S} toast={toast} />
           <Card>
             <div className="overflow-x-auto"><Tabs tabs={[{ key: "companies", label: "Companies" }, { key: "discussion", label: "Discussion" }, { key: "timeline", label: "Timeline" }]} active={tab} setActive={setTab} /></div>
             {tab === "companies" && (
@@ -6475,10 +6476,9 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
           </Card>
         </div>
 
-        <div className="flex flex-col gap-4">
-          <CandidateInterviewsCard candidate={candidate} S={S} toast={toast} />
+        <div className="flex flex-col gap-5 min-w-0">
           <CandidateJobsCard candidate={candidate} S={S} toast={toast} />
-          <CandidatePrefsCard candidate={candidate} S={S} toast={toast} />
+          <CandidateInterviewsCard candidate={candidate} S={S} toast={toast} />
           <Card>
             <SectionTitle title="Candidate page" sub="Their secure link. No login needed." size="text-xl" />
             <div className="flex items-center gap-2 rounded-lg px-3 py-2.5 mt-3 text-sm" style={{ background: C.canvas }}><Lock size={14} color={C.ink2} className="shrink-0" /><span style={{ color: C.ink2 }} className="truncate">{window.location.host + "/?c=" + candidate.portal}</span><Copy size={15} color={C.ink2} className="ml-auto cursor-pointer shrink-0" onClick={() => { try { navigator.clipboard.writeText(window.location.origin + window.location.pathname + "?c=" + candidate.portal); toast("Link copied"); } catch (e) { toast("Copy failed. Select the link and copy it."); } }} /></div>
