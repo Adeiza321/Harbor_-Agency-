@@ -262,7 +262,8 @@ Deno.serve(async (req: Request) => {
            <div style="font-size:15px;line-height:1.6;"><b>${esc(recruiterName)}</b> thinks you'd be a strong fit for ${roleHtml} and would like to put you forward.</div>
            ${roleCard(job)}
            <div style="font-size:15px;line-height:1.6;margin-top:16px;">${routedNext(link)} Nothing is shared with the employer until you apply.</div>
-           ${button(brand, portalUrl + "&role=" + encodeURIComponent(link.id), "See the role and apply")}`, undefined, unsubUrl);
+           ${button(brand, portalUrl + "&role=" + encodeURIComponent(link.id), "See the role and apply")}
+           <div style="font-size:13px;line-height:1.6;margin-top:12px;"><a href="${esc(portalUrl)}" style="color:${brand.color};">View your full profile</a> on your candidate page.</div>`, undefined, unsubUrl);
         const sentRouted = await sendBrevo(brand, { email: cand.email, name: cand.name }, subj, routedHtml, undefined, { cc: await recruiterCc(admin, cand) });
         return json({ ok: true, sent: sentRouted, kind: "routed" });
       }
@@ -271,7 +272,8 @@ Deno.serve(async (req: Request) => {
         `<div style="font-size:20px;margin-bottom:8px;">Hi ${firstName},</div>
          <div style="font-size:15px;line-height:1.6;">Good news: you've been assigned a recruiter, <b>${esc(recruiterName)}</b>, for ${roleHtml}, and your application is now under review. Once a decision is made, you'll get another email updating you on its status.</div>
          <div style="font-size:15px;line-height:1.6;margin-top:12px;">Message ${rec?.full_name || me.full_name ? esc(recruiterName.split(" ")[0]) : "your recruiter"} any time if you have questions or want to stay connected.</div>
-         ${button(brand, portalUrl, "Message your recruiter")}
+         <div style="font-size:15px;line-height:1.6;margin-top:12px;">Your candidate page shows your full profile: your details, what you're looking for, the roles you're on and where each one stands.</div>
+         ${button(brand, portalUrl, "View your full profile")}
          ${cand.pitch_consent || cand.pitch_consent_at ? "" : pitchYesNo(brand, portalUrl)}`, undefined, unsubUrl);
       const sent = await sendBrevo(brand, { email: cand.email, name: cand.name }, subject, html, undefined, { cc: await recruiterCc(admin, cand) });
       return json({ ok: true, sent });

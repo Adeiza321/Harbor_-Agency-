@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { loadBrand, sendBrevo } from "./brand.ts";
 import { newReferralToken, referralEmail } from "./referral.ts";
 import { assignApplication } from "../inbox/assign.ts";
+import { sendReceived } from "./received.ts";
 
 // Public, unauthenticated endpoint: the front door for every inbound source (the public apply
 // page at /?apply=<job link_slug>, a paste-in from Indeed/LinkedIn, a manual entry tool, a webhook
@@ -221,11 +222,13 @@ Deno.serve(async (req: Request) => {
     }
 
     // Through a recruiter's own link: theirs straight away (referrals wait for "I'm interested").
+    let assignedCandidate: string | null = null;
     if (viaRec && !referrer && !existingRow) {
       try {
         const { data: fresh } = await admin.from("applications").select("*").eq("id", appId).single();
         if (fresh && fresh.status === "new") {
           const r = await assignApplication(admin, fresh, viaRec, { id: viaRec.id, name: viaRec.full_name || "their recruiter", viaLink: true });
+          assignedCandidate = r?.candidateId || null;
           await admin.rpc("push_update", { p_user: viaRec.id, p_kind: "event", p_title: name + (resolvedJobId ? " applied for " + resolvedRoleTitle : " joined the Active file") + " through your link",
             p_body: resolvedJobId ? "They're your candidate now, on the role, and the AI screening has started." : "They're your candidate now, on the Active file.", p_link: { page: "candidates", candidateId: r.candidateId }, p_dedupe: "applink:" + appId, p_covered: false, p_actor: null });
         }
@@ -252,6 +255,16 @@ Deno.serve(async (req: Request) => {
         const sent = await sendBrevo(b, { email, name }, m.subject, m.html);
         if (!sent) console.error("referral email not sent", appId);
       } catch (e) { console.error("referral email", appId, String((e as Error)?.message || e)); }
+    }
+
+    // "We've received your application" (received.ts), with their recruiter and candidate page when
+    // they're on file. Not for referrals (they get the referral email) or a repeat of the same one.
+    if (!referrer && !existingRow) {
+      try {
+        const b = await loadBrand(admin);
+        const r = await sendReceived(admin, b, { email, name, role: resolvedRoleTitle || null, candidateId: assignedCandidate });
+        if (!r.sent && !r.skipped) console.error("received email not sent", appId);
+      } catch (e) { console.error("received email", appId, String((e as Error)?.message || e)); }
     }
 
     // The Send-us-your-CV page uses id + prefsToken to save the "Help us match you" answers.
