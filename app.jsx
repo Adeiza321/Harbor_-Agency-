@@ -21,24 +21,24 @@ const IS_PUBLIC_PAGE = (() => { try { const q = new URLSearchParams(location.sea
 const DARK = (() => { if (IS_PUBLIC_PAGE) return false; try { const t = localStorage.getItem(THEME_KEY) || "light"; return t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) { return false; } })();
 try { document.documentElement.style.colorScheme = DARK ? "dark" : "light"; } catch (e) { /* no DOM */ }
 const C_LIGHT = {
-  canvas: "#F3EFE7", card: "#FFFFFF", soft: "#FAF8F3", ink: "#14201B", ink2: "#56605A",
-  ink3: "#8C948E", line: "#E6E1D6", line2: "#D5D2C7", side: "#12241D", lime: "#C8F169",
+  canvas: "#F7F7F5", card: "#FFFFFF", soft: "#FAFAF8", ink: "#14201B", ink2: "#56605A",
+  ink3: "#7D857F", line: "#E7E7E3", line2: "#D5D5CF", side: "#14201B", lime: "#C8F169",
   em: "#1F6F54", emTint: "#DDEFE6", warnBg: "#FBEFD8", warnFg: "#A5670A",
   dangerBg: "#FBE4DD", dangerFg: "#B8432A", infoBg: "#E5E8FB", infoFg: "#3B4BB8",
-  neutralBg: "#EFEBE1", neutralFg: "#56605A",
-  solid: "#14201B", onSide: "#F3EFE7", warnText: "#7A4B05", dangerText: "#8E3320", emText: "#14503C", hover: "#F4F2EC",
+  neutralBg: "#F0F0EC", neutralFg: "#56605A",
+  solid: "#14201B", onSide: "#F2F4F1", warnText: "#7A4B05", dangerText: "#8E3320", emText: "#14503C", hover: "#F3F3F0",
 };
 const C_DARK = {
-  canvas: "#0D1813", card: "#15231D", soft: "#1A2A23", ink: "#E8EEEA", ink2: "#AEBAB3",
-  ink3: "#7D8B84", line: "#263830", line2: "#34483F", side: "#09130F", lime: "#C8F169",
+  canvas: "#0F1412", card: "#171D1A", soft: "#1C2320", ink: "#E8EEEA", ink2: "#AEBAB3",
+  ink3: "#87928C", line: "#27302C", line2: "#35403A", side: "#0B100E", lime: "#C8F169",
   em: "#2E9470", emTint: "#173A2D", warnBg: "#3A2C14", warnFg: "#EDB95C",
   dangerBg: "#3E1F18", dangerFg: "#F28B70", infoBg: "#1F2647", infoFg: "#A3AEF7",
-  neutralBg: "#21302A", neutralFg: "#AEBAB3",
+  neutralBg: "#222A26", neutralFg: "#AEBAB3",
   solid: "#2C4238", onSide: "#E8EEEA", warnText: "#F2C77A", dangerText: "#F6A28C", emText: "#9FDDBF", hover: "#1E3029",
 };
 const C = DARK ? C_DARK : C_LIGHT;
 // Headings and big numbers (the name is historic: they used to be a serif).
-const SERIF = { fontFamily: '"Manrope","DM Sans",ui-sans-serif,system-ui,sans-serif', fontWeight: 700, letterSpacing: "-0.02em" };
+const SERIF = { fontFamily: '"Manrope","Inter",ui-sans-serif,system-ui,sans-serif', fontWeight: 700, letterSpacing: "-0.02em" };
 const TONE = {
   em: { bg: C.emTint, fg: C.em }, warn: { bg: C.warnBg, fg: C.warnFg },
   danger: { bg: C.dangerBg, fg: C.dangerFg }, info: { bg: C.infoBg, fg: C.infoFg },
@@ -1140,7 +1140,7 @@ function Card({ children, className = "", style = {}, dark = false }) {
   return (
     <div
       className={`rounded-2xl border p-5 md:p-6 ${className}`}
-      style={{ background: dark ? C.side : C.card, borderColor: dark ? C.side : C.line, boxShadow: dark ? "none" : "0 2px 6px rgba(20,32,27,0.05)", minWidth: 0, ...style }}
+      style={{ background: dark ? C.side : C.card, borderColor: dark ? C.side : C.line, boxShadow: dark ? "none" : "0 1px 2px rgba(20,32,27,0.04)", minWidth: 0, ...style }}
     >
       {children}
     </div>
@@ -1150,15 +1150,15 @@ function Card({ children, className = "", style = {}, dark = false }) {
 function Pill({ children, tone = "neutral" }) {
   const t = TONE[tone] || TONE.neutral;
   return (
-    <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap" style={{ background: t.bg, color: t.fg }}>
+    <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: t.bg, color: t.fg }}>
       {children}
     </span>
   );
 }
 function StatusPill({ status }) {
-  if (status === "Placed" || status === "Hired") return <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: C.side, color: C.lime }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: C.lime }} />{status}</span>;
+  if (status === "Placed" || status === "Hired") return <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: C.side, color: C.lime }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: C.lime }} />{status}</span>;
   const t = TONE[STATUS_TONE[status] || "neutral"] || TONE.neutral;
-  return <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: t.bg, color: t.fg }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: t.fg }} />{status}</span>;
+  return <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: t.bg, color: t.fg }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: t.fg }} />{status}</span>;
 }
 // AI fit as a small ring: green 85+, amber 70+, red below; a dash when not scored.
 function ScoreRing({ value, size = 38 }) {
@@ -1277,12 +1277,12 @@ function IconBtn({ icon: I, label, onClick, tone = "neutral", size = "md", bare 
   );
 }
 function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", full = false, type = "button", disabled = false, title }) {
-  const base = `inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${full ? "w-full" : ""}`;
+  const base = `inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold ${full ? "w-full" : ""}`;
   const style =
     kind === "primary" ? { background: C.em, color: "#fff" } :
     kind === "dark" ? { background: C.solid, color: "#fff" } :
     kind === "danger" ? { background: C.dangerFg, color: "#fff" } :
-    { background: C.card, color: C.ink, border: `1px solid ${C.line}` };
+    { background: C.card, color: C.ink, border: `1px solid ${C.line2}` };
   return (
     <button type={type} onClick={onClick} disabled={disabled} title={title || undefined} className={`${base} ${className}`} style={{ ...style, ...(disabled ? { opacity: 0.6, cursor: "not-allowed" } : {}) }}>
       {Icon && <Icon size={16} />}
@@ -1293,7 +1293,7 @@ function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", fu
 
 function SearchInput({ value, onChange, placeholder }) {
   return (
-    <label className="pn-search flex items-center gap-2 rounded-full border px-3.5 flex-1 min-w-0" style={{ borderColor: C.line, background: C.soft }}>
+    <label className="pn-search flex items-center gap-2 rounded-xl border px-3.5 flex-1 min-w-0" style={{ borderColor: C.line, background: C.card }}>
       <Search size={15} color={C.ink3} className="shrink-0" />
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="bg-transparent outline-none text-sm flex-1 min-w-0 py-2.5" style={{ color: C.ink }} />
     </label>
@@ -2854,7 +2854,7 @@ function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
             style={
               dark
                 ? { background: active ? "rgba(200,241,105,0.1)" : undefined, color: active ? "#fff" : "#A9BBB1", fontWeight: active ? 500 : 400 }
-                : { background: active ? C.emTint : "transparent", color: active ? C.em : C.ink2, fontWeight: active ? 500 : 400 }
+                : { background: active ? (DARK ? C.emTint : "#EEF5F1") : "transparent", color: active ? C.ink : C.ink2, fontWeight: active ? 600 : 400 }
             }
           >
             {dark && active && <span className="absolute rounded-r" style={{ left: -12, top: 8, bottom: 8, width: 3, background: C.lime }} />}
@@ -2877,32 +2877,32 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
   const extra = role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : [];
   return (
-    <div className="flex-col shrink-0 h-screen sticky top-0" style={{ display: desktop ? "flex" : "none", width: collapsed ? 72 : 260, background: C.side }}>
+    <div className="flex-col shrink-0 h-screen sticky top-0" style={{ display: desktop ? "flex" : "none", width: collapsed ? 72 : 248, background: C.card, borderRight: `1px solid ${C.line}` }}>
       <div className="flex items-center gap-2.5 px-4 pt-6 pb-5">
-        {collapsed ? <BrandMark size={32} /> : <div className="flex-1 min-w-0"><BrandLogo height={24} chip /></div>}
-        <button onClick={() => setCollapsed((c) => !c)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}>
-          {collapsed ? <ChevronRight size={16} color="#A9BBB1" /> : <ChevronLeft size={16} color="#A9BBB1" />}
+        {collapsed ? <BrandMark size={32} chip={DARK} /> : <div className="flex-1 min-w-0"><BrandLogo height={24} chip={DARK} /></div>}
+        <button onClick={() => setCollapsed((c) => !c)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.neutralBg }} aria-label={collapsed ? "Expand menu" : "Collapse menu"}>
+          {collapsed ? <ChevronRight size={16} color={C.ink2} /> : <ChevronLeft size={16} color={C.ink2} />}
         </button>
       </div>
-      {!collapsed && <div className="px-4 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>WORKSPACE</div>}
+      {!collapsed && <div className="px-4 pb-1.5 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>WORKSPACE</div>}
       {/* The menu scrolls on short screens so the sign-out and profile below always stay in view. */}
       <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
-        {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <>
-          <NavList items={items} page={page} setPage={setPage} dark badges={badges} />
-          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} dark badges={badges} /></>}
+        {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} badges={badges} /> : <>
+          <NavList items={items} page={page} setPage={setPage} badges={badges} />
+          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} badges={badges} /></>}
         </>}
       </div>
       {!collapsed && (
         <div className="px-3 pb-3 pt-3 shrink-0">
-          <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: "#A9BBB1", border: "1px solid rgba(255,255,255,0.12)" }}>Sign out</button>
+          <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: C.ink2, border: `1px solid ${C.line}` }}>Sign out</button>
         </div>
       )}
-      <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full shrink-0" style={{ background: page === "myProfile" ? "rgba(255,255,255,0.07)" : "transparent" }} title="My profile">
+      <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full shrink-0" style={{ background: page === "myProfile" ? C.hover : "transparent", borderTop: `1px solid ${C.line}` }} title="My profile">
         <UserAvatar u={me} tone="em" />
         {!collapsed && (
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-white truncate">{me.name}</div>
-            <div className="text-xs truncate" style={{ color: "#8FA69A" }}>{me.label}</div>
+            <div className="text-sm font-semibold truncate" style={{ color: C.ink }}>{me.name}</div>
+            <div className="text-xs truncate" style={{ color: C.ink2 }}>{me.label}</div>
           </div>
         )}
       </button>
@@ -8866,7 +8866,7 @@ function WeekGrid({ days, list, clash, onOpen }) {
           {days.map((d) => {
             const items = inDay(d); const { pos, n } = lay(items);
             return (
-              <div key={d.ymd} className="relative" style={{ borderLeft: `1px solid #EFEBE1`, background: d.ymd === todayYmd ? C.soft : "transparent" }}>
+              <div key={d.ymd} className="relative" style={{ borderLeft: `1px solid ${C.line}`, background: d.ymd === todayYmd ? C.soft : "transparent" }}>
                 {hours.map((h, i) => <div key={h} className="absolute left-0 right-0" style={{ top: i * HOUR, borderTop: i ? "1px dashed #F0ECE3" : "none" }} />)}
                 {d.ymd === todayYmd && nz.h >= from && nz.h < to && <div className="absolute left-0 right-0" style={{ top: ((nz.h - from) * 60 + nz.min) * HOUR / 60, height: 2, background: C.dangerFg, zIndex: 2 }} />}
                 {items.map((iv) => {
@@ -8999,7 +8999,7 @@ function InterviewsPage({ S, toast }) {
             </div>
           )}
           {view !== "list" && <div className="flex flex-wrap gap-4 text-xs mt-3" style={{ color: C.ink2 }}>
-            {[[C.emTint, "transparent", "Candidate confirmed"], [C.warnBg, "transparent", "Waiting for candidate"], ["#EFEBE1", "transparent", "Done"], ["#fff", C.dangerFg, "Clash"]].map(([bg, b, l]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: bg, border: `2px solid ${b}` }} />{l}</span>)}
+            {[[C.emTint, "transparent", "Candidate confirmed"], [C.warnBg, "transparent", "Waiting for candidate"], [C.neutralBg, "transparent", "Done"], ["#fff", C.dangerFg, "Clash"]].map(([bg, b, l]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: bg, border: `2px solid ${b}` }} />{l}</span>)}
           </div>}
         </Card>
         <div className="xl:w-[300px] shrink-0 flex flex-col gap-4">
@@ -11507,7 +11507,7 @@ function PreferencesDone({ p, name, preview, onClose }) {
    One question per screen, like a short career quiz: a top bar with back, logo and "3/12", a thin
    progress line, a big question, and full-width answers. Tapping a single-choice answer moves on;
    multi-choice and typed answers have Continue. Full screen, so it feels like an app on phones. */
-const QUIZ_FONT = { fontFamily: '"DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif' };
+const QUIZ_FONT = { fontFamily: '"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif' };
 function QuizOption({ selected, onClick, children, hint, multi }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={!!selected}
@@ -11736,7 +11736,7 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
       <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
           <button type="button" onClick={done ? onClose : back} aria-label={(inBefore ? bi === 0 : i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(inBefore ? bi === 0 : i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
-          <BrandLogo height={24} />
+          <BrandLogo height={24} chip={DARK} />
           <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{edit ? "Edit" : inBefore ? "Step " + (bi + 1) : (done ? total : pos + 1) + "/" + total}</span>
         </div>
         <div style={{ height: 3, background: "#ECE9E2" }}><div style={{ height: 3, width: pct + "%", background: C.em, transition: "width .3s ease" }} /></div>
