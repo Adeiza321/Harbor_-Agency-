@@ -21,24 +21,24 @@ const IS_PUBLIC_PAGE = (() => { try { const q = new URLSearchParams(location.sea
 const DARK = (() => { if (IS_PUBLIC_PAGE) return false; try { const t = localStorage.getItem(THEME_KEY) || "light"; return t === "dark" || (t === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches); } catch (e) { return false; } })();
 try { document.documentElement.style.colorScheme = DARK ? "dark" : "light"; } catch (e) { /* no DOM */ }
 const C_LIGHT = {
-  canvas: "#F3EFE7", card: "#FFFFFF", soft: "#FAF8F3", ink: "#14201B", ink2: "#56605A",
-  ink3: "#8C948E", line: "#E6E1D6", line2: "#D5D2C7", side: "#12241D", lime: "#C8F169",
+  canvas: "#F7F7F5", card: "#FFFFFF", soft: "#FAFAF8", ink: "#14201B", ink2: "#56605A",
+  ink3: "#7D857F", line: "#E7E7E3", line2: "#D5D5CF", side: "#14201B", lime: "#C8F169",
   em: "#1F6F54", emTint: "#DDEFE6", warnBg: "#FBEFD8", warnFg: "#A5670A",
   dangerBg: "#FBE4DD", dangerFg: "#B8432A", infoBg: "#E5E8FB", infoFg: "#3B4BB8",
-  neutralBg: "#EFEBE1", neutralFg: "#56605A",
-  solid: "#14201B", onSide: "#F3EFE7", warnText: "#7A4B05", dangerText: "#8E3320", emText: "#14503C", hover: "#F4F2EC",
+  neutralBg: "#F0F0EC", neutralFg: "#56605A",
+  solid: "#14201B", onSide: "#F2F4F1", warnText: "#7A4B05", dangerText: "#8E3320", emText: "#14503C", hover: "#F3F3F0",
 };
 const C_DARK = {
-  canvas: "#0D1813", card: "#15231D", soft: "#1A2A23", ink: "#E8EEEA", ink2: "#AEBAB3",
-  ink3: "#7D8B84", line: "#263830", line2: "#34483F", side: "#09130F", lime: "#C8F169",
+  canvas: "#0F1412", card: "#171D1A", soft: "#1C2320", ink: "#E8EEEA", ink2: "#AEBAB3",
+  ink3: "#87928C", line: "#27302C", line2: "#35403A", side: "#0B100E", lime: "#C8F169",
   em: "#2E9470", emTint: "#173A2D", warnBg: "#3A2C14", warnFg: "#EDB95C",
   dangerBg: "#3E1F18", dangerFg: "#F28B70", infoBg: "#1F2647", infoFg: "#A3AEF7",
-  neutralBg: "#21302A", neutralFg: "#AEBAB3",
+  neutralBg: "#222A26", neutralFg: "#AEBAB3",
   solid: "#2C4238", onSide: "#E8EEEA", warnText: "#F2C77A", dangerText: "#F6A28C", emText: "#9FDDBF", hover: "#1E3029",
 };
 const C = DARK ? C_DARK : C_LIGHT;
 // Headings and big numbers (the name is historic: they used to be a serif).
-const SERIF = { fontFamily: '"Manrope","DM Sans",ui-sans-serif,system-ui,sans-serif', fontWeight: 700, letterSpacing: "-0.02em" };
+const SERIF = { fontFamily: '"Manrope","Inter",ui-sans-serif,system-ui,sans-serif', fontWeight: 700, letterSpacing: "-0.02em" };
 const TONE = {
   em: { bg: C.emTint, fg: C.em }, warn: { bg: C.warnBg, fg: C.warnFg },
   danger: { bg: C.dangerBg, fg: C.dangerFg }, info: { bg: C.infoBg, fg: C.infoFg },
@@ -175,12 +175,31 @@ function downloadCsv(filename, headers, rows) {
 }
 // Sums placement fees per currency (mixed-currency totals can't be added together) and
 // joins them for display, e.g. "\u20A64,000,000" or "\u20A64,000,000 + $1,200" when currencies differ.
+/* The agency currency (Agency settings): every total in ProNext is shown in it, other currencies
+   converted at today's rate (ExchangeRate-API's daily feed, see useFxRates; set by App). A rate
+   that isn't known yet leaves the amounts in their own currencies, side by side. */
+let FX_RATES = null, AGENCY_CUR = "USD";
+const fxConvert = (n, from, to = AGENCY_CUR) => {
+  const v = Number(n) || 0;
+  if (!v || !from || from === to) return v;
+  const r = FX_RATES && FX_RATES.rates;
+  return r && r[from] && r[to] ? (v / r[from]) * r[to] : null;
+};
+// { NGN: 2000000, SAR: 47520 } as one amount in the agency currency ("NGN 2,000,000 + SAR 47,520"
+// if a rate is missing).
+const moneyTotal = (totals) => {
+  const entries = Object.entries(totals || {}).filter(([, v]) => v);
+  if (!entries.length) return money(0, AGENCY_CUR);
+  const conv = entries.map(([cur, v]) => fxConvert(v, cur));
+  if (conv.every((x) => x != null)) return money(conv.reduce((a, x) => a + x, 0), AGENCY_CUR);
+  return entries.map(([cur, v]) => money(v, cur)).join(" + ");
+};
+// "≈ $1,780" beside an amount in another currency (nothing when it's already the agency currency).
+const approxAgency = (n, cur) => { if (!n || !cur || cur === AGENCY_CUR) return ""; const v = fxConvert(n, cur); return v == null ? "" : "≈ " + money(v, AGENCY_CUR); };
 const sumByCurrency = (placements, numKey, curKey) => {
   const totals = {};
   placements.forEach((p) => { const cur = p[curKey] || "NGN"; totals[cur] = (totals[cur] || 0) + (p[numKey] || 0); });
-  const entries = Object.entries(totals).filter(([, v]) => v);
-  if (entries.length === 0) return naira(0);
-  return entries.map(([cur, v]) => money(v, cur)).join(" + ");
+  return moneyTotal(totals);
 };
 /* Money in a job's own currency (jobs.currency, ISO code). Falls back to naira. */
 const money = (n, cur) => { try { return new Intl.NumberFormat(undefined, { style: "currency", currency: cur || "NGN", maximumFractionDigits: 0 }).format(Number(n || 0)); } catch (e) { return naira(n); } };
@@ -1140,7 +1159,7 @@ function Card({ children, className = "", style = {}, dark = false }) {
   return (
     <div
       className={`rounded-2xl border p-5 md:p-6 ${className}`}
-      style={{ background: dark ? C.side : C.card, borderColor: dark ? C.side : C.line, boxShadow: dark ? "none" : "0 2px 6px rgba(20,32,27,0.05)", minWidth: 0, ...style }}
+      style={{ background: dark ? C.side : C.card, borderColor: dark ? C.side : C.line, boxShadow: dark ? "none" : "0 1px 2px rgba(20,32,27,0.04)", minWidth: 0, ...style }}
     >
       {children}
     </div>
@@ -1150,15 +1169,15 @@ function Card({ children, className = "", style = {}, dark = false }) {
 function Pill({ children, tone = "neutral" }) {
   const t = TONE[tone] || TONE.neutral;
   return (
-    <span className="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap" style={{ background: t.bg, color: t.fg }}>
+    <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: t.bg, color: t.fg }}>
       {children}
     </span>
   );
 }
 function StatusPill({ status }) {
-  if (status === "Placed" || status === "Hired") return <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: C.side, color: C.lime }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: C.lime }} />{status}</span>;
+  if (status === "Placed" || status === "Hired") return <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: C.side, color: C.lime }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: C.lime }} />{status}</span>;
   const t = TONE[STATUS_TONE[status] || "neutral"] || TONE.neutral;
-  return <span className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: t.bg, color: t.fg }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: t.fg }} />{status}</span>;
+  return <span className="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap" style={{ background: t.bg, color: t.fg }}><span className="w-1.5 h-1.5 rounded-full" style={{ background: t.fg }} />{status}</span>;
 }
 // AI fit as a small ring: green 85+, amber 70+, red below; a dash when not scored.
 function ScoreRing({ value, size = 38 }) {
@@ -1231,7 +1250,7 @@ function KPI({ label, value, delta, foot, dark = false, trend }) {
         )}
       </div>
       <div className="flex items-end justify-between gap-2 mb-1">
-        <div className="text-2xl md:text-4xl break-words" style={{ ...SERIF, color: dark ? C.lime : C.ink }}>{value}</div>
+        <div className={(String(value).length > 9 ? "text-xl md:text-2xl" : "text-2xl md:text-4xl") + " break-words"} style={{ ...SERIF, color: dark ? C.lime : C.ink }}>{value}</div>
         {chip && <span className="rounded-full px-2 py-0.5 text-[11px] font-semibold shrink-0 mb-1" style={{ background: chip.bg, color: chip.fg, fontVariantNumeric: "tabular-nums" }} title={"Compared with " + trend.vs}>{chip.t}{chip.t !== "same" ? " vs " + trend.vs : ""}</span>}
       </div>
       {trend && <Sparkline series={trend.series} color={line[0]} fill={line[1]} />}
@@ -1277,12 +1296,12 @@ function IconBtn({ icon: I, label, onClick, tone = "neutral", size = "md", bare 
   );
 }
 function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", full = false, type = "button", disabled = false, title }) {
-  const base = `inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium ${full ? "w-full" : ""}`;
+  const base = `inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold ${full ? "w-full" : ""}`;
   const style =
     kind === "primary" ? { background: C.em, color: "#fff" } :
     kind === "dark" ? { background: C.solid, color: "#fff" } :
     kind === "danger" ? { background: C.dangerFg, color: "#fff" } :
-    { background: C.card, color: C.ink, border: `1px solid ${C.line}` };
+    { background: C.card, color: C.ink, border: `1px solid ${C.line2}` };
   return (
     <button type={type} onClick={onClick} disabled={disabled} title={title || undefined} className={`${base} ${className}`} style={{ ...style, ...(disabled ? { opacity: 0.6, cursor: "not-allowed" } : {}) }}>
       {Icon && <Icon size={16} />}
@@ -1293,7 +1312,7 @@ function Btn({ children, onClick, kind = "ghost", icon: Icon, className = "", fu
 
 function SearchInput({ value, onChange, placeholder }) {
   return (
-    <label className="pn-search flex items-center gap-2 rounded-full border px-3.5 flex-1 min-w-0" style={{ borderColor: C.line, background: C.soft }}>
+    <label className="pn-search flex items-center gap-2 rounded-xl border px-3.5 flex-1 min-w-0" style={{ borderColor: C.line, background: C.card }}>
       <Search size={15} color={C.ink3} className="shrink-0" />
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="bg-transparent outline-none text-sm flex-1 min-w-0 py-2.5" style={{ color: C.ink }} />
     </label>
@@ -2854,7 +2873,7 @@ function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
             style={
               dark
                 ? { background: active ? "rgba(200,241,105,0.1)" : undefined, color: active ? "#fff" : "#A9BBB1", fontWeight: active ? 500 : 400 }
-                : { background: active ? C.emTint : "transparent", color: active ? C.em : C.ink2, fontWeight: active ? 500 : 400 }
+                : { background: active ? (DARK ? C.emTint : "#EEF5F1") : "transparent", color: active ? C.ink : C.ink2, fontWeight: active ? 600 : 400 }
             }
           >
             {dark && active && <span className="absolute rounded-r" style={{ left: -12, top: 8, bottom: 8, width: 3, background: C.lime }} />}
@@ -2877,32 +2896,32 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
   const extra = role === "admin" ? NAV_ADMIN_EXTRA : role === "recops" ? NAV_RECOPS_EXTRA : [];
   return (
-    <div className="flex-col shrink-0 h-screen sticky top-0" style={{ display: desktop ? "flex" : "none", width: collapsed ? 72 : 260, background: C.side }}>
+    <div className="flex-col shrink-0 h-screen sticky top-0" style={{ display: desktop ? "flex" : "none", width: collapsed ? 72 : 248, background: C.card, borderRight: `1px solid ${C.line}` }}>
       <div className="flex items-center gap-2.5 px-4 pt-6 pb-5">
-        {collapsed ? <BrandMark size={32} /> : <div className="flex-1 min-w-0"><BrandLogo height={24} chip /></div>}
-        <button onClick={() => setCollapsed((c) => !c)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}>
-          {collapsed ? <ChevronRight size={16} color="#A9BBB1" /> : <ChevronLeft size={16} color="#A9BBB1" />}
+        {collapsed ? <BrandMark size={32} chip={DARK} /> : <div className="flex-1 min-w-0"><BrandLogo height={24} chip={DARK} /></div>}
+        <button onClick={() => setCollapsed((c) => !c)} className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style={{ background: C.neutralBg }} aria-label={collapsed ? "Expand menu" : "Collapse menu"}>
+          {collapsed ? <ChevronRight size={16} color={C.ink2} /> : <ChevronLeft size={16} color={C.ink2} />}
         </button>
       </div>
-      {!collapsed && <div className="px-4 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>WORKSPACE</div>}
+      {!collapsed && <div className="px-4 pb-1.5 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>WORKSPACE</div>}
       {/* The menu scrolls on short screens so the sign-out and profile below always stay in view. */}
       <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
-        {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} dark badges={badges} /> : <>
-          <NavList items={items} page={page} setPage={setPage} dark badges={badges} />
-          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-xs font-semibold tracking-widest" style={{ color: "#6F8A7D" }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} dark badges={badges} /></>}
+        {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} badges={badges} /> : <>
+          <NavList items={items} page={page} setPage={setPage} badges={badges} />
+          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} badges={badges} /></>}
         </>}
       </div>
       {!collapsed && (
         <div className="px-3 pb-3 pt-3 shrink-0">
-          <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: "#A9BBB1", border: "1px solid rgba(255,255,255,0.12)" }}>Sign out</button>
+          <button onClick={onSignOut} className="w-full text-left text-xs rounded-lg px-2 py-2" style={{ color: C.ink2, border: `1px solid ${C.line}` }}>Sign out</button>
         </div>
       )}
-      <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full shrink-0" style={{ background: page === "myProfile" ? "rgba(255,255,255,0.07)" : "transparent" }} title="My profile">
+      <button onClick={() => setPage("myProfile")} className="px-4 pb-5 pt-2 flex items-center gap-2.5 text-left w-full shrink-0" style={{ background: page === "myProfile" ? C.hover : "transparent", borderTop: `1px solid ${C.line}` }} title="My profile">
         <UserAvatar u={me} tone="em" />
         {!collapsed && (
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-white truncate">{me.name}</div>
-            <div className="text-xs truncate" style={{ color: "#8FA69A" }}>{me.label}</div>
+            <div className="text-sm font-semibold truncate" style={{ color: C.ink }}>{me.name}</div>
+            <div className="text-xs truncate" style={{ color: C.ink2 }}>{me.label}</div>
           </div>
         )}
       </button>
@@ -4068,7 +4087,10 @@ function rolePicks(S, earnings, from, to) {
       else if ((c.matches || []).some((m) => m.job_id === j.id && (m.fit || 0) >= 60)) fits++;
     });
     const chance = Math.min(0.85, 0.08 + active * 0.1 + fits * 0.05 + (late ? 0.2 : 0));
-    return { j, value, currency: earnings ? s.incentiveCurrency : s.feeCurrency, active, late, fits, chance, expected: value * chance, contract: monthlyJob };
+    const currency = earnings ? s.incentiveCurrency : s.feeCurrency;
+    const conv = fxConvert(value, currency);
+    // Ranked in the agency currency, so a naira fee doesn't outrank a bigger dollar one.
+    return { j, value, currency, active, late, fits, chance, expected: (conv == null ? value : conv) * chance, contract: monthlyJob };
   }).filter((x) => x.j.status === "Open" || x.active > 0).sort((a, b) => b.expected - a.expected || b.value - a.value);
 }
 // A recruiter's Overview: the roles they're engaged on (their worklist), open ones first, with
@@ -4125,7 +4147,7 @@ function RolePicker({ S, earnings }) {
               <div className="text-xs truncate" style={{ color: C.ink2 }}>{plural(x.active, "candidate")} in play{x.late ? ", " + x.late + " at interview or later" : ""}{x.fits ? " · " + plural(x.fits, "strong fit") + " not put forward yet" : ""}</div>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-sm font-medium" style={{ fontVariantNumeric: "tabular-nums" }}>{x.value ? money(x.value, x.currency) : earnings ? "Incentive not set" : "Fee not set"}</div>
+              <div className="text-sm font-medium" style={{ fontVariantNumeric: "tabular-nums" }}>{x.value ? money(x.value, x.currency) : earnings ? "Incentive not set" : "Fee not set"}{x.value && approxAgency(x.value, x.currency) ? <span className="block text-xs font-normal" style={{ color: C.ink3 }}>{approxAgency(x.value, x.currency)}</span> : null}</div>
               <div className="text-xs" style={{ color: C.ink3 }}>{x.contract ? "contract · " : ""}{Math.round(x.chance * 100)}% chance</div>
             </div>
           </button>
@@ -4206,7 +4228,7 @@ function useFxRates() {
   const [fx, setFx] = useState(() => { try { const c = JSON.parse(localStorage.getItem(FX_KEY) || "null"); return c && c.rates ? c : null; } catch (e) { return null; } });
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (fx && Date.now() - fx.at < 12 * 3600e3) return;
+    if (fx && Date.now() - fx.at < 6 * 3600e3 && new Date(fx.at).toDateString() === new Date().toDateString()) return;
     fetch("https://open.er-api.com/v6/latest/USD").then((r) => r.json()).then((d) => {
       if (d && d.result === "success" && d.rates) { const v = { at: Date.now(), rates: d.rates, updated: d.time_last_update_utc || "" }; setFx(v); try { localStorage.setItem(FX_KEY, JSON.stringify(v)); } catch (e) { /* private window */ } }
       else setFailed(true);
@@ -4229,7 +4251,7 @@ function RecruiterAuditPage({ S, toast }) {
   const baseCur = goal.currency || "USD";
   // The currency the page is shown in (remembered in this browser); every amount, whatever it was
   // entered in, is converted to it at today's rate.
-  const [cur, setCurRaw] = useState(() => { try { return localStorage.getItem("pronext-audit-cur") || baseCur; } catch (e) { return baseCur; } });
+  const [cur, setCurRaw] = useState(() => { try { return localStorage.getItem("pronext-audit-cur") || AGENCY_CUR; } catch (e) { return AGENCY_CUR; } });
   const setCur = (c) => { setCurRaw(c); try { localStorage.setItem("pronext-audit-cur", c); } catch (e) { /* private window */ } };
   const { fx, failed: fxFailed, convert } = useFxRates();
   const missed = new Set(); // currencies we couldn't convert (left out)
@@ -4490,6 +4512,154 @@ function RecruiterAuditPage({ S, toast }) {
 }
 
 const PERIOD_VS = { Daily: "yesterday", Weekly: "last week", Monthly: "last month", Yearly: "last year" };
+/* ---- Home: role cards, candidates interviewing, the monthly goal, pipeline value and client
+   follow-ups. mine: only the signed-in recruiter's candidates and roles. */
+const HOME_STAGE_GROUPS = [["In review", ["Sourced", "In review", "Screening"]], ["With client", ["Submitted"]], ["Interview", ["Interview"]], ["Offer", ["Offer"]]];
+function HomeRoles({ S, mine }) {
+  const [all, setAll] = useState(false);
+  const cands = mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands;
+  const roles = S.jobs.filter((j) => j.status !== "Draft" && j.status !== "Closed" && !j.leadRole && (!mine || onWorklist(S, j))).map((j) => {
+    const counts = HOME_STAGE_GROUPS.map(() => 0); let fits = 0;
+    cands.forEach((c) => {
+      const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
+      if (l) { if (isLiveLink(l)) { const g = HOME_STAGE_GROUPS.findIndex(([, st]) => st.includes(l.stage)); if (g >= 0) counts[g]++; } }
+      else if ((c.matches || []).some((m) => m.job_id === j.id && (m.fit || 0) >= 60)) fits++;
+    });
+    return { j, counts, fits, score: counts[3] * 8 + counts[2] * 4 + counts[1] * 2 + counts[0] };
+  }).sort((a, b) => b.score - a.score || (b.j.createdAt || 0) - (a.j.createdAt || 0));
+  if (!roles.length) return null;
+  const shown = all ? roles : roles.slice(0, 4);
+  return (
+    <section aria-label="Your roles" className="flex flex-col gap-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-lg" style={SERIF}>{mine ? "Your roles" : "Open roles"} <span className="text-sm font-normal" style={{ color: C.ink2, fontFamily: "inherit", letterSpacing: 0 }}>{roles.length}</span></div>
+        <button type="button" onClick={() => S.go("jobs")} className="text-sm font-semibold" style={{ color: C.em }}>All jobs</button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {shown.map(({ j, counts, fits }) => {
+          const b = suggestBilling(j, null);
+          return (
+            <button key={j.id} type="button" onClick={() => S.openJob(j.id)} className="rounded-2xl border p-4 text-left flex flex-col gap-3 min-w-0" style={{ background: C.card, borderColor: C.line }}>
+              <div className="flex items-start gap-3 min-w-0 w-full">
+                <span className="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-bold shrink-0" style={{ background: C.emTint, color: C.emText }}>{initialsOf(j.client)}</span>
+                <span className="flex-1 min-w-0"><span className="block font-semibold truncate">{j.role}</span><span className="block text-xs truncate mt-0.5" style={{ color: C.ink2 }}>{[j.client, j.location, j.workSetup].filter(Boolean).join(" · ")}</span></span>
+                <StatusPill status={j.status} />
+              </div>
+              {(j.minPay || j.maxPay || b.fee) && (
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                  {(j.minPay || j.maxPay) && !j.commissionOnly && <span><span style={{ color: C.ink2 }}>Salary </span>{j.minPay ? money(j.minPay, j.currency) : "?"}{j.maxPay && j.maxPay !== j.minPay ? " – " + money(j.maxPay, j.currency) : ""} / {(j.salaryPeriod || "Yearly").toLowerCase()}</span>}
+                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>≈ {money(b.fee, b.feeCurrency)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
+                </div>
+              )}
+              <div className="grid grid-cols-4 gap-1.5 w-full">
+                {HOME_STAGE_GROUPS.map(([label], i) => (
+                  <span key={label} className="rounded-lg px-2 py-1.5" style={{ background: i >= 2 && counts[i] ? C.emTint : C.soft }}>
+                    <span className="block text-base font-bold" style={{ color: i >= 2 && counts[i] ? C.emText : C.ink }}>{counts[i]}</span>
+                    <span className="block text-[11px] truncate" style={{ color: i >= 2 && counts[i] ? C.emText : C.ink2 }}>{label}</span>
+                  </span>
+                ))}
+              </div>
+              {fits > 0 && <span className="text-xs flex items-center gap-1.5" style={{ color: C.emText }}><Sparkles size={13} />{plural(fits, "person", "people")} already in ProNext {fits === 1 ? "fits" : "fit"} this role</span>}
+            </button>
+          );
+        })}
+      </div>
+      {roles.length > 4 && <button type="button" onClick={() => setAll((x) => !x)} className="self-start text-sm font-semibold" style={{ color: C.em }}>{all ? "Show fewer" : "Show all " + roles.length}</button>}
+    </section>
+  );
+}
+function HomeInterviewing({ S, mine }) {
+  const now = Date.now();
+  const rows = [];
+  (mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands).forEach((c) => (c.jobLinks || []).forEach((l) => {
+    if (!isLiveLink(l) || !["Interview", "Offer"].includes(l.stage)) return;
+    const j = S.jobs.find((x) => x.id === l.jobId);
+    const next = (S.interviews || []).filter((iv) => iv.linkId === l.id && iv.status === "scheduled" && iv.end >= now).sort((a, b) => a.start - b.start)[0] || null;
+    rows.push({ c, l, j, next });
+  }));
+  rows.sort((a, b) => (a.next ? a.next.start : Infinity) - (b.next ? b.next.start : Infinity));
+  const when = (t) => { const d = new Date(t), today = new Date(); const same = d.toDateString() === today.toDateString(); const tmr = new Date(Date.now() + 864e5).toDateString() === d.toDateString();
+    return (same ? "Today" : tmr ? "Tomorrow" : d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })) + ", " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); };
+  return (
+    <Card className="!p-0">
+      <div className="flex items-baseline justify-between gap-2 px-5 pt-4 pb-3">
+        <div className="text-lg" style={SERIF}>Candidates interviewing <span className="text-sm font-normal" style={{ color: C.ink2, fontFamily: "inherit", letterSpacing: 0 }}>{rows.length}</span></div>
+        <button type="button" onClick={() => S.go("interviews")} className="text-sm font-semibold" style={{ color: C.em }}>Interviews</button>
+      </div>
+      {rows.length === 0 && <div className="px-5 pb-5 text-sm" style={{ color: C.ink2 }}>No one is at interview or offer yet.</div>}
+      {rows.slice(0, 6).map(({ c, l, j, next }) => (
+        <button key={l.id} type="button" onClick={() => S.openCandidate(c.id)} className="w-full flex items-center gap-3 px-5 py-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
+          <Avatar init={initialsOf(c.name)} tone="em" size={34} src={c.photo || undefined} />
+          <span className="flex-1 min-w-0"><span className="block text-sm font-semibold truncate">{c.name}</span><span className="block text-xs truncate" style={{ color: C.ink2 }}>{j ? j.role + (j.client ? " · " + j.client : "") : "Role"}</span></span>
+          <StatusPill status={next && next.round ? l.stage : l.stage} />
+          <span className="text-xs text-right shrink-0 hidden sm:block" style={{ color: C.ink2, width: 128 }}>{next ? (next.round ? next.round + " · " : "") + when(next.start) : l.stage === "Offer" ? "Offer out" : "No interview booked"}</span>
+        </button>
+      ))}
+      {rows.length > 6 && <button type="button" onClick={() => S.go("interviews")} className="w-full px-5 py-3 text-sm font-semibold text-left" style={{ color: C.em, borderTop: `1px solid ${C.line}` }}>See all {rows.length}</button>}
+    </Card>
+  );
+}
+function HomeGoal({ S, recruiterId }) {
+  const d = new Date(), from = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  const tm = monthlyTargets(S);
+  const goal = (S.settings && S.settings.revenueGoal) || {};
+  const plc = S.placements.filter((p) => p.createdAt >= from && p.status !== "Fallout" && (!recruiterId || p.recruiterId === recruiterId));
+  const target = Math.max(1, Number(tm.placements) || 1);
+  const pct = Math.min(100, Math.round((plc.length / target) * 100));
+  const earned = recruiterId ? sumByCurrency(plc.filter((p) => p.incentiveNum), "incentiveNum", "incentiveCurrency") : sumByCurrency(plc.filter((p) => p.feeNum), "feeNum", "feeCurrency");
+  const dim = "rgba(242,244,241,.72)";
+  return (
+    <div className="rounded-2xl p-5 flex flex-col gap-3" style={{ background: C.side, color: C.onSide }}>
+      <div className="text-sm" style={{ color: dim }}>{d.toLocaleDateString("en-GB", { month: "long" })}</div>
+      <div className="flex items-baseline gap-2"><span className="text-4xl" style={{ ...SERIF, color: "#fff" }}>{plc.length}</span><span className="text-sm" style={{ color: dim }}>of {target} placements</span></div>
+      <div className="h-2 rounded-full" style={{ background: "rgba(255,255,255,.12)" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Placements against this month's target"><div className="h-2 rounded-full" style={{ width: pct + "%", background: C.lime }} /></div>
+      <div className="flex justify-between gap-3 text-sm"><span style={{ color: dim }}>{recruiterId ? "Your earnings" : "Fees this month"}</span><span className="font-semibold text-right">{earned}</span></div>
+      {!recruiterId && goal.amount ? <div className="text-xs" style={{ color: dim }}>Revenue goal {(() => { const v = fxConvert(goal.amount, goal.currency || "USD"); return v == null ? money(goal.amount, goal.currency || "USD") : money(v, AGENCY_CUR); })()}{goal.by ? " by " + fdate(goal.by + "T12:00:00") : ""}</div> : null}
+    </div>
+  );
+}
+function HomePipelineValue({ S, mine }) {
+  const totals = {}; let n = 0;
+  (mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands).forEach((c) => (c.jobLinks || []).forEach((l) => {
+    if (!isLiveLink(l) || !["Interview", "Offer"].includes(l.stage)) return;
+    const j = S.jobs.find((x) => x.id === l.jobId); if (!j) return;
+    const b = suggestBilling(j, null);
+    const v = Number(mine ? b.incentive : b.fee) || 0, cur = mine ? b.incentiveCurrency : b.feeCurrency;
+    n++; if (v) totals[cur] = (totals[cur] || 0) + v;
+  }));
+  return (
+    <Card>
+      <div className="text-sm" style={{ color: C.ink2 }}>{mine ? "Your earnings in play" : "Pipeline value"}</div>
+      <div className="text-2xl mt-1" style={SERIF}>{moneyTotal(totals)}</div>
+      <div className="text-xs mt-1" style={{ color: C.ink2 }}>{n ? (mine ? "Your incentive on " : "Fees on ") + plural(n, "candidate") + " at interview or offer" : "Nobody at interview or offer yet"}</div>
+    </Card>
+  );
+}
+function HomeFollowups({ S }) {
+  const [leads, setLeads] = useState(null);
+  React.useEffect(() => {
+    let live = true;
+    S.sb("/rest/v1/leads?select=id,company,status,interested_at,data,outreach_messages(status,sent_at,kind,followup),client_replies(received_at,auto,spam)&status=in.(contacted,replied)&order=created_at.desc&limit=300")
+      .then((r) => live && setLeads(r || [])).catch(() => live && setLeads([]));
+    return () => { live = false; };
+  }, []); // eslint-disable-line
+  if (!leads) return null;
+  const week = Date.now() - 7 * 864e5;
+  const replied = leads.filter((l) => (l.client_replies || []).some((r) => !r.auto && !r.spam && new Date(r.received_at).getTime() >= week)).slice(0, 3);
+  const due = leads.map((l) => ({ l, f: leadFollowup(l) })).filter((x) => x.f).sort((a, b) => a.f.due - b.f.due).slice(0, 5);
+  if (!replied.length && !due.length) return null;
+  const day = (t) => { const d = new Date(t); return d.toDateString() === new Date().toDateString() ? "today" : d.getTime() < Date.now() ? "due" : d.toLocaleDateString("en-GB", { weekday: "short" }); };
+  return (
+    <Card>
+      <div className="flex items-baseline justify-between gap-2"><div className="text-sm font-semibold">Client follow-ups</div><button type="button" onClick={() => S.go("campaigns")} className="text-xs font-semibold" style={{ color: C.em }}>Outreach</button></div>
+      <div className="flex flex-col gap-2.5 mt-3">
+        {replied.map((l) => <button key={"r" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0 font-semibold" style={{ color: C.emText }}>Replied</span></button>)}
+        {due.map(({ l, f }) => <button key={"f" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0" style={{ color: f.isDue ? C.warnFg : C.ink2 }}>Follow-up {f.step} · {day(f.due)}</span></button>)}
+      </div>
+    </Card>
+  );
+}
+
 function OverviewRecOps({ S }) {
   const checks = useAttentionChecks(S);
   const [period, setPeriod] = useState("Monthly");
@@ -4537,9 +4707,9 @@ function OverviewRecOps({ S }) {
         <KPI label="Total billed" value={billedPeriod} foot={periodFoot} />
         <KPI label="Payment due" value={paymentDue} foot={invoicedDue.length + " invoice" + (invoicedDue.length === 1 ? "" : "s") + " awaiting payment"} />
       </KPIGrid>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
-        <SubmissionsCard S={S} />
-        <AttentionList title="Needs attention" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
+        <div className="flex flex-col gap-5 min-w-0">
+          <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const drafts = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "draft");
           const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
           const unassigned = S.inbox.filter((x) => x.status === "new").map((x) => ({ id: null, name: x.name, sub: x.role, go: "inbox" }));
@@ -4555,15 +4725,22 @@ function OverviewRecOps({ S }) {
             { icon: AlertTriangle, t: "Placements in guarantee", s: plural(guarantee.length, "placement"), tone: "danger", people: guarantee, go: "billing" },
           ];
         })()} />
+          <HomeRoles S={S} />
+          <HomeInterviewing S={S} />
+          <SubmissionsCard S={S} />
+          <RolePicker S={S} />
+          <Card>
+            <RecruiterPerformanceChart S={S} />
+          </Card>
+          <TeamToday S={S} />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
+          <HomeGoal S={S} />
+          <HomePipelineValue S={S} />
+          <HomeFollowups S={S} />
+          <PaceCard S={S} />
+        </div>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <PaceCard S={S} />
-        <div className="lg:col-span-2 min-w-0"><RolePicker S={S} /></div>
-      </div>
-      <Card>
-        <RecruiterPerformanceChart S={S} />
-      </Card>
-      <TeamToday S={S} />
     </div>
   );
 }
@@ -4620,9 +4797,9 @@ function OverviewRecruiter({ S }) {
         <KPI label="My interviews" value={st.interviews} foot="in interview now" />
         <KPI label="My earnings" value={sumByCurrency(S.placements.filter((p) => p.recruiterId === S.me.id && ["Ready", "Invoiced", "Paid"].includes(p.status) && p.incentiveNum), "incentiveNum", "incentiveCurrency")} foot="your incentive, after guarantee" />
       </KPIGrid>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
-        <AttentionList title="Needs attention" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
+        <div className="flex flex-col gap-5 min-w-0">
+          <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
           const routed = linkPeople(S, (l) => l.response === "pending");
@@ -4633,10 +4810,15 @@ function OverviewRecruiter({ S }) {
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
           ];
         })()} />
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-        <PaceCard S={S} recruiterId={S.me.id} />
-        <div className="lg:col-span-2 min-w-0"><MyEngagedRoles S={S} /></div>
+          <MyEngagedRoles S={S} />
+          <HomeInterviewing S={S} mine />
+          <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
+          <HomeGoal S={S} recruiterId={S.me.id} />
+          <HomePipelineValue S={S} mine />
+          <PaceCard S={S} recruiterId={S.me.id} />
+        </div>
       </div>
     </div>
   );
@@ -8874,7 +9056,7 @@ function WeekGrid({ days, list, clash, onOpen }) {
           {days.map((d) => {
             const items = inDay(d); const { pos, n } = lay(items);
             return (
-              <div key={d.ymd} className="relative" style={{ borderLeft: `1px solid #EFEBE1`, background: d.ymd === todayYmd ? C.soft : "transparent" }}>
+              <div key={d.ymd} className="relative" style={{ borderLeft: `1px solid ${C.line}`, background: d.ymd === todayYmd ? C.soft : "transparent" }}>
                 {hours.map((h, i) => <div key={h} className="absolute left-0 right-0" style={{ top: i * HOUR, borderTop: i ? "1px dashed #F0ECE3" : "none" }} />)}
                 {d.ymd === todayYmd && nz.h >= from && nz.h < to && <div className="absolute left-0 right-0" style={{ top: ((nz.h - from) * 60 + nz.min) * HOUR / 60, height: 2, background: C.dangerFg, zIndex: 2 }} />}
                 {items.map((iv) => {
@@ -9007,7 +9189,7 @@ function InterviewsPage({ S, toast }) {
             </div>
           )}
           {view !== "list" && <div className="flex flex-wrap gap-4 text-xs mt-3" style={{ color: C.ink2 }}>
-            {[[C.emTint, "transparent", "Candidate confirmed"], [C.warnBg, "transparent", "Waiting for candidate"], ["#EFEBE1", "transparent", "Done"], ["#fff", C.dangerFg, "Clash"]].map(([bg, b, l]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: bg, border: `2px solid ${b}` }} />{l}</span>)}
+            {[[C.emTint, "transparent", "Candidate confirmed"], [C.warnBg, "transparent", "Waiting for candidate"], [C.neutralBg, "transparent", "Done"], ["#fff", C.dangerFg, "Clash"]].map(([bg, b, l]) => <span key={l} className="flex items-center gap-1.5"><span className="w-3 h-3 rounded" style={{ background: bg, border: `2px solid ${b}` }} />{l}</span>)}
           </div>}
         </Card>
         <div className="xl:w-[300px] shrink-0 flex flex-col gap-4">
@@ -11515,7 +11697,7 @@ function PreferencesDone({ p, name, preview, onClose }) {
    One question per screen, like a short career quiz: a top bar with back, logo and "3/12", a thin
    progress line, a big question, and full-width answers. Tapping a single-choice answer moves on;
    multi-choice and typed answers have Continue. Full screen, so it feels like an app on phones. */
-const QUIZ_FONT = { fontFamily: '"DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif' };
+const QUIZ_FONT = { fontFamily: '"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif' };
 function QuizOption({ selected, onClick, children, hint, multi }) {
   return (
     <button type="button" onClick={onClick} aria-pressed={!!selected}
@@ -11744,7 +11926,7 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
       <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
           <button type="button" onClick={done ? onClose : back} aria-label={(inBefore ? bi === 0 : i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(inBefore ? bi === 0 : i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
-          <BrandLogo height={24} />
+          <BrandLogo height={24} chip={DARK} />
           <span className="text-xs font-semibold rounded-full px-2.5 py-1" style={{ border: `1px solid ${C.line}`, background: C.card, color: C.ink }}>{edit ? "Edit" : inBefore ? "Step " + (bi + 1) : (done ? total : pos + 1) + "/" + total}</span>
         </div>
         <div style={{ height: 3, background: "#ECE9E2" }}><div style={{ height: 3, width: pct + "%", background: C.em, transition: "width .3s ease" }} /></div>
@@ -12873,7 +13055,7 @@ function EarningsCard({ list }) {
         <div key={x.key} className="flex items-center gap-3 py-2" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
           <div className="w-14 shrink-0 text-xs" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{fdate(x.date + "T12:00:00")}</div>
           <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{x.p.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{x.p.role}</div></div>
-          <div className="text-sm font-medium shrink-0" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}</div>
+          <div className="text-sm font-medium shrink-0 text-right" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}{approxAgency(x.amount, x.currency) ? <span className="block text-xs font-normal" style={{ color: C.ink3 }}>{approxAgency(x.amount, x.currency)}</span> : null}</div>
         </div>
       ))}
     </Card>
@@ -12887,21 +13069,23 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
   const [busy, setBusy] = useState(false);
   const today = ymdToday();
   const items = list.flatMap((p) => payoutSchedule(p, today));
-  const cur = goal.currency || "USD";
-  const mine = items.filter((x) => x.currency === cur);
-  const otherCur = [...new Set(items.filter((x) => x.currency !== cur).map((x) => x.currency))];
+  // In the agency currency: the goal and every payout converted at today's rate (any that can't be
+  // converted yet are left out and named).
+  const cur = AGENCY_CUR;
+  const mine = items.map((x) => { const v = fxConvert(x.amount, x.currency, cur); return v == null ? null : { ...x, amount: v }; }).filter(Boolean);
+  const otherCur = [...new Set(items.filter((x) => fxConvert(x.amount, x.currency, cur) == null).map((x) => x.currency))];
   // Locked in: everything owed on placements that started by the goal date (paid out later or not).
   const startedBy = (x) => (x.p.startDate || today) <= goal.by;
   const sum = (arr) => arr.reduce((a, x) => a + (x.amount || 0), 0);
   const received = sum(mine.filter((x) => x.received));
   const locked = sum(mine.filter(startedBy));
   const arrivesByGoal = sum(mine.filter((x) => x.date <= goal.by));
-  const target = Number(goal.amount) || 0;
+  const target = Number(fxConvert(goal.amount, goal.currency || "USD", cur) ?? goal.amount) || 0;
   const pctRecv = target ? Math.min(100, (received / target) * 100) : 0;
   const pctLocked = target ? Math.min(100, (locked / target) * 100) : 0;
   const upcoming = items.filter((x) => !x.received).sort((a, b) => (a.date < b.date ? -1 : 1)).slice(0, 6);
-  const activeContracts = list.filter((p) => p.payType === "monthly" && payoutSchedule(p, today).some((x) => !x.received) && !(p.startDate && p.startDate > today) && p.feeCurrency === cur);
-  const monthlyNow = activeContracts.reduce((a, p) => a + placementMonthly(p), 0);
+  const activeContracts = list.filter((p) => p.payType === "monthly" && payoutSchedule(p, today).some((x) => !x.received) && !(p.startDate && p.startDate > today) && fxConvert(1, p.feeCurrency || "NGN", cur) != null);
+  const monthlyNow = activeContracts.reduce((a, p) => a + (fxConvert(placementMonthly(p), p.feeCurrency || "NGN", cur) || 0), 0);
   const save = () => {
     const amount = num(g.amount);
     if (!amount || !g.by) { toast("Enter an amount and a date"); return; }
@@ -12946,7 +13130,7 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
             <div key={x.key} className="flex items-center gap-3 py-2" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
               <div className="w-14 shrink-0 text-xs" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{fdate(x.date + "T12:00:00")}</div>
               <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{x.p.name}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{x.label}</div></div>
-              <div className="text-sm font-medium shrink-0" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}</div>
+              <div className="text-sm font-medium shrink-0 text-right" style={{ fontVariantNumeric: "tabular-nums" }}>{money(x.amount, x.currency)}{approxAgency(x.amount, x.currency) ? <span className="block text-xs font-normal" style={{ color: C.ink3 }}>{approxAgency(x.amount, x.currency)}</span> : null}</div>
             </div>
           ))}
         </div>
@@ -12955,7 +13139,7 @@ function PayoutTracker({ list, S, toast, canEditGoal }) {
           <div className="text-xl" style={{ fontVariantNumeric: "tabular-nums" }}>{money(monthlyNow, cur)}<span className="text-sm" style={{ color: C.ink3 }}> a month</span></div>
           <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>{activeContracts.length ? "From " + plural(activeContracts.length, "active contractor") + ", paid monthly." : "No active contractors yet. Add one with New billing entry → Contract."}</div>
           <div className="text-xs mt-3" style={{ color: C.ink3 }}>Contract months count as received once each month has passed. Permanent payouts count as received when marked Paid.</div>
-          {otherCur.length > 0 && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Placements in {otherCur.join(", ")} aren't added to the {cur} goal.</div>}
+          {otherCur.length > 0 && <div className="text-xs mt-2" style={{ color: C.ink3 }}>Placements in {otherCur.join(", ")} aren't counted yet: today's exchange rate hasn't loaded.</div>}
         </div>
       </div>
     </Card>
@@ -14134,8 +14318,9 @@ function AgencyTab({ toast, S }) {
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default currency</label>
+          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency currency</label>
           <PickList value={defaultCurrency} onChange={setDefaultCurrency} options={withValue(CURRENCY_OPTIONS, defaultCurrency)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
+          <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>Every total in ProNext is shown in this currency, other currencies converted at today's exchange rate. New jobs start in it too.</div>
         </div>
         <div>
           <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default hiring country</label>
@@ -16662,6 +16847,7 @@ export default function App() {
   const [status, setStatus] = useState(session ? "loading" : "signedout"); // loading | signedout | pending | ready | error
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState(null);
+  const fxr = useFxRates();
   const [rerouteAsk, setRerouteAsk] = useState(null); // { name, roles, label, resolve }
   const [tourOpen, setTourOpen] = useState(false);
   const [errMsg, setErrMsg] = useState("");
@@ -17011,6 +17197,7 @@ export default function App() {
     const roles = live.map((l) => { const j = data.jobs.find((x) => x.id === l.jobId); return j ? j.role + (j.client ? ", " + j.client : "") + " (" + l.stage + ")" : "Another role (" + l.stage + ")"; });
     setRerouteAsk({ name: c.name, roles, label: label || ((data.jobs.find((x) => x.id === jobId) || {}).role || "the new role"), resolve });
   });
+  FX_RATES = fxr.fx; AGENCY_CUR = (data.settings && data.settings.defaultCurrency) || "USD";
   const S = {
     role, me: myMe, query, toast, error: showError, go: setPage,
     cands: data.cands, updateCand, askReroute,
