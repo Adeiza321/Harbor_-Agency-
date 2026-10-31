@@ -223,12 +223,32 @@ function suggestBilling(job, candidatePay) {
   // The candidate's pay, when given, is taken to be in the same period as the job's.
   const salary = payOver(job, hourlyFee || job.billingFrequency === "Monthly" ? "month" : "year", num(candidatePay) || null);
   const fee = hourlyFee ? Math.round((Number(job.billingAmount) || 0) * CONTRACT_HOURS_MONTH * 100) / 100
-    : job.billingType === "flat" ? (job.billingAmount || 0) : Math.round((salary * (job.billingAmount || 0)) / 100);
+    : job.billingType === "flat" ? (job.billingAmount || 0) : Math.round(salary * (job.billingAmount || 0)) / 100;
   const feeCurrency = job.billingType === "percent" || !job.billingType ? (job.currency || "NGN") : (job.billingCurrency || "NGN");
   const incentive = job.incentiveType === "hourly" ? Math.round((Number(job.incentiveAmount) || 0) * CONTRACT_HOURS_MONTH * 100) / 100
-    : job.incentiveType === "flat" ? (job.incentiveAmount || 0) : Math.round((fee * (job.incentiveAmount || 0)) / 100);
+    : job.incentiveType === "flat" ? (job.incentiveAmount || 0) : Math.round(fee * (job.incentiveAmount || 0)) / 100;
   const incentiveCurrency = job.incentiveType === "flat" || job.incentiveType === "hourly" ? (job.incentiveCurrency || "NGN") : feeCurrency;
   return { fee: fee || "", feeCurrency, incentive: incentive || "", incentiveCurrency };
+}
+// The working behind a role's money, shown wherever it appears:
+//   "$5/hr × 40 hrs × 4 wks = $800/month × 6 months = $4,800"
+//   "10% of $4,160/month ($26/hr × 160 hrs) = $416/month × 12 months = $4,992"
+const plMonths = (n) => n + " month" + (n === 1 ? "" : "s");
+function feeWorking(job) {
+  if (!job || !job.billingAmount) return "";
+  const m = roleMoney(job, null), c = m.feeCurrency, tail = m.feeMonthly ? "/month × " + plMonths(m.feeMonths) + " = " + money(m.feeTotal, c) : "";
+  if (job.billingType === "hourly") return money(job.billingAmount, c) + "/hr × 40 hrs × 4 wks = " + money(m.fee, c) + tail;
+  if (job.billingType === "flat") return m.feeMonthly ? money(m.fee, c) + tail : money(m.fee, c) + " on placement";
+  const per = m.feeMonthly ? "month" : "year", pay = payOver(job, per, null);
+  const hourly = job.salaryPeriod === "Hourly" && m.feeMonthly ? " (" + money(Number(job.maxPay) || Number(job.minPay) || 0, job.currency || c) + "/hr × 160 hrs)" : "";
+  return job.billingAmount + "% of " + money(pay, job.currency || c) + "/" + per + hourly + " = " + money(m.fee, c) + (m.feeMonthly ? tail : " on placement");
+}
+function incWorking(job) {
+  if (!job || !job.incentiveAmount) return "";
+  const m = roleMoney(job, null), c = m.incCurrency, tail = m.incMonthly ? "/month × " + plMonths(m.incMonths) + " = " + money(m.incTotal, c) : "";
+  if (job.incentiveType === "hourly") return money(job.incentiveAmount, c) + "/hr × 40 hrs × 4 wks = " + money(m.inc, c) + tail;
+  if (job.incentiveType === "flat") return m.incMonthly ? money(m.inc, c) + tail : money(m.inc, c) + " on placement";
+  return job.incentiveAmount + "% of the client fee " + money(m.fee, m.feeCurrency) + (m.feeMonthly ? "/month" : "") + " = " + money(m.inc, c) + (m.incMonthly ? tail : " on placement");
 }
 // The agency's and the recruiter's money on a role, each on its own timeline (set separately on the
 // job: the agency may bill 6 months while the recruiter is paid for 3).
@@ -4579,7 +4599,7 @@ function HomeRoles({ S, mine }) {
               {(j.minPay || j.maxPay || b.fee) && (
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                   {(j.minPay || j.maxPay) && !j.commissionOnly && <span><span style={{ color: C.ink2 }}>Salary </span>{j.minPay ? money(j.minPay, j.currency) : "?"}{j.maxPay && j.maxPay !== j.minPay ? " – " + money(j.maxPay, j.currency) : ""} / {(j.salaryPeriod || "Yearly").toLowerCase()}</span>}
-                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>≈ {rm.feeMonthly ? money(rm.fee, rm.feeCurrency) + "/mo × " + rm.feeMonths + " = " : ""}{money(b.fee, b.feeCurrency)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
+                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>{feeWorking(j)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
                 </div>
               )}
               <div className="grid grid-cols-4 gap-1.5 w-full">
@@ -8454,14 +8474,15 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                 <div>
                   <div className="text-xs" style={{ color: C.ink3 }}>Client billing</div>
                   <div className="font-medium mt-0.5">{job.billingAmount ? (job.billingType === "hourly" ? money(job.billingAmount, job.billingCurrency) + " per hour worked" : job.billingType === "flat" ? money(job.billingAmount, job.billingCurrency) : job.billingAmount + "% of salary") : "Not set"}</div>
-                  {job.billingAmount && (() => { const rm = roleMoney(job, null); return <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{rm.feeMonthly ? (rm.fee ? "≈ " + money(rm.fee, rm.feeCurrency) + " a month" + (job.billingType === "hourly" ? " (160 hours)" : "") + ", for " + rm.feeMonths + " month" + (rm.feeMonths === 1 ? "" : "s") + " · ≈ " + money(rm.feeTotal, rm.feeCurrency) + " in all" : "Monthly, for " + rm.feeMonths + " months") : "One-off, on placement"}</div>; })()}
+                  {job.billingAmount && <div className="text-xs mt-0.5" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{feeWorking(job) || (job.billingFrequency === "Monthly" ? "Monthly" : "One-off, on placement")}</div>}
                 </div>
               )}
               <div>
                 <div className="text-xs" style={{ color: C.ink3 }}>{S.role === "recruiter" ? "Your incentive" : "Recruiter incentive"}</div>
                 {(() => { const e = recruiterEarning(job); const t = earningText(e); return <>
                   <div className="font-medium mt-0.5">{t || (e && e.missing ? "Not set yet" : job.incentiveAmount + "% of the client fee")}</div>
-                  {t && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{[e.basis, e.monthly ? "paid monthly" : "one-off, on placement", e.upTo ? "depends on the hire's pay" : ""].filter(Boolean).join(" · ")}</div>}
+                  {t && incWorking(job) && <div className="text-xs mt-0.5" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{incWorking(job)}</div>}
+                {t && !incWorking(job) && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{[e.basis, e.monthly ? "paid monthly" : "one-off, on placement", e.upTo ? "depends on the hire's pay" : ""].filter(Boolean).join(" · ")}</div>}
                   {e && e.missing && S.role !== "recruiter" && <div className="text-xs mt-0.5" style={{ color: C.warnFg }}>{!job.incentiveAmount ? "Add the recruiter incentive (Edit job)" : "Add the client fee or the role's pay (Edit job), so recruiters see what they'd earn"}</div>}
                 </>; })()}
               </div>
@@ -8939,7 +8960,8 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
                 <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months</label><input value={billingMonths} onChange={(e) => setBillingMonths(e.target.value)} placeholder="e.g. 6" className={inp} style={inpStyle} /></div>
               )}
             </div>
-            {(() => { const rm = roleMoney(formMoneyJob, null); return rm.fee && rm.feeMonthly ? <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>≈ <b>{money(rm.fee, rm.feeCurrency)}</b> a month{billingType === "hourly" ? " (" + num(billingAmount) + " × 40 hours × 4 weeks)" : ""} × {rm.feeMonths} month{rm.feeMonths === 1 ? "" : "s"} = <b>{money(rm.feeTotal, rm.feeCurrency)}</b> to the agency</div> : null; })()}
+            {feeWorking(formMoneyJob) && <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText, fontVariantNumeric: "tabular-nums" }}>To the agency: <b>{feeWorking(formMoneyJob)}</b></div>}
+            {billingType === "flat" && billingFrequency === "Monthly" && salaryPeriod === "Hourly" && num(billingAmount) > 0 && num(billingAmount) < 200 && <div className="text-xs mt-1.5 rounded-lg px-3 py-2" style={{ background: C.warnBg, color: C.warnText }}>{money(num(billingAmount), billingCurrency)} a month looks like an hourly rate. If the fee is per hour worked, choose <b>Per hour worked</b> so it's counted × 160 hours a month.</div>}
           </div>
           <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
             <SectionTitle title="Recruiter incentive" sub="What the recruiter earns for placing a candidate on this role." size="text-base" />
@@ -8975,7 +8997,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
                 <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>For how many months (the recruiter's own)</label><input value={incentiveMonths} onChange={(e) => setIncentiveMonths(e.target.value)} placeholder="e.g. 3" className={inp} style={inpStyle} /></div>
               )}
             </div>
-            {(() => { const rm = roleMoney(formMoneyJob, null); return rm.inc ? <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText }}>≈ <b>{money(rm.inc, rm.incCurrency)}</b>{rm.incMonthly ? <> a month{incentiveType === "hourly" ? " (" + num(incentiveAmount) + " × 40 hours × 4 weeks)" : ""} × {rm.incMonths} month{rm.incMonths === 1 ? "" : "s"} = <b>{money(rm.incTotal, rm.incCurrency)}</b></> : " on placement"} to the recruiter</div> : null; })()}
+            {incWorking(formMoneyJob) && <div className="text-xs mt-2 rounded-lg px-3 py-2" style={{ background: C.emTint, color: C.emText, fontVariantNumeric: "tabular-nums" }}>To the recruiter: <b>{incWorking(formMoneyJob)}</b></div>}
           </div>
           <div className="pt-4" style={{ borderTop: `1px solid ${C.line}` }}>
             <SectionTitle title="Screening questions" sub="Every recruiter on this role asks applicants these before recording their answers." size="text-base" />
