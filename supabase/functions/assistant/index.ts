@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { readAttachment } from "./attach.ts";
 import { buildDigest } from "./digest.ts";
 import { aiDownFrom, noteAiHealth } from "../sourcing/ai.ts";
+import { candidateFilter, filterContext } from "./filter.ts";
 
 // The ProNext assistant: helps close roles. Signed-in staff only.
 //   - It LOOKS THINGS UP itself (candidates, jobs, pipelines, interviews, client feedback, AI
@@ -860,6 +861,17 @@ Deno.serve(async (req: Request) => {
       const t = String(body.title || "").replace(/\s+/g, " ").trim().slice(0, 240);
       if (t) await admin.from("assistant_memories").insert({ user_id: me.id, scope: "personal", kind: "declined", text: t, source: "declined", thread_id: body.threadId || null });
       return json({ ok: true });
+    }
+
+    // The Candidates page's AI filter (filter.ts): a description turned into the page's own filters.
+    if (body.action === "candidate_filter") {
+      const text = String(body.text || "").trim();
+      if (!text) return json({ error: "Describe who you're looking for" }, 400);
+      const { filter, usage } = await candidateFilter(key!, FAST, text, filterContext(body.context), new Date().toISOString().slice(0, 10));
+      const [pi, po] = priceOf(FAST);
+      await admin.from("ai_usage").insert({ user_id: me.id, feature: "candidate_filter", model: FAST, input_tokens: usage.input, output_tokens: usage.output,
+        cost_usd: Math.round(((usage.input * pi + usage.output * po) / 1e6) * 1e6) / 1e6 }).then(() => {}, () => {});
+      return json({ ok: true, filter });
     }
 
     // A file or voice note added in the chat: read once into text (attach.ts); the page keeps the text
