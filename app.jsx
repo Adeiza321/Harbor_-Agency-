@@ -210,7 +210,8 @@ const curSymbol = (cur) => { try { return new Intl.NumberFormat(undefined, { sty
 // A job's pay over a year or a month, whatever period it's quoted in (an hourly rate counts 40 hours
 // a week, the same as contract payouts). A percentage fee billed once is a share of a year's pay; a
 // percentage fee billed monthly is a share of a month's pay.
-const PAY_PER_YEAR = { Hourly: 2080, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
+// Hourly roles: 40 hours a week x 4 weeks a month (160 hours a month, 1,920 a year).
+const PAY_PER_YEAR = { Hourly: 1920, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
 const payOver = (job, per, pay) => { const p = Number(pay) || Number(job.maxPay) || Number(job.minPay) || 0; const y = p * (PAY_PER_YEAR[job.salaryPeriod] || 1); return per === "month" ? y / 12 : y; };
 function suggestBilling(job, candidatePay) {
   if (!job) return { fee: "", feeCurrency: "NGN", incentive: "", incentiveCurrency: "NGN" };
@@ -4526,7 +4527,7 @@ const HOME_STAGE_GROUPS = [["In review", ["Sourced", "In review", "Screening"]],
 function HomeRoles({ S, mine }) {
   const [all, setAll] = useState(false);
   const cands = mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands;
-  const roles = S.jobs.filter((j) => j.status !== "Draft" && j.status !== "Closed" && !j.leadRole && (!mine || onWorklist(S, j))).map((j) => {
+  const roles = S.jobs.filter((j) => j.status === "Open" && !j.leadRole && (!mine || onWorklist(S, j))).map((j) => {
     const counts = HOME_STAGE_GROUPS.map(() => 0); let fits = 0;
     cands.forEach((c) => {
       const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
@@ -4541,7 +4542,7 @@ function HomeRoles({ S, mine }) {
     <section aria-label="Your roles" className="flex flex-col gap-3">
       <div className="flex items-baseline justify-between gap-2">
         <div className="text-lg" style={SERIF}>{mine ? "Your roles" : "Open roles"} <span className="text-sm font-normal" style={{ color: C.ink2, fontFamily: "inherit", letterSpacing: 0 }}>{roles.length}</span></div>
-        <button type="button" onClick={() => S.go("jobs")} className="text-sm font-semibold" style={{ color: C.em }}>All jobs</button>
+        <button type="button" onClick={() => { try { sessionStorage.setItem("pn.jobsTab", mine ? "Mine" : "Open"); } catch (e) { /* private window */ } S.go("jobs"); }} className="text-sm font-semibold" style={{ color: C.em }}>{mine ? "All your roles" : "All open roles"}</button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {shown.map(({ j, counts, fits }) => {
@@ -4643,30 +4644,6 @@ function HomePipelineValue({ S, mine }) {
     </Card>
   );
 }
-function HomeFollowups({ S }) {
-  const [leads, setLeads] = useState(null);
-  React.useEffect(() => {
-    let live = true;
-    S.sb("/rest/v1/leads?select=id,company,status,interested_at,data,outreach_messages(status,sent_at,kind,followup),client_replies(received_at,auto,spam)&status=in.(contacted,replied)&order=created_at.desc&limit=300")
-      .then((r) => live && setLeads(r || [])).catch(() => live && setLeads([]));
-    return () => { live = false; };
-  }, []); // eslint-disable-line
-  if (!leads) return null;
-  const week = Date.now() - 7 * 864e5;
-  const replied = leads.filter((l) => (l.client_replies || []).some((r) => !r.auto && !r.spam && new Date(r.received_at).getTime() >= week)).slice(0, 3);
-  const due = leads.map((l) => ({ l, f: leadFollowup(l) })).filter((x) => x.f).sort((a, b) => a.f.due - b.f.due).slice(0, 5);
-  if (!replied.length && !due.length) return null;
-  const day = (t) => { const d = new Date(t); return d.toDateString() === new Date().toDateString() ? "today" : d.getTime() < Date.now() ? "due" : d.toLocaleDateString("en-GB", { weekday: "short" }); };
-  return (
-    <Card>
-      <div className="flex items-baseline justify-between gap-2"><div className="text-sm font-semibold">Client follow-ups</div><button type="button" onClick={() => S.go("campaigns")} className="text-xs font-semibold" style={{ color: C.em }}>Outreach</button></div>
-      <div className="flex flex-col gap-2.5 mt-3">
-        {replied.map((l) => <button key={"r" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0 font-semibold" style={{ color: C.emText }}>Replied</span></button>)}
-        {due.map(({ l, f }) => <button key={"f" + l.id} type="button" onClick={() => S.go("campaigns")} className="flex justify-between gap-2 text-sm text-left"><span className="truncate">{l.company || "Client"}</span><span className="shrink-0" style={{ color: f.isDue ? C.warnFg : C.ink2 }}>Follow-up {f.step} · {day(f.due)}</span></button>)}
-      </div>
-    </Card>
-  );
-}
 
 function OverviewRecOps({ S }) {
   const checks = useAttentionChecks(S);
@@ -4717,6 +4694,14 @@ function OverviewRecOps({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
+          <Card>
+            <RecruiterPerformanceChart S={S} />
+          </Card>
+          <HomeRoles S={S} />
+          <HomeInterviewing S={S} />
+          <RolePicker S={S} />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
           <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const drafts = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "draft");
           const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
@@ -4733,19 +4718,8 @@ function OverviewRecOps({ S }) {
             { icon: AlertTriangle, t: "Placements in guarantee", s: plural(guarantee.length, "placement"), tone: "danger", people: guarantee, go: "billing" },
           ];
         })()} />
-          <HomeRoles S={S} />
-          <HomeInterviewing S={S} />
-          <SubmissionsCard S={S} />
-          <RolePicker S={S} />
-          <Card>
-            <RecruiterPerformanceChart S={S} />
-          </Card>
-          <TeamToday S={S} />
-        </div>
-        <div className="flex flex-col gap-5 min-w-0">
           <HomeGoal S={S} />
           <HomePipelineValue S={S} />
-          <HomeFollowups S={S} />
           <PaceCard S={S} />
         </div>
       </div>
@@ -4807,6 +4781,10 @@ function OverviewRecruiter({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
+          <MyEngagedRoles S={S} />
+          <HomeInterviewing S={S} mine />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
           <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
@@ -4818,11 +4796,6 @@ function OverviewRecruiter({ S }) {
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
           ];
         })()} />
-          <MyEngagedRoles S={S} />
-          <HomeInterviewing S={S} mine />
-          <SubmissionsCard S={S} recruiterId={S.me.id} title="My submissions and placements" />
-        </div>
-        <div className="flex flex-col gap-5 min-w-0">
           <HomeGoal S={S} recruiterId={S.me.id} />
           <HomePipelineValue S={S} mine />
           <PaceCard S={S} recruiterId={S.me.id} />
@@ -4834,8 +4807,9 @@ function OverviewRecruiter({ S }) {
 
 /* Candidates: Board view (columns by status) and Calendar view (their interviews by day). */
 const BOARD_COLS = ["In review", "With client", "Interview", "Offer", "Active file", "Hired", "Placed"];
+// Each column shows its first 10 (best AI fit first); "View all" opens the table on that status.
 function CandidateBoard({ rows, openCandidate, onMore }) {
-  const LIMIT = 25;
+  const LIMIT = 10;
   return (
     <div className="overflow-x-auto -mx-1 px-1 pb-1">
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${BOARD_COLS.length}, minmax(200px, 1fr))`, minWidth: BOARD_COLS.length * 212 }}>
@@ -4854,7 +4828,7 @@ function CandidateBoard({ rows, openCandidate, onMore }) {
                   </span>
                 </button>
               ))}
-              {list.length > LIMIT && <button type="button" onClick={() => onMore(col)} className="text-xs font-semibold px-1 py-1 text-left" style={{ color: C.em }}>+{list.length - LIMIT} more</button>}
+              {list.length > LIMIT && <button type="button" onClick={() => onMore(col)} className="text-xs font-semibold px-1 py-1 text-left" style={{ color: C.em }}>View all {list.length}</button>}
               {!list.length && <div className="text-xs px-1 py-2" style={{ color: C.ink3 }}>No one</div>}
             </div>
           );
@@ -8604,7 +8578,8 @@ function JobsPage({ setPage, onPromote, S, onOpenJob }) {
   const [q, setQ] = useState("");
   const gq = (S.query || "").toLowerCase();
   const hit = (j, t) => j.role.toLowerCase().includes(t) || j.client.toLowerCase().includes(t);
-  const [tab, setTab] = useState("All");
+  // Arriving from Home's "All open roles" opens on that tab.
+  const [tab, setTab] = useState(() => { try { const t = sessionStorage.getItem("pn.jobsTab"); sessionStorage.removeItem("pn.jobsTab"); return t || "All"; } catch (e) { return "All"; } });
   const [dFrom, setDFrom] = useState(""), [dTo, setDTo] = useState("");
   const inDates = (t) => (!dFrom || t >= new Date(dFrom + "T00:00:00").getTime()) && (!dTo || t <= new Date(dTo + "T23:59:59").getTime());
   const [view, setViewRaw] = useState(() => { try { return localStorage.getItem("pn.jobsView") || "list"; } catch (e) { return "list"; } });
@@ -13093,11 +13068,11 @@ const BILLING_STATUSES = [["Guarantee", "In guarantee"], ["Ready", "Ready to inv
 
 /* ---- Payouts --------------------------------------------------------------------------------
    Permanent (one_off): one payout of the fee when the guarantee clears (start + guarantee days).
-   Contract (monthly):  hourly rate x hours a week x 52 / 12 each month, for contract_months
+   Contract (monthly):  hourly rate x hours a week x 4 weeks each month, for contract_months
    (default 6), paid a month in arrears; stops at ended_on (the last month is pro-rated). */
 const CONTRACT_DEFAULT_MONTHS = 6;
 const addMonths = (ymd, n) => { const d = new Date((ymd || ymdToday()) + "T00:00:00"); const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); return ymdOf(d); };
-const contractMonthly = (rate, hoursPerWeek) => Math.round((Number(rate) || 0) * (Number(hoursPerWeek) || 40) * 52 / 12 * 100) / 100;
+const contractMonthly = (rate, hoursPerWeek) => Math.round((Number(rate) || 0) * (Number(hoursPerWeek) || 40) * 4 * 100) / 100;
 const placementMonthly = (p) => contractMonthly(p.hourlyRate, p.hoursPerWeek);
 function payoutSchedule(p, todayYmd = ymdToday()) {
   const start = p.startDate || (p.createdAt ? ymdOf(new Date(p.createdAt)) : todayYmd);
