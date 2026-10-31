@@ -4718,6 +4718,14 @@ function OverviewRecOps({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
+          <Card>
+            <RecruiterPerformanceChart S={S} />
+          </Card>
+          <HomeRoles S={S} />
+          <HomeInterviewing S={S} />
+          <RolePicker S={S} />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
           <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const drafts = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "draft");
           const review = S.cands.filter((c) => c.status === "In review").map((c) => ({ id: c.id, name: c.name, sub: daysAgo(c.updatedAt || c.createdAt) }));
@@ -4734,21 +4742,11 @@ function OverviewRecOps({ S }) {
             { icon: AlertTriangle, t: "Placements in guarantee", s: plural(guarantee.length, "placement"), tone: "danger", people: guarantee, go: "billing" },
           ];
         })()} />
-          <HomeRoles S={S} />
-          <HomeInterviewing S={S} />
-        </div>
-        <div className="flex flex-col gap-5 min-w-0">
           <HomeGoal S={S} />
           <HomePipelineValue S={S} />
           <HomeFollowups S={S} />
           <PaceCard S={S} />
         </div>
-      </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-        <RolePicker S={S} />
-        <Card>
-          <RecruiterPerformanceChart S={S} />
-        </Card>
       </div>
     </div>
   );
@@ -4808,6 +4806,10 @@ function OverviewRecruiter({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
+          <MyEngagedRoles S={S} />
+          <HomeInterviewing S={S} mine />
+        </div>
+        <div className="flex flex-col gap-5 min-w-0">
           <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
           const matches = S.cands.map((c) => ({ c, n: realMatches(c, S).length })).filter((x) => x.n > 0).map(({ c, n }) => ({ id: c.id, name: c.name, sub: plural(n, "role") }));
           const waiting = linkPeople(S, (l) => l.ai && l.ai.followups && l.ai.followups.state === "sent");
@@ -4819,10 +4821,6 @@ function OverviewRecruiter({ S }) {
             { icon: Mail, t: "Routed roles", s: routed.length + " waiting for candidates to accept", tone: "info", people: routed, go: "candidates" },
           ];
         })()} />
-          <MyEngagedRoles S={S} />
-          <HomeInterviewing S={S} mine />
-        </div>
-        <div className="flex flex-col gap-5 min-w-0">
           <HomeGoal S={S} recruiterId={S.me.id} />
           <HomePipelineValue S={S} mine />
           <PaceCard S={S} recruiterId={S.me.id} />
