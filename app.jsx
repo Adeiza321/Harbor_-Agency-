@@ -8237,6 +8237,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   const [delBusy, setDelBusy] = useState(false);
   const [fitFor, setFitFor] = useState(null);
   const [benchBusy, setBenchBusy] = useState(false);
+  const [roleTab, setRoleTab] = useState("jd"); // Job description | Bench | Outside sourcing | Screening questions
   if (!job) return (
     <div className="flex flex-col gap-4">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Jobs</button>
@@ -8360,7 +8361,67 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           <div className="rounded-xl border px-3.5 py-3" style={{ background: C.card, borderColor: C.line }}><div className="text-xs" style={{ color: C.ink2 }}>Applications</div><div className="text-lg font-semibold mt-0.5">{views.apps}{views.referrals ? <span className="font-normal" style={{ color: C.ink3 }}> · {views.referrals} referred</span> : null}</div></div>
           <div title="Applications as a share of job views" className="rounded-xl border px-3.5 py-3" style={{ background: C.card, borderColor: C.line }}><div className="text-xs" style={{ color: C.ink2 }}>Viewers who applied</div><div className="text-lg font-semibold mt-0.5">{views.total ? Math.round((views.apps / views.total) * 100) + "%" : "-"}</div></div>
         </div>
+          {(() => {
+            const tabs = [{ key: "jd", label: "Job description" },
+              ...(S.role !== "recruiter" && takesCandidates(job) ? [{ key: "bench", label: "Bench" + (fits.length ? " " + fits.length : "") }] : []),
+              ...(S.role !== "recruiter" || !job.leadRole ? [{ key: "src", label: "Outside sourcing" }] : []),
+              { key: "sq", label: "Screening questions " + (job.screeningQuestions || []).length }];
+            const cur = tabs.some((t) => t.key === roleTab) ? roleTab : "jd";
+            return <div className="flex flex-col gap-3">
+              <div className="overflow-x-auto"><Tabs tabs={tabs} active={cur} setActive={setRoleTab} /></div>
+              {cur === "jd" && <>
           {job.description ? <RoleDescription text={job.description} /> : <Card><SectionTitle title="About the role" size="text-xl" /><div className="text-sm mt-2" style={{ color: C.ink2 }}>No job description yet.{S.role !== "recruiter" ? " Add one with Edit job." : ""}</div></Card>}
+              </>}
+              {cur === "bench" && <>
+        {S.role !== "recruiter" && takesCandidates(job) && (
+          <Card>
+            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <SectionTitle title="Candidates who might fit this role" sub="Only people whose parallel job titles match this role are reviewed, on location, work setup, experience, skills and every requirement. Anyone at Interview or Offer on another role is left out." size="text-xl" />
+              <Btn icon={Sparkles} onClick={checkBench} disabled={benchBusy} className="shrink-0">{benchBusy ? "Checking…" : "Check the bench"}</Btn>
+            </div>
+            {lastBench > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Last checked {fdate(lastBench)} · {plural(fits.length, "fit")}</div>}
+            <div className="flex flex-col gap-2 mt-3">
+              {fits.map(({ c, m }) => (
+                <div key={c.id} className="rounded-xl border p-3" style={{ borderColor: C.line }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0 cursor-pointer" onClick={() => S.openCandidate(c.id)}>
+                      <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone="em" />
+                      <div className="min-w-0"><div className="font-medium text-sm truncate">{c.name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[c.role, c.location, c.recruiter].filter(Boolean).join(" · ")}</div></div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm font-medium">{m.fit}%</span>
+                      <Pill tone={VERDICT_TONE[m.verdict] || "neutral"}>{m.verdict}</Pill>
+                    </div>
+                  </div>
+                  {m.verdict_reason && <div className="text-xs mt-2" style={{ color: C.ink2 }}>{m.verdict_reason}</div>}
+                  <div className="flex gap-2 mt-2 justify-end"><Btn onClick={() => setFitFor(c)}>Open review</Btn><Btn kind="primary" onClick={() => reroute(c)}>Route</Btn></div>
+                </div>
+              ))}
+              {!fits.length && <div className="text-sm" style={{ color: C.ink2 }}>{lastBench ? "No one on the bench meets this role's must-haves yet." : "Not checked yet. Check the bench to review the closest people already in ProNext."}</div>}
+            </div>
+          </Card>
+        )}
+              </>}
+              {cur === "src" && <>
+        {S.role !== "recruiter" && <JobSourcingCard job={job} S={S} toast={toast} />}
+        {S.role === "recruiter" && !job.leadRole && <RecruiterSourcingCard job={job} S={S} toast={toast} engaged={!!myOpenEngagement || onWorklist(S, job)} />}
+              </>}
+              {cur === "sq" && <>
+        {(job.screeningQuestions || []).length > 0 && (
+          <Card>
+            <div className="flex items-start justify-between gap-3">
+              <SectionTitle title="Screening questions" sub="Ask every applicant these before recording their answers on the candidate's profile." size="text-xl" />
+              <IconBtn icon={Copy} label="Copy all questions" onClick={copyQuestions} className="!w-10 !h-10 !rounded-xl" />
+            </div>
+            <div className="flex flex-col gap-2 mt-3">
+              {job.screeningQuestions.map((q, i) => <div key={i} className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.canvas, color: C.ink }}>{i + 1}. {q}</div>)}
+            </div>
+          </Card>
+        )}
+                {!(job.screeningQuestions || []).length && <Card><div className="text-sm" style={{ color: C.ink2 }}>No screening questions on this role yet.{S.role !== "recruiter" ? " Add them with Edit job." : ""}</div></Card>}
+              </>}
+            </div>;
+          })()}
       {(() => {
         const groups = [["In review", ["Sourced", "In review", "Screening"]], ["With client", ["Submitted"]], ["Interview", ["Interview"]], ["Offer", ["Offer"]], ["Placed", ["Placed"]]];
         const live = candidates.filter((c) => c.link && c.link.response === "accepted");
@@ -8423,47 +8484,6 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
           </div>
         </Card>
         {fitFor && <FitReviewModal open onClose={() => setFitFor(null)} candidate={S.cands.find((x) => x.id === fitFor.id) || fitFor} job={job} S={S} toast={toast} />}
-        {S.role !== "recruiter" && takesCandidates(job) && (
-          <Card>
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-              <SectionTitle title="Candidates who might fit this role" sub="Only people whose parallel job titles match this role are reviewed, on location, work setup, experience, skills and every requirement. Anyone at Interview or Offer on another role is left out." size="text-xl" />
-              <Btn icon={Sparkles} onClick={checkBench} disabled={benchBusy} className="shrink-0">{benchBusy ? "Checking…" : "Check the bench"}</Btn>
-            </div>
-            {lastBench > 0 && <div className="text-xs mt-1" style={{ color: C.ink2 }}>Last checked {fdate(lastBench)} · {plural(fits.length, "fit")}</div>}
-            <div className="flex flex-col gap-2 mt-3">
-              {fits.map(({ c, m }) => (
-                <div key={c.id} className="rounded-xl border p-3" style={{ borderColor: C.line }}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 min-w-0 cursor-pointer" onClick={() => S.openCandidate(c.id)}>
-                      <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone="em" />
-                      <div className="min-w-0"><div className="font-medium text-sm truncate">{c.name}</div><div className="text-xs truncate" style={{ color: C.ink2 }}>{[c.role, c.location, c.recruiter].filter(Boolean).join(" · ")}</div></div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-sm font-medium">{m.fit}%</span>
-                      <Pill tone={VERDICT_TONE[m.verdict] || "neutral"}>{m.verdict}</Pill>
-                    </div>
-                  </div>
-                  {m.verdict_reason && <div className="text-xs mt-2" style={{ color: C.ink2 }}>{m.verdict_reason}</div>}
-                  <div className="flex gap-2 mt-2 justify-end"><Btn onClick={() => setFitFor(c)}>Open review</Btn><Btn kind="primary" onClick={() => reroute(c)}>Route</Btn></div>
-                </div>
-              ))}
-              {!fits.length && <div className="text-sm" style={{ color: C.ink2 }}>{lastBench ? "No one on the bench meets this role's must-haves yet." : "Not checked yet. Check the bench to review the closest people already in ProNext."}</div>}
-            </div>
-          </Card>
-        )}
-        {S.role !== "recruiter" && <JobSourcingCard job={job} S={S} toast={toast} />}
-        {S.role === "recruiter" && !job.leadRole && <RecruiterSourcingCard job={job} S={S} toast={toast} engaged={!!myOpenEngagement || onWorklist(S, job)} />}
-        {(job.screeningQuestions || []).length > 0 && (
-          <Card>
-            <div className="flex items-start justify-between gap-3">
-              <SectionTitle title="Screening questions" sub="Ask every applicant these before recording their answers on the candidate's profile." size="text-xl" />
-              <IconBtn icon={Copy} label="Copy all questions" onClick={copyQuestions} className="!w-10 !h-10 !rounded-xl" />
-            </div>
-            <div className="flex flex-col gap-2 mt-3">
-              {job.screeningQuestions.map((q, i) => <div key={i} className="text-sm rounded-lg px-3 py-2.5" style={{ background: C.canvas, color: C.ink }}>{i + 1}. {q}</div>)}
-            </div>
-          </Card>
-        )}
         {S.role !== "recruiter" && jobEngLog.length > 0 && (
           <Card>
             <SectionTitle title="Engagement log" sub="Who has worked this role, how long, and why they stepped back." size="text-xl" />
