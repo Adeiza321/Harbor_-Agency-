@@ -7136,6 +7136,10 @@ function CompanyCard({ group, endorsed, open, onToggle, candidate, S, toast }) {
 const REJECT_REASONS = [["experience", "Not enough experience"], ["skill", "Missing a must-have skill"], ["salary", "Salary expectation"], ["location", "Location / work authorisation"],
   ["notice", "Notice period"], ["other_candidate", "Client chose another candidate"], ["role_closed", "Role filled or paused"], ["interview", "Interview performance"], ["other", "Other"]];
 const REJECT_LABEL = { ...Object.fromEntries(REJECT_REASONS), rerouted: "Routed to another role" };
+// Picking "Rejected" from a stage dropdown opens the reject form for that role (reason, feedback,
+// the email to the candidate) instead of only asking for a note. After they reached the client
+// (Submitted, Interview, Offer) it starts as a client reject.
+const rejectKindFor = (stage) => ["Submitted", "Interview", "Offer"].includes(stage) ? "client" : "internal";
 function RejectModal({ candidate, kind: kind0, linkId: link0, S, toast, onClose, onDone }) {
   const first = candidate.name.split(" ")[0];
   // Live roles first; roles already rejected stay pickable so their reason and feedback can be
@@ -7577,6 +7581,7 @@ function ScreeningAnswerRow({ link, job, S, toast }) {
 /* The roles a candidate is attached to (candidate_jobs), with a stage per role. */
 function CandidateJobsCard({ candidate, S, toast }) {
   const [pick, setPick] = useState("");
+  const [rejectFor, setRejectFor] = useState(null);
   const available0 = S.jobs.filter((j) => takesCandidates(j) && !candidate.jobLinks.some((l) => l.jobId === j.id));
   const available = available0.filter((j) => onWorklist(S, j));
   const offList = available0.length - available.length;
@@ -7589,6 +7594,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
   return (
     <Card>
       <SectionTitle title="Jobs" sub={candidate.jobLinks.length ? "Roles this candidate is attached to." : "Not attached to any job yet."} size="text-xl" />
+      {rejectFor && <RejectModal candidate={candidate} kind={rejectFor.kind} linkId={rejectFor.linkId} S={S} toast={toast} onClose={() => setRejectFor(null)} />}
       {candidate.jobLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return (
         <div key={l.id} className="py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
           <div className="flex items-center justify-between gap-2">
@@ -7596,7 +7602,7 @@ function CandidateJobsCard({ candidate, S, toast }) {
             <div className="flex items-center gap-2 shrink-0">
               {j && j.leadRole && S.role === "recruiter"
                 ? <span title="A client lead role: Rec Ops or an Admin moves this candidate along"><Pill tone="info">{l.stage}</Pill></span>
-                : <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; S.askReason({ title: "Move " + candidate.name.split(" ")[0] + " to " + v + "?", sub: (j ? j.role + (j.client ? " · " + j.client : "") + " · " : "") + "now " + l.stage }).then((r) => r === null ? null : S.setStage(l.id, v, { reason: r }).then(() => toast("Stage set to " + v))).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
+                : <select className={sel} style={{ borderColor: C.line, color: C.ink }} value={l.stage} onChange={(e) => { const v = e.target.value; if (v === "Rejected") { setRejectFor({ linkId: l.id, kind: rejectKindFor(l.stage) }); return; } S.askReason({ title: "Move " + candidate.name.split(" ")[0] + " to " + v + "?", sub: (j ? j.role + (j.client ? " · " + j.client : "") + " · " : "") + "now " + l.stage }).then((r) => r === null ? null : S.setStage(l.id, v, { reason: r }).then(() => toast("Stage set to " + v))).catch(() => {}); }}>{PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}</select>}
               {S.role !== "recruiter" && ["Rejected", "Withdrawn"].includes(l.stage) && <button title="Remove from job" className="px-1" style={{ color: C.ink3 }} onClick={() => S.unlinkJob(l.id).then(() => toast("Removed from job")).catch(() => {})}><X size={14} /></button>}
             </div>
           </div>
@@ -8186,6 +8192,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
   const activeCount = candidates.filter((c) => !c.link || !["Rejected", "Withdrawn"].includes(c.link.stage)).length;
   const setStatus = (v) => { if (v === "On hold") { setHold({ reason: job.holdReason || "", until: job.holdUntil || "" }); return; } S.setJobStatus(job.id, v).then(() => toast(v === "Open" ? "Role reopened" : "Role " + v.toLowerCase())).catch(() => {}); };
   const [hold, setHold] = useState(null);
+  const [rejectFor, setRejectFor] = useState(null);
   const saveHold = () => { setBusy(true); S.setJobStatus(job.id, "On hold", hold).then(() => { setHold(null); toast("Role on hold. No new candidates until it's reopened."); }).catch(() => {}).finally(() => setBusy(false)); };
   const engagedPeople = (job.engagedNames || []).filter(Boolean);
   const vs = (S.jobViews && S.jobViews[job.id]) || {};
@@ -8390,6 +8397,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
       {S.role === "recruiter" && !job.leadRole && <RecruiterSourcingCard job={job} S={S} toast={toast} engaged={!!myOpenEngagement || onWorklist(S, job)} />}
       <Card>
         <SectionTitle title="Candidates on this role" sub={activeCount + " active \u00b7 " + candidates.length + " total"} size="text-xl" />
+        {rejectFor && <RejectModal candidate={S.cands.find((x) => x.id === rejectFor.cand.id) || rejectFor.cand} kind={rejectFor.kind} linkId={rejectFor.linkId} S={S} toast={toast} onClose={() => setRejectFor(null)} />}
         <div className="mt-3">
           <DataTable
             rows={candidates}
@@ -8407,7 +8415,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
               ) : c.link ? (
                 <div className="flex items-center gap-1.5">
                   <select className="text-sm rounded-lg border px-2 py-1.5 bg-white" style={{ borderColor: C.line, color: C.ink }} value={c.link.stage} onClick={(e) => e.stopPropagation()}
-                    onChange={(e) => { e.stopPropagation(); const v = e.target.value; S.askReason({ title: "Move " + c.name.split(" ")[0] + " to " + v + "?", sub: (job ? job.role + (job.client ? " · " + job.client : "") + " · " : "") + "now " + c.link.stage }).then((r) => r === null ? null : S.setStage(c.link.id, v, { reason: r }).then(() => toast(c.name.split(" ")[0] + " moved to " + v))).catch(() => {}); }}>
+                    onChange={(e) => { e.stopPropagation(); const v = e.target.value; if (v === "Rejected") { setRejectFor({ cand: c, linkId: c.link.id, kind: rejectKindFor(c.link.stage) }); return; } S.askReason({ title: "Move " + c.name.split(" ")[0] + " to " + v + "?", sub: (job ? job.role + (job.client ? " · " + job.client : "") + " · " : "") + "now " + c.link.stage }).then((r) => r === null ? null : S.setStage(c.link.id, v, { reason: r }).then(() => toast(c.name.split(" ")[0] + " moved to " + v))).catch(() => {}); }}>
                     {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                   {c.link.reject && <span className="text-xs max-w-[220px] truncate" style={{ color: C.dangerFg }} title={c.link.reject.feedback || ""}>{c.link.reject.kind === "client" ? "Client: " : "Us: "}{REJECT_LABEL[c.link.reject.reason] || c.link.reject.reason}</span>}
