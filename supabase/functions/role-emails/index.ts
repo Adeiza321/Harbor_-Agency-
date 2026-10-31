@@ -53,18 +53,22 @@ function money(n: number | null, cur: string) {
 const PAY_PER_YEAR: Record<string, number> = { Hourly: 1920, Daily: 260, Weekly: 52, Monthly: 12, Yearly: 1 };
 function earning(j: any) {
   if (!j.incentive_amount) return "";
-  const monthlyBill = j.billing_frequency === "Monthly";
+  // Contract roles paid by the hour: 40 hours a week x 4 weeks = 160 hours a month.
+  const hourlyFee = j.billing_type === "hourly";
+  const monthlyBill = hourlyFee || j.billing_frequency === "Monthly";
   const pay = (Number(j.max_pay) || Number(j.min_pay) || 0) * (PAY_PER_YEAR[j.salary_period || "Yearly"] || 1) / (monthlyBill ? 12 : 1);
-  const flatFee = j.billing_type === "flat";
-  const fee = flatFee ? Number(j.billing_amount) || 0 : Math.round(pay * (Number(j.billing_amount) || 0) / 100);
-  const pct = j.incentive_type !== "flat";
-  const amount = pct ? Math.round(fee * Number(j.incentive_amount) / 100) : Number(j.incentive_amount);
-  const cur = pct ? (flatFee ? j.billing_currency : j.currency) || "USD" : j.incentive_currency || j.currency || "USD";
+  const pctFee = !j.billing_type || j.billing_type === "percent";
+  const fee = hourlyFee ? (Number(j.billing_amount) || 0) * 160 : !pctFee ? Number(j.billing_amount) || 0 : Math.round(pay * (Number(j.billing_amount) || 0) / 100);
+  const hourlyInc = j.incentive_type === "hourly";
+  const pct = j.incentive_type !== "flat" && !hourlyInc;
+  const amount = hourlyInc ? Number(j.incentive_amount) * 160 : pct ? Math.round(fee * Number(j.incentive_amount) / 100) : Number(j.incentive_amount);
+  const cur = pct ? (pctFee ? j.currency : j.billing_currency) || "USD" : j.incentive_currency || j.currency || "USD";
   if (!amount) return pct ? j.incentive_amount + "% of the client fee" : "";
-  const monthly = j.incentive_frequency === "Monthly" || (pct && monthlyBill);
-  const months = monthly ? (j.incentive_months || j.billing_months || 6) : 0;
-  const upTo = pct && !flatFee && j.min_pay && j.max_pay && Number(j.min_pay) < Number(j.max_pay);
-  return (upTo ? "up to " : "") + money(amount, cur) + (monthly ? " a month" + (months ? " for " + months + " months" : "") : "");
+  // The recruiter's own months (set separately from the agency's).
+  const monthly = hourlyInc || j.incentive_frequency === "Monthly" || (pct && monthlyBill);
+  const months = monthly ? (Number(j.incentive_months) || (j.incentive_frequency === "Monthly" || hourlyInc ? 6 : Number(j.billing_months) || 6)) : 0;
+  const upTo = pct && pctFee && j.min_pay && j.max_pay && Number(j.min_pay) < Number(j.max_pay);
+  return (upTo ? "up to " : "") + money(amount, cur) + (monthly ? " a month" + (months ? " for " + months + " months (" + money(amount * months, cur) + " in all)" : "") : "");
 }
 function facts(j: any) {
   const pay = j.min_pay || j.max_pay ? [money(j.min_pay, j.currency), money(j.max_pay, j.currency)].filter(Boolean).join(" – ") + (j.salary_period ? " " + String(j.salary_period).toLowerCase() : "") : "";
