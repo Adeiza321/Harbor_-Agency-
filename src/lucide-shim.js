@@ -13,4 +13,5 @@ export {
   LuKeyRound as KeyRound, LuPower as Power, LuPowerOff as PowerOff, LuUserCheck as UserCheck, LuBot as Bot, LuRefreshCw as RefreshCw, LuForward as Forward, LuRocket as Rocket, LuThumbsDown as ThumbsDown, LuThumbsUp as ThumbsUp, LuSkipForward as SkipForward, LuClipboardPen as ClipboardPen, LuScanSearch as ScanSearch, LuCirclePause as CirclePause, LuCirclePlay as CirclePlay, LuBadgeCheck as BadgeCheck, LuListTodo as ListTodo, LuTarget as Target, LuTrophy as Trophy,
   LuSmile as Smile, LuSmilePlus as SmilePlus, LuMic as Mic, LuPlay as Play, LuPause as Pause, LuBrain as Brain,
   LuMoon as Moon, LuSun as Sun, LuMonitor as Monitor, LuLayoutGrid as LayoutGrid, LuList as ListIcon, LuPin as Pin, LuFolderPlus as FolderPlus,
+  LuBuilding2 as Building2, LuImage as ImageIcon, LuCoins as Coins, LuGlobe as Globe, LuShieldCheck as ShieldCheck, LuLandmark as Landmark, LuHash as Hash, LuLogOut as LogOut, LuDatabase as Database, LuScrollText as ScrollText, LuEye as Eye, LuPercent as Percent, LuHistory as History, LuHandshake as Handshake, LuPlug as Plug,
 } from "react-icons/lu";

@@ -20,3 +20,4 @@ html, body, input, select, textarea, button { font-family: "Inter", "DM Sans", u
 .harbor-skel { background: linear-gradient(90deg, #ECECE8 0%, #F6F6F3 40%, #ECECE8 80%); background-size: 300% 100%; animation: harbor-skel 1.3s ease-in-out infinite; }
 @keyframes harbor-skel { 0% { background-position: 100% 0; } 100% { background-position: -50% 0; } }
 @media (prefers-reduced-motion: reduce) { .harbor-skel { animation: none; } }
+.pn-row:hover{background:rgba(127,127,127,.06)}

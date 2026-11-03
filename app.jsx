@@ -10,7 +10,7 @@ import {
   Camera, UserRound, MessageCircle, ArrowLeft, SendHorizontal, Paperclip, Trash2, FileText,
   MoreVertical, RotateCcw, UserMinus, ArrowRightLeft, ExternalLink, MailPlus, Ban,
   KeyRound, Power, PowerOff, UserCheck, Bot, RefreshCw, Forward, Rocket, ThumbsDown, ThumbsUp, SkipForward, ClipboardPen, ScanSearch, CirclePause, CirclePlay, BadgeCheck, ListTodo, Target, Trophy,
-  Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon, Pin, FolderPlus,
+  Smile, SmilePlus, Mic, Play, Pause, Brain, Moon, Sun, Monitor, LayoutGrid, ListIcon, Pin, FolderPlus, Building2, ImageIcon, Coins, Globe, ShieldCheck, Landmark, Hash, LogOut, Database, ScrollText, Eye, Percent, History, Handshake, Plug,
 } from "lucide-react";
 
 /* Design tokens */
@@ -2467,42 +2467,41 @@ function AgreementSettingsTab({ S, toast }) {
     if (published && blank) { toast("Fill in the part in [square brackets] before publishing"); return; }
     setBusy(true);
     S.saveAgreement({ title: title.trim() || "Recruiter agreement", body, published, version: (cur.version || 1) + (changedText && cur.body ? 1 : 0), updatedAt: new Date().toISOString(), updatedBy: S.me.id })
-      .then(() => toast(published ? (cur.published ? "Agreement saved" : "Published: recruiters who haven't signed are asked to before they can use ProNext") : "Saved as a draft. Recruiters don't see it until you publish it.")).catch(() => {}).finally(() => setBusy(false));
+      .then(() => { setEditing(false); toast(published ? (cur.published ? "Agreement saved" : "Published: recruiters who haven't signed are asked to before they can use ProNext") : "Saved as a draft. Recruiters don't see it until you publish it."); }).catch(() => {}).finally(() => setBusy(false));
   };
   const recruiters = (S.users || []).filter((u) => u.roleKey === "recruiter" && u.status !== "Disabled");
   const latest = (uid) => (sigs || []).find((x) => x.user_id === uid);
+  const [editing, setEditing] = useState(false);
+  const openEdit = () => { setTitle(cur.title || ""); setBody(cur.body || ""); setPublished(!!cur.published); setEditing(true); };
+  const openPreview = () => { setTitle(cur.title || ""); setBody(cur.body || ""); setPreview(true); };
+  const publishNow = (v) => {
+    if (v && !(cur.body || "").trim()) { toast("Add the agreement text before publishing"); return false; }
+    if (v && /\[[A-Z][A-Z ,]+:[^\]]*\]/.test(cur.body || "")) { toast("Fill in the part in [square brackets] before publishing"); return false; }
+    return S.saveAgreement({ ...cur, title: cur.title || "Recruiter agreement", published: v, updatedAt: new Date().toISOString(), updatedBy: S.me.id })
+      .then(() => { toast(v ? "Published: recruiters who haven't signed are asked to before they can use ProNext" : "Unpublished. Recruiters aren't asked to sign until you publish it again."); return true; }).catch(() => false);
+  };
   const field = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <SectionTitle title="Recruiter agreement" sub="Recruiters sign this as part of setting up their account. Once it's published, a recruiter who hasn't signed sees it first after signing in and can't use ProNext until they sign. Editing it later doesn't ask anyone to sign again; each signed copy keeps the exact text they signed." size="text-xl" />
-          <Pill tone={cur.published ? "em" : "warn"}>{cur.published ? "Published · version " + (cur.version || 1) : "Draft, not published"}</Pill>
-        </div>
-        {!cur.published && <div className="text-xs mt-3 rounded-lg px-3 py-2" style={{ background: C.warnBg, color: C.warnFg }}>This is a starting draft for you to review and change. It isn't legal advice: have a lawyer check it, and fill in the part in [square brackets], before you publish it.</div>}
-        <label className="text-xs font-medium mt-4 block" style={{ color: C.ink2 }}>Title</label>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} className={field} style={{ borderColor: C.line, background: C.soft }} />
-        <label className="text-xs font-medium mt-4 block" style={{ color: C.ink2 }}>Agreement text</label>
-        <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{"Start a line with ## for a heading. {{agency_address}} becomes the company address in Agency settings, {{recruiter}} and {{recruiter_address}} the name and address the recruiter types, {{date}} the day they sign."}</div>
-        <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={20} className={field + " font-mono"} style={{ borderColor: C.line, background: C.soft, fontSize: 12.5, lineHeight: 1.55 }} />
-        <label className="flex items-center gap-2.5 mt-4 text-sm cursor-pointer">
-          <input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} />
-          <span>Published: recruiters must sign it</span>
-        </label>
-        <div className="flex gap-2 mt-4 flex-wrap">
-          <Btn onClick={() => setPreview(true)}>Preview</Btn>
-          <Btn kind="primary" onClick={save} disabled={!dirty || busy}>{busy ? "Saving\u2026" : "Save"}</Btn>
-        </div>
-      </Card>
-      <Card>
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <SectionTitle title="Who has signed" sub={"Each signed agreement is countersigned for " + agencyLegalName(S) + " by an Admin."} size="text-lg" />
-          {waiting.length > 0 && <Btn kind="primary" onClick={() => { setCsErr(""); setCs({ ids: waiting.map((x) => x.id) }); }}>Countersign {waiting.length === 1 ? "1 agreement" : "all " + waiting.length}</Btn>}
-        </div>
-        <div className="mt-2 flex flex-col">
-          {recruiters.length === 0 && <div className="text-sm" style={{ color: C.ink3 }}>No recruiters yet.</div>}
+      <SetGroup title="Recruiter agreement" sub="Recruiters sign it while setting up their account. Editing it later doesn't ask anyone to sign again; each signed copy keeps its exact text."
+        action={<Pill tone={cur.published ? "em" : "warn"}>{cur.published ? "Published · v" + (cur.version || 1) : "Draft"}</Pill>}>
+        {!cur.published && <div className="text-xs mx-4 md:mx-5 mb-3 rounded-lg px-3 py-2" style={{ background: C.warnBg, color: C.warnFg }}>A starting draft to review. It isn't legal advice: have a lawyer check it and fill in the part in [square brackets] before you publish it.</div>}
+        <SetRow icon={ScrollText} title={cur.title || "Recruiter agreement"} sub={cur.body ? "Version " + (cur.version || 1) + (cur.updatedAt ? " · updated " + new Date(cur.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "") : "No text yet"}
+          right={<><IconBtn icon={Eye} label="Preview the agreement" size="sm" onClick={openPreview} /><IconBtn icon={Pencil} label="Edit the agreement" size="sm" onClick={openEdit} /></>} />
+        <SetRow icon={BadgeCheck} title="Recruiters must sign" sub="Anyone who hasn't signed sees it after signing in and can't use ProNext until they do"
+          right={<Switch on={!!cur.published} label="Recruiters must sign" onChange={publishNow} />} />
+      </SetGroup>
+      <SetModal open={editing} onClose={() => setEditing(false)} title="Edit recruiter agreement" busy={busy} onSave={save} canSave={changedText} wide extra={<Btn icon={Eye} onClick={() => setPreview(true)}>Preview</Btn>}>
+        <Fld label="Title"><input value={title} onChange={(e) => setTitle(e.target.value)} className={FLD_CLS} style={fldStyle()} /></Fld>
+        <Fld label="Agreement text" hint={"Start a line with ## for a heading. {{agency_address}} becomes the company address in Agency settings, {{recruiter}} and {{recruiter_address}} the name and address the recruiter types, {{date}} the day they sign."}>
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={16} className={FLD_CLS + " font-mono"} style={{ ...fldStyle(), fontSize: 12.5, lineHeight: 1.55 }} />
+        </Fld>
+      </SetModal>
+      <SetGroup title="Who has signed" sub={"Each signed agreement is countersigned for " + agencyLegalName(S) + " by an Admin."} action={waiting.length > 0 && <Btn kind="primary" onClick={() => { setCsErr(""); setCs({ ids: waiting.map((x) => x.id) }); }}>Countersign {waiting.length === 1 ? "1 agreement" : "all " + waiting.length}</Btn>}>
+        <div className="flex flex-col">
+          {recruiters.length === 0 && <div className="text-sm px-5 py-3" style={{ color: C.ink3, borderTop: `1px solid ${C.line}` }}>No recruiters yet.</div>}
           {recruiters.map((u, i) => { const a = latest(u.id); return (
-            <div key={u.id} className="flex items-center gap-3 py-2.5" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
+            <div key={u.id} className="flex items-center gap-3 px-4 md:px-5 py-2.5" style={{ borderTop: `1px solid ${C.line}` }}>
               <UserAvatar u={u} size={30} tone="neutral" />
               <div className="flex-1 min-w-0"><div className="text-sm font-medium truncate">{u.name}</div><div className="text-xs" style={{ color: C.ink3 }}>{!u.agreementSignedAt && a ? "Asked to sign again · last signed " + signedStamp(a.signed_at) : a ? "Signed " + signedStamp(a.signed_at) + " (version " + a.version + ")" + (a.agency_signed_at ? " · countersigned by " + a.agency_signer_name : "") : sigs === null ? "Checking\u2026" : "Not signed yet"}</div></div>
               {a && u.agreementSignedAt && !a.agency_signed_at && <button onClick={() => { setCsErr(""); setCs({ ids: [a.id] }); }} className="text-xs font-medium" style={{ color: C.em }}>Countersign</button>}
@@ -2512,7 +2511,7 @@ function AgreementSettingsTab({ S, toast }) {
             </div>
           ); })}
         </div>
-      </Card>
+      </SetGroup>
       <Modal open={!!cs} onClose={() => !csBusy && setCs(null)} title={"Sign for " + agencyLegalName(S)}>
         <div className="text-sm mb-4" style={{ color: C.ink2 }}>{cs && cs.ids.length > 1 ? "This countersigns " + cs.ids.length + " signed agreements at once." : "This countersigns the agreement for " + agencyLegalName(S) + "."} The signature is stamped with the date and time you sign.</div>
         <label className="text-xs font-medium" style={{ color: C.ink2 }}>Name of the person signing</label>
@@ -11261,6 +11260,7 @@ function ClientRepliesCard({ S, toast }) {
   const [st, setSt] = useState(null);
   const [domain, setDomain] = useState("");
   const [busy, setBusy] = useState("");
+  const [setup, setSetup] = useState(false);
   const isAdmin = S.role === "admin";
   const load = () => S.sourcing("reply_status", {}).then((r) => { setSt(r); setDomain((d) => d || r.domain || ""); }).catch(() => setSt({ error: true }));
   React.useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -11273,18 +11273,12 @@ function ClientRepliesCard({ S, toast }) {
   const label = on ? "On" : st.status === "testing" ? "Checking…" : st.status === "test_failed" ? "Check didn't come back" : st.status === "dns" ? "Waiting for DNS" : "Off";
   const inp = "rounded-lg border px-3 py-2 text-sm outline-none";
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <SectionTitle title="Client replies" sub="When a client replies to a pitch or follow-up, Pronext stops the follow-ups, moves the lead to Replied, tells you, and forwards the reply to your inbox. Out-of-office replies don't stop anything." size="text-xl" />
-        <Pill tone={tone}>{label}</Pill>
-      </div>
-      {on ? (
-        <div className="text-sm mt-3" style={{ color: C.ink2 }}>
-          Client emails go out with <b style={{ color: C.ink }}>{st.address}</b> as the reply address. Replies are forwarded to {st.forwardTo || "whoever sent the pitch"}, and replying there goes straight back to the client.
-          {isAdmin && <div className="mt-2"><Btn onClick={() => run("reply_off")} disabled={!!busy}>Turn off</Btn></div>}
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3 mt-3 text-sm">
+    <SetGroup title="Client replies" sub="When a client replies, Pronext stops the follow-ups, marks the lead Replied, tells you and forwards the reply to your inbox. Out-of-office replies don't stop anything." action={<Pill tone={tone}>{label}</Pill>}>
+      {on ? <SetRow icon={Mail} ok wrap title={"Replies come to " + st.address} sub={"Forwarded to " + (st.forwardTo || "whoever sent the pitch") + "; replying there goes straight back to the client."} right={isAdmin && <Btn onClick={() => run("reply_off")} disabled={!!busy}>Turn off</Btn>} />
+        : <SetRow icon={Mail} warn wrap title={st.status === "testing" ? "Checking the reply address" : "Not turned on"} sub={st.status === "testing" ? "A check email is on its way; this turns on by itself when it arrives." : "Replies go straight to your mailbox, so follow-ups don't stop by themselves."}
+            right={<Btn kind="primary" onClick={() => setSetup(true)}>{st.status === "off" ? "Set up" : "Continue"}</Btn>} />}
+      <Modal open={setup && !on} onClose={() => setSetup(false)} title="Set up client replies" wide>
+        <div className="flex flex-col gap-4 text-sm">
           <div style={{ color: C.ink2 }}>Until this is on, replies go straight to your mailbox, so Pronext can't see them and you have to stop follow-ups yourself.</div>
           <div>
             <div className="font-medium">1. Add these two DNS records where your domain is managed</div>
@@ -11320,8 +11314,8 @@ function ClientRepliesCard({ S, toast }) {
             </div>
           ) : <div className="text-xs" style={{ color: C.ink3 }}>An Admin turns this on.</div>}
         </div>
-      )}
-    </Card>
+      </Modal>
+    </SetGroup>
   );
 }
 
@@ -11334,7 +11328,8 @@ function OutreachSetup({ S, toast, status, onSaved }) {
   const setL = (k, v) => setF((x) => ({ ...x, leads: { ...x.leads, [k]: v } }));
   const inp = "w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none";
   const inpS = { borderColor: C.line, background: C.soft };
-  const save = () => {
+  const save = (over) => saveF(over || f);
+  const saveF = (f) => {
     setBusy(true);
     const regions = (f.regions || []).filter(Boolean);
     const body = { outreach: { ...f, clientSender: f.clientSender === "brevo" ? "brevo" : "auto", clientBrevoPerDay: Math.min(100, Math.max(1, Number(f.clientBrevoPerDay) || 15)), regions: regions.length ? regions : ["US", "EU", "MY"], minInternalFits: Number(f.minInternalFits) || 0, prospectsPerJob: Number(f.prospectsPerJob) || 20, xrayPerJob: Number(f.xrayPerJob) || 40, xrayEmailsPerDay: f.xrayEmailsPerDay === "" || f.xrayEmailsPerDay == null ? 40 : Math.max(0, Number(f.xrayEmailsPerDay) || 0), xrayEmailMinFit: f.xrayEmailMinFit === "" || f.xrayEmailMinFit == null ? 60 : Math.max(0, Math.min(100, Number(f.xrayEmailMinFit) || 0)), pdlEmailsPerDay: f.pdlEmailsPerDay === "" || f.pdlEmailsPerDay == null ? 10 : Math.max(0, Math.min(200, Number(f.pdlEmailsPerDay) || 0)), pdlPerSearch: Math.max(5, Math.min(100, Number(f.pdlPerSearch) || 20)), dailyCap: Number(f.dailyCap) || 40, retentionDays: Number(f.retentionDays) || 90, leads: { ...f.leads, postingsPerDay: Number(f.leads.postingsPerDay) || 25, maxAgeDays: Number(f.leads.maxAgeDays) || 1, minEmployees: f.leads.minEmployees === "" || f.leads.minEmployees == null ? 10 : Math.max(0, Number(f.leads.minEmployees) || 0), maxEmployees: f.leads.maxEmployees === "" || f.leads.maxEmployees == null ? 500 : Math.max(0, Number(f.leads.maxEmployees) || 0) } } };
@@ -11342,17 +11337,20 @@ function OutreachSetup({ S, toast, status, onSaved }) {
   };
   const conn = (status && status.connections) || {};
   const q = (status && status.queue) || {};
-  const Row = ({ ok, label, hint }) => (
-    <div className="flex items-start gap-2.5 py-2">
-      {ok ? <CheckCircle2 size={16} color={C.em} className="shrink-0 mt-0.5" /> : <AlertTriangle size={16} color={C.warnFg} className="shrink-0 mt-0.5" />}
-      <div><div className="text-sm font-medium">{label}</div><div className="text-xs" style={{ color: C.ink2 }}>{hint}</div></div>
-    </div>
-  );
+  // One connection: its name, then what it does once connected or what's missing.
+  const Row = ({ ok, label, hint }) => { const [name, ...what] = String(label).split(": "); const done = hint === "Connected" || hint === "Set"; return (
+    <SetRow icon={ok ? CheckCircle2 : AlertTriangle} ok={ok} warn={!ok} wrap title={name} sub={done ? (what.length ? what.join(": ") : "All set") : hint} right={<Pill tone={ok ? "em" : "warn"}>{ok ? "Connected" : "Not set"}</Pill>} />
+  ); };
+  const [edit, setEdit] = useState(null);
+  const open = (k) => { setF({ ...s0, leads: { ...(s0.leads || {}) } }); setEdit(k); };
+  const SECTIONS = { sender: "Sender", sending: "Sending", sourcing: "Finding candidates", lookup: "Email lookup", leads: "Client leads", contract: "Contract email", retention: "Outside contacts" };
+  const LOOKUP = { apollo_only: "Apollo only", apollo: "Apollo, then ContactOut", contactout: "ContactOut, then Apollo" };
+  const ed = (k) => (isAdmin ? () => open(k) : undefined);
+  const lz = s0.leads || {}, ct = s0.contract || {};
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <SectionTitle title="Connections" sub="Keys are stored as Supabase secrets, never in the app. See supabase/SOURCING_SETUP.md." size="text-xl" />
-        <div className="mt-2">
+      <SetGroup title="Connections" sub="Keys are stored as Supabase secrets, never in the app (see supabase/SOURCING_SETUP.md).">
+        <div className="grid md:grid-cols-2">
           <Row ok={conn.anthropic} label="AI (Claude)" hint={conn.anthropic ? "Connected" : "Add ANTHROPIC_API_KEY"} />
           <Row ok={conn.apollo} label="Apollo: finds candidates outside ProNext and hiring managers' emails" hint={conn.apollo ? "Connected" : "Add APOLLO_API_KEY. Until then, jobs only check your own bench."} />
           <Row ok={!!(conn.search && (conn.search.serper || conn.search.brave || conn.search.tavily || conn.search.gemini))} label="Free search engines: X-ray sourcing of public profiles" hint={(() => {
@@ -11367,21 +11365,33 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           <Row ok={conn.sender && conn.sender !== "none"} label="Email sender" hint={conn.sender === "apollo" ? "Apollo sequence (from your outreach mailbox)" : conn.sender === "instantly" ? "Instantly" : conn.sender === "gmail" ? "Gmail (Google Workspace)" : "Not connected. Link your outreach-domain mailbox in Apollo and add APOLLO_SEQUENCE_ID. Approved emails wait in the queue until then."} />
           <Row ok={!(status && status.blockers && status.blockers.length)} label="Sender details" hint={status && status.blockers && status.blockers.length ? "Missing: " + status.blockers.join(", ") + ". Required by anti-spam law in every email." : "Set"} />
         </div>
-        <div className="flex items-center justify-between gap-3 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${C.line}` }}>
-          <div className="text-sm" style={{ color: C.ink2 }}>{q.queued || 0} queued · {q.sentToday || 0} sent today · {q.failed || 0} failed</div>
-          <div className="flex gap-2">
+        <SetRow icon={Send} title="Email queue" sub={(q.queued || 0) + " queued · " + (q.sentToday || 0) + " sent today · " + (q.failed || 0) + " failed"} right={<>
             {(q.failed || 0) > 0 && <Btn onClick={() => S.sourcing("retry_failed", {}).then((r) => { toast(r.message || "Retried"); onSaved(); }).catch((e) => S.error(e.message))}>Retry failed</Btn>}
             <Btn kind="primary" icon={Send} disabled={!(q.queued > 0)} onClick={() => S.sourcing("send_now", {}).then((r) => { toast(r.message || (r.sent || 0) + " sent"); onSaved(); }).catch((e) => S.error(e.message))}>Send queued now</Btn>
-          </div>
-        </div>
-      </Card>
+          </>} />
+      </SetGroup>
       <ClientRepliesCard S={S} toast={toast} />
-      <Card>
-        <SectionTitle title="Outreach settings" sub={isAdmin ? "Applies to both candidate outreach and client leads." : "Only an Admin can change these."} size="text-xl" />
-        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+      <SetGroup title="Outreach settings" sub={isAdmin ? "Apply to both candidate outreach and client leads." : "Only an Admin can change these."}>
+        <SetRow icon={UserRound} title="Sender" sub={s0.businessAddress || "No postal address yet (required in every email)"} warn={!s0.businessAddress || !s0.senderName} value={[s0.senderName, s0.senderTitle].filter(Boolean).join(" · ") || "Not set"} onClick={ed("sender")} />
+        <SetRow icon={Send} title="Sending" sub={(s0.clientSender === "brevo" ? "Client pitches through Brevo" : "Client pitches through the outreach sender") + (s0.includePay !== false ? " · pay range mentioned" : "")} value={(s0.approval === "auto" ? "Automatic" : "Approve each email") + " · " + (s0.dailyCap ?? 40) + "/day"} onClick={ed("sending")} />
+        <SetRow icon={Search} title="Finding candidates" sub={"Searches outside ProNext when the bench has fewer than " + (s0.minInternalFits ?? 3) + " strong fits"} value={"Up to " + (s0.prospectsPerJob ?? 20) + " per job"} onClick={ed("sourcing")} />
+        <SetRow icon={Mail} title="Email lookup" sub="For candidates and client contacts" value={LOOKUP[s0.emailLookup || "apollo_only"]} onClick={ed("lookup")} />
+        <SetRow icon={Briefcase} title="Fetch new job postings every morning" sub={(lz.postingsPerDay ?? 25) + " postings a day · companies of " + (lz.minEmployees ?? 10) + "–" + ((lz.maxEmployees ?? 500) || "any") + " people"}
+          right={<>{isAdmin && <IconBtn icon={Pencil} label="Edit client lead settings" size="sm" onClick={() => open("leads")} />}<Switch on={!!lz.enabled} label="Fetch new job postings every morning" disabled={!isAdmin || busy} onChange={(v) => save({ ...s0, leads: { ...lz, enabled: v } })} /></>} />
+        <SetRow icon={FileText} title="Send our contract automatically" sub="When a company says it's interested" right={<>{isAdmin && <IconBtn icon={Pencil} label="Edit the contract email" size="sm" onClick={() => open("contract")} />}<Switch on={!!ct.enabled} label="Send our contract automatically" disabled={!isAdmin || busy} onChange={(v) => save({ ...s0, leads: { ...lz }, contract: { ...ct, enabled: v } })} /></>} />
+        <SetRow icon={Database} title="Outside contacts who never engaged" value={"Deleted after " + (s0.retentionDays ?? 90) + " days"} onClick={ed("retention")} />
+      </SetGroup>
+
+      <Modal open={edit === "sender"} onClose={() => !busy && setEdit(null)} title={SECTIONS.sender} wide>
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sender name</label><input value={f.senderName || ""} onChange={(e) => set("senderName", e.target.value)} placeholder="e.g. Ahmed Sanni" className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sender title</label><input value={f.senderTitle || ""} onChange={(e) => set("senderTitle", e.target.value)} placeholder="e.g. Senior Recruiter" className={inp} style={inpS} /></div>
           <div className="md:col-span-2"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Business postal address (shown in every email)</label><input value={f.businessAddress || ""} onChange={(e) => set("businessAddress", e.target.value)} className={inp} style={inpS} /></div>
+        </fieldset>
+        {isAdmin && <div className="flex justify-end gap-2 mt-5"><Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={() => save()} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn></div>}
+      </Modal>
+      <Modal open={edit === "sending"} onClose={() => !busy && setEdit(null)} title={SECTIONS.sending} wide>
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-medium" style={{ color: C.ink2 }}>Sending</label>
             <select value={f.approval || "manual"} onChange={(e) => set("approval", e.target.value)} className={inp} style={inpS}>
@@ -11389,20 +11399,29 @@ function OutreachSetup({ S, toast, status, onSaved }) {
               <option value="auto">Send automatically once drafted</option>
             </select>
           </div>
-          <div>
-            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where client leads come from</label>
-            <div className="text-xs mt-1 leading-relaxed" style={{ color: C.ink2 }}>Your Active file candidates, one at a time: each day ProNext looks for new roles that match a candidate's own job titles, within about an hour's commute of where they live (or in cities they'd move to, if they said they'd relocate). Remote roles, companies they've worked for and candidates without a city on their profile are left out, and a role is kept only if it's a strong fit for that candidate. Each email to a company carries up to 5 qualified candidates as blind resumes, so make and check blind resumes under Candidates &gt; Blind resumes.</div>
-          </div>
-          <div className="md:col-span-2 rounded-xl p-3.5 flex flex-col gap-2.5" style={{ background: C.canvas }}>
-            <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!(f.contract && f.contract.enabled)} onChange={(e) => set("contract", { ...(f.contract || {}), enabled: e.target.checked })} /> Send our contract automatically when a company says it's interested</label>
-            <div className="text-xs" style={{ color: C.ink3 }}>It goes from the client sender, to the hiring contact who clicked "We're interested". Until this is set up, Admins get a notice to send it themselves. You can use {"{{first_name}}"}, {"{{company}}"}, {"{{role}}"} and {"{{contract_link}}"}.</div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Subject</label><input value={(f.contract && f.contract.subject) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), subject: e.target.value })} placeholder="Next steps: our agreement for the {{role}} role" className={inp} style={inpS} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label><textarea rows={5} value={(f.contract && f.contract.body) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), body: e.target.value })} placeholder={"Hi {{first_name}},\n\nThanks for your interest in our candidates for the {{role}} role. Here's our agreement to review and sign: {{contract_link}}\n\nOnce it's signed we'll set up interviews straight away."} className={inp} style={inpS} /></div>
-            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Link to the contract (https://, e.g. a signing link)</label><input value={(f.contract && f.contract.url) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), url: e.target.value })} placeholder="https://" className={inp} style={inpS} /></div>
-          </div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outreach emails per day</label><input type="number" min="1" value={f.dailyCap ?? 40} onChange={(e) => set("dailyCap", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Send client pitches through</label>
+            <select value={f.clientSender === "brevo" ? "brevo" : "auto"} onChange={(e) => set("clientSender", e.target.value)} className={inp} style={inpS}>
+              <option value="auto">The outreach sender (Apollo sequence)</option>
+              <option value="brevo">Brevo (for now)</option>
+            </select>
+            {f.clientSender === "brevo" && <div className="text-xs mt-1" style={{ color: C.warnFg }}>Brevo also sends your candidate emails and doesn't allow emailing contacts you didn't collect yourself, so keep the daily number low. Each pitch's delivery shows on the lead and in Email tracking.</div>}</div>
+          {f.clientSender === "brevo" && <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most client pitches through Brevo per day</label><input type="number" min="1" max="100" value={f.clientBrevoPerDay ?? 15} onChange={(e) => set("clientBrevoPerDay", e.target.value)} className={inp} style={inpS} /></div>}
+          <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={f.includePay !== false} onChange={(e) => set("includePay", e.target.checked)} />Mention the job's pay range in candidate emails</label>
+        </fieldset>
+        {isAdmin && <div className="flex justify-end gap-2 mt-5"><Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={() => save()} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn></div>}
+      </Modal>
+      <Modal open={edit === "sourcing"} onClose={() => !busy && setEdit(null)} title={SECTIONS.sourcing} wide>
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Search outside ProNext when the bench has fewer strong fits than</label><input type="number" min="0" value={f.minInternalFits ?? 3} onChange={(e) => set("minInternalFits", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outside candidates per job (each costs an Apollo credit)</label><input type="number" min="1" value={f.prospectsPerJob ?? 20} onChange={(e) => set("prospectsPerJob", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most X-ray people kept per job (free searches)</label><input type="number" min="5" max="80" value={f.xrayPerJob ?? 40} onChange={(e) => set("xrayPerJob", e.target.value)} className={inp} style={inpS} /></div>
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only find emails for X-ray people with a fit of at least (%)</label><input type="number" min="0" max="100" value={f.xrayEmailMinFit ?? 60} onChange={(e) => set("xrayEmailMinFit", e.target.value)} className={inp} style={inpS} /></div>
+        </fieldset>
+        {isAdmin && <div className="flex justify-end gap-2 mt-5"><Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={() => save()} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn></div>}
+      </Modal>
+      <Modal open={edit === "lookup"} onClose={() => !busy && setEdit(null)} title={SECTIONS.lookup} wide>
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email lookup (candidates and client contacts)</label>
             <select value={f.emailLookup || "apollo_only"} onChange={(e) => set("emailLookup", e.target.value)} className={inp} style={inpS}>
               <option value="apollo_only">Apollo only</option>
@@ -11412,29 +11431,42 @@ function OutreachSetup({ S, toast, status, onSaved }) {
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>People looked up for an email per day ({!f.emailLookup || f.emailLookup === "apollo_only" ? "Apollo" : f.emailLookup === "apollo" ? "Apollo first, then ContactOut" : "ContactOut first, then Apollo"}; each lookup that finds an email uses a credit; 0 turns it off)</label><input type="number" min="0" max="500" value={f.xrayEmailsPerDay ?? 40} onChange={(e) => set("xrayEmailsPerDay", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>People Data Labs email lookups per day, when Apollo has none (1 PDL credit per email found; 0 turns it off)</label><input type="number" min="0" max="200" value={f.pdlEmailsPerDay ?? 10} onChange={(e) => set("pdlEmailsPerDay", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most people per People Data Labs search (1 PDL credit each)</label><input type="number" min="5" max="100" value={f.pdlPerSearch ?? 20} onChange={(e) => set("pdlPerSearch", e.target.value)} className={inp} style={inpS} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only find emails for X-ray people with a fit of at least (%)</label><input type="number" min="0" max="100" value={f.xrayEmailMinFit ?? 60} onChange={(e) => set("xrayEmailMinFit", e.target.value)} className={inp} style={inpS} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most outreach emails per day</label><input type="number" min="1" value={f.dailyCap ?? 40} onChange={(e) => set("dailyCap", e.target.value)} className={inp} style={inpS} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Send client pitches through</label>
-            <select value={f.clientSender === "brevo" ? "brevo" : "auto"} onChange={(e) => set("clientSender", e.target.value)} className={inp} style={inpS}>
-              <option value="auto">The outreach sender (Apollo sequence)</option>
-              <option value="brevo">Brevo (for now)</option>
-            </select>
-            {f.clientSender === "brevo" && <div className="text-xs mt-1" style={{ color: C.warnFg }}>Brevo also sends your candidate emails and doesn't allow emailing contacts you didn't collect yourself, so keep the daily number low. Each pitch's delivery shows on the lead and in Email tracking.</div>}</div>
-          {f.clientSender === "brevo" && <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Most client pitches through Brevo per day</label><input type="number" min="1" max="100" value={f.clientBrevoPerDay ?? 15} onChange={(e) => set("clientBrevoPerDay", e.target.value)} className={inp} style={inpS} /></div>}
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete outside contacts who never engaged after (days)</label><input type="number" min="14" value={f.retentionDays ?? 90} onChange={(e) => set("retentionDays", e.target.value)} className={inp} style={inpS} /></div>
-          <label className="flex items-center gap-2 text-sm md:col-span-2"><input type="checkbox" checked={f.includePay !== false} onChange={(e) => set("includePay", e.target.checked)} />Mention the job's pay range in candidate emails</label>
-          <div className="md:col-span-2 pt-3" style={{ borderTop: `1px solid ${C.line}` }}>
-            <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!f.leads.enabled} onChange={(e) => setL("enabled", e.target.checked)} />Fetch new job postings every morning (client leads)</label>
-            <div className="text-xs mt-1" style={{ color: C.ink2 }}>Postings are matched to candidates who agreed to be presented anonymously (they opt in on their candidate page). Employers whose posting says no agencies or no unsolicited CVs are always left out, and so is anyone who has worked at the company.</div>
+        </fieldset>
+        {isAdmin && <div className="flex justify-end gap-2 mt-5"><Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={() => save()} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn></div>}
+      </Modal>
+      <Modal open={edit === "leads"} onClose={() => !busy && setEdit(null)} title={SECTIONS.leads} wide>
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-xs font-medium" style={{ color: C.ink2 }}>Where client leads come from</label>
+            <div className="text-xs mt-1 leading-relaxed" style={{ color: C.ink2 }}>Your Active file candidates, one at a time: each day ProNext looks for new roles that match a candidate's own job titles, within about an hour's commute of where they live (or in cities they'd move to, if they said they'd relocate). Remote roles, companies they've worked for and candidates without a city on their profile are left out, and a role is kept only if it's a strong fit for that candidate. Each email to a company carries up to 5 qualified candidates as blind resumes, so make and check blind resumes under Candidates &gt; Blind resumes.</div>
           </div>
+            <div className="text-xs mt-1" style={{ color: C.ink2 }}>Postings are matched to candidates who agreed to be presented anonymously (they opt in on their candidate page). Employers whose posting says no agencies or no unsolicited CVs are always left out, and so is anyone who has worked at the company.</div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Postings per day (each costs a TheirStack credit)</label><input type="number" min="1" value={f.leads.postingsPerDay ?? 25} onChange={(e) => setL("postingsPerDay", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Only postings from the last (days)</label><input type="number" min="1" max="14" value={f.leads.maxAgeDays ?? 1} onChange={(e) => setL("maxAgeDays", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Smallest company to pitch (employees; 0 = no minimum)</label><input type="number" min="0" value={f.leads.minEmployees ?? 10} onChange={(e) => setL("minEmployees", e.target.value)} className={inp} style={inpS} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Largest company to pitch (employees; 0 = no maximum)</label><input type="number" min="0" value={f.leads.maxEmployees ?? 500} onChange={(e) => setL("maxEmployees", e.target.value)} className={inp} style={inpS} />
             <div className="text-xs mt-1" style={{ color: C.ink3 }}>Small and medium companies are likelier to take an agency's CVs and pay. Companies with no known size aren't searched.</div></div>
         </fieldset>
-        {isAdmin && <div className="flex justify-end mt-4"><Btn kind="primary" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save settings"}</Btn></div>}
-      </Card>
+        {isAdmin && <div className="flex justify-end gap-2 mt-5"><Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={() => save()} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn></div>}
+      </Modal>
+      <Modal open={edit === "contract"} onClose={() => !busy && setEdit(null)} title={SECTIONS.contract} wide>
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="md:col-span-2 rounded-xl p-3.5 flex flex-col gap-2.5" style={{ background: C.canvas }}>
+            <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!(f.contract && f.contract.enabled)} onChange={(e) => set("contract", { ...(f.contract || {}), enabled: e.target.checked })} /> Send our contract automatically when a company says it's interested</label>
+            <div className="text-xs" style={{ color: C.ink3 }}>It goes from the client sender, to the hiring contact who clicked "We're interested". Until this is set up, Admins get a notice to send it themselves. You can use {"{{first_name}}"}, {"{{company}}"}, {"{{role}}"} and {"{{contract_link}}"}.</div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Subject</label><input value={(f.contract && f.contract.subject) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), subject: e.target.value })} placeholder="Next steps: our agreement for the {{role}} role" className={inp} style={inpS} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Email</label><textarea rows={5} value={(f.contract && f.contract.body) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), body: e.target.value })} placeholder={"Hi {{first_name}},\n\nThanks for your interest in our candidates for the {{role}} role. Here's our agreement to review and sign: {{contract_link}}\n\nOnce it's signed we'll set up interviews straight away."} className={inp} style={inpS} /></div>
+            <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Link to the contract (https://, e.g. a signing link)</label><input value={(f.contract && f.contract.url) || ""} onChange={(e) => set("contract", { ...(f.contract || {}), url: e.target.value })} placeholder="https://" className={inp} style={inpS} /></div>
+          </div>
+        </fieldset>
+        {isAdmin && <div className="flex justify-end gap-2 mt-5"><Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={() => save()} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn></div>}
+      </Modal>
+      <Modal open={edit === "retention"} onClose={() => !busy && setEdit(null)} title={SECTIONS.retention} wide>
+        <fieldset disabled={!isAdmin} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete outside contacts who never engaged after (days)</label><input type="number" min="14" value={f.retentionDays ?? 90} onChange={(e) => set("retentionDays", e.target.value)} className={inp} style={inpS} /></div>
+        </fieldset>
+        {isAdmin && <div className="flex justify-end gap-2 mt-5"><Btn onClick={() => setEdit(null)} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={() => save()} disabled={busy}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn></div>}
+      </Modal>
     </div>
   );
 }
@@ -11580,13 +11612,14 @@ function CampaignsPage({ toast, S }) {
       {(tab === "candidates" || tab === "pool") && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed. When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["skipped", "Skipped"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
+            {tab === "pool" ? <div><div className="font-medium">Talent pool</div><div className="text-xs mt-0.5" style={{ color: C.ink2 }}>People found for roles that have closed. Nobody here is emailed.</div></div> : <Tabs tabs={[["found", "Needs approval"], ["sending", "Sending"], ["contacted", "Emailed"], ["interested", "Interested"], ["closed", "Closed"], ["skipped", "Skipped"]].map(([k, label]) => ({ key: k, label: label + " " + cnt(pAll, pGroups[k]) }))} active={pf} setActive={(k) => { setPf(k); setSel({}); }} />}
             {pfx === "found" && pList.some((p) => p.email) && <div className="flex gap-2 shrink-0">
               <Btn onClick={() => { const em = pList.filter((p) => p.email); setSel(ids.length === em.length ? {} : Object.fromEntries(em.map((p) => [p.id, true]))); }}>{ids.length === pList.filter((p) => p.email).length ? "Clear" : "Select all " + pList.filter((p) => p.email).length}</Btn>
               <Btn kind="primary" icon={Send} disabled={!ids.length || !!busy} onClick={() => run("approve", () => S.sourcing("approve_prospects", { ids }).then((r) => { setSel({}); toast(approvedMsg(r.queued, r.held, r.heldWhy)); }))}>Approve {ids.length || ""}</Btn>
             </div>}
           </div>
-          {tab !== "pool" && <div className="text-xs mt-3" style={{ color: C.ink2 }}>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</div>}
+          {tab !== "pool" && <InfoTip>When a job goes live, ProNext checks your bench first, then runs a free X-ray search of public profiles (LinkedIn, plus GitHub and technical sites for technical roles); those people have no email, so you contact them on LinkedIn or their site. If there are fewer strong fits than your setting, it also searches Apollo for people with a verified email and drafts a personal email for each. Open a job to search again or regenerate its titles.</InfoTip>}
+          {tab === "pool" && <InfoTip>When a new role fits them, they come back under that role as "Needs approval" with a fresh draft. Kept for 12 months after their role closed.</InfoTip>}
           {filterBar}
           <div className="flex flex-col gap-2 mt-3">
             {prospects == null ? <SkeletonRows n={4} /> : pList.length ? pageOf(pList).map((p) => (
@@ -11609,7 +11642,8 @@ function CampaignsPage({ toast, S }) {
               <Btn icon={Download} disabled={!!busy || !conn.theirstack} onClick={() => run("fetch", () => paidAction(S, toast, "fetch_leads", {}, (c) => setConfirm(c && { ...c, go: () => { setConfirmBusy(true); Promise.resolve(c.go()).finally(() => { setConfirmBusy(false); load(); }); } }), load))}>{busy === "fetch" ? "Fetching…" : "Fetch today's jobs"}</Btn>
             </div>
           </div>
-          <div className="text-xs mt-3" style={{ color: C.ink2 }}>{conn.theirstack ? "" : "TheirStack isn't connected yet, so no postings are fetched. "}Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</div>
+          {!conn.theirstack && <div className="text-xs mt-3" style={{ color: C.warnFg }}>TheirStack isn't connected yet, so no postings are fetched.</div>}
+          <InfoTip>Each morning (once an Admin approves the credits) ProNext looks for new roles for each Active file candidate, near where they live, and keeps a role only when they're a very strong fit. Each candidate is told first (the role, never the employer) and can acknowledge or withdraw; the pitch waits for them, with a reminder after 2 days. Each contact at the company (anyone named in the job description, Talent Acquisition, the hiring manager and the CEO, found on Apollo) then gets their own email with the ready candidates' must-haves and anonymised resumes; when one says they're interested, the agreement goes out by itself (Outreach settings).</InfoTip>
           {filterBar}
           {lf === "removed" && <div className="flex flex-col gap-2 mt-3">
             {leads == null ? <SkeletonRows n={3} /> : removedRows.length ? pageOf(removedRows).map(({ o, l }) => <RemovedOfferRow key={o.id} o={o} l={l} S={S} toast={toast} onChanged={load} />)
@@ -14607,83 +14641,176 @@ function UserDetailModal({ user, onClose, S }) {
   );
 }
 
-function AgencyTab({ toast, S }) {
-  const [name, setName] = useState(S.settings.name);
-  const [guarantee, setGuarantee] = useState(String(S.settings.guaranteeDays));
-  const [auto, setAuto] = useState(S.settings.ai);
-  const [defaultCurrency, setDefaultCurrency] = useState(S.settings.defaultCurrency);
-  const [defaultCountry, setDefaultCountry] = useState(S.settings.defaultCountry);
-  const [busy, setBusy] = useState(false);
-  const [company, setCompany] = useState(() => ({ ...(S.settings.company || {}) }));
-  const [invoicePrefix, setInvoicePrefix] = useState(S.settings.invoicePrefix || "INV");
-  const save = () => {
-    setBusy(true);
-    S.saveSettings({ ...S.settings, name, guaranteeDays: guarantee === "" ? 60 : Math.max(0, Number(guarantee) || 0), ai: auto, defaultCurrency, defaultCountry, company, invoicePrefix })
-      .then(() => toast("Settings saved")).catch(() => {}).finally(() => setBusy(false));
-  };
+/* Settings building blocks. A group is a card of rows; a row is an icon, a title (and a line under
+   it), the current value, and one action on the right: a chevron that opens a pop-up, a switch that
+   saves on the spot, or icon buttons. Forms live in pop-ups (SetModal), not on the page. */
+// "How this works": a long explanation kept behind a small button.
+function InfoTip({ label = "How this works", children }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-col gap-5">
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-    <Card className="flex flex-col gap-4">
-      <div className="text-lg" style={SERIF}>Agency</div>
-      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
-      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Name in email footers (e.g. your full company name)</label><input value={company.legalName || ""} onChange={(e) => setCompany({ ...company, legalName: e.target.value })} placeholder={name} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
-      <div>
-        <label className="text-xs font-medium" style={{ color: C.ink2 }}>Logo (shown at the top of every email; your agency name is used when there's no logo)</label>
-        <div className="flex items-center gap-3 mt-1.5">
-          {company.logoUrl ? <img src={company.logoUrl} alt="Agency logo" className="h-9 max-w-[160px] object-contain rounded" style={{ background: C.canvas }} /> : <div className="rounded-lg border" style={{ borderColor: C.line }}><BrandMark size={36} /></div>}
-          <label className="text-sm rounded-lg border px-3 py-2 cursor-pointer" style={{ borderColor: C.line }}>{company.logoUrl ? "Change logo" : "Upload logo"}<input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (!f) return; S.uploadLogo(f).then((url) => { setCompany({ ...company, logoUrl: url }); toast("Logo uploaded. Save changes to use it."); }).catch(() => {}); }} /></label>
-          {company.logoUrl && <IconBtn icon={Trash2} label="Remove logo" tone="danger" size="sm" onClick={() => setCompany({ ...company, logoUrl: "" })} />}
-        </div>
+    <div className="mt-3">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: C.ink2 }}><Info size={14} />{label}<ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : "none" }} /></button>
+      {open && <div className="text-xs mt-2 rounded-lg px-3 py-2.5 leading-relaxed" style={{ background: C.canvas, color: C.ink2 }}>{children}</div>}
+    </div>
+  );
+}
+function SetGroup({ title, sub, action, children, className = "" }) {
+  return (
+    <section className={"rounded-2xl border overflow-hidden " + className} style={{ background: C.card, borderColor: C.line, boxShadow: "0 1px 2px rgba(20,32,27,0.04)" }}>
+      <div className="flex items-center justify-between gap-3 px-4 md:px-5 py-3.5">
+        <div className="min-w-0"><h3 className="text-sm font-semibold">{title}</h3>{sub && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{sub}</div>}</div>
+        {action && <div className="flex items-center gap-1.5 shrink-0">{action}</div>}
       </div>
-      <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Guarantee period (days)</label><input value={guarantee} onChange={(e) => setGuarantee(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency currency</label>
-          <PickList value={defaultCurrency} onChange={setDefaultCurrency} options={withValue(CURRENCY_OPTIONS, defaultCurrency)} searchPlaceholder="Search currency or code" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
-          <div className="text-xs mt-1.5" style={{ color: C.ink3 }}>Every total in ProNext is shown in this currency, other currencies converted at today's exchange rate. New jobs start in it too.</div>
-        </div>
-        <div>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Default hiring country</label>
-          <PickList value={defaultCountry} onChange={(v) => { setDefaultCountry(v); if (COUNTRY_CURRENCY[v]) setDefaultCurrency(COUNTRY_CURRENCY[v]); }} options={withValue(COUNTRY_OPTIONS, defaultCountry)} placeholder="Select a country…" searchPlaceholder="Search countries" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} />
-        </div>
-      </div>
-      <div className="text-xs" style={{ color: C.ink3 }}>New jobs default to this currency and country unless changed when posting.</div>
-      <button onClick={() => setAuto(!auto)} className="pt-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
-        <div><div className="text-sm font-medium">AI screening questions</div><div className="text-xs" style={{ color: C.ink2 }}>Draft questions for every new candidate. You approve before they send.</div></div>
-        <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: auto ? C.em : C.line2 }}><div className={`w-5 h-5 rounded-full bg-white ${auto ? "ml-auto" : ""}`} /></div>
-      </button>
-    </Card>
-    <Card className="flex flex-col gap-3">
-        <div><div className="text-lg" style={SERIF}>Invoice details</div><div className="text-xs" style={{ color: C.ink2 }}>Printed on invoices as "Bill from" and payment details. Anything left blank stays blank on the invoice.</div></div>
+      {children}
+    </section>
+  );
+}
+function SetRow({ icon: I, title, sub, value, onClick, right, warn, ok, wrap }) {
+  const has = value != null && value !== "";
+  const inner = (
+    <>
+      {I && <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: warn ? C.warnBg : ok ? C.emTint : C.neutralBg, color: warn ? C.warnFg : ok ? C.em : C.ink2 }}><I size={15} /></span>}
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-medium truncate">{title}</span>
+        {sub && <span className={"block text-xs " + (wrap ? "" : "truncate")} style={{ color: warn ? C.warnFg : C.ink3 }}>{sub}</span>}
+        {has && <span className="block sm:hidden text-xs truncate mt-0.5" style={{ color: C.ink2 }}>{value}</span>}
+      </span>
+      {has && <span className="hidden sm:block text-sm text-right truncate" style={{ color: C.ink2, maxWidth: "45%" }}>{value}</span>}
+      {right && <span className="flex items-center gap-1 shrink-0">{right}</span>}
+      {onClick && !right && <ChevronRight size={16} color={C.ink3} className="shrink-0" />}
+    </>
+  );
+  const cls = "w-full flex items-center gap-3 px-4 md:px-5 py-3 text-left";
+  const style = { borderTop: `1px solid ${C.line}` };
+  return onClick && !right
+    ? <button type="button" onClick={onClick} className={cls + " pn-row"} style={style}>{inner}</button>
+    : <div className={cls} style={style}>{inner}</div>;
+}
+// A switch that flips at once and flips back if saving fails (onChange returns a promise of true/false).
+function Switch({ on, onChange, label, disabled }) {
+  const [v, setV] = useState(!!on);
+  useEffect(() => setV(!!on), [on]);
+  const flip = () => { const n = !v; setV(n); Promise.resolve(onChange(n)).then((ok) => { if (ok === false) setV(!n); }); };
+  return (
+    <button type="button" role="switch" aria-checked={v} aria-label={label} disabled={disabled} onClick={flip}
+      className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0 transition-colors" style={{ background: v ? C.em : C.line2, opacity: disabled ? 0.6 : 1 }}>
+      <span className="w-5 h-5 rounded-full bg-white transition-transform" style={{ transform: v ? "translateX(16px)" : "none", boxShadow: "0 1px 2px rgba(0,0,0,.2)" }} />
+    </button>
+  );
+}
+function Fld({ label, hint, children, className = "", div }) {
+  const T = div ? "div" : "label";
+  return <T className={"block " + className}><span className="block text-xs font-medium mb-1.5" style={{ color: C.ink2 }}>{label}</span>{children}{hint && <span className="block text-xs mt-1" style={{ color: C.ink3 }}>{hint}</span>}</T>;
+}
+const FLD_CLS = "w-full rounded-lg border px-3 py-2 text-sm outline-none";
+const fldStyle = () => ({ borderColor: C.line, background: C.soft, color: C.ink });
+function SetModal({ open, onClose, title, sub, onSave, busy, saveLabel = "Save", wide, canSave = true, extra, children }) {
+  return (
+    <Modal open={open} onClose={() => !busy && onClose()} title={title} wide={wide}>
+      {sub && <div className="text-sm -mt-2 mb-4" style={{ color: C.ink2 }}>{sub}</div>}
+      <div className="flex flex-col gap-4">{children}</div>
+      <div className="flex items-center gap-2 mt-5">{extra}<span className="flex-1" /><Btn onClick={onClose} disabled={busy}>Cancel</Btn><Btn kind="primary" onClick={onSave} disabled={busy || !canSave}>{busy ? <>Saving <InlineDots color="#fff" /></> : saveLabel}</Btn></div>
+    </Modal>
+  );
+}
+// Saves part of the agency settings; resolves true when it saved.
+function useSettingsSave(S, toast) {
+  const [busy, setBusy] = useState(false);
+  const save = (patch, msg, done) => {
+    setBusy(true);
+    return S.saveSettings({ ...S.settings, ...patch }).then(() => { if (msg) toast(msg); if (done) done(); return true; }).catch(() => false).finally(() => setBusy(false));
+  };
+  return [save, busy];
+}
+const maskTail = (s) => { const t = String(s || "").replace(/\s/g, ""); return t.length > 4 ? "•••• " + t.slice(-4) : t; };
+
+function AgencyTab({ toast, S }) {
+  const st = S.settings, co = st.company || {};
+  const [save, busy] = useSettingsSave(S, toast);
+  const [edit, setEdit] = useState(null); // "profile" | "money" | "guarantee" | "invoice"
+  const [d, setD] = useState({ company: {} });
+  const open = (k) => { setD({ name: st.name || "", company: { ...co }, guarantee: String(st.guaranteeDays ?? 60), currency: st.defaultCurrency, country: st.defaultCountry, prefix: st.invoicePrefix || "INV" }); setEdit(k); };
+  const close = () => setEdit(null);
+  const setCo = (k, v) => setD((x) => ({ ...x, company: { ...x.company, [k]: v } }));
+  const curLabel = (CURRENCY_OPTIONS.find((o) => o.value === st.defaultCurrency) || {}).label || st.defaultCurrency || "Not set";
+  const filled = COMPANY_FIELDS.filter(([k]) => String(co[k] || "").trim()).length;
+  const bank = [co.bankName, maskTail(co.accountNumber)].filter(Boolean).join(" · ");
+  const prefix = st.invoicePrefix || "INV";
+  const edBtn = (k, label) => <IconBtn icon={Pencil} label={label} size="sm" onClick={() => open(k)} />;
+  return (
+    <div className="flex flex-col gap-4">
+      <SetGroup title="Agency profile" sub="How your agency appears in ProNext and in every email." action={edBtn("profile", "Edit agency profile")}>
+        <SetRow icon={Building2} title="Agency name" value={st.name} onClick={() => open("profile")} />
+        <SetRow icon={Mail} title="Name in email footers" value={co.legalName || st.name} sub={co.legalName ? "" : "Same as the agency name"} onClick={() => open("profile")} />
+        <SetRow icon={ImageIcon} title="Logo" sub={co.logoUrl ? "Shown at the top of every email" : "None yet: your agency name is used instead"}
+          value={co.logoUrl ? <img src={co.logoUrl} alt="Agency logo" className="h-7 max-w-[120px] object-contain rounded inline-block" style={{ background: C.canvas }} /> : null} onClick={() => open("profile")} />
+      </SetGroup>
+
+      <SetGroup title="Defaults" sub="Used across the agency unless changed on a job.">
+        <SetRow icon={Coins} title="Agency currency" sub="Totals are shown in it, at today's exchange rate" value={curLabel} onClick={() => open("money")} />
+        <SetRow icon={Globe} title="Default hiring country" value={st.defaultCountry || "Not set"} onClick={() => open("money")} />
+        <SetRow icon={ShieldCheck} title="Guarantee period" sub="Free replacement window after a placement" value={(st.guaranteeDays ?? 60) + " days"} onClick={() => open("guarantee")} />
+        <SetRow icon={Sparkles} title="AI screening questions" sub="Drafted for every new candidate; you approve before they send"
+          right={<Switch on={!!st.ai} label="AI screening questions" disabled={busy} onChange={(v) => save({ ai: v }, v ? "AI screening questions turned on" : "AI screening questions turned off")} />} />
+      </SetGroup>
+
+      <SetGroup title="Invoicing" sub={"Printed on invoices as \"Bill from\" and payment details · " + filled + " of " + COMPANY_FIELDS.length + " filled"} action={edBtn("invoice", "Edit invoice details")}>
+        <SetRow icon={Building2} title="Bill from" sub={co.address || "No address yet"} value={co.name || "Not set"} warn={!co.name} onClick={() => open("invoice")} />
+        <SetRow icon={Landmark} title="Bank details" value={bank || "Not set"} warn={!bank} onClick={() => open("invoice")} />
+        <SetRow icon={Clock} title="Payment terms" value={(co.termsDays != null ? co.termsDays : 30) + " days"} onClick={() => open("invoice")} />
+        <SetRow icon={Hash} title="Invoice numbers" value={prefix + "-" + new Date().getFullYear() + "-0001"} onClick={() => open("invoice")} />
+      </SetGroup>
+
+      <SetModal open={edit === "profile"} onClose={close} title="Agency profile" busy={busy} canSave={!!String(d.name || "").trim()}
+        onSave={() => save({ name: d.name.trim(), company: d.company }, "Agency profile saved", close)}>
+        <Fld label="Agency name"><input value={d.name || ""} onChange={(e) => setD({ ...d, name: e.target.value })} className={FLD_CLS} style={fldStyle()} /></Fld>
+        <Fld label="Name in email footers" hint="e.g. your full registered company name"><input value={d.company.legalName || ""} onChange={(e) => setCo("legalName", e.target.value)} placeholder={d.name} className={FLD_CLS} style={fldStyle()} /></Fld>
+        <Fld div label="Logo" hint="Shown at the top of every email. PNG, JPG, SVG or WebP.">
+          <div className="flex items-center gap-3">
+            {d.company.logoUrl ? <img src={d.company.logoUrl} alt="Agency logo" className="h-10 max-w-[160px] object-contain rounded" style={{ background: C.canvas }} /> : <div className="rounded-lg border" style={{ borderColor: C.line }}><BrandMark size={40} /></div>}
+            <label className="text-sm font-medium rounded-lg border px-3 py-1.5 cursor-pointer flex items-center gap-1.5" style={{ borderColor: C.line }}><Upload size={14} />{d.company.logoUrl ? "Change" : "Upload"}
+              <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) S.uploadLogo(f).then((url) => setCo("logoUrl", url)).catch(() => {}); }} /></label>
+            {d.company.logoUrl && <IconBtn icon={Trash2} label="Remove logo" tone="danger" size="sm" onClick={() => setCo("logoUrl", "")} />}
+          </div>
+        </Fld>
+      </SetModal>
+
+      <SetModal open={edit === "money"} onClose={close} title="Currency and country" sub="New jobs start in these, and every total in ProNext is shown in the agency currency (other currencies converted at today's rate). Candidate salaries keep their own currency." busy={busy}
+        onSave={() => save({ defaultCurrency: d.currency, defaultCountry: d.country }, "Currency and country saved", close)}>
+        <Fld div label="Default hiring country"><PickList value={d.country} onChange={(v) => setD((x) => ({ ...x, country: v, currency: COUNTRY_CURRENCY[v] || x.currency }))} options={withValue(COUNTRY_OPTIONS, d.country)} placeholder="Select a country…" searchPlaceholder="Search countries" className={FLD_CLS} style={fldStyle()} /></Fld>
+        <Fld div label="Agency currency" hint="Picking a country sets its currency; you can change it."><PickList value={d.currency} onChange={(v) => setD((x) => ({ ...x, currency: v }))} options={withValue(CURRENCY_OPTIONS, d.currency)} searchPlaceholder="Search currency or code" className={FLD_CLS} style={fldStyle()} /></Fld>
+      </SetModal>
+
+      <SetModal open={edit === "guarantee"} onClose={close} title="Guarantee period" sub="How long after a placement you'll replace a candidate who leaves." busy={busy}
+        onSave={() => save({ guaranteeDays: d.guarantee === "" ? 60 : Math.max(0, Number(d.guarantee) || 0) }, "Guarantee period saved", close)}>
+        <Fld label="Days"><input type="number" min="0" value={d.guarantee} onChange={(e) => setD({ ...d, guarantee: e.target.value })} className={FLD_CLS} style={fldStyle()} /></Fld>
+      </SetModal>
+
+      <SetModal open={edit === "invoice"} onClose={close} title="Invoice details" sub="Anything left blank stays blank on the invoice." busy={busy} wide
+        onSave={() => save({ company: d.company, invoicePrefix: d.prefix || "INV" }, "Invoice details saved", close)}>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {COMPANY_FIELDS.map(([k, l]) => (
-            <div key={k} className={k === "address" ? "sm:col-span-2" : ""}><label className="text-xs font-medium" style={{ color: C.ink2 }}>{l}</label><input value={company[k] || ""} onChange={(e) => setCompany({ ...company, [k]: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
+            <Fld key={k} label={l} className={k === "address" ? "sm:col-span-2" : ""}><input value={d.company[k] || ""} onChange={(e) => setCo(k, e.target.value)} className={FLD_CLS} style={fldStyle()} /></Fld>
           ))}
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Default payment terms (days)</label><input type="number" min="0" value={company.termsDays != null ? company.termsDays : 30} onChange={(e) => setCompany({ ...company, termsDays: e.target.value === "" ? null : Number(e.target.value) })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Invoice number prefix</label><input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>Numbers look like {invoicePrefix || "INV"}-{new Date().getFullYear()}-0001</div></div>
+          <Fld label="Payment terms (days)"><input type="number" min="0" value={d.company.termsDays != null ? d.company.termsDays : 30} onChange={(e) => setCo("termsDays", e.target.value === "" ? null : Number(e.target.value))} className={FLD_CLS} style={fldStyle()} /></Fld>
+          <Fld label="Invoice number prefix" hint={"Numbers look like " + (d.prefix || "INV") + "-" + new Date().getFullYear() + "-0001"}><input value={d.prefix || ""} onChange={(e) => setD({ ...d, prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "") })} className={FLD_CLS} style={fldStyle()} /></Fld>
         </div>
-    </Card>
-    </div>
-      <div><Btn kind="primary" disabled={busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn></div>
+      </SetModal>
     </div>
   );
 }
 
 function DataPrivacyTab({ toast, S }) {
-  const [retention, setRetention] = useState(S.settings.retentionDays ? String(S.settings.retentionDays) : "");
-  const [busy, setBusy] = useState(false);
+  const st = S.settings;
+  const [save, busy] = useSettingsSave(S, toast);
+  const [editRet, setEditRet] = useState(false);
+  const [ret, setRet] = useState("");
   const [purgeOpen, setPurgeOpen] = useState(false);
   const [purgeBusy, setPurgeBusy] = useState(false);
-  const days = num(retention);
-  // Rejects (client or otherwise) and "not a fit" candidates all land on Active file now
-  // rather than a dead-end "Rejected" status, so staleness here means sitting untouched on
-  // Active file, not a status that nothing sets anymore.
+  const days = Number(st.retentionDays) || 0;
+  // Rejects (client or otherwise) and "not a fit" candidates all land on Active file now, so
+  // staleness here means sitting untouched on Active file.
   const eligible = days ? S.cands.filter((c) => c.status === "Active file" && c.updatedAt < Date.now() - days * 864e5) : [];
-  const saveRetention = () => {
-    setBusy(true);
-    S.saveSettings({ ...S.settings, retentionDays: days || null }).then(() => toast("Retention setting saved")).catch(() => {}).finally(() => setBusy(false));
-  };
   const exportCandidates = () => downloadCsv("harbor-candidates.csv",
     ["Name", "Role", "Location", "Status", "Recruiter", "Email", "Phone", "AI score", "Added"],
     S.cands.map((c) => [c.name, c.role, c.location, c.status, c.recruiter || "", c.emailAddr, c.phone, c.ai, new Date(c.createdAt).toISOString().slice(0, 10)]));
@@ -14694,74 +14821,54 @@ function DataPrivacyTab({ toast, S }) {
     setPurgeBusy(true);
     S.purgeCandidates(eligible.map((c) => c.id)).then(() => { toast(eligible.length + " candidate(s) removed"); setPurgeOpen(false); }).catch(() => {}).finally(() => setPurgeBusy(false));
   };
-  const [idle, setIdle] = useState(String(S.settings.idleMinutes || 30));
-  const [idleBusy, setIdleBusy] = useState(false);
-  const saveIdle = () => {
-    setIdleBusy(true);
-    S.saveSettings({ ...S.settings, idleMinutes: Number(idle) }).then(() => toast("Automatic sign-out saved. It applies to everyone from their next page load.")).catch(() => {}).finally(() => setIdleBusy(false));
-  };
+  const retDays = num(ret);
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <SectionTitle title="Automatic sign-out" sub="Signs people out of ProNext after a period with no activity, so an unattended computer doesn't stay logged in. They get a 2-minute warning first, and need to sign in again afterwards." size="text-lg" />
-        <div className="flex flex-col sm:flex-row sm:items-end gap-3 mt-4">
-          <div className="sm:w-64"><label className="text-xs font-medium" style={{ color: C.ink2 }}>Sign out after no activity for</label>
-            <select value={idle} onChange={(e) => setIdle(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }}>
-              {[[15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [120, "2 hours"], [240, "4 hours"], [480, "8 hours"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select></div>
-          <Btn kind="primary" disabled={idleBusy || Number(idle) === (S.settings.idleMinutes || 30)} onClick={saveIdle}>{idleBusy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
-        </div>
-      </Card>
-      <Card>
-        <SectionTitle title="Export data" sub="Download a CSV for your own records or another system." size="text-lg" />
-        <div className="flex flex-wrap gap-2 mt-4"><Btn icon={Download} onClick={exportCandidates}>Export candidates</Btn><Btn icon={Download} onClick={exportPlacements}>Export placements</Btn></div>
-      </Card>
-      <Card>
-        <SectionTitle title="Data retention" sub="Automatically clean up candidates on Active file who've sat untouched for a while." size="text-lg" />
-        <div className="flex flex-col gap-3 mt-4 md:max-w-sm">
-          <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Delete inactive Active-file candidates after (days)</label><input value={retention} onChange={(e) => setRetention(e.target.value)} placeholder="Never" className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
-          <Btn kind="primary" disabled={busy} onClick={saveRetention}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save"}</Btn>
-        </div>
-        {days > 0 && (
-          <div className="mt-4 pt-4 flex flex-wrap items-center justify-between gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
-            <div className="text-sm" style={{ color: C.ink2 }}>{eligible.length} inactive Active-file candidate{eligible.length === 1 ? "" : "s"} past {days} days right now.</div>
-            <Btn kind="danger" disabled={!eligible.length} onClick={() => setPurgeOpen(true)}>Purge now</Btn>
-          </div>
-        )}
-      </Card>
+      <SetGroup title="Security">
+        <SetRow icon={LogOut} title="Automatic sign-out" sub="After no activity, with a 2-minute warning first. Applies from everyone's next page load."
+          right={<select value={String(st.idleMinutes || 30)} disabled={busy} aria-label="Sign out after no activity for" onChange={(e) => save({ idleMinutes: Number(e.target.value) }, "Automatic sign-out saved")} className="rounded-lg border px-2.5 py-1.5 text-sm outline-none" style={fldStyle()}>
+            {[[15, "15 minutes"], [30, "30 minutes"], [60, "1 hour"], [120, "2 hours"], [240, "4 hours"], [480, "8 hours"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>} />
+      </SetGroup>
+      <SetGroup title="Export data" sub="CSV files for your own records or another system.">
+        <SetRow icon={Users} title="Candidates" sub={plural(S.cands.length, "candidate")} right={<IconBtn icon={Download} label="Export candidates" onClick={exportCandidates} />} />
+        <SetRow icon={Trophy} title="Placements" sub={plural(S.placements.length, "placement")} right={<IconBtn icon={Download} label="Export placements" onClick={exportPlacements} />} />
+      </SetGroup>
+      <SetGroup title="Data retention">
+        <SetRow icon={Database} title="Delete inactive Active-file candidates" sub="Once they've sat untouched for longer than this" value={days ? "After " + days + " days" : "Never"} onClick={() => { setRet(days ? String(days) : ""); setEditRet(true); }} />
+        {days > 0 && <SetRow icon={Trash2} warn={eligible.length > 0} title={plural(eligible.length, "candidate") + " past " + days + " days"} sub={eligible.length ? "Ready to be removed now" : "Nothing to remove right now"}
+          right={eligible.length > 0 && <Btn kind="danger" onClick={() => setPurgeOpen(true)}>Purge</Btn>} />}
+      </SetGroup>
+      <SetModal open={editRet} onClose={() => setEditRet(false)} title="Data retention" sub="Candidates on Active file who haven't been touched for this many days can be removed. Leave it blank to keep everyone." busy={busy}
+        onSave={() => save({ retentionDays: retDays || null }, "Retention setting saved", () => setEditRet(false))}>
+        <Fld label="Delete after (days)"><input type="number" min="0" value={ret} onChange={(e) => setRet(e.target.value)} placeholder="Never" className={FLD_CLS} style={fldStyle()} /></Fld>
+      </SetModal>
       <ConfirmModal open={purgeOpen} onClose={() => setPurgeOpen(false)} title="Delete these candidates?" body={"This permanently deletes " + eligible.length + " inactive Active-file candidate(s) past your retention window. This can't be undone."} onConfirm={confirmPurge} busy={purgeBusy} />
     </div>
   );
 }
 
 const INTEGRATIONS_LIST = [
-  { key: "linkedin", label: "LinkedIn", sub: "Lets you pick LinkedIn as a channel when promoting a job." },
-  { key: "googleJobs", label: "Google for Jobs", sub: "Lets you pick Google for Jobs as a channel when promoting a job." },
-  { key: "googleCalendar", label: "Google Calendar", sub: "Adds an ‘Add to calendar’ link once a candidate reaches the Interview stage." },
+  { key: "linkedin", label: "LinkedIn", icon: Share2, sub: "Pick LinkedIn as a channel when promoting a job." },
+  { key: "googleJobs", label: "Google for Jobs", icon: Search, sub: "Pick Google for Jobs as a channel when promoting a job." },
+  { key: "googleCalendar", label: "Google Calendar", icon: Calendar, sub: "An ‘Add to calendar’ link once a candidate reaches Interview." },
 ];
 function IntegrationsTab({ toast, S }) {
-  const base = { linkedin: false, googleJobs: false, googleCalendar: false, ...S.settings.integrations };
-  const [enabled, setEnabled] = useState(base);
-  const [busy, setBusy] = useState(false);
-  const dirty = JSON.stringify(enabled) !== JSON.stringify(base);
-  const toggle = (k) => setEnabled((e) => ({ ...e, [k]: !e[k] }));
-  const save = () => { setBusy(true); S.saveSettings({ ...S.settings, integrations: enabled }).then(() => toast("Integrations saved")).catch(() => {}).finally(() => setBusy(false)); };
+  const on = { linkedin: false, googleJobs: false, googleCalendar: false, ...S.settings.integrations };
+  const [save, busy] = useSettingsSave(S, toast);
   return (
-    <Card>
-      <SectionTitle title="Integrations" sub="Turn on the channels and tools your team can use elsewhere in ProNext." size="text-lg" />
-      <div className="flex flex-col gap-1 mt-4">
+    <div className="flex flex-col gap-3">
+      <SetGroup title="Integrations" sub="Channels and tools your team can use elsewhere in ProNext. Changes save straight away.">
         {INTEGRATIONS_LIST.map((i) => (
-          <button key={i.key} onClick={() => toggle(i.key)} className="py-3 flex items-center justify-between gap-3 text-left" style={{ borderTop: `1px solid ${C.line}` }}>
-            <div><div className="text-sm font-medium">{i.label}</div><div className="text-xs" style={{ color: C.ink2 }}>{i.sub}</div></div>
-            <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: enabled[i.key] ? C.em : C.line2 }}><div className={`w-5 h-5 rounded-full bg-white ${enabled[i.key] ? "ml-auto" : ""}`} /></div>
-          </button>
+          <SetRow key={i.key} icon={i.icon} title={i.label} sub={i.sub}
+            right={<Switch on={!!on[i.key]} label={i.label} disabled={busy} onChange={(v) => save({ integrations: { ...on, [i.key]: v } }, i.label + (v ? " turned on" : " turned off"))} />} />
         ))}
-      </div>
-      <div className="text-xs mt-3" style={{ color: C.ink3 }}>LinkedIn and Google for Jobs post through your ad campaigns, tracked here in ProNext — a real posting connection to either platform isn't wired up yet.</div>
-      <Btn kind="primary" className="mt-4" disabled={!dirty || busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
-    </Card>
+      </SetGroup>
+      <div className="text-xs px-1" style={{ color: C.ink3 }}>LinkedIn and Google for Jobs post through your ad campaigns, tracked here in ProNext. A direct posting connection to either isn't wired up yet.</div>
+    </div>
   );
 }
+
 
 function AuditLogTab({ S }) {
   return (
@@ -14792,60 +14899,82 @@ function AuditLogTab({ S }) {
 function ClientTermsTab({ toast, S }) {
   const cur = (S.settings && S.settings.clientAgreement) || { title: "Candidate Introduction Terms", body: "", version: 1, feePct: 10, firstTimeDiscountPct: 20 };
   const poc0 = (S.settings && S.settings.clientPoc) || {};
-  const [f, setF] = useState({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20 });
-  const [poc, setPoc] = useState({ userId: poc0.userId || "", title: poc0.title || "", bookingUrl: poc0.bookingUrl || "", us: (poc0.phones && poc0.phones.us) || "", eu: (poc0.phones && poc0.phones.eu) || "" });
+  const draftF = () => ({ title: cur.title || "", body: cur.body || "", feePct: cur.feePct ?? 10, firstTimeDiscountPct: cur.firstTimeDiscountPct ?? 20 });
+  const draftPoc = () => ({ userId: poc0.userId || "", title: poc0.title || "", bookingUrl: poc0.bookingUrl || "", us: (poc0.phones && poc0.phones.us) || "", eu: (poc0.phones && poc0.phones.eu) || "" });
+  const [f, setF] = useState(draftF);
+  const [poc, setPoc] = useState(draftPoc);
+  const [edit, setEdit] = useState(null); // "poc" | "terms"
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState(null);
   const [view, setView] = useState(null);
+  const [preview, setPreview] = useState(null);
   React.useEffect(() => { S.clientAgreements().then((r) => setRows(r || [])).catch(() => setRows([])); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const staff = (S.users || []).filter((u) => ["admin", "recops"].includes(u.roleKey) && u.status === "Active");
-  const inp = "w-full mt-1 rounded-lg border px-3 py-2 text-sm outline-none", inpS = { borderColor: C.line, background: C.soft };
-  const changed = f.body !== (cur.body || "") || f.title !== (cur.title || "");
+  const person = (S.users || []).find((u) => u.id === poc0.userId);
+  const open = (k) => { setF(draftF()); setPoc(draftPoc()); setEdit(k); };
   const save = () => {
+    const changed = f.body !== (cur.body || "") || f.title !== (cur.title || "");
     setBusy(true);
     const a = { ...cur, title: f.title.trim() || "Candidate Introduction Terms", body: f.body, feePct: Number(f.feePct) || 10, firstTimeDiscountPct: Math.max(0, Number(f.firstTimeDiscountPct) || 0),
       version: (Number(cur.version) || 1) + (changed ? 1 : 0), updatedAt: new Date().toISOString() };
-    S.saveClientTerms(a, { userId: poc.userId || null, title: poc.title.trim(), bookingUrl: poc.bookingUrl.trim(), phones: { us: poc.us.trim(), eu: poc.eu.trim() } }).then(() => toast("Saved. New signatures use these terms; signed copies don't change.")).catch(() => {}).finally(() => setBusy(false));
+    S.saveClientTerms(a, { userId: poc.userId || null, title: poc.title.trim(), bookingUrl: poc.bookingUrl.trim(), phones: { us: poc.us.trim(), eu: poc.eu.trim() } })
+      .then(() => { toast(edit === "terms" ? "Saved. New signatures use these terms; signed copies don't change." : "Point of contact saved"); setEdit(null); }).catch(() => {}).finally(() => setBusy(false));
   };
+  const phones = [poc0.phones && poc0.phones.us && "US " + poc0.phones.us, poc0.phones && poc0.phones.eu && "UK/EU " + poc0.phones.eu].filter(Boolean).join(" · ");
+  const host = (u) => { try { return new URL(u).host.replace(/^www\./, "") + new URL(u).pathname.replace(/\/$/, ""); } catch (e) { return u; } };
+  const fld = (v, on, ph, type) => <input type={type || "text"} value={v} onChange={(e) => on(e.target.value)} placeholder={ph} className={FLD_CLS} style={fldStyle()} />;
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <SectionTitle title="Point of contact" sub="Introduced to a client as soon as they sign, to coordinate with the candidates. The client can book a call with them." />
-        <div className="grid sm:grid-cols-3 gap-3 mt-3">
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Person<select value={poc.userId} onChange={(e) => setPoc({ ...poc, userId: e.target.value })} className={inp} style={inpS}>{staff.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Title shown to clients<input value={poc.title} onChange={(e) => setPoc({ ...poc, title: e.target.value })} placeholder="e.g. Client Partner" className={inp} style={inpS} /></label>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Booking link<input value={poc.bookingUrl} onChange={(e) => setPoc({ ...poc, bookingUrl: e.target.value })} placeholder="https://calendly.com/…" className={inp} style={inpS} /></label>
+      <SetGroup title="Point of contact" sub="Introduced to a client as soon as they sign, to coordinate with the candidates." action={<IconBtn icon={Pencil} label="Edit point of contact" size="sm" onClick={() => open("poc")} />}>
+        <SetRow icon={UserRound} title="Person" value={person ? person.name + (poc0.title ? " · " + poc0.title : "") : "Not chosen"} warn={!person} onClick={() => open("poc")} />
+        <SetRow icon={Calendar} title="Booking link" sub={poc0.bookingUrl ? "" : "None: clients are asked to reply to arrange a call"} warn={!poc0.bookingUrl} value={poc0.bookingUrl ? host(poc0.bookingUrl) : ""} onClick={() => open("poc")} />
+        <SetRow icon={Phone} title="Phone numbers" sub="Clients see the number for where they are" value={phones || "None"} onClick={() => open("poc")} />
+      </SetGroup>
+
+      <SetGroup title="Client agreement" sub="What clients sign to unlock full resumes. One signature covers every candidate we send that company."
+        action={<><IconBtn icon={Eye} label="Preview the agreement" size="sm" onClick={() => setPreview(cur)} /><IconBtn icon={Pencil} label="Edit the agreement" size="sm" onClick={() => open("terms")} /></>}>
+        <SetRow icon={ScrollText} title={cur.title || "Candidate Introduction Terms"} sub={cur.body ? "Version " + (cur.version || 1) + (cur.updatedAt ? " · updated " + new Date(cur.updatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "") : "No text yet"} warn={!cur.body} onClick={() => open("terms")} />
+        <SetRow icon={Percent} title="Fee" value={(cur.feePct ?? 10) + "% of annual gross salary"} onClick={() => open("terms")} />
+        <SetRow icon={BadgeCheck} title="First-time client discount" value={(cur.firstTimeDiscountPct ?? 20) + "% off the fee"} onClick={() => open("terms")} />
+      </SetGroup>
+
+      <SetGroup title="Signed by clients" sub={rows && rows.length ? plural(rows.length, "company", "companies") + " · countersigned automatically by the point of contact" : "Countersigned automatically by the point of contact."}>
+        {rows === null ? <div className="px-5 pb-4"><SkeletonRows n={2} /></div> : rows.length === 0 ? <div className="text-sm px-5 py-3" style={{ color: C.ink3, borderTop: `1px solid ${C.line}` }}>No client has signed yet.</div> : rows.map((a) => (
+          <SetRow key={a.id} icon={Building2} title={a.company} sub={a.signer_name + ", " + a.signer_title + " · " + signedStamp(a.signed_at)} value={"Fee " + a.fee_pct + "%" + (a.first_time ? " (first-time)" : "")}
+            right={<IconBtn icon={Eye} label={"View " + a.company + "'s agreement"} size="sm" onClick={() => setView(a)} />} />
+        ))}
+      </SetGroup>
+
+      <SetModal open={edit === "poc"} onClose={() => setEdit(null)} title="Point of contact" sub="The client can book a call with them. A person's own number is never shown." busy={busy} onSave={save}>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Fld label="Person"><select value={poc.userId} onChange={(e) => setPoc({ ...poc, userId: e.target.value })} className={FLD_CLS} style={fldStyle()}><option value="">Choose…</option>{staff.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select></Fld>
+          <Fld label="Title shown to clients">{fld(poc.title, (v) => setPoc({ ...poc, title: v }), "e.g. Client Partner")}</Fld>
         </div>
-        <div className="grid sm:grid-cols-2 gap-3 mt-3">
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone shown to US clients<input value={poc.us} onChange={(e) => setPoc({ ...poc, us: e.target.value })} placeholder="optional, e.g. +1 …" className={inp} style={inpS} /></label>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Phone shown to UK and Europe clients<input value={poc.eu} onChange={(e) => setPoc({ ...poc, eu: e.target.value })} placeholder="optional, e.g. +44 …" className={inp} style={inpS} /></label>
+        <Fld label="Booking link" hint="Without one, clients are asked to reply to arrange a call.">{fld(poc.bookingUrl, (v) => setPoc({ ...poc, bookingUrl: v }), "https://calendly.com/…")}</Fld>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <Fld label="Phone for US clients">{fld(poc.us, (v) => setPoc({ ...poc, us: v }), "optional, e.g. +1 …")}</Fld>
+          <Fld label="Phone for UK and Europe clients">{fld(poc.eu, (v) => setPoc({ ...poc, eu: v }), "optional, e.g. +44 …")}</Fld>
         </div>
-        <div className="text-xs mt-1" style={{ color: C.ink3 }}>Clients see the number for where they are; elsewhere, no number. A person's own number is never shown.</div>
-        {!poc.bookingUrl && <div className="text-xs mt-2" style={{ color: C.warnFg }}>No booking link yet: clients are asked to reply to arrange a call instead.</div>}
-      </Card>
-      <Card>
-        <SectionTitle title="Client agreement" sub="What clients sign to unlock the full resumes. One signature covers every candidate we send that company. Placeholders: {{client}} {{client_company_no}} {{client_address}} {{agency_address}} {{date}} {{fee}} {{discount}}." />
-        <div className="grid sm:grid-cols-3 gap-3 mt-3">
-          <label className="text-xs font-medium sm:col-span-1" style={{ color: C.ink2 }}>Title<input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} className={inp} style={inpS} /></label>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>Fee (% of annual gross salary)<input type="number" min="0" step="0.5" value={f.feePct} onChange={(e) => setF({ ...f, feePct: e.target.value })} className={inp} style={inpS} /></label>
-          <label className="text-xs font-medium" style={{ color: C.ink2 }}>First-time client discount (% off the fee)<input type="number" min="0" max="100" step="1" value={f.firstTimeDiscountPct} onChange={(e) => setF({ ...f, firstTimeDiscountPct: e.target.value })} className={inp} style={inpS} /></label>
+      </SetModal>
+
+      <SetModal open={edit === "terms"} onClose={() => setEdit(null)} title="Client agreement" busy={busy} onSave={save} wide
+        extra={<Btn icon={Eye} onClick={() => setPreview(f)}>Preview</Btn>}>
+        <div className="grid sm:grid-cols-3 gap-3">
+          <Fld label="Title">{fld(f.title, (v) => setF({ ...f, title: v }))}</Fld>
+          <Fld label="Fee (% of annual salary)"><input type="number" min="0" step="0.5" value={f.feePct} onChange={(e) => setF({ ...f, feePct: e.target.value })} className={FLD_CLS} style={fldStyle()} /></Fld>
+          <Fld label="First-time discount (% off)"><input type="number" min="0" max="100" step="1" value={f.firstTimeDiscountPct} onChange={(e) => setF({ ...f, firstTimeDiscountPct: e.target.value })} className={FLD_CLS} style={fldStyle()} /></Fld>
         </div>
-        <textarea value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} rows={18} className={inp + " font-mono text-xs leading-relaxed mt-3"} style={inpS} />
-        <div className="flex justify-end mt-3"><Btn kind="primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save"}</Btn></div>
-      </Card>
-      <Card>
-        <SectionTitle title="Signed by clients" sub="Countersigned automatically by the point of contact." />
-        {rows === null ? <SkeletonRows n={2} /> : rows.length === 0 ? <div className="text-sm py-3" style={{ color: C.ink3 }}>No client has signed yet.</div> : (
-          <div className="flex flex-col mt-2">
-            {rows.map((a) => (
-              <div key={a.id} className="flex items-center gap-3 py-2.5 text-sm" style={{ borderTop: "1px solid " + C.line }}>
-                <div className="flex-1 min-w-0"><div className="font-medium truncate">{a.company}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{a.signer_name}, {a.signer_title} · {signedStamp(a.signed_at)} · fee {a.fee_pct}%{a.first_time ? " (first-time)" : ""}</div></div>
-                <button type="button" onClick={() => setView(a)} className="text-xs font-medium" style={{ color: C.em }}>View</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+        <Fld label="Agreement text" hint="Placeholders: {{client}} {{client_company_no}} {{client_address}} {{agency_address}} {{date}} {{fee}} {{discount}}. Saving changed text makes a new version; signed copies don't change.">
+          <textarea value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} rows={14} className={FLD_CLS + " font-mono text-xs leading-relaxed"} style={fldStyle()} />
+        </Fld>
+      </SetModal>
+
+      {preview && (
+        <Modal open onClose={() => setPreview(null)} title={preview.title || "Client agreement"} wide>
+          <div className="text-xs mb-3" style={{ color: C.ink3 }}>The text as saved, with placeholders still in {"{{ }}"}; they're filled in for each client when they sign.</div>
+          <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: "60vh" }}><AgreementText body={preview.body || ""} /></div>
+        </Modal>
+      )}
       {view && (
         <Modal open onClose={() => setView(null)} title={view.title + ": " + view.company} wide>
           <div className="rounded-xl p-4 overflow-y-auto" style={{ background: "#fff", border: "1px solid " + C.line, maxHeight: 420 }}><AgreementText body={view.body} /></div>
@@ -14859,19 +14988,40 @@ function ClientTermsTab({ toast, S }) {
     </div>
   );
 }
+const SETTINGS_TABS = [
+  { key: "agency", label: "Agency", icon: Building2 },
+  { key: "privacy", label: "Data & privacy", icon: ShieldCheck },
+  { key: "agreement", label: "Recruiter agreement", icon: ScrollText },
+  { key: "clientterms", label: "Client agreement", icon: Handshake },
+  { key: "integrations", label: "Integrations", icon: Plug },
+  { key: "audit", label: "Audit log", icon: History },
+];
+// A side menu of sections on wide screens (tabs on phones), with each section's rows beside it.
 function SettingsPage({ toast, S }) {
-  const [tab, setTab] = useState(() => takeTabParam(["agency", "privacy", "agreement", "clientterms", "integrations", "audit"], "agency"));
+  const [tab, setTab] = useState(() => takeTabParam(SETTINGS_TABS.map((t) => t.key), "agency"));
   useEffect(clearTabParam, []);
   return (
-    <div className="flex flex-col gap-5 md:gap-6">
-      <SectionTitle size="text-3xl md:text-4xl" title="Agency settings" sub="Defaults that apply across the whole agency." />
-      <div className="overflow-x-auto"><Tabs tabs={[{ key: "agency", label: "Agency" }, { key: "privacy", label: "Data & privacy" }, { key: "agreement", label: "Recruiter agreement" }, { key: "clientterms", label: "Client agreement" }, { key: "integrations", label: "Integrations" }, { key: "audit", label: "Audit log" }]} active={tab} setActive={setTab} /></div>
-      {tab === "agency" && <AgencyTab toast={toast} S={S} />}
-      {tab === "privacy" && <DataPrivacyTab toast={toast} S={S} />}
-      {tab === "agreement" && <AgreementSettingsTab toast={toast} S={S} />}
-      {tab === "clientterms" && <ClientTermsTab toast={toast} S={S} />}
-      {tab === "integrations" && <IntegrationsTab toast={toast} S={S} />}
-      {tab === "audit" && <AuditLogTab S={S} />}
+    <div className="flex flex-col gap-5">
+      <SectionTitle size="text-2xl md:text-3xl" title="Agency settings" sub="Defaults that apply across the whole agency." />
+      <div className="lg:hidden overflow-x-auto"><Tabs tabs={SETTINGS_TABS} active={tab} setActive={setTab} /></div>
+      <div className="grid gap-6 lg:grid-cols-[210px_minmax(0,1fr)] items-start">
+        <nav className="hidden lg:flex flex-col gap-0.5 sticky top-4" aria-label="Settings sections">
+          {SETTINGS_TABS.map((t) => { const on = t.key === tab, I = t.icon; return (
+            <button key={t.key} type="button" onClick={() => setTab(t.key)} aria-current={on ? "page" : undefined} className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-left"
+              style={on ? { background: C.card, color: C.ink, fontWeight: 600, border: `1px solid ${C.line}`, boxShadow: "0 1px 2px rgba(20,32,27,.05)" } : { color: C.ink2, border: "1px solid transparent" }}>
+              <I size={16} color={on ? C.em : C.ink3} />{t.label}
+            </button>
+          ); })}
+        </nav>
+        <div className={"min-w-0 w-full " + (tab === "audit" ? "" : "max-w-3xl")}>
+          {tab === "agency" && <AgencyTab toast={toast} S={S} />}
+          {tab === "privacy" && <DataPrivacyTab toast={toast} S={S} />}
+          {tab === "agreement" && <AgreementSettingsTab toast={toast} S={S} />}
+          {tab === "clientterms" && <ClientTermsTab toast={toast} S={S} />}
+          {tab === "integrations" && <IntegrationsTab toast={toast} S={S} />}
+          {tab === "audit" && <AuditLogTab S={S} />}
+        </div>
+      </div>
     </div>
   );
 }
