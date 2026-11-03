@@ -16,6 +16,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "Content-Type": "application/json" } });
 const SITE = (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com").replace(/\/+$/, "");
+// A job's address carries its title, then its code (/jobs/human-resources-manager-06df8c69/); older
+// /jobs/<code>/ links still work. Keep this the same as jobPath in app.jsx.
+const jobPath = (slug: string, title?: string | null) => {
+  let t = String(title || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (t.length > 60) t = t.slice(0, 60).replace(/-[^-]*$/, "");
+  return t ? t + "-" + slug : String(slug || "");
+};
 const DAILY = 180; // Google's default quota is 200 notifications a day.
 
 const b64url = (b: ArrayBuffer | Uint8Array | string) => {
@@ -60,8 +67,8 @@ Deno.serve(async (req: Request) => {
     // What the database says: open jobs and their public details (the same list the pages are built from).
     const { data: pub } = await admin.rpc("public_jobs");
     const jobs: any[] = Array.isArray(pub?.jobs) ? pub.jobs : [];
-    const urlOf = (slug: string) => `${SITE}/jobs/${encodeURIComponent(slug)}/`;
-    const openUrls = new Map<string, any>(jobs.map((j) => [urlOf(j.slug), j]));
+    const urlOf = (j: any) => `${SITE}/jobs/${encodeURIComponent(jobPath(j.slug, j.title))}/`;
+    const openUrls = new Map<string, any>(jobs.map((j) => [urlOf(j), j]));
     const { data: log } = await admin.from("google_index_log").select("url,hash,deleted_at");
     const known = new Map<string, any>((log || []).map((r: any) => [r.url, r]));
 

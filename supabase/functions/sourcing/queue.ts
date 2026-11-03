@@ -94,6 +94,13 @@ export function finalBody(body: string, token: string, kind: "p" | "l", region: 
 // one) and its must-haves. Cached per call, since a batch is usually many people for one job.
 type JobPack = { job: any; page: string; mustHaves: { summary: string; items: string[] } | null } | null;
 const JOB_COLS = "id,role_title,client,description,location,country,work_setup,employment_type,min_pay,max_pay,currency,salary_period,commission_only,status,link_slug,outreach_brief";
+// A job's address carries its title, then its code (/jobs/human-resources-manager-06df8c69/); older
+// /jobs/<code>/ links still work. Keep this the same as jobPath in app.jsx.
+const jobPath = (slug: string, title?: string | null) => {
+  let t = String(title || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (t.length > 60) t = t.slice(0, 60).replace(/-[^-]*$/, "");
+  return t ? t + "-" + slug : String(slug || "");
+};
 export async function jobPack(admin: any, jobId: string | null, cache: Map<string, JobPack>): Promise<JobPack> {
   if (!jobId) return null;
   if (cache.has(jobId)) return cache.get(jobId)!;
@@ -107,7 +114,7 @@ export async function jobPack(admin: any, jobId: string | null, cache: Map<strin
         const { error } = await admin.from("jobs").update({ link_slug: slug }).eq("id", job.id).is("link_slug", null);
         if (error) slug = "";
       }
-      if (slug) pack = { job, page: `${portalBase()}/jobs/${encodeURIComponent(slug)}/`, mustHaves: await mustHavesFor(admin, job) };
+      if (slug) pack = { job, page: `${portalBase()}/jobs/${encodeURIComponent(jobPath(slug, job.role_title))}/`, mustHaves: await mustHavesFor(admin, job) };
     }
   } catch (e) { console.error("job links", jobId, String((e as Error)?.message || e)); }
   cache.set(jobId, pack);

@@ -46,7 +46,14 @@ const priceOf = (m: string) => (PRICE.find(([k]) => m.includes(k)) || PRICE[1])[
 const MAX_STEPS = 10;
 // Public links with the person's own referral code (?r=), as the app's Share buttons make them.
 const PORTAL = (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com").replace(/\/+$/, "");
-const applyLink = (slug: string, me: any) => `${PORTAL}/jobs/${slug}/` + (me?.ref_code ? `?r=${me.ref_code}` : "");
+const applyLink = (slug: string, me: any, title?: string) => `${PORTAL}/jobs/${jobPath(slug, title)}/` + (me?.ref_code ? `?r=${me.ref_code}` : "");
+// A job's address carries its title, then its code (/jobs/human-resources-manager-06df8c69/); older
+// /jobs/<code>/ links still work. Keep this the same as jobPath in app.jsx.
+const jobPath = (slug: string, title?: string | null) => {
+  let t = String(title || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (t.length > 60) t = t.slice(0, 60).replace(/-[^-]*$/, "");
+  return t ? t + "-" + slug : String(slug || "");
+};
 const joinLink = (me: any) => `${PORTAL}/jobs/?join=1` + (me?.ref_code ? `&r=${me.ref_code}` : "");
 const clip = (s: unknown, n: number) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 const day = (d: unknown) => (d ? String(d).slice(0, 10) : "");
@@ -259,7 +266,7 @@ async function runRead(db: any, me: any, name: string, input: any, admin?: any):
     const ivs = me.scoped ? (ivs0 || []).filter((i: any) => i.recruiter_id === me.id) : ivs0;
     return {
       id: j.id, role: j.role_title, client: j.client, status: j.status, hold: j.hold_reason || undefined, location: j.location, work_setup: j.work_setup, country: j.country,
-      apply_link: j.link_slug ? applyLink(j.link_slug, me) : undefined, send_cv_link: joinLink(me),
+      apply_link: j.link_slug ? applyLink(j.link_slug, me, j.role_title) : undefined, send_cv_link: joinLink(me),
       employment_type: j.employment_type, openings: j.headcount || 1, pay: [j.min_pay, j.max_pay].filter(Boolean).join("–") + " " + (j.currency || "") + (j.salary_period ? "/" + j.salary_period : ""),
       fee: feeOf(j), recruiter_incentive: yourCut(j) || undefined, days_open: Math.round((Date.now() - new Date(j.created_at).getTime()) / 864e5),
       description: clip(j.description, 3500), screening_questions: j.screening_questions || [], parallel_titles: j.parallel_titles || [],
@@ -639,7 +646,7 @@ BRAINSTORM MODE: think with the person. Explore options, challenge assumptions, 
 HELPING PEOPLE USE PRONEXT: when someone asks how to do something, answer for their role (${role}) with numbered steps using the exact names in the guide, and say when something is only for Admins or Rec Ops and who to ask instead. Explain what each page shows from their point of view (a Recruiter only sees their own candidates; Rec Ops and Admins see everyone). If the guide doesn't cover it, say you're not sure rather than invent a button.
 ${GUIDE}`;
   return common + (mode === "brainstorm" ? brainstorm : work) + help + where +
-    `\n\nOpen jobs (id | role | client | apply link with ${me.full_name || "their"}'s referral code):\n${jobs.map((j) => `${j.id} | ${j.role_title} | ${j.client} | ${j.link_slug ? applyLink(j.link_slug, me) : "(no public page)"}`).join("\n") || "(none)"}` +
+    `\n\nOpen jobs (id | role | client | apply link with ${me.full_name || "their"}'s referral code):\n${jobs.map((j) => `${j.id} | ${j.role_title} | ${j.client} | ${j.link_slug ? applyLink(j.link_slug, me, j.role_title) : "(no public page)"}`).join("\n") || "(none)"}` +
     `\nGeneral "send us your CV" link: ${joinLink(me)}` +
     `\n\nTeam (id | name | role):\n${users.map((u) => `${u.id} | ${u.full_name} | ${u.role}`).join("\n") || "(none)"}`;
 }
