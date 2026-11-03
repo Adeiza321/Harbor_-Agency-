@@ -2909,7 +2909,14 @@ function MyProfilePage({ S, toast, onBack, initialTab }) {
 }
 
 /* Sidebar (desktop) + Mobile bottom nav + More sheet */
-function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
+// "New": anything that came in within the last 2 days gets a pulsing tag (still, for reduced motion).
+const NEW_MS = 2 * 864e5;
+const isFresh = (t) => { const ms = typeof t === "number" ? t : t ? new Date(t).getTime() : 0; return ms > 0 && Date.now() - ms < NEW_MS; };
+function NewTag({ at, className = "" }) {
+  if (!isFresh(at)) return null;
+  return <span className={"pn-new " + className} title={"Added " + new Date(typeof at === "number" ? at : new Date(at).getTime()).toLocaleString()}><span className="pn-new-dot" />New</span>;
+}
+function NavList({ items, page, setPage, dark, onNavigate, badges = {}, fresh = {} }) {
   return (
     <div className="flex flex-col gap-1">
       {items.map((it) => {
@@ -2931,8 +2938,10 @@ function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
             <span className="relative shrink-0">
               <Icon size={18} />
               {!it.label && badges[it.key] > 0 && <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full" style={{ background: dark ? C.lime : "#D9573B" }} />}
+              {!it.label && !(badges[it.key] > 0) && fresh[it.key] > 0 && <span className="pn-new-dot absolute -top-1 -right-1" />}
             </span>
             {it.label && <span className="flex-1">{it.label}</span>}
+            {it.label && !(badges[it.key] > 0) && fresh[it.key] > 0 && <span className="pn-new pn-new-count" aria-label={fresh[it.key] + " new in the last 2 days"}><span className="pn-new-dot" />{fresh[it.key] > 99 ? "99+" : fresh[it.key]}</span>}
             {it.label && badges[it.key] > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full text-[11px] font-bold flex items-center justify-center shrink-0" style={dark ? { background: C.lime, color: C.side } : { background: "#D9573B", color: "#fff" }} aria-label={badges[it.key] + " unread"}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}
           </button>
         );
@@ -2941,7 +2950,7 @@ function NavList({ items, page, setPage, dark, onNavigate, badges = {} }) {
   );
 }
 
-function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
+function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges, fresh }) {
   const desktop = useDesktop();
   const [collapsed, setCollapsed] = useState(false);
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
@@ -2957,9 +2966,9 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
       {!collapsed && <div className="px-4 pb-1.5 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>WORKSPACE</div>}
       {/* The menu scrolls on short screens so the sign-out and profile below always stay in view. */}
       <div className="px-3 flex-1 min-h-0 overflow-y-auto" style={{ scrollbarWidth: "thin" }}>
-        {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} badges={badges} /> : <>
-          <NavList items={items} page={page} setPage={setPage} badges={badges} />
-          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} badges={badges} /></>}
+        {collapsed ? <NavList items={[...items, ...extra].map((i) => ({ ...i, label: "" }))} page={page} setPage={setPage} badges={badges} fresh={fresh} /> : <>
+          <NavList items={items} page={page} setPage={setPage} badges={badges} fresh={fresh} />
+          {extra.length > 0 && <><div className="px-1 pt-5 pb-1.5 text-[11px] font-semibold tracking-widest" style={{ color: C.ink3 }}>{role === "admin" ? "ADMIN" : "TEAM"}</div><NavList items={extra} page={page} setPage={setPage} badges={badges} fresh={fresh} /></>}
         </>}
       </div>
       {!collapsed && (
@@ -2980,7 +2989,7 @@ function Sidebar({ role, page, setPage, me, pendingQ, onSignOut, badges }) {
   );
 }
 
-function MobileBottomNav({ role, page, setPage, onMore, badges = {} }) {
+function MobileBottomNav({ role, page, setPage, onMore, badges = {}, fresh = {} }) {
   const desktop = useDesktop();
   const items = MOBILE_TABS[role];
   return (
@@ -2990,7 +2999,7 @@ function MobileBottomNav({ role, page, setPage, onMore, badges = {} }) {
         const Icon = it.icon;
         return (
           <button key={it.key} data-tour={"nav-" + it.key} onClick={() => setPage(it.key)} className="flex-1 flex flex-col items-center justify-center gap-1 py-2 mx-0.5 my-1 rounded-xl transition-colors" style={{ background: active ? C.emTint : "transparent" }} aria-current={active ? "page" : undefined}>
-            <span className="relative"><Icon size={21} color={active ? C.em : C.ink3} />{badges[it.key] > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}</span>
+            <span className="relative"><Icon size={21} color={active ? C.em : C.ink3} />{!(badges[it.key] > 0) && fresh[it.key] > 0 && <span className="pn-new-dot absolute -top-0.5 -right-1" />}{badges[it.key] > 0 && <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-1 rounded-full text-[10px] font-semibold flex items-center justify-center" style={{ background: "#D9573B", color: "#fff" }}>{badges[it.key] > 99 ? "99+" : badges[it.key]}</span>}</span>
             <span className="leading-none" style={{ fontSize: 10, color: active ? C.em : C.ink3, fontWeight: active ? 600 : 400 }}>{it.label}</span>
           </button>
         );
@@ -3005,7 +3014,7 @@ function MobileBottomNav({ role, page, setPage, onMore, badges = {} }) {
   );
 }
 
-function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }) {
+function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges, fresh }) {
   const desktop = useDesktop();
   if (!open || desktop) return null;
   const items = role === "recruiter" ? NAV_RECRUITER : NAV_RECOPS;
@@ -3015,7 +3024,7 @@ function MoreSheet({ open, onClose, role, page, setPage, me, onSignOut, badges }
       <div className="absolute inset-0" style={{ background: "rgba(20,32,27,0.45)" }} onClick={onClose} />
       <div className="absolute bottom-0 left-0 right-0 rounded-t-2xl p-5 overflow-y-auto" style={{ background: C.card, maxHeight: "80vh" }}>
         <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: C.line }} />
-        <NavList items={[...items, ...extra]} page={page} setPage={setPage} onNavigate={onClose} badges={badges} />
+        <NavList items={[...items, ...extra]} page={page} setPage={setPage} onNavigate={onClose} badges={badges} fresh={fresh} />
         <div className="pt-3 mt-3" style={{ borderTop: `1px solid ${C.line}` }}>
           <div className="text-xs font-medium px-3 mb-2" style={{ color: C.ink3 }}>APPEARANCE</div>
           <div className="grid grid-cols-3 gap-1 rounded-xl p-1 mx-1 mb-2" style={{ background: C.neutralBg }} role="group" aria-label="Appearance">
@@ -4851,7 +4860,7 @@ function CandidateBoard({ rows, openCandidate, onMore }) {
               <div className="flex justify-between gap-2 px-1 text-xs font-semibold" style={{ color: C.ink2 }}><span>{col}</span><span>{list.length}</span></div>
               {list.slice(0, LIMIT).map((c) => (
                 <button key={c.id} type="button" onClick={() => openCandidate(c)} className="rounded-lg p-3 text-left flex flex-col gap-1 min-w-0" style={{ background: C.card, boxShadow: "0 1px 2px rgba(20,32,27,0.06)" }}>
-                  <span className="text-sm font-semibold truncate">{c.name}</span>
+                  <span className="text-sm font-semibold truncate flex items-center gap-1.5"><span className="truncate">{c.name}</span><NewTag at={c.createdAt} /></span>
                   <span className="text-xs truncate" style={{ color: C.ink2 }}>{c.role || "No title yet"}</span>
                   <span className="flex items-center justify-between gap-2 mt-1">
                     <span className="text-xs" style={{ color: C.ink2 }}>{c.ai ? "AI fit " + c.ai : "Not screened"}</span>
@@ -5076,7 +5085,7 @@ function CandidatesList({ scope, data, openCandidate, setPage, onAddCandidate, S
             { key: "name", label: "CANDIDATE", render: (c) => (
               <div className="flex items-center gap-3">
                 <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone={PEOPLE_TONE[c.recruiterInit] || "em"} src={c.photoUrl || undefined} />
-                <div><div className="font-medium">{c.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{c.role}</div></div>
+                <div><div className="font-medium flex items-center gap-2">{c.name}<NewTag at={c.createdAt} /></div><div className="text-xs" style={{ color: C.ink2 }}>{c.role}</div></div>
               </div>
             ) },
             { key: "recruiter", label: "RECRUITER", render: (c) => c.recruiter ? <div className="flex items-center gap-2"><Avatar init={c.recruiterInit} tone={PEOPLE_TONE[c.recruiterInit]} size={24} /><span className="text-xs">{c.recruiter}</span></div> : <Pill tone="danger">Unassigned</Pill> },
@@ -8473,7 +8482,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                 { key: "name", label: "CANDIDATE", render: (c) => (
                   <div className="flex items-center gap-3">
                     <Avatar init={c.name.split(" ").map((x) => x[0]).join("")} tone="em" />
-                    <div><div className="font-medium">{c.name}</div><div className="text-xs" style={{ color: C.ink2 }}>{c.recruiter || "Unassigned"}</div></div>
+                    <div><div className="font-medium flex items-center gap-2">{c.name}<NewTag at={c.createdAt} /></div><div className="text-xs" style={{ color: C.ink2 }}>{c.recruiter || "Unassigned"}</div></div>
                   </div>
                 ) },
                 { key: "stage", label: "STAGE", render: (c) => c.link && c.link.response !== "accepted" ? (
@@ -8705,7 +8714,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
   if (row) return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift rounded-xl border px-4 py-3 cursor-pointer flex flex-wrap md:flex-nowrap items-center gap-x-5 gap-y-2" style={{ borderColor: C.line, background: C.card }}>
       <div className="min-w-0 flex-1 basis-full md:basis-0">
-        <div className="flex items-center gap-2"><span className="font-medium truncate" title={j.role}>{j.role}</span><span className="md:hidden ml-auto shrink-0">{tag}</span></div>
+        <div className="flex items-center gap-2"><span className="font-medium truncate" title={j.role}>{j.role}</span><NewTag at={j.createdAt} className="shrink-0" /><span className="md:hidden ml-auto shrink-0">{tag}</span></div>
         <div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div>
         {earnLine}
       </div>
@@ -8721,7 +8730,7 @@ function JobCard({ j, S, mine, onOpen, onShare, row }) {
   return (
     <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }} className="pn-lift relative rounded-2xl border p-4 cursor-pointer flex flex-col" style={{ borderColor: C.line, background: C.card }}>
       <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0"><div className="font-medium truncate" title={j.role}>{j.role}</div><div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div>{earnLine}</div>
+        <div className="flex-1 min-w-0"><div className="font-medium flex items-center gap-2 min-w-0"><span className="truncate" title={j.role}>{j.role}</span><NewTag at={j.createdAt} className="shrink-0" /></div><div className="text-xs truncate" style={{ color: C.ink3 }}>{[j.client, jobPlace(j.location, j.country), j.workSetup].filter(Boolean).join(" · ")}</div>{earnLine}</div>
         {h.key ? <span title={h.why}><Pill tone={h.tone}>{h.label}</Pill></span> : <span title={j.status === "On hold" ? holdText(j) : ""}><StatusPill status={j.status} /></span>}
       </div>
       <div className="flex h-2 rounded-full overflow-hidden mt-4 mb-1.5" style={{ background: C.neutralBg }} aria-hidden="true">
@@ -10297,7 +10306,7 @@ function ProspectCard({ p, jobLabel, selected, onSelect, onSave, onStatus, canEd
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="min-w-0">
-              <div className="font-medium text-sm truncate">{name}{(() => { const f = foundOn(p); return <span className="ml-1.5 align-middle rounded-full px-2 py-px font-medium" style={{ fontSize: 10.5, background: f.tone.bg, color: f.tone.fg }} title={"Found through " + f.label + (p.data && p.data.query ? ". Search: " + p.data.query : "")}>{f.label}</span>; })()}</div>
+              <div className="font-medium text-sm truncate">{name}<NewTag at={p.created_at} className="ml-1.5 align-middle" />{(() => { const f = foundOn(p); return <span className="ml-1.5 align-middle rounded-full px-2 py-px font-medium" style={{ fontSize: 10.5, background: f.tone.bg, color: f.tone.fg }} title={"Found through " + f.label + (p.data && p.data.query ? ". Search: " + p.data.query : "")}>{f.label}</span>; })()}</div>
               <div className="text-xs truncate" style={{ color: C.ink2 }}>{[p.title, p.company, p.location].filter(Boolean).join(" · ")}</div>
             </div>
             <div className="flex items-center gap-2 shrink-0">{p.fit != null && <span className="text-sm font-medium">{p.fit}%</span>}{p.verdict && <Pill tone={VERDICT_TONE[p.verdict] || "neutral"}>{p.verdict}</Pill>}<Pill tone={PROSPECT_TONE[p.status] || "neutral"}>{statusLabel}</Pill></div>
@@ -11148,7 +11157,7 @@ function LeadCard({ l, S, toast, selected, onSelect, onChanged, expandAll }) {
             <button type="button" aria-expanded={expanded} onClick={() => setExpanded((x) => !x)} className="min-w-0 flex items-start gap-2 text-left flex-1">
               <ChevronDown size={16} color={C.ink2} className="shrink-0 mt-0.5 transition-transform" style={{ transform: expanded ? "none" : "rotate(-90deg)" }} />
               <span className="min-w-0">
-                <span className="block font-medium text-sm">{l.job_title}</span>
+                <span className="block font-medium text-sm">{l.job_title}<NewTag at={l.created_at} className="ml-1.5 align-middle" /></span>
                 <span className="block text-xs" style={{ color: C.ink2 }}>{[l.company, l.data && l.data.remote ? "Remote" : null, l.location, l.posted_at ? "posted " + fdate(l.posted_at) : null].filter(Boolean).join(" · ")}</span>
               </span>
             </button>
@@ -17519,6 +17528,16 @@ export default function App() {
     setUpdates((list) => list.map((u) => (u.seen_at ? u : { ...u, seen_at: at })));
     try { await sbFetch("/rest/v1/assistant_updates?seen_at=is.null", { method: "PATCH", body: { seen_at: at }, token: s.token }); } catch (e) { /* shown as seen here; tried again next time */ }
   };
+  // Outside candidates and client leads found in the last 2 days (Admins and Rec Ops), for the Outreach menu item.
+  const [freshOut, setFreshOut] = useState(0);
+  const staffRole = status === "ready" && me && (me.roleKey === "admin" || me.roleKey === "recops");
+  React.useEffect(() => {
+    if (!staffRole || !session) return undefined;
+    const check = () => { const since = encodeURIComponent(new Date(Date.now() - NEW_MS).toISOString());
+      Promise.all([sbFetch("/rest/v1/prospects?select=id&created_at=gte." + since, { token: session.token }).catch(() => []), sbFetch("/rest/v1/leads?select=id&status=neq.pending&created_at=gte." + since, { token: session.token }).catch(() => [])])
+        .then(([a, b]) => setFreshOut((a || []).length + (b || []).length)); };
+    check(); const t = setInterval(check, 10 * 60e3); return () => clearInterval(t);
+  }, [staffRole]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => {
     if (isPublic || setupToken || checkinToken) return;
     document.title = (msgUnread > 0 ? "(" + msgUnread + ") " : "") + "ProNext";
@@ -18179,6 +18198,13 @@ export default function App() {
   const pendingQ = countFollowups(data.cands, "draft");
   // Counts next to the menu items: unread messages, and retention check-ins due on your placements.
   const myTasksDue = (data.tasks || []).filter((t) => t.assignedTo === session.uid && t.status === "open" && t.dueOn && t.dueOn <= ymdToday()).length;
+  // New in the last 2 days, next to the menu items: a recruiter's own candidates and the jobs they can
+  // see; Admins and Rec Ops everything, plus outside candidates and client leads found for Outreach.
+  const fresh = {
+    candidates: data.cands.filter((c) => isFresh(c.createdAt) && (role !== "recruiter" || c.recruiterId === session.uid)).length,
+    jobs: data.jobs.filter((j) => isFresh(j.createdAt) && j.status !== "Draft").length,
+    campaigns: freshOut,
+  };
   const badges = { messages: msgUnread, todo: myTasksDue, billing: checkinsDue(data.cands, role === "recruiter" ? data.placements.filter((p) => p.recruiterId === session.uid) : data.placements).length };
 
 
@@ -18220,7 +18246,7 @@ export default function App() {
     {needAgreement && <AgreementGate S={S} agreement={agreement} onSigned={() => toast("Signed. Welcome to ProNext! Your copy is in My profile.")} onSignOut={signOut} />}
     <div className="flex min-h-screen" style={{ background: C.canvas, color: C.ink }} {...(needAgreement ? { inert: "", "aria-hidden": "true" } : {})}>
       <TopProgressBar show={refreshing} />
-      <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} />
+      <Sidebar role={role} page={page} setPage={setPage} me={myMe} pendingQ={pendingQ} onSignOut={signOut} badges={badges} fresh={fresh} />
       <div className="flex-1 min-w-0">
         <TopBar query={query} setQuery={setQuery} S={S} onCmd={() => setCmdOpen(true)} />
         {data.aiDownSince && role === "admin" && <AiPausedBanner since={data.aiDownSince} admin />}
@@ -18234,8 +18260,8 @@ export default function App() {
         {role === "recruiter" && !tourOpen && !needAgreement && <SetupAccountModal S={S} toast={toast} />}
         <div key={page + (candidate ? ":" + candidate.id : "")} className="pn-page px-4 md:px-8" style={{ paddingBottom: 96 }}>{content}</div>
       </div>
-      <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} />
-      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={badges} />
+      <MobileBottomNav role={role} page={page} setPage={setPage} onMore={() => setMoreOpen(true)} badges={badges} fresh={fresh} />
+      <MoreSheet open={moreOpen} onClose={() => setMoreOpen(false)} role={role} page={page} setPage={setPage} me={myMe} onSignOut={signOut} badges={badges} fresh={fresh} />
       <Celebration S={S} />
       <AssistantPanel S={S} badges={badges} pageCtx={{ jobId: page === "jobDetail" ? jobId : null, candidateId: candidate ? candidate.id : null }}
         updates={updates} onUpdatesSeen={markUpdatesSeen} onRefreshUpdates={loadUpdates}

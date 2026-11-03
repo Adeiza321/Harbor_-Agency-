@@ -21,3 +21,9 @@ html, body, input, select, textarea, button { font-family: "Inter", "DM Sans", u
 @keyframes harbor-skel { 0% { background-position: 100% 0; } 100% { background-position: -50% 0; } }
 @media (prefers-reduced-motion: reduce) { .harbor-skel { animation: none; } }
 .pn-row:hover{background:rgba(127,127,127,.06)}
+.pn-new{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;line-height:1;padding:3px 7px;border-radius:999px;background:#E3F1EA;color:#1F6F54;white-space:nowrap;vertical-align:middle}
+.pn-new-count{margin-left:auto;font-size:11px}
+.pn-new-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#1F9E6E;animation:pn-pulse 1.6s ease-out infinite}
+@keyframes pn-pulse{0%{box-shadow:0 0 0 0 rgba(31,158,110,.55)}70%{box-shadow:0 0 0 6px rgba(31,158,110,0)}100%{box-shadow:0 0 0 0 rgba(31,158,110,0)}}
+@media (prefers-reduced-motion:reduce){.pn-new-dot{animation:none}}
+html[style*="dark"] .pn-new{background:rgba(200,241,105,.12);color:#C8F169}
