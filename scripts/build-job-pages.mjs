@@ -44,7 +44,14 @@ const org = { name: data.legalName || data.agency || "Pronext", short: data.agen
 // ---------- helpers ----------
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const jsonLd = (o) => JSON.stringify(o).replace(/</g, "\\u003c");
-const jobUrl = (slug) => `${SITE}/jobs/${encodeURIComponent(slug)}/`;
+// A job's address carries its title, then its code (/jobs/human-resources-manager-06df8c69/). Keep
+// this the same as jobPath in app.jsx and the edge functions.
+const jobPath = (slug, title) => {
+  let t = String(title || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (t.length > 60) t = t.slice(0, 60).replace(/-[^-]*$/, "");
+  return t ? t + "-" + slug : String(slug || "");
+};
+const jobUrl = (j) => `${SITE}/jobs/${encodeURIComponent(jobPath(j.slug, j.title))}/`;
 const day = (iso) => new Date(iso || Date.now()).toISOString().slice(0, 10);
 const PER = { Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" };
 const UNIT = { Yearly: "YEAR", Monthly: "MONTH", Weekly: "WEEK", Daily: "DAY", Hourly: "HOUR" };
@@ -134,7 +141,7 @@ function posting(j) {
     validThrough: new Date(Date.now() + 45 * 864e5).toISOString(),
     hiringOrganization: { "@type": "Organization", name: org.name, sameAs: org.website, ...(org.logo ? { logo: org.logo } : {}) },
     directApply: true,
-    url: jobUrl(j.slug),
+    url: jobUrl(j),
   };
   const emp = EMP[String(j.employmentType || "").toLowerCase()];
   if (emp) o.employmentType = emp;
@@ -179,7 +186,7 @@ const jobBody = (j) => `<main style="max-width:720px;margin:0 auto;padding:24px;
 <p><a href="${SITE}/jobs/">All jobs</a></p>
 <h1>${esc(j.title)}</h1>
 <p>${esc([org.name, jobPlace(j.location, j.country), j.workSetup, j.employmentType, payText(j.pay)].filter(Boolean).join(" · "))}</p>
-<p><a href="${jobUrl(j.slug)}?go=apply">Apply now</a> · <a href="${jobUrl(j.slug)}?refer=1">Refer someone</a></p>
+<p><a href="${jobUrl(j)}?go=apply">Apply now</a> · <a href="${jobUrl(j)}?refer=1">Refer someone</a></p>
 <article>${descHtml(j.description)}</article>
 <p><strong>Equal opportunity employer.</strong> ${esc(org.name)} and the employers we recruit for are equal opportunity employers. We welcome applicants of every background and don't discriminate on the basis of race, colour, religion, sex, sexual orientation, gender identity or expression, national origin, age, disability, veteran status, or any other protected characteristic. If you need any adjustments to apply or interview, just let us know.</p>
 </main>`;
@@ -210,21 +217,25 @@ try {
 if (domain) writeFileSync(join(OUT, "CNAME"), domain + "\n");
 
 for (const j of jobs) {
-  const dir = join(OUT, "jobs", j.slug);
+  // The page lives at the address with the title. The older /jobs/<code>/ address gets the same page,
+  // pointing Google at the new one (canonical), so links already shared keep working.
+  const dirs = [join(OUT, "jobs", jobPath(j.slug, j.title)), join(OUT, "jobs", j.slug)];
+  for (const dir of [...new Set(dirs)]) {
   mkdirSync(dir, { recursive: true });
   const place = jobPlace(j.location, j.country) || (j.workSetup && /remote/i.test(j.workSetup) ? "Remote" : "");
   writeFileSync(join(dir, "index.html"), page({
     title: `${j.title}${place && !String(j.title).includes(place) ? " – " + place : ""} | ${org.short} Jobs`,
     description: snippet(j) || `${j.title} – apply with ${org.short}.`,
-    canonical: jobUrl(j.slug),
+    canonical: jobUrl(j),
     head: `<script type="application/ld+json">${jsonLd(posting(j))}</script>\n`,
     body: jobBody(j),
   }));
+  }
 }
 
 const boardList = {
   "@context": "https://schema.org", "@type": "ItemList",
-  itemListElement: jobs.map((j, i) => ({ "@type": "ListItem", position: i + 1, url: jobUrl(j.slug), name: j.title })),
+  itemListElement: jobs.map((j, i) => ({ "@type": "ListItem", position: i + 1, url: jobUrl(j), name: j.title })),
 };
 writeFileSync(join(OUT, "jobs", "index.html"), page({
   title: `Jobs at ${org.short} – ${jobs.length} open ${jobs.length === 1 ? "role" : "roles"}`,
@@ -232,10 +243,10 @@ writeFileSync(join(OUT, "jobs", "index.html"), page({
   canonical: `${SITE}/jobs/`,
   head: `<script type="application/ld+json">${jsonLd(boardList)}</script>\n`,
   body: `<main style="max-width:720px;margin:0 auto;padding:24px;font-family:"DM Sans",system-ui,sans-serif"><h1>Jobs at ${esc(org.short)}</h1><ul>${jobs.map((j) =>
-    `<li><a href="${jobUrl(j.slug)}">${esc(j.title)}</a> – ${esc([jobPlace(j.location, j.country), j.workSetup, j.employmentType].filter(Boolean).join(" · "))}</li>`).join("")}</ul></main>`,
+    `<li><a href="${jobUrl(j)}">${esc(j.title)}</a> – ${esc([jobPlace(j.location, j.country), j.workSetup, j.employmentType].filter(Boolean).join(" · "))}</li>`).join("")}</ul></main>`,
 }));
 
-const urls = [{ loc: `${SITE}/jobs/`, lastmod: day(jobs[0]?.postedAt) }, ...jobs.map((j) => ({ loc: jobUrl(j.slug), lastmod: day(j.postedAt) }))];
+const urls = [{ loc: `${SITE}/jobs/`, lastmod: day(jobs[0]?.postedAt) }, ...jobs.map((j) => ({ loc: jobUrl(j), lastmod: day(j.postedAt) }))];
 writeFileSync(join(OUT, "sitemap.xml"), `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 ${urls.map((u) => `  <url><loc>${esc(u.loc)}</loc><lastmod>${u.lastmod}</lastmod></url>`).join("\n")}

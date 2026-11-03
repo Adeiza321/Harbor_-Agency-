@@ -5,11 +5,18 @@
 import { button, emailShell, esc, type Brand } from "./brand.ts";
 
 export const PORTAL_BASE = () => (Deno.env.get("PORTAL_BASE_URL") || "https://recruitment.pronextglobal.com").replace(/\/+$/, "");
+// A job's address carries its title, then its code (/jobs/human-resources-manager-06df8c69/); older
+// /jobs/<code>/ links still work. Keep this the same as jobPath in app.jsx.
+export const jobPath = (slug: string, title?: string | null) => {
+  let t = String(title || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (t.length > 60) t = t.slice(0, 60).replace(/-[^-]*$/, "");
+  return t ? t + "-" + slug : String(slug || "");
+};
 export const newReferralToken = () => Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, "0")).join("");
 
 export function referralEmail(b: Brand, o: { name: string; referrer: string; role: string; slug: string | null; token: string; followup?: boolean }) {
   const agency = b.legal || b.name;
-  const page = o.slug ? `${PORTAL_BASE()}/jobs/${encodeURIComponent(o.slug)}/` : `${PORTAL_BASE()}/jobs/`;
+  const page = o.slug ? `${PORTAL_BASE()}/jobs/${encodeURIComponent(jobPath(o.slug, o.role))}/` : `${PORTAL_BASE()}/jobs/`;
   const t = encodeURIComponent(o.token);
   const first = esc(o.name.split(" ")[0] || "there");
   const rFirst = o.referrer.split(" ")[0] || o.referrer;

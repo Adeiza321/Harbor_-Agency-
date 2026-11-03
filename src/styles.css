@@ -27,3 +27,6 @@ html, body, input, select, textarea, button { font-family: "Inter", "DM Sans", u
 @keyframes pn-pulse{0%{box-shadow:0 0 0 0 rgba(31,158,110,.55)}70%{box-shadow:0 0 0 6px rgba(31,158,110,0)}100%{box-shadow:0 0 0 0 rgba(31,158,110,0)}}
 @media (prefers-reduced-motion:reduce){.pn-new-dot{animation:none}}
 html[style*="dark"] .pn-new{background:rgba(200,241,105,.12);color:#C8F169}
+@keyframes pn-float{0%,100%{translate:0 0}50%{translate:0 -6px}}
+.pn-float{animation:pn-float 7s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.pn-float{animation:none}}

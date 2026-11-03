@@ -544,7 +544,7 @@ function mapAll(d) {
       engagedIds: (j.job_recruiters || []).map((r) => r.recruiter_id), engagedNames: (j.job_recruiters || []).map((r) => pname(r.recruiter_id)),
       holdReason: j.hold_reason || "", holdUntil: j.hold_until || null, heldAt: j.held_at ? new Date(j.held_at).getTime() : null, heldBy: j.held_by ? pname(j.held_by) : "",
       submitted: new Set([...en.map((e) => e.candidate_id), ...submittedLinks.map((l) => l.candidate_id)]).size,
-      interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, leadRole: !!j.lead_role, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug) : "" }; });
+      interview: new Set([...en.filter((e) => e.status === "Interview").map((e) => e.candidate_id), ...links.filter((l) => l.stage === "Interview").map((l) => l.candidate_id)]).size, days: Math.floor((Date.now() - new Date(j.created_at)) / 864e5), status: j.status, leadRole: !!j.lead_role, slug: j.link_slug || "", link: j.link_slug ? applyUrl(j.link_slug, j.role_title) : "" }; });
   const inbox = d.applications.map((a) => ({ id: a.id, name: a.name, role: a.role_title, source: a.source || "-", email: a.email || "", phone: a.phone || "", ai: a.ai_score || 0, when: ago(a.created_at), at: new Date(a.created_at).getTime(),
     status: a.status || (a.candidate_id || a.assigned_to ? "assigned" : "new"), jobId: a.job_id, candidateId: a.candidate_id, linkedin: a.linkedin || "", hasCv: !!a.resume_path, cvName: a.resume_name || "",
     answers: Array.isArray(a.answers) ? a.answers : [], prefs: a.preferences || a.preferences_draft || null, prefsDraft: !a.preferences && !!a.preferences_draft, workSetup: Array.isArray(a.work_setup) ? a.work_setup : (a.preferences && Array.isArray(a.preferences.workSetup) ? a.preferences.workSetup : []), note: a.note || "", referrer: a.referrer && typeof a.referrer === "object" && a.referrer.name ? a.referrer : null,
@@ -7688,11 +7688,20 @@ function CandidateJobsCard({ candidate, S, toast }) {
    clicks. New ones wait here until Rec Ops or an Admin assigns them to a recruiter (which creates
    the candidate, puts them on the job and starts the AI screening) or dismisses them. */
 const SOURCE_LABEL = { career_page: "Apply page", outreach: "Outreach email", linkedin: "LinkedIn", indeed: "Indeed", google_jobs: "Google for Jobs", facebook: "Facebook", whatsapp: "WhatsApp", x: "X (Twitter)", telegram: "Telegram", email: "Shared by email", instagram: "Instagram", referral: "Referral", manual: "Added by hand" };
-const applyUrl = (slug) => window.location.origin + "/jobs/" + slug + "/";
+// A job's public address carries its title, then its code: /jobs/human-resources-manager-06df8c69/.
+// Only the code identifies the job, so older /jobs/<code>/ links keep working. Keep this the same as
+// jobPath in scripts/build-job-pages.mjs and the edge functions.
+const jobPath = (slug, title) => {
+  let t = String(title || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (t.length > 60) t = t.slice(0, 60).replace(/-[^-]*$/, "");
+  return t ? t + "-" + slug : String(slug || "");
+};
+const jobCodeOf = (seg) => { const m = /-([0-9a-f]{8})$/i.exec(seg || ""); return m ? m[1] : seg; };
+const applyUrl = (slug, title) => window.location.origin + "/jobs/" + jobPath(slug, title) + "/";
 
 function ApplyLinks({ S, toast }) {
   const jobs = S.jobs.filter((j) => j.status === "Open" && j.slug && !j.leadRole);
-  const copy = (j) => { try { navigator.clipboard.writeText(myLink(applyUrl(j.slug))); toast("Your apply link copied for " + j.role); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
+  const copy = (j) => { try { navigator.clipboard.writeText(myLink(applyUrl(j.slug, j.role))); toast("Your apply link copied for " + j.role); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   const copyUrl = (u, msg) => { try { navigator.clipboard.writeText(myLink(u)); toast(msg); } catch (e) { toast("Copy failed. Select the link and copy it."); } };
   if (!jobs.length) return <div className="text-sm" style={{ color: C.ink3 }}>No open jobs yet. Open a job to get its apply link.</div>;
   return (
@@ -7717,7 +7726,7 @@ function ApplyLinks({ S, toast }) {
         <div key={j.id} className="rounded-xl border px-3 py-2.5 flex items-center gap-3" style={{ borderColor: C.line }}>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium truncate">{j.role} <span style={{ color: C.ink3, fontWeight: 400 }}>· {j.client}</span></div>
-            <div className="text-xs truncate" style={{ color: C.ink3 }}>{myLink(applyUrl(j.slug))}</div>
+            <div className="text-xs truncate" style={{ color: C.ink3 }}>{myLink(applyUrl(j.slug, j.role))}</div>
           </div>
           <IconBtn icon={Copy} label="Copy link" size="sm" onClick={() => copy(j)} />
         </div>
@@ -8886,7 +8895,7 @@ function PostJobForm({ setPage, toast, onPromote, S, onOpenJob, editJob }) {
     const id = uid();
     // The job's public apply page (/?apply=<slug>); applications from it land in the Inbox.
     const slug = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
-    const link = applyUrl(slug);
+    const link = applyUrl(slug, title);
     S.setJobs((l) => [{ id, role: title, client, location, workSetup, employmentType, headcount: num(headcount) || 1,
       salaryPeriod, commissionOnly, minPay: commissionOnly ? null : (num(minPay) || null), maxPay: commissionOnly ? null : (num(maxPay) || null), description, currency, country, seo,
       billingType, billingAmount: num(billingAmount) || null, billingCurrency, billingFrequency: billingType === "hourly" ? "Monthly" : billingFrequency, billingMonths: billingFrequency === "Monthly" || billingType === "hourly" ? (num(billingMonths) || null) : null,
@@ -9158,7 +9167,7 @@ const SHARE_CHANNELS = [
   { key: "instagram", name: "Instagram", tone: { bg: "#FBE7EF", fg: "#B5306B" }, tag: "IG", copyOnly: true, hint: "Copies the post and link. Paste it into your story (link sticker) or bio." },
 ];
 const SHARE_LABEL = Object.fromEntries(SHARE_CHANNELS.map((c) => [c.key, c.name]));
-const shareUrl = (job, key) => myLink(window.location.origin + "/jobs/" + job.slug + "/?utm_source=" + key);
+const shareUrl = (job, key) => myLink(window.location.origin + "/jobs/" + jobPath(job.slug, job.role) + "/?utm_source=" + key);
 function sharePost(job) {
   const place = jobPlace(job.location, job.country);
   const facts = [place, job.workSetup, job.employmentType].filter(Boolean);
@@ -12279,6 +12288,7 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
 
   return (
     <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: C.soft, ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
+      <PublicIcons fixed phone />
       <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
           <button type="button" onClick={done ? onClose : back} aria-label={(inBefore ? bi === 0 : i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(inBefore ? bi === 0 : i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
@@ -16147,6 +16157,28 @@ function CandidatePortal({ data, token, onChanged }) {
    straight away), &refer=1 (open the "refer someone" form).
    The job description comes first, with Apply and Refer someone at the top; the form only
    opens when they click one (phone and computer alike). */
+// A few floating icons around the public pages (jobs board, a job and its application, the Active
+// file sign-up), kept in the side margins on wide screens; on phones only in the Active file form's empty space.
+// Decoration only: hidden from screen readers, never clickable, still for reduced motion.
+const PUBLIC_ICONS = [
+  [Briefcase, { left: "6%", top: "16%" }, -8], [Sparkles, { left: "9%", top: "68%" }, 6],
+  [Target, { right: "6%", top: "30%" }, 7], [Users, { right: "9%", top: "80%" }, -6],
+];
+const PUBLIC_ICONS_PHONE = [[Briefcase, { left: "10%", top: "62%" }, -8], [Sparkles, { right: "12%", top: "74%" }, 8]];
+function PublicIcons({ fixed, phone }) {
+  return (
+    <div className={(fixed ? "fixed" : "absolute") + " inset-0 -z-10 pointer-events-none overflow-hidden"} aria-hidden="true">
+      {PUBLIC_ICONS.map(([I, pos, rot], i) => (
+        <span key={i} className="absolute hidden xl:block pn-float" style={{ ...pos, rotate: rot + "deg", opacity: DARK ? 0.45 : 0.36, animationDelay: -(i * 2.5) + "s", animationDuration: 9 + i + "s" }}>
+          <I size={46} color={C.em} strokeWidth={1.75} />
+        </span>
+      ))}
+      {phone && PUBLIC_ICONS_PHONE.map(([I, pos, rot], i) => (
+        <span key={"p" + i} className="absolute xl:hidden pn-float" style={{ ...pos, rotate: rot + "deg", opacity: DARK ? 0.24 : 0.18, animationDelay: -(i * 3) + "s", animationDuration: "10s" }}><I size={36} color={C.em} strokeWidth={1.75} /></span>
+      ))}
+    </div>
+  );
+}
 function ApplyPage({ slug }) {
   const params = React.useMemo(() => new URLSearchParams(window.location.search), []);
   // Where they came from: an outreach email, a shared post (?utm_source=linkedin etc.), or the apply page.
@@ -16167,7 +16199,11 @@ function ApplyPage({ slug }) {
   const [more, setMore] = useState(false);
   const fileRef = React.useRef(null);
   useEffect(() => {
-    sbFetch("/rest/v1/rpc/public_job", { method: "POST", body: { p_slug: slug } }).then((j) => setJob(j || false)).catch(() => setJob(false));
+    sbFetch("/rest/v1/rpc/public_job", { method: "POST", body: { p_slug: slug } }).then((j) => {
+      setJob(j || false);
+      // An older /jobs/<code>/ link: show the address with the job's title, keeping any ?ref= and the like.
+      try { const want = "/jobs/" + jobPath(slug, j && j.title) + "/"; if (j && j.title && /^\/jobs\//.test(window.location.pathname) && window.location.pathname !== want) window.history.replaceState(null, "", want + window.location.search + window.location.hash); } catch (e) { /* keep the address */ }
+    }).catch(() => setJob(false));
   }, [slug]);
   const jobLoaded = !!(job && job.title);
   useEffect(() => (jobLoaded ? trackJobView(slug) : undefined), [jobLoaded, slug]);
@@ -16230,7 +16266,8 @@ function ApplyPage({ slug }) {
   const payText = job ? payLabel(job.pay) : "";
   const desc = job ? String(job.description || "") : "";
   const shell = (children) => (
-    <div className="min-h-screen" style={{ background: C.canvas }}>
+    <div className="min-h-screen relative isolate" style={{ background: C.canvas }}>
+      <PublicIcons />
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1 flex items-center justify-between gap-3">
           <a href={JOBS_URL()} aria-label="All jobs"><BrandLogo height={30} /></a>
@@ -16565,7 +16602,8 @@ function JoinPage() {
     onClose={() => { if (app.current) { setDone(true); window.scrollTo(0, 0); } else window.location.href = withQ(JOBS_URL(), "r", PUB_REF()); }}
     onFinished={() => { setAnswered(true); setDone(true); window.scrollTo(0, 0); }} />;
   return (
-    <div className="min-h-screen" style={{ background: C.canvas }}>
+    <div className="min-h-screen relative isolate" style={{ background: C.canvas }}>
+      <PublicIcons />
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1 flex items-center justify-between gap-3">
           <a href={withQ(JOBS_URL(), "r", PUB_REF())} aria-label="All jobs"><BrandLogo height={30} /></a>
@@ -16590,7 +16628,7 @@ const SITE_ROOT = () => window.location.origin + "/";
 const JOBS_URL = () => SITE_ROOT() + "jobs/";
 // "Send us your CV" for people not applying to a specific job: they join the Active file.
 const ACTIVE_FILE_URL = () => JOBS_URL() + "?join=1";
-const jobUrl = (slug, extra) => withQ(SITE_ROOT() + "jobs/" + encodeURIComponent(slug) + "/" + (extra ? "?" + extra : ""), "r", PUB_REF());
+const jobUrl = (j, extra) => withQ(SITE_ROOT() + "jobs/" + encodeURIComponent(jobPath(j.slug, j.title)) + "/" + (extra ? "?" + extra : ""), "r", PUB_REF());
 const PAY_PER = { Yearly: "a year", Monthly: "a month", Weekly: "a week", Daily: "a day", Hourly: "an hour" };
 function payLabel(pay) {
   if (!pay) return "";
@@ -16678,7 +16716,8 @@ function JobsBoard() {
   const inputBox = "flex items-center gap-2 flex-1 min-w-0 px-3.5";
 
   return (
-    <div className="min-h-screen" style={{ background: C.card }}>
+    <div className="min-h-screen relative isolate" style={{ background: C.card }}>
+      <PublicIcons fixed />
       <header className="border-b" style={{ borderColor: C.line }}>
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3">
           <a href={JOBS_URL()} aria-label="All jobs"><BrandLogo height={28} /></a>
@@ -16731,7 +16770,7 @@ function JobsBoard() {
                   {shown.map((j) => {
                     const on = desktop && current && current.slug === j.slug;
                     return (
-                      <a key={j.slug} href={jobUrl(j.slug)} onClick={(e) => pick(e, j)} className="block rounded-xl border p-4 md:p-5 transition-shadow hover:shadow-md"
+                      <a key={j.slug} href={jobUrl(j)} onClick={(e) => pick(e, j)} className="block rounded-xl border p-4 md:p-5 transition-shadow hover:shadow-md"
                         style={{ borderColor: on ? C.em : C.line, boxShadow: on ? `inset 4px 0 0 ${C.em}` : undefined, background: C.card }}>
                         <div className="text-[17px] font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{j.title}</div>
                         <div className="text-sm mt-1" style={{ color: C.ink2 }}>{agency}</div>
@@ -16751,13 +16790,13 @@ function JobsBoard() {
                 {desktop && current && (
                   <div className="flex-1 min-w-0 sticky top-4 rounded-xl border overflow-hidden flex flex-col" style={{ borderColor: C.line, maxHeight: "calc(100vh - 32px)" }}>
                     <div className="p-6 border-b" style={{ borderColor: C.line, boxShadow: "0 4px 10px -8px rgba(20,32,27,0.2)" }}>
-                      <a href={jobUrl(current.slug)} className="text-2xl font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{current.title}</a>
+                      <a href={jobUrl(current)} className="text-2xl font-semibold leading-snug hover:underline" style={{ color: C.ink }}>{current.title}</a>
                       <div className="text-sm mt-1.5" style={{ color: C.ink2 }}>{agency}</div>
                       <div className="text-sm" style={{ color: C.ink2 }}>{jobPlace(current.location, current.country)}{current.workSetup ? (jobPlace(current.location, current.country) ? " · " : "") + current.workSetup : ""}</div>
                       {(payLabel(current.pay) || current.employmentType) && <div className="text-sm mt-1" style={{ color: C.ink }}>{[payLabel(current.pay), current.employmentType].filter(Boolean).join(" · ")}</div>}
                       <div className="flex flex-wrap gap-2 mt-4">
-                        <a href={jobUrl(current.slug, "go=apply")}><Btn kind="primary" className="!px-6">Apply now</Btn></a>
-                        <a href={jobUrl(current.slug, "refer=1")}><Btn className="!px-5">Refer someone</Btn></a>
+                        <a href={jobUrl(current, "go=apply")}><Btn kind="primary" className="!px-6">Apply now</Btn></a>
+                        <a href={jobUrl(current, "refer=1")}><Btn className="!px-5">Refer someone</Btn></a>
                       </div>
                     </div>
                     <div ref={detailRef} className="p-6 overflow-y-auto flex flex-col gap-6">
@@ -17184,7 +17223,7 @@ const FETCH_PATH = "/rest/v1/candidates?select=*,candidate_endorsements(*),candi
 export function publicRoute() {
   const q = new URLSearchParams(window.location.search), path = window.location.pathname;
   const m = path.match(/^\/jobs\/([A-Za-z0-9_-]+)\/?$/);
-  if (m || q.get("apply")) return { kind: "apply", slug: m ? m[1] : q.get("apply") };
+  if (m || q.get("apply")) return { kind: "apply", slug: m ? jobCodeOf(m[1]) : q.get("apply") };
   if (/^\/(jobs|careers)\/?$/.test(path) || q.has("jobs") || q.has("careers")) return { kind: q.get("join") ? "join" : "board" };
   if (q.get("u")) return { kind: "outreach", token: q.get("u"), linkKind: q.get("k") === "l" ? "l" : "p", action: q.get("a") || "interested" };
   if (q.get("t")) return { kind: "client", token: q.get("t") };
