@@ -243,12 +243,13 @@ function feeWorking(job) {
   const hourly = job.salaryPeriod === "Hourly" && m.feeMonthly ? " (" + money(Number(job.maxPay) || Number(job.minPay) || 0, job.currency || c) + "/hr × 160 hrs)" : "";
   return job.billingAmount + "% of " + money(pay, job.currency || c) + "/" + per + hourly + " = " + money(m.fee, c) + (m.feeMonthly ? tail : " on placement");
 }
-function incWorking(job) {
+// hideFee: for recruiters, who never see the agency's fee ("10% of the client fee = …").
+function incWorking(job, hideFee) {
   if (!job || !job.incentiveAmount) return "";
   const m = roleMoney(job, null), c = m.incCurrency, tail = m.incMonthly ? "/month × " + plMonths(m.incMonths) + " = " + money(m.incTotal, c) : "";
   if (job.incentiveType === "hourly") return money(job.incentiveAmount, c) + "/hr × 40 hrs × 4 wks = " + money(m.inc, c) + tail;
   if (job.incentiveType === "flat") return m.incMonthly ? money(m.inc, c) + tail : money(m.inc, c) + " on placement";
-  return job.incentiveAmount + "% of the client fee " + money(m.fee, m.feeCurrency) + (m.feeMonthly ? "/month" : "") + " = " + money(m.inc, c) + (m.incMonthly ? tail : " on placement");
+  return job.incentiveAmount + "% of the client fee" + (hideFee ? "" : " " + money(m.fee, m.feeCurrency) + (m.feeMonthly ? "/month" : "")) + " = " + money(m.inc, c) + (m.incMonthly ? tail : " on placement");
 }
 // The agency's and the recruiter's money on a role, each on its own timeline (set separately on the
 // job: the agency may bill 6 months while the recruiter is paid for 3).
@@ -2886,7 +2887,7 @@ function AppearanceCard() {
 function MyProfilePage({ S, toast, onBack, initialTab }) {
   const [tab, setTab] = useState(["account", "notifications", "security", "calendar"].includes(initialTab) ? initialTab : "account");
   return (
-    <div className="flex flex-col gap-5 md:gap-6 max-w-2xl">
+    <div className="flex flex-col gap-5 md:gap-6 max-w-4xl">
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm w-fit" style={{ color: C.ink2 }}><ChevronLeft size={15} /> Back</button>
       <SectionTitle size="text-3xl md:text-4xl" title="My profile" sub="Your account details, visible to the rest of the team." />
       <Tabs tabs={[{ key: "account", label: "Account" }, { key: "notifications", label: "Notifications" }, { key: "security", label: "Security" }, { key: "calendar", label: "Calendar" }]} active={tab} setActive={setTab} />
@@ -4144,40 +4145,6 @@ function rolePicks(S, earnings, from, to) {
     return { j, value, currency, active, late, fits, chance, expected: (conv == null ? value : conv) * chance, contract: monthlyJob };
   }).filter((x) => x.j.status === "Open" || x.active > 0).sort((a, b) => b.expected - a.expected || b.value - a.value);
 }
-// A recruiter's Overview: the roles they're engaged on (their worklist), open ones first, with
-// how their own candidates are doing on each.
-function MyEngagedRoles({ S }) {
-  const mine = S.jobs.filter((j) => (j.engagedIds || []).includes(S.me.id) && j.status !== "Draft");
-  const rows = mine.map((j) => {
-    let mineOn = 0, late = 0;
-    S.cands.forEach((c) => { if (c.recruiterId !== S.me.id) return; const l = (c.jobLinks || []).find((x) => x.jobId === j.id); if (l && l.response !== "declined" && !["Rejected", "Withdrawn"].includes(l.stage)) { mineOn++; if (["Interview", "Offer", "Placed"].includes(l.stage)) late++; } });
-    return { j, mineOn, late, earn: earningText(recruiterEarning(j)) };
-  });
-  return (
-    <Card>
-      <div className="flex items-start justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-2"><Briefcase size={16} color={C.em} /><div className="text-lg" style={{ ...SERIF }}>Roles you're engaged on</div></div>
-        <button onClick={() => S.go("jobs")} className="text-xs" style={{ color: C.em }}>All roles</button>
-      </div>
-      <div className="text-xs mt-0.5" style={{ color: C.ink2 }}>Your worklist, with your candidates on each.</div>
-      <div className="mt-3 flex flex-col">
-        {rows.length === 0 && <div className="text-sm py-3" style={{ color: C.ink3 }}>You're not engaged on any roles yet. Open Jobs and engage on one to add it here.</div>}
-        {rows.map((x, i) => (
-          <button key={x.j.id} onClick={() => S.openJob(x.j.id)} className="flex items-center gap-3 py-2.5 text-left" style={{ borderTop: i ? `1px solid ${C.line}` : "none" }}>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium truncate">{x.j.role} <span className="font-normal" style={{ color: C.ink3 }}>· {x.j.client}</span></div>
-              <div className="text-xs truncate" style={{ color: C.ink2 }}>{x.mineOn ? plural(x.mineOn, "of your candidates", "of your candidates") + " on it" + (x.late ? ", " + x.late + " at interview or later" : "") : "None of your candidates on it yet"}</div>
-            </div>
-            <div className="text-right shrink-0 flex flex-col items-end gap-1">
-              <StatusPill status={x.j.status} />
-              <div className="text-xs" style={{ color: C.ink3 }}>{x.earn ? "You earn " + x.earn.charAt(0).toLowerCase() + x.earn.slice(1) : "Incentive not set yet"}</div>
-            </div>
-          </button>
-        ))}
-      </div>
-    </Card>
-  );
-}
 function RolePicker({ S, earnings }) {
   const pr = usePeriod("this_month");
   const picks = rolePicks(S, earnings, pr.from, pr.to).slice(0, 6);
@@ -4569,7 +4536,7 @@ const HOME_STAGE_GROUPS = [["In review", ["Sourced", "In review", "Screening"]],
 function HomeRoles({ S, mine }) {
   const [all, setAll] = useState(false);
   const cands = mine ? S.cands.filter((c) => c.recruiterId === S.me.id) : S.cands;
-  const roles = S.jobs.filter((j) => j.status === "Open" && !j.leadRole && (!mine || onWorklist(S, j))).map((j) => {
+  const roles = S.jobs.filter((j) => !j.leadRole && (mine ? onWorklist(S, j) && j.status !== "Draft" && j.status !== "Closed" : j.status === "Open")).map((j) => {
     const counts = HOME_STAGE_GROUPS.map(() => 0); let fits = 0;
     cands.forEach((c) => {
       const l = (c.jobLinks || []).find((x) => x.jobId === j.id);
@@ -4578,7 +4545,7 @@ function HomeRoles({ S, mine }) {
     });
     return { j, counts, fits, score: counts[3] * 8 + counts[2] * 4 + counts[1] * 2 + counts[0] };
   }).sort((a, b) => b.score - a.score || (b.j.createdAt || 0) - (a.j.createdAt || 0));
-  if (!roles.length) return null;
+  if (!roles.length) return mine ? <Card><div className="text-lg" style={SERIF}>Your roles</div><div className="text-sm mt-1" style={{ color: C.ink2 }}>You're not engaged on any roles yet. Open Jobs and press Engage on a role to add it here.</div><button type="button" onClick={() => S.go("jobs")} className="mt-3 text-sm font-semibold" style={{ color: C.em }}>Open Jobs</button></Card> : null;
   const shown = all ? roles : roles.slice(0, 4);
   return (
     <section aria-label="Your roles" className="flex flex-col gap-3">
@@ -4596,10 +4563,10 @@ function HomeRoles({ S, mine }) {
                 <span className="flex-1 min-w-0"><span className="block font-semibold truncate">{j.role}</span><span className="block text-xs truncate mt-0.5" style={{ color: C.ink2 }}>{[j.client, j.location, j.workSetup].filter(Boolean).join(" · ")}</span></span>
                 <StatusPill status={j.status} />
               </div>
-              {(j.minPay || j.maxPay || b.fee) && (
+              {(j.minPay || j.maxPay || b.fee || mine) && (
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
                   {(j.minPay || j.maxPay) && !j.commissionOnly && <span><span style={{ color: C.ink2 }}>Salary </span>{j.minPay ? money(j.minPay, j.currency) : "?"}{j.maxPay && j.maxPay !== j.minPay ? " – " + money(j.maxPay, j.currency) : ""} / {(j.salaryPeriod || "Yearly").toLowerCase()}</span>}
-                  {b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>{feeWorking(j)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
+                  {mine ? (incWorking(j, true) ? <span><span style={{ color: C.ink2 }}>You earn </span>{incWorking(j, true)}</span> : <span style={{ color: C.ink3 }}>Your incentive isn't set yet</span>) : b.fee ? <span><span style={{ color: C.ink2 }}>Fee </span>{feeWorking(j)}{approxAgency(b.fee, b.feeCurrency) ? <span style={{ color: C.ink2 }}> ({approxAgency(b.fee, b.feeCurrency)})</span> : null}</span> : null}
                 </div>
               )}
               <div className="grid grid-cols-4 gap-1.5 w-full">
@@ -4617,6 +4584,27 @@ function HomeRoles({ S, mine }) {
       </div>
       {roles.length > 4 && <button type="button" onClick={() => setAll((x) => !x)} className="self-start text-sm font-semibold" style={{ color: C.em }}>{all ? "Show fewer" : "Show all " + roles.length}</button>}
     </section>
+  );
+}
+// A recruiter's own candidates by where they stand, each opening Candidates.
+function HomeMyCandidates({ S }) {
+  const mine = S.cands.filter((c) => c.recruiterId === S.me.id && !c.isDraft);
+  const rows = [["In review", "In review"], ["With client", "With client"], ["Interview", "Interview"], ["Offer", "Offer"], ["Active file", "Active file"], ["Placed", "Placed"]]
+    .map(([label, st]) => [label, mine.filter((c) => c.status === st).length]);
+  const week = mine.filter((c) => Date.now() - (c.createdAt || 0) < 7 * 864e5).length;
+  return (
+    <Card>
+      <div className="flex items-baseline justify-between gap-2"><div className="text-sm font-semibold">Your candidates <span className="font-normal" style={{ color: C.ink2 }}>{mine.length}</span></div><button type="button" onClick={() => S.go("candidates")} className="text-xs font-semibold" style={{ color: C.em }}>Open</button></div>
+      <div className="grid grid-cols-3 gap-2 mt-3">
+        {rows.map(([label, n]) => (
+          <button key={label} type="button" onClick={() => S.go("candidates")} className="rounded-lg px-2.5 py-2 text-left" style={{ background: n && ["Interview", "Offer", "Placed"].includes(label) ? C.emTint : C.soft }}>
+            <span className="block text-base font-bold" style={{ color: n && ["Interview", "Offer", "Placed"].includes(label) ? C.emText : C.ink }}>{n}</span>
+            <span className="block text-[11px] truncate" style={{ color: C.ink2 }}>{label}</span>
+          </button>
+        ))}
+      </div>
+      {week > 0 && <div className="text-xs mt-2.5" style={{ color: C.ink2 }}>{plural(week, "added", "added")} this week</div>}
+    </Card>
   );
 }
 function HomeInterviewing({ S, mine }) {
@@ -4823,8 +4811,9 @@ function OverviewRecruiter({ S }) {
       </KPIGrid>
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
         <div className="flex flex-col gap-5 min-w-0">
-          <MyEngagedRoles S={S} />
+          <HomeRoles S={S} mine />
           <HomeInterviewing S={S} mine />
+          <RolePicker S={S} earnings />
         </div>
         <div className="flex flex-col gap-5 min-w-0">
           <AttentionList title="Needs you" S={S} extra={pendingWins(S).length ? <TeamWins S={S} /> : null} items={(() => {
@@ -4840,6 +4829,7 @@ function OverviewRecruiter({ S }) {
         })()} />
           <HomeGoal S={S} recruiterId={S.me.id} />
           <HomePipelineValue S={S} mine />
+          <HomeMyCandidates S={S} />
           <PaceCard S={S} recruiterId={S.me.id} />
         </div>
       </div>
@@ -8582,7 +8572,7 @@ function JobDetail({ job, S, toast, onBack, onPromote, onEdit, onDeleted, onAddC
                 <div className="text-xs" style={{ color: C.ink3 }}>{S.role === "recruiter" ? "Your incentive" : "Recruiter incentive"}</div>
                 {(() => { const e = recruiterEarning(job); const t = earningText(e); return <>
                   <div className="font-medium mt-0.5">{t || (e && e.missing ? "Not set yet" : job.incentiveAmount + "% of the client fee")}</div>
-                  {t && incWorking(job) && <div className="text-xs mt-0.5" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{incWorking(job)}</div>}
+                  {t && incWorking(job) && <div className="text-xs mt-0.5" style={{ color: C.ink2, fontVariantNumeric: "tabular-nums" }}>{incWorking(job, S.role === "recruiter")}</div>}
                 {t && !incWorking(job) && <div className="text-xs mt-0.5" style={{ color: C.ink3 }}>{[e.basis, e.monthly ? "paid monthly" : "one-off, on placement", e.upTo ? "depends on the hire's pay" : ""].filter(Boolean).join(" · ")}</div>}
                   {e && e.missing && S.role !== "recruiter" && <div className="text-xs mt-0.5" style={{ color: C.warnFg }}>{!job.incentiveAmount ? "Add the recruiter incentive (Edit job)" : "Add the client fee or the role's pay (Edit job), so recruiters see what they'd earn"}</div>}
                 </>; })()}
@@ -14632,7 +14622,10 @@ function AgencyTab({ toast, S }) {
       .then(() => toast("Settings saved")).catch(() => {}).finally(() => setBusy(false));
   };
   return (
-    <Card className="flex flex-col gap-4 md:max-w-xl">
+    <div className="flex flex-col gap-5">
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+    <Card className="flex flex-col gap-4">
+      <div className="text-lg" style={SERIF}>Agency</div>
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Agency name</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
       <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Name in email footers (e.g. your full company name)</label><input value={company.legalName || ""} onChange={(e) => setCompany({ ...company, legalName: e.target.value })} placeholder={name} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
       <div>
@@ -14660,8 +14653,9 @@ function AgencyTab({ toast, S }) {
         <div><div className="text-sm font-medium">AI screening questions</div><div className="text-xs" style={{ color: C.ink2 }}>Draft questions for every new candidate. You approve before they send.</div></div>
         <div className="w-10 h-6 rounded-full flex items-center px-0.5 shrink-0" style={{ background: auto ? C.em : C.line2 }}><div className={`w-5 h-5 rounded-full bg-white ${auto ? "ml-auto" : ""}`} /></div>
       </button>
-      <div className="pt-3 flex flex-col gap-3" style={{ borderTop: `1px solid ${C.line}` }}>
-        <div><div className="text-sm font-medium">Invoice details</div><div className="text-xs" style={{ color: C.ink2 }}>Printed on invoices as "Bill from" and payment details. Anything left blank stays blank on the invoice.</div></div>
+    </Card>
+    <Card className="flex flex-col gap-3">
+        <div><div className="text-lg" style={SERIF}>Invoice details</div><div className="text-xs" style={{ color: C.ink2 }}>Printed on invoices as "Bill from" and payment details. Anything left blank stays blank on the invoice.</div></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {COMPANY_FIELDS.map(([k, l]) => (
             <div key={k} className={k === "address" ? "sm:col-span-2" : ""}><label className="text-xs font-medium" style={{ color: C.ink2 }}>{l}</label><input value={company[k] || ""} onChange={(e) => setCompany({ ...company, [k]: e.target.value })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
@@ -14669,9 +14663,10 @@ function AgencyTab({ toast, S }) {
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Default payment terms (days)</label><input type="number" min="0" value={company.termsDays != null ? company.termsDays : 30} onChange={(e) => setCompany({ ...company, termsDays: e.target.value === "" ? null : Number(e.target.value) })} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /></div>
           <div><label className="text-xs font-medium" style={{ color: C.ink2 }}>Invoice number prefix</label><input value={invoicePrefix} onChange={(e) => setInvoicePrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))} className="w-full mt-1.5 rounded-lg border px-3.5 py-2.5 text-sm outline-none" style={{ borderColor: C.line, background: C.soft }} /><div className="text-xs mt-1" style={{ color: C.ink3 }}>Numbers look like {invoicePrefix || "INV"}-{new Date().getFullYear()}-0001</div></div>
         </div>
-      </div>
-      <Btn kind="primary" disabled={busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn>
     </Card>
+    </div>
+      <div><Btn kind="primary" disabled={busy} onClick={save}>{busy ? <>Saving <InlineDots color="#fff" /></> : "Save changes"}</Btn></div>
+    </div>
   );
 }
 
