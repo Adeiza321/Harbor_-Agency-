@@ -12279,6 +12279,7 @@ function PreferencesQuiz({ initial, known, prefill, onSave, onClose, onFinished,
 
   return (
     <div className="fixed inset-0 z-[70] overflow-y-auto" style={{ background: C.soft, ...QUIZ_FONT }} role="dialog" aria-modal="true" aria-label="Help us match you">
+      <PublicIcons fixed phone />
       <div className="sticky top-0 z-10" style={{ background: C.soft }}>
         <div className="max-w-3xl mx-auto flex items-center justify-between px-4 h-14">
           <button type="button" onClick={done ? onClose : back} aria-label={(inBefore ? bi === 0 : i === 0 && !edit) || done ? "Close" : "Back"} className="w-10 h-10 -ml-2 rounded-full flex items-center justify-center" style={{ color: C.ink }}>{(inBefore ? bi === 0 : i === 0 && !edit) || done ? <X size={20} /> : <ArrowLeft size={20} />}</button>
@@ -16147,6 +16148,31 @@ function CandidatePortal({ data, token, onChanged }) {
    straight away), &refer=1 (open the "refer someone" form).
    The job description comes first, with Apply and Refer someone at the top; the form only
    opens when they click one (phone and computer alike). */
+// Floating icon tiles around the public pages (jobs board, a job and its application, the Active
+// file sign-up), kept in the side margins on wide screens; on phones only in the Active file form's empty space.
+// Decoration only: hidden from screen readers, never clickable, still for reduced motion.
+const PUBLIC_ICONS = [
+  [Briefcase, { left: "4%", top: "9%" }, -8], [Sparkles, { left: "11%", top: "24%" }, 6], [Users, { left: "5%", top: "41%" }, 4],
+  [Calendar, { left: "12%", top: "58%" }, -6], [BadgeCheck, { left: "4%", top: "74%" }, 7], [Send, { left: "10%", top: "90%" }, -4],
+  [Target, { right: "4%", top: "12%" }, 7], [MessageCircle, { right: "11%", top: "28%" }, -6], [FileText, { right: "5%", top: "46%" }, 5],
+  [Trophy, { right: "12%", top: "63%" }, -7], [Globe, { right: "4%", top: "79%" }, 6], [Handshake, { right: "10%", top: "93%" }, -5],
+];
+const PUBLIC_ICONS_PHONE = [[Briefcase, { left: "7%", top: "56%" }, -8], [Sparkles, { right: "9%", top: "62%" }, 8], [Users, { left: "16%", top: "72%" }, 5], [Target, { right: "14%", top: "78%" }, -6]];
+function PublicIcons({ fixed, phone, edges }) {
+  return (
+    <div className={(fixed ? "fixed" : "absolute") + " inset-0 -z-10 pointer-events-none overflow-hidden"} aria-hidden="true">
+      {PUBLIC_ICONS.filter(([, pos]) => !edges || parseFloat(pos.left || pos.right) < 6).map(([I, pos, rot], i) => (
+        <span key={i} className="absolute hidden xl:flex pn-float items-center justify-center rounded-2xl"
+          style={{ ...pos, width: 52, height: 52, rotate: rot + "deg", background: C.card, border: `1px solid ${C.line}`, boxShadow: "0 10px 24px -18px rgba(18,36,29,.45)", opacity: 0.85, animationDelay: -(i * 1.3) + "s", animationDuration: 6 + (i % 4) + "s" }}>
+          <I size={22} color={C.em} strokeWidth={1.75} />
+        </span>
+      ))}
+      {phone && PUBLIC_ICONS_PHONE.map(([I, pos, rot], i) => (
+        <span key={"p" + i} className="absolute xl:hidden pn-float" style={{ ...pos, rotate: rot + "deg", opacity: DARK ? 0.14 : 0.1, animationDelay: -(i * 1.7) + "s" }}><I size={34} color={C.em} strokeWidth={1.5} /></span>
+      ))}
+    </div>
+  );
+}
 function ApplyPage({ slug }) {
   const params = React.useMemo(() => new URLSearchParams(window.location.search), []);
   // Where they came from: an outreach email, a shared post (?utm_source=linkedin etc.), or the apply page.
@@ -16230,7 +16256,8 @@ function ApplyPage({ slug }) {
   const payText = job ? payLabel(job.pay) : "";
   const desc = job ? String(job.description || "") : "";
   const shell = (children) => (
-    <div className="min-h-screen" style={{ background: C.canvas }}>
+    <div className="min-h-screen relative isolate" style={{ background: C.canvas }}>
+      <PublicIcons />
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1 flex items-center justify-between gap-3">
           <a href={JOBS_URL()} aria-label="All jobs"><BrandLogo height={30} /></a>
@@ -16565,7 +16592,8 @@ function JoinPage() {
     onClose={() => { if (app.current) { setDone(true); window.scrollTo(0, 0); } else window.location.href = withQ(JOBS_URL(), "r", PUB_REF()); }}
     onFinished={() => { setAnswered(true); setDone(true); window.scrollTo(0, 0); }} />;
   return (
-    <div className="min-h-screen" style={{ background: C.canvas }}>
+    <div className="min-h-screen relative isolate" style={{ background: C.canvas }}>
+      <PublicIcons />
       <div className="max-w-2xl mx-auto p-4 md:p-8 flex flex-col gap-4">
         <div className="mb-1 flex items-center justify-between gap-3">
           <a href={withQ(JOBS_URL(), "r", PUB_REF())} aria-label="All jobs"><BrandLogo height={30} /></a>
@@ -16678,7 +16706,8 @@ function JobsBoard() {
   const inputBox = "flex items-center gap-2 flex-1 min-w-0 px-3.5";
 
   return (
-    <div className="min-h-screen" style={{ background: C.card }}>
+    <div className="min-h-screen relative isolate" style={{ background: C.card }}>
+      <PublicIcons fixed edges />
       <header className="border-b" style={{ borderColor: C.line }}>
         <div className="max-w-6xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between gap-3">
           <a href={JOBS_URL()} aria-label="All jobs"><BrandLogo height={28} /></a>
