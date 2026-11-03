@@ -16169,12 +16169,12 @@ function PublicIcons({ fixed, phone }) {
   return (
     <div className={(fixed ? "fixed" : "absolute") + " inset-0 -z-10 pointer-events-none overflow-hidden"} aria-hidden="true">
       {PUBLIC_ICONS.map(([I, pos, rot], i) => (
-        <span key={i} className="absolute hidden xl:block pn-float" style={{ ...pos, rotate: rot + "deg", opacity: DARK ? 0.45 : 0.36, animationDelay: -(i * 2.5) + "s", animationDuration: 9 + i + "s" }}>
+        <span key={i} className="absolute hidden xl:block pn-wander" style={{ ...pos, rotate: rot + "deg", opacity: DARK ? 0.45 : 0.36, animationName: "pn-wander-" + "abcd"[i % 4], animationDelay: -(i * 4) + "s", animationDuration: 18 + i * 3 + "s" }}>
           <I size={46} color={C.em} strokeWidth={1.75} />
         </span>
       ))}
       {phone && PUBLIC_ICONS_PHONE.map(([I, pos, rot], i) => (
-        <span key={"p" + i} className="absolute xl:hidden pn-float" style={{ ...pos, rotate: rot + "deg", opacity: DARK ? 0.24 : 0.18, animationDelay: -(i * 3) + "s", animationDuration: "10s" }}><I size={36} color={C.em} strokeWidth={1.75} /></span>
+        <span key={"p" + i} className="absolute xl:hidden pn-wander" style={{ ...pos, rotate: rot + "deg", opacity: DARK ? 0.24 : 0.18, animationName: "pn-wander-" + "ab"[i % 2], animationDelay: -(i * 5) + "s", animationDuration: 20 + i * 4 + "s" }}><I size={36} color={C.em} strokeWidth={1.75} /></span>
       ))}
     </div>
   );
