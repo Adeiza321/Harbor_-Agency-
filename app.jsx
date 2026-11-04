@@ -6128,9 +6128,11 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
     setDelBusy(true);
     S.deleteCandidate(candidate.id).then(() => { toast("Candidate deleted"); onBack(); }).catch(() => {}).finally(() => setDelBusy(false));
   };
-  // Which job the "Message" modal is talking about (a candidate can have more than one live
-  // link); defaults to the most recently created one that isn't declined.
-  const liveLinks = candidate.jobLinks.filter((l) => l.response !== "declined").sort((a, b) => b.createdAt - a.createdAt);
+  // Which job the "Message" window is talking about (a candidate can be on more than one role, each
+  // with its own conversation). It opens on the conversation with the latest message, so it carries on
+  // where you left off; a role nobody has messaged on yet comes after, newest first.
+  const lastMsgAt = (l) => { const m = l.messages || []; return m.length ? m[m.length - 1].at || 0 : 0; };
+  const liveLinks = candidate.jobLinks.filter((l) => l.response !== "declined").sort((a, b) => lastMsgAt(b) - lastMsgAt(a) || b.createdAt - a.createdAt);
   const [msgLinkId, setMsgLinkId] = useState(null);
   const msgLink = candidate.jobLinks.find((l) => l.id === (msgLinkId || (liveLinks[0] && liveLinks[0].id))) || null;
   const [reply, setReply] = useState("");
@@ -6283,7 +6285,7 @@ function CandidateDetail({ candidate, onBack, toast, S }) {
               headerExtra={liveLinks.length > 1 ? (
                 <div className="px-3 py-2 shrink-0" style={{ background: C.card, borderBottom: `1px solid ${C.line}` }}>
                   <select value={msgLink.id} onChange={(e) => setMsgLinkId(e.target.value)} className="w-full rounded-lg border px-3 py-2 text-sm outline-none" style={{ borderColor: C.line, background: C.card }}>
-                    {liveLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); return <option key={l.id} value={l.id}>{j ? j.role + " · " + j.client : "Role"}</option>; })}
+                    {liveLinks.map((l) => { const j = S.jobs.find((x) => x.id === l.jobId); const n = (l.messages || []).length; return <option key={l.id} value={l.id}>{(j ? j.role + " · " + j.client : "Role") + (n ? " · " + plural(n, "message") : " · no messages yet")}</option>; })}
                   </select>
                 </div>
               ) : null} />
